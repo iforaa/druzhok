@@ -79,15 +79,7 @@ func (b *Bot) onUpdate(ctx context.Context, _ *tgbot.Bot, update *models.Update)
 	var userName string
 	if msg.From != nil {
 		userID = msg.From.ID
-		parts := []string{msg.From.FirstName, msg.From.LastName}
-		// Build "First Last", trimming empty parts.
-		filtered := parts[:0]
-		for _, p := range parts {
-			if p != "" {
-				filtered = append(filtered, p)
-			}
-		}
-		userName = strings.Join(filtered, " ")
+		userName = strings.TrimSpace(msg.From.FirstName + " " + msg.From.LastName)
 	}
 
 	b.log.Debug("telegram: received message",

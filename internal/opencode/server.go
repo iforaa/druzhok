@@ -167,10 +167,13 @@ func (s *Server) stopLocked() error {
 	return nil
 }
 
+// healthClient is a shared HTTP client with a short timeout for health checks.
+var healthClient = &http.Client{Timeout: 5 * time.Second}
+
 // IsHealthy performs a GET /global/health request and returns true iff the
 // response status is 200.
 func (s *Server) IsHealthy() bool {
-	resp, err := http.Get(s.healthURL()) //nolint:noctx
+	resp, err := healthClient.Get(s.healthURL()) //nolint:noctx
 	if err != nil {
 		return false
 	}

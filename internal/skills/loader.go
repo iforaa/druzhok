@@ -2,7 +2,9 @@ package skills
 
 import (
 	"fmt"
+	"log/slog"
 	"os"
+	"regexp"
 	"strings"
 
 	"gopkg.in/yaml.v3"
@@ -10,10 +12,11 @@ import (
 
 // Skill represents a loaded skill with its metadata and body content.
 type Skill struct {
-	Name        string   `yaml:"name"`
-	Description string   `yaml:"description"`
-	Triggers    []string `yaml:"triggers"`
-	Body        string   `yaml:"-"`
+	Name        string           `yaml:"name"`
+	Description string           `yaml:"description"`
+	Triggers    []string         `yaml:"triggers"`
+	Body        string           `yaml:"-"`
+	compiled    []*regexp.Regexp // pre-compiled trigger regexes
 }
 
 // LoadSkill parses a markdown file with YAML frontmatter between --- delimiters.
@@ -63,6 +66,17 @@ func LoadSkill(path string) (*Skill, error) {
 	}
 
 	skill.Body = strings.TrimRight(body, "\n")
+
+	// Pre-compile trigger regexes at load time.
+	for _, trigger := range skill.Triggers {
+		re, err := regexp.Compile(trigger)
+		if err != nil {
+			slog.Warn("invalid trigger regex, skipping", "skill", skill.Name, "trigger", trigger, "error", err)
+			continue
+		}
+		skill.compiled = append(skill.compiled, re)
+	}
+
 	return &skill, nil
 }
 

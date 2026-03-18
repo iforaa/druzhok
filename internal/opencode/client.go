@@ -16,10 +16,10 @@ const (
 	DefaultPromptTimeout = 5 * time.Minute
 
 	// pollInterval is the initial delay between polling attempts.
-	pollInterval = 500 * time.Millisecond
+	pollInterval = 200 * time.Millisecond
 
 	// maxPollInterval caps the exponential backoff.
-	maxPollInterval = 5 * time.Second
+	maxPollInterval = 1 * time.Second
 )
 
 // Client wraps the OpenCode SDK and provides a synchronous interface

@@ -136,8 +136,9 @@ func (p *Processor) Process(ctx context.Context, msg db.Message, chat *db.Chat) 
 	log.Debug("processor: message status set to processing")
 
 	// 3. Ensure the chat has an OpenCode session.
+	isNewSession := chat.OcSessionID == ""
 	sessionID := chat.OcSessionID
-	if sessionID == "" {
+	if isNewSession {
 		var err error
 		sessionID, err = p.client.CreateSession(ctx)
 		if err != nil {
@@ -146,19 +147,26 @@ func (p *Processor) Process(ctx context.Context, msg db.Message, chat *db.Chat) 
 		if err := p.db.UpdateSessionID(chat.ID, sessionID); err != nil {
 			return "", fmt.Errorf("processor: save session id: %w", err)
 		}
+		// Also create the chat directory for rules on first session.
+		if err := EnsureChatDir(chat.TgChatID); err != nil {
+			log.Warn("processor: failed to create chat dir", "error", err)
+		}
 		log.Debug("processor: new session created", "session_id", sessionID)
 	}
 
 	// 4. Load per-chat rules and build prompt.
-	if err := EnsureChatDir(chat.TgChatID); err != nil {
-		log.Warn("processor: failed to create chat dir", "error", err)
-	}
 	chatRules := LoadChatRules(chat.TgChatID)
-	rulesPath := RulesFilePath(chat.TgChatID)
+	rulesPath := ""
+	if chatRules != "" {
+		rulesPath = RulesFilePath(chat.TgChatID)
+	} else {
+		// Always include the path so the agent knows where to write rules.
+		rulesPath = RulesFilePath(chat.TgChatID)
+	}
 
 	// History is only injected when the session is brand new.
 	var history []db.Message
-	if chat.OcSessionID == "" || sessionID != chat.OcSessionID {
+	if isNewSession {
 		var histErr error
 		history, histErr = p.db.GetRecentMessages(chat.ID, maxHistoryMessages)
 		if histErr != nil {

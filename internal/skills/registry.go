@@ -4,7 +4,6 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
-	"regexp"
 )
 
 // Registry holds all discovered skills and provides matching capabilities.
@@ -31,13 +30,12 @@ func NewRegistry(dir string) (*Registry, error) {
 		}
 
 		skillPath := filepath.Join(dir, entry.Name(), "SKILL.md")
-		if _, err := os.Stat(skillPath); os.IsNotExist(err) {
-			continue
-		}
-
 		skill, err := LoadSkill(skillPath)
 		if err != nil {
-			logger.Warn("failed to load skill", "path", skillPath, "error", err)
+			// File not found or invalid — skip silently for missing, warn for parse errors.
+			if !os.IsNotExist(err) {
+				logger.Warn("failed to load skill", "path", skillPath, "error", err)
+			}
 			continue
 		}
 
@@ -47,16 +45,11 @@ func NewRegistry(dir string) (*Registry, error) {
 	return reg, nil
 }
 
-// Match iterates all skills and returns the first whose trigger regex matches input.
-// Returns nil if no skill matches.
+// Match iterates all skills and returns the first whose pre-compiled trigger
+// regex matches input. Returns nil if no skill matches.
 func (r *Registry) Match(input string) *Skill {
 	for _, skill := range r.skills {
-		for _, trigger := range skill.Triggers {
-			re, err := regexp.Compile(trigger)
-			if err != nil {
-				r.log.Warn("invalid trigger regex", "skill", skill.Name, "trigger", trigger, "error", err)
-				continue
-			}
+		for _, re := range skill.compiled {
 			if re.MatchString(input) {
 				return skill
 			}
