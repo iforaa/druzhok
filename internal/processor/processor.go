@@ -144,7 +144,12 @@ func (p *Processor) Process(ctx context.Context, msg db.Message, chat *db.Chat) 
 	}
 	log.Debug("processor: message status set to processing")
 
-	// 3. Ensure the chat has an OpenCode session.
+	// 3. Ensure chat directory exists (for rules file).
+	if err := EnsureChatDir(chat.TgChatID); err != nil {
+		log.Warn("processor: failed to create chat dir", "error", err)
+	}
+
+	// 4. Ensure the chat has an OpenCode session.
 	isNewSession := chat.OcSessionID == ""
 	sessionID := chat.OcSessionID
 	if isNewSession {
@@ -155,10 +160,6 @@ func (p *Processor) Process(ctx context.Context, msg db.Message, chat *db.Chat) 
 		}
 		if err := p.db.UpdateSessionID(chat.ID, sessionID); err != nil {
 			return "", fmt.Errorf("processor: save session id: %w", err)
-		}
-		// Also create the chat directory for rules on first session.
-		if err := EnsureChatDir(chat.TgChatID); err != nil {
-			log.Warn("processor: failed to create chat dir", "error", err)
 		}
 		log.Debug("processor: new session created", "session_id", sessionID)
 	}
