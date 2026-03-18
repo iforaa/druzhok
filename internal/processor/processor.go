@@ -13,7 +13,13 @@ import (
 	"github.com/igorkuznetsov/druzhok/internal/opencode"
 )
 
-var internalTagRe = regexp.MustCompile(`(?s)<internal>.*?</internal>`)
+var (
+	internalTagRe = regexp.MustCompile(`(?s)<internal>.*?</internal>`)
+	// Strip tool call markup that leaks from some models.
+	toolCallsRe = regexp.MustCompile(`(?s)<\|tool_calls_section_begin\|>.*?<\|tool_calls_section_end\|>`)
+	// Also catch individual tool call blocks if the section tags are missing.
+	toolCallRe = regexp.MustCompile(`(?s)<\|tool_call_begin\|>.*?<\|tool_call_end\|>`)
+)
 
 // Processor handles incoming user messages by sending them to OpenCode
 // and persisting the responses. It limits concurrent in-flight requests
@@ -103,10 +109,13 @@ func EnsureChatDir(tgChatID int64) error {
 	return os.MkdirAll(dir, 0o755)
 }
 
-// StripInternalTags removes <internal>...</internal> blocks from agent output.
-// Only the text outside these tags is shown to the user in Telegram.
+// StripInternalTags removes <internal>...</internal> blocks and tool call
+// markup from agent output. Only clean text is shown to the user in Telegram.
 func StripInternalTags(text string) string {
-	return strings.TrimSpace(internalTagRe.ReplaceAllString(text, ""))
+	text = internalTagRe.ReplaceAllString(text, "")
+	text = toolCallsRe.ReplaceAllString(text, "")
+	text = toolCallRe.ReplaceAllString(text, "")
+	return strings.TrimSpace(text)
 }
 
 // Process handles a single user message end-to-end:
