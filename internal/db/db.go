@@ -21,10 +21,20 @@ func Open(dsn string) (*DB, error) {
 		return nil, fmt.Errorf("db open: %w", err)
 	}
 
+	// Single writer connection to prevent SQLITE_BUSY errors.
+	// modernc.org/sqlite does not support concurrent writers well.
+	conn.SetMaxOpenConns(1)
+
 	// Enable WAL mode for better concurrent read performance.
 	if _, err := conn.Exec("PRAGMA journal_mode=WAL;"); err != nil {
 		conn.Close()
 		return nil, fmt.Errorf("db wal mode: %w", err)
+	}
+
+	// Busy timeout: wait up to 5s if another connection holds a lock.
+	if _, err := conn.Exec("PRAGMA busy_timeout=5000;"); err != nil {
+		conn.Close()
+		return nil, fmt.Errorf("db busy timeout: %w", err)
 	}
 
 	// Enable foreign key enforcement.

@@ -4,10 +4,14 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"regexp"
+	"strings"
 
 	"github.com/igorkuznetsov/druzhok/internal/db"
 	"github.com/igorkuznetsov/druzhok/internal/opencode"
 )
+
+var internalTagRe = regexp.MustCompile(`(?s)<internal>.*?</internal>`)
 
 // Processor handles incoming user messages by sending them to OpenCode
 // and persisting the responses. It limits concurrent in-flight requests
@@ -38,6 +42,12 @@ func BuildPrompt(systemPrompt, userMessage string) string {
 		return userMessage
 	}
 	return fmt.Sprintf("<system-context>\n%s\n</system-context>\n\n%s", systemPrompt, userMessage)
+}
+
+// StripInternalTags removes <internal>...</internal> blocks from agent output.
+// Only the text outside these tags is shown to the user in Telegram.
+func StripInternalTags(text string) string {
+	return strings.TrimSpace(internalTagRe.ReplaceAllString(text, ""))
 }
 
 // Process handles a single user message end-to-end:
@@ -89,7 +99,7 @@ func (p *Processor) Process(ctx context.Context, msg db.Message, chat *db.Chat) 
 		return "", fmt.Errorf("processor: send prompt: %w", err)
 	}
 
-	// 5. Save assistant response as a new message.
+	// 5. Save full assistant response (including internal tags) for history.
 	if _, err := p.db.SaveMessage(chat.ID, 0, "assistant", responseText); err != nil {
 		return "", fmt.Errorf("processor: save assistant message: %w", err)
 	}
@@ -100,5 +110,11 @@ func (p *Processor) Process(ctx context.Context, msg db.Message, chat *db.Chat) 
 	}
 	log.Debug("processor: message completed")
 
-	return responseText, nil
+	// 7. Strip <internal>...</internal> blocks before returning to user.
+	userVisible := StripInternalTags(responseText)
+	if userVisible == "" {
+		userVisible = "(Task completed)"
+	}
+
+	return userVisible, nil
 }

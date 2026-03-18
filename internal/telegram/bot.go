@@ -66,6 +66,11 @@ func (b *Bot) onUpdate(ctx context.Context, _ *tgbot.Bot, update *models.Update)
 		return
 	}
 
+	// Skip messages with no text (photos, stickers, etc.)
+	if msg.Text == "" {
+		return
+	}
+
 	chatID := msg.Chat.ID
 	messageID := msg.ID
 	text := msg.Text

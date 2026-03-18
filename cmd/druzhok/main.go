@@ -265,7 +265,7 @@ func (a *App) handleMessage(ctx context.Context, chatID int64, userID int64, use
 
 // getOrCreateChat ensures both the user and chat exist in the database.
 func (a *App) getOrCreateChat(_ context.Context, chatID int64, userID int64, userName string) (*db.Chat, error) {
-	// Ensure user exists.
+	// Ensure user exists (handle race: if CreateUser fails on UNIQUE, fetch existing).
 	user, err := a.db.GetUserByTgID(userID)
 	if err != nil {
 		return nil, fmt.Errorf("get user: %w", err)
@@ -273,11 +273,15 @@ func (a *App) getOrCreateChat(_ context.Context, chatID int64, userID int64, use
 	if user == nil {
 		user, err = a.db.CreateUser(userID, userName)
 		if err != nil {
-			return nil, fmt.Errorf("create user: %w", err)
+			// Race condition: another goroutine created the user first.
+			user, err = a.db.GetUserByTgID(userID)
+			if err != nil || user == nil {
+				return nil, fmt.Errorf("create user: %w", err)
+			}
 		}
 	}
 
-	// Ensure chat exists.
+	// Ensure chat exists (handle race: if CreateChat fails on UNIQUE, fetch existing).
 	chat, err := a.db.GetChatByTgID(chatID)
 	if err != nil {
 		return nil, fmt.Errorf("get chat: %w", err)
@@ -285,7 +289,11 @@ func (a *App) getOrCreateChat(_ context.Context, chatID int64, userID int64, use
 	if chat == nil {
 		chat, err = a.db.CreateChat(user.ID, chatID, userName)
 		if err != nil {
-			return nil, fmt.Errorf("create chat: %w", err)
+			// Race condition: another goroutine created the chat first.
+			chat, err = a.db.GetChatByTgID(chatID)
+			if err != nil || chat == nil {
+				return nil, fmt.Errorf("create chat: %w", err)
+			}
 		}
 	}
 
