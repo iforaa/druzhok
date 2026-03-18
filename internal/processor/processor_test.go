@@ -9,35 +9,38 @@ import (
 
 func TestBuildPrompt(t *testing.T) {
 	tests := []struct {
-		name         string
-		systemPrompt string
-		history      []db.Message
-		userMessage  string
-		wantContains []string
-		wantAbsent   []string
+		name          string
+		chatRules     string
+		rulesFilePath string
+		history       []db.Message
+		userMessage   string
+		wantContains  []string
+		wantAbsent    []string
 	}{
 		{
-			name:         "no system prompt no history",
-			systemPrompt: "",
-			history:      nil,
-			userMessage:  "Hello, world!",
+			name:        "no rules no history",
+			chatRules:   "",
+			history:     nil,
+			userMessage: "Hello, world!",
 			wantContains: []string{"Hello, world!"},
 			wantAbsent:   []string{"<system-context>", "<conversation-history>"},
 		},
 		{
-			name:         "with system prompt",
-			systemPrompt: "You are a helpful assistant.",
-			history:      nil,
-			userMessage:  "What is Go?",
+			name:          "with rules and file path",
+			chatRules:     "You are a helpful assistant.",
+			rulesFilePath: "chats/123/rules.md",
+			history:       nil,
+			userMessage:   "What is Go?",
 			wantContains: []string{
 				"<system-context>",
 				"You are a helpful assistant.",
+				"<chat-rules-file>chats/123/rules.md</chat-rules-file>",
 				"What is Go?",
 			},
 		},
 		{
-			name:         "with history",
-			systemPrompt: "",
+			name:      "with history",
+			chatRules: "",
 			history: []db.Message{
 				{Role: "user", Text: "Hi there"},
 				{Role: "assistant", Text: "Hello! How can I help?"},
@@ -51,13 +54,13 @@ func TestBuildPrompt(t *testing.T) {
 			},
 		},
 		{
-			name:         "history strips internal tags from assistant messages",
-			systemPrompt: "",
+			name:      "history strips internal tags from assistant messages",
+			chatRules: "",
 			history: []db.Message{
 				{Role: "user", Text: "Build a game"},
 				{Role: "assistant", Text: "<internal>writing code...</internal>Done! Game is ready."},
 			},
-			userMessage: "Thanks",
+			userMessage:  "Thanks",
 			wantContains: []string{"Done! Game is ready.", "Thanks"},
 			wantAbsent:   []string{"writing code"},
 		},
@@ -65,7 +68,7 @@ func TestBuildPrompt(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			got := BuildPrompt(tc.systemPrompt, tc.history, tc.userMessage)
+			got := BuildPrompt(tc.chatRules, tc.rulesFilePath, tc.history, tc.userMessage)
 
 			for _, want := range tc.wantContains {
 				if !strings.Contains(got, want) {

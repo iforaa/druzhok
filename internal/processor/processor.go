@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"os"
+	"path/filepath"
 	"regexp"
 	"strings"
 
@@ -34,12 +36,16 @@ func New(database *db.DB, client *opencode.Client, maxConcurrent int) *Processor
 }
 
 // BuildPrompt constructs the prompt string that will be sent to OpenCode.
-// It includes system prompt, conversation history, and the new user message.
-func BuildPrompt(systemPrompt string, history []db.Message, userMessage string) string {
+// It includes chat rules, conversation history, rules file path, and the new user message.
+func BuildPrompt(chatRules string, rulesFilePath string, history []db.Message, userMessage string) string {
 	var parts []string
 
-	if systemPrompt != "" {
-		parts = append(parts, fmt.Sprintf("<system-context>\n%s\n</system-context>", systemPrompt))
+	if chatRules != "" {
+		parts = append(parts, fmt.Sprintf("<system-context>\n%s\n</system-context>", chatRules))
+	}
+
+	if rulesFilePath != "" {
+		parts = append(parts, fmt.Sprintf("<chat-rules-file>%s</chat-rules-file>", rulesFilePath))
 	}
 
 	if len(history) > 0 {
@@ -73,6 +79,29 @@ func FormatHistory(messages []db.Message) string {
 
 // maxHistoryMessages is the number of recent messages to include as context.
 const maxHistoryMessages = 20
+
+// ChatRulesDir is the base directory for per-chat rules files.
+const ChatRulesDir = "chats"
+
+// RulesFilePath returns the path to the rules file for a given Telegram chat ID.
+func RulesFilePath(tgChatID int64) string {
+	return filepath.Join(ChatRulesDir, fmt.Sprintf("%d", tgChatID), "rules.md")
+}
+
+// LoadChatRules reads the rules.md file for a chat. Returns empty string if not found.
+func LoadChatRules(tgChatID int64) string {
+	data, err := os.ReadFile(RulesFilePath(tgChatID))
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(data))
+}
+
+// EnsureChatDir creates the per-chat directory if it doesn't exist.
+func EnsureChatDir(tgChatID int64) error {
+	dir := filepath.Join(ChatRulesDir, fmt.Sprintf("%d", tgChatID))
+	return os.MkdirAll(dir, 0o755)
+}
 
 // StripInternalTags removes <internal>...</internal> blocks from agent output.
 // Only the text outside these tags is shown to the user in Telegram.
@@ -120,13 +149,16 @@ func (p *Processor) Process(ctx context.Context, msg db.Message, chat *db.Chat) 
 		log.Debug("processor: new session created", "session_id", sessionID)
 	}
 
-	// 4. Build prompt. OpenCode maintains session state natively, so we
-	// only need to include the system prompt — no history injection needed.
-	// History is only injected when the session is brand new (no prior messages
-	// in OpenCode yet) to carry over context from before a session reset.
+	// 4. Load per-chat rules and build prompt.
+	if err := EnsureChatDir(chat.TgChatID); err != nil {
+		log.Warn("processor: failed to create chat dir", "error", err)
+	}
+	chatRules := LoadChatRules(chat.TgChatID)
+	rulesPath := RulesFilePath(chat.TgChatID)
+
+	// History is only injected when the session is brand new.
 	var history []db.Message
 	if chat.OcSessionID == "" || sessionID != chat.OcSessionID {
-		// New session — inject recent history so agent has context.
 		var histErr error
 		history, histErr = p.db.GetRecentMessages(chat.ID, maxHistoryMessages)
 		if histErr != nil {
@@ -134,7 +166,7 @@ func (p *Processor) Process(ctx context.Context, msg db.Message, chat *db.Chat) 
 			history = nil
 		}
 	}
-	prompt := BuildPrompt(chat.SystemPrompt, history, msg.Text)
+	prompt := BuildPrompt(chatRules, rulesPath, history, msg.Text)
 	log.Debug("processor: sending prompt", "session_id", sessionID, "prompt_len", len(prompt))
 
 	responseText, err := p.client.SendPrompt(ctx, sessionID, prompt)
