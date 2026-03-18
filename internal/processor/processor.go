@@ -8,9 +8,12 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"sync"
+	"time"
 
 	"github.com/igorkuznetsov/druzhok/internal/db"
 	"github.com/igorkuznetsov/druzhok/internal/opencode"
+	"github.com/igorkuznetsov/druzhok/internal/telegram"
 )
 
 var (
@@ -21,21 +24,26 @@ var (
 	toolCallRe = regexp.MustCompile(`(?s)<\|tool_call_begin\|>.*?<\|tool_call_end\|>`)
 )
 
+// editInterval is the minimum time between Telegram message edits (rate limit).
+const editInterval = 1 * time.Second
+
 // Processor handles incoming user messages by sending them to OpenCode
 // and persisting the responses. It limits concurrent in-flight requests
 // via a semaphore channel.
 type Processor struct {
 	db     *db.DB
 	client *opencode.Client
+	bot    *telegram.Bot
 	sem    chan struct{}
 	log    *slog.Logger
 }
 
 // New creates a Processor with the given concurrency limit.
-func New(database *db.DB, client *opencode.Client, maxConcurrent int) *Processor {
+func New(database *db.DB, client *opencode.Client, bot *telegram.Bot, maxConcurrent int) *Processor {
 	return &Processor{
 		db:     database,
 		client: client,
+		bot:    bot,
 		sem:    make(chan struct{}, maxConcurrent),
 		log:    slog.Default(),
 	}
@@ -122,9 +130,10 @@ func StripInternalTags(text string) string {
 //  1. Acquires a semaphore slot (respects ctx cancellation).
 //  2. Marks the message as "processing".
 //  3. Ensures the chat has an OpenCode session, creating one if needed.
-//  4. Builds the prompt and sends it to OpenCode.
-//  5. Saves the assistant reply as a new message in the DB.
-//  6. Marks the original user message as "completed".
+//  4. Builds the prompt and sends it to OpenCode with streaming.
+//  5. Streams partial responses to Telegram by editing a placeholder message.
+//  6. Saves the assistant reply as a new message in the DB.
+//  7. Marks the original user message as "completed".
 //
 // It returns the assistant response text.
 func (p *Processor) Process(ctx context.Context, msg db.Message, chat *db.Chat) (string, error) {
@@ -187,26 +196,84 @@ func (p *Processor) Process(ctx context.Context, msg db.Message, chat *db.Chat) 
 	prompt := BuildPrompt(chatRules, rulesPath, history, msg.Text)
 	log.Debug("processor: sending prompt", "session_id", sessionID, "prompt_len", len(prompt))
 
-	responseText, err := p.client.SendPrompt(ctx, sessionID, prompt)
+	// 5. Send initial placeholder message to Telegram.
+	tgMsgID, sendErr := p.bot.SendInitialMessage(ctx, chat.TgChatID, "...")
+	if sendErr != nil {
+		log.Warn("processor: failed to send initial message, falling back to non-streaming", "error", sendErr)
+	}
+
+	// 6. Send prompt with streaming callback.
+	var mu sync.Mutex
+	var lastEditTime time.Time
+	var lastEditedText string
+
+	onChunk := func(text string) {
+		if tgMsgID == 0 {
+			return // no placeholder message to edit
+		}
+
+		cleaned := StripInternalTags(text)
+		if cleaned == "" {
+			return
+		}
+
+		// Truncate to Telegram message limit.
+		if len(cleaned) > telegram.TelegramMessageLimit {
+			cleaned = cleaned[:telegram.TelegramMessageLimit]
+		}
+
+		mu.Lock()
+		defer mu.Unlock()
+
+		// Rate-limit: at most 1 edit per second.
+		if time.Since(lastEditTime) < editInterval {
+			return
+		}
+		// Skip if text hasn't changed.
+		if cleaned == lastEditedText {
+			return
+		}
+
+		if err := p.bot.EditMessage(ctx, chat.TgChatID, tgMsgID, cleaned); err != nil {
+			log.Debug("processor: failed to edit message during streaming", "error", err)
+			return
+		}
+		lastEditTime = time.Now()
+		lastEditedText = cleaned
+	}
+
+	responseText, err := p.client.SendPromptStreaming(ctx, sessionID, prompt, onChunk)
 	if err != nil {
 		return "", fmt.Errorf("processor: send prompt: %w", err)
 	}
 
-	// 5. Save full assistant response (including internal tags) for history.
+	// 7. Save full assistant response (including internal tags) for history.
 	if _, err := p.db.SaveMessage(chat.ID, 0, "assistant", responseText); err != nil {
 		return "", fmt.Errorf("processor: save assistant message: %w", err)
 	}
 
-	// 6. Mark user message as completed.
+	// 8. Mark user message as completed.
 	if err := p.db.UpdateMessageStatus(msg.ID, "completed"); err != nil {
 		return "", fmt.Errorf("processor: update status completed: %w", err)
 	}
 	log.Debug("processor: message completed")
 
-	// 7. Strip <internal>...</internal> blocks before returning to user.
+	// 9. Strip <internal>...</internal> blocks before returning to user.
 	userVisible := StripInternalTags(responseText)
 	if userVisible == "" {
 		userVisible = "(Task completed)"
+	}
+
+	// 10. Final edit of the Telegram message with complete response.
+	if tgMsgID != 0 {
+		// Truncate for Telegram limit before final edit.
+		finalText := userVisible
+		if len(finalText) > telegram.TelegramMessageLimit {
+			finalText = finalText[:telegram.TelegramMessageLimit]
+		}
+		if err := p.bot.EditMessage(ctx, chat.TgChatID, tgMsgID, finalText); err != nil {
+			log.Warn("processor: failed to send final edit", "error", err)
+		}
 	}
 
 	return userVisible, nil

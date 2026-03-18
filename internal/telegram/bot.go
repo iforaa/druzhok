@@ -59,6 +59,39 @@ func (b *Bot) SendMessage(ctx context.Context, chatID int64, text string) error 
 	return nil
 }
 
+// SendInitialMessage sends an initial placeholder message and returns its ID.
+// This is used to create a message that will later be edited with streaming content.
+func (b *Bot) SendInitialMessage(ctx context.Context, chatID int64, text string) (int, error) {
+	msg, err := b.bot.SendMessage(ctx, &tgbot.SendMessageParams{
+		ChatID: chatID,
+		Text:   text,
+	})
+	if err != nil {
+		return 0, fmt.Errorf("telegram: send initial message: %w", err)
+	}
+	return msg.ID, nil
+}
+
+// EditMessage edits an existing message's text using the Telegram Bot API's
+// editMessageText method. If the new text is identical to the current text,
+// Telegram returns an error which this method silently ignores.
+func (b *Bot) EditMessage(ctx context.Context, chatID int64, messageID int, text string) error {
+	_, err := b.bot.EditMessageText(ctx, &tgbot.EditMessageTextParams{
+		ChatID:    chatID,
+		MessageID: messageID,
+		Text:      text,
+	})
+	if err != nil {
+		// Telegram returns "message is not modified" if the text hasn't changed.
+		// This is not a real error.
+		if strings.Contains(err.Error(), "message is not modified") {
+			return nil
+		}
+		return fmt.Errorf("telegram: edit message: %w", err)
+	}
+	return nil
+}
+
 // onUpdate is the default handler wired into the tgbot library.
 func (b *Bot) onUpdate(ctx context.Context, _ *tgbot.Bot, update *models.Update) {
 	msg := update.Message

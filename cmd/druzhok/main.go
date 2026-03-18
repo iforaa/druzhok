@@ -89,8 +89,9 @@ func main() {
 		registry = &skills.Registry{}
 	}
 
-	// 9. Create processor.
-	proc := processor.New(database, client, cfg.MaxConcurrentPrompts)
+	// 9. Create processor (bot will be set after bot creation below).
+	// We use nil for bot temporarily and set it after the bot is created.
+	var proc *processor.Processor
 
 	// 10. Create App struct.
 	app := &App{
@@ -116,8 +117,13 @@ func main() {
 		os.Exit(1)
 	}
 
-	// 12. Set app.bot.
+	// 12. Set app.bot and create processor (now that bot is available).
 	app.bot = bot
+	proc = processor.New(database, client, bot, cfg.MaxConcurrentPrompts)
+	app.proc = proc
+
+	// 12b. Start SSE event loop for streaming responses.
+	client.StartEventLoop(ctx)
 
 	// 13. Start health monitor goroutine.
 	app.wg.Add(1)
@@ -245,6 +251,8 @@ func (a *App) handleMessage(ctx context.Context, chatID int64, userID int64, use
 	}
 
 	// 5. Process in goroutine.
+	// The processor handles sending/editing Telegram messages via streaming.
+	// If the response is longer than one Telegram message, send remaining chunks.
 	a.wg.Add(1)
 	go func() {
 		defer a.wg.Done()
@@ -257,8 +265,13 @@ func (a *App) handleMessage(ctx context.Context, chatID int64, userID int64, use
 			return
 		}
 
-		if err := a.bot.SendMessage(ctx, chatID, response); err != nil {
-			log.Error("failed to send response", "error", err)
+		// If response exceeds Telegram limit, the processor already sent the
+		// first chunk via edit. Send any remaining chunks as new messages.
+		if len(response) > telegram.TelegramMessageLimit {
+			remaining := response[telegram.TelegramMessageLimit:]
+			if err := a.bot.SendMessage(ctx, chatID, remaining); err != nil {
+				log.Error("failed to send overflow response", "error", err)
+			}
 		}
 	}()
 }
@@ -548,8 +561,12 @@ func (a *App) retryLoop(ctx context.Context) {
 						return
 					}
 
-					if err := a.bot.SendMessage(ctx, chat.TgChatID, response); err != nil {
-						slog.Error("retry loop: failed to send response", "chat_id", chat.TgChatID, "error", err)
+					// If response exceeds Telegram limit, send remaining chunks.
+					if len(response) > telegram.TelegramMessageLimit {
+						remaining := response[telegram.TelegramMessageLimit:]
+						if err := a.bot.SendMessage(ctx, chat.TgChatID, remaining); err != nil {
+							slog.Error("retry loop: failed to send overflow response", "chat_id", chat.TgChatID, "error", err)
+						}
 					}
 				}()
 			}
