@@ -11,10 +11,20 @@ Inspired by [NanoClaw](https://github.com/qwibitai/nanoclaw) — a personal Clau
 - **Go** as the language (native to OpenCode, strong for future containerization)
 - **Telegram** as the only channel (for now)
 - **No containers** for MVP — `opencode serve` runs directly on the host
-- **SQLite** for persistence
+- **SQLite** in WAL mode for persistence
 - **User** as a first-class concept from day one (even with a single user)
-- **Per-chat customization** via system prompts (equivalent to NanoClaw's per-group CLAUDE.md)
+- **Per-chat customization** via system prompts stored in the database (equivalent to NanoClaw's per-group CLAUDE.md)
 - **Skills** as markdown instruction files (same pattern as NanoClaw)
+- **Structured logging** via Go's `slog` standard library
+
+### Prerequisites
+
+Before implementation, spike a minimal Go program that:
+1. Starts `opencode serve`
+2. Creates a session via the Go SDK
+3. Sends one prompt and receives a response
+
+This verifies the SDK API surface matches what this spec assumes. Document any deviations.
 
 ## Architecture
 
@@ -27,7 +37,7 @@ Telegram Bot API
 |                                |
 |  +----------+   +-----------+ |
 |  | Telegram  |-->| Message   | |
-|  | Channel   |   | Router    | |
+|  | Channel   |   | Processor | |
 |  +----------+   +-----+-----+ |
 |                       |        |
 |  +----------+   +-----+-----+ |
@@ -43,7 +53,7 @@ Telegram Bot API
                         |
                         v
                  opencode serve
-               (subprocess, :4096)
+              (subprocess, configurable port)
 ```
 
 Single Go binary that:
@@ -52,13 +62,40 @@ Single Go binary that:
 3. Runs the Telegram bot
 4. Manages SQLite state
 
+### Concurrency Model
+
+Each chat's prompt execution runs in its own goroutine. A semaphore limits concurrent OpenCode prompts to N (configurable, default 5). This prevents one slow chat from blocking others.
+
+```go
+// Simplified model
+sem := make(chan struct{}, config.MaxConcurrentPrompts)
+
+func processMessage(chat Chat, msg Message) {
+    sem <- struct{}{}        // acquire slot
+    defer func() { <-sem }() // release slot
+    // ... send prompt to OpenCode, wait for response
+}
+```
+
+### Logging
+
+Structured logging via Go's `slog` package. Log levels:
+- **ERROR**: OpenCode crashes, Telegram API failures, DB errors
+- **WARN**: Rate limits, session recovery, retries
+- **INFO**: Message processed, session created, server started
+- **DEBUG**: Full prompts, OpenCode responses, SDK calls
+
+`opencode serve` subprocess stdout/stderr captured and logged at DEBUG level.
+
 ## Data Model
 
 ```sql
 CREATE TABLE users (
-    id          TEXT PRIMARY KEY,
-    name        TEXT NOT NULL,
-    created_at  DATETIME DEFAULT CURRENT_TIMESTAMP
+    id              TEXT PRIMARY KEY,
+    tg_user_id      INTEGER NOT NULL UNIQUE,
+    name            TEXT NOT NULL,
+    is_admin        INTEGER NOT NULL DEFAULT 0,
+    created_at      DATETIME DEFAULT CURRENT_TIMESTAMP
 );
 
 CREATE TABLE chats (
@@ -68,7 +105,6 @@ CREATE TABLE chats (
     oc_session_id   TEXT,
     name            TEXT NOT NULL DEFAULT '',
     system_prompt   TEXT NOT NULL DEFAULT '',
-    agent           TEXT NOT NULL DEFAULT 'default',
     model           TEXT NOT NULL DEFAULT '',
     status          TEXT NOT NULL DEFAULT 'active',
     created_at      DATETIME DEFAULT CURRENT_TIMESTAMP
@@ -85,24 +121,30 @@ CREATE TABLE messages (
     created_at      DATETIME DEFAULT CURRENT_TIMESTAMP
 );
 
-CREATE TABLE scheduled_tasks (
-    id              TEXT PRIMARY KEY,
-    user_id         TEXT NOT NULL REFERENCES users(id),
-    chat_id         TEXT NOT NULL REFERENCES chats(id),
-    prompt          TEXT NOT NULL,
-    schedule_type   TEXT NOT NULL CHECK(schedule_type IN ('cron', 'interval', 'once')),
-    schedule_value  TEXT NOT NULL,
-    status          TEXT NOT NULL DEFAULT 'active'
-                    CHECK(status IN ('active', 'paused', 'completed', 'deleted')),
-    next_run        DATETIME,
-    created_at      DATETIME DEFAULT CURRENT_TIMESTAMP
-);
-
 CREATE INDEX idx_messages_status ON messages(status);
 CREATE INDEX idx_messages_chat ON messages(chat_id, created_at);
 CREATE INDEX idx_chats_tg ON chats(tg_chat_id);
-CREATE INDEX idx_tasks_next_run ON scheduled_tasks(status, next_run);
 ```
+
+SQLite opened in WAL mode with a single writer connection for safe concurrent reads.
+
+### Message Status Flow
+
+Status tracks the **user message → AI response** lifecycle:
+
+```
+User message saved (role: user, status: pending)
+  → Processing started (status: processing)
+  → OpenCode responds → save assistant message (role: assistant, status: completed)
+  → User message updated (status: completed)
+  → Response sent to Telegram → assistant message (status: sent)
+```
+
+On failure at any step, status stays at its current value. The polling loop retries on the next cycle.
+
+### User Creation
+
+On first `/start` from a Telegram user, Druzhok creates a user record from the Telegram user's ID and display name. The first user to `/start` is automatically the admin (`is_admin = 1`). Admin status is required for privileged commands (`/prompt`, `/model`, `/reset`).
 
 ## Package Structure
 
@@ -115,23 +157,19 @@ druzhok/
 │   ├── config/
 │   │   └── config.go            # Env vars, credentials, validation
 │   ├── db/
-│   │   ├── db.go                # SQLite connection, migrations
+│   │   ├── db.go                # SQLite connection, migrations (CREATE TABLE IF NOT EXISTS)
 │   │   ├── users.go             # User CRUD
 │   │   ├── chats.go             # Chat CRUD, session mapping
-│   │   ├── messages.go          # Message storage, status transitions
-│   │   └── tasks.go             # Scheduled tasks
+│   │   └── messages.go          # Message storage, status transitions
 │   ├── opencode/
 │   │   ├── server.go            # Manage opencode serve lifecycle
-│   │   ├── client.go            # Go SDK wrapper
-│   │   └── events.go            # SSE event stream consumer
+│   │   └── client.go            # Go SDK wrapper
 │   ├── telegram/
 │   │   ├── bot.go               # Telegram bot setup, polling
 │   │   ├── handler.go           # Message/command handler
 │   │   └── sender.go            # Response delivery, message splitting
-│   ├── router/
-│   │   └── router.go            # Message routing, prompt building
-│   ├── scheduler/
-│   │   └── scheduler.go         # Task scheduling engine
+│   ├── processor/
+│   │   └── processor.go         # Message processing, prompt building, concurrency
 │   └── skills/
 │       ├── loader.go            # Discover and parse skill markdown
 │       └── registry.go          # Skill registry
@@ -140,14 +178,8 @@ druzhok/
 │   │   └── SKILL.md
 │   ├── customize/
 │   │   └── SKILL.md
-│   ├── debug/
-│   │   └── SKILL.md
-│   └── status/
+│   └── debug/
 │       └── SKILL.md
-├── chats/                       # Per-chat customization (runtime)
-│   └── {chat-name}/
-│       ├── system-prompt.md
-│       └── config.json
 ├── data/
 │   └── druzhok.db
 ├── go.mod
@@ -155,17 +187,21 @@ druzhok/
 └── Makefile
 ```
 
+Migrations use `CREATE TABLE IF NOT EXISTS`. Future schema changes use idempotent `ALTER TABLE ... ADD COLUMN` wrapped in error handling.
+
 ## OpenCode Integration
 
 ### Server Lifecycle
 
 Druzhok manages `opencode serve` as a child process:
 
-1. **Start:** Spawn `opencode serve --port 4096 --hostname 127.0.0.1`
-2. **Health:** Poll `GET /global/health` with backoff until ready
-3. **Auth:** Set provider API keys via `POST /provider/{id}/oauth/authorize` or `auth.set()`
-4. **Monitor:** Health check every 30s, auto-restart on crash (max 3 retries)
-5. **Stop:** SIGTERM on shutdown, wait 10s, SIGKILL if needed
+1. **Start:** Spawn `opencode serve --port <configurable> --hostname 127.0.0.1` in the Druzhok project root (where `.opencode/` lives). Port defaults to 4096, configurable via `DRUZHOK_OPENCODE_PORT`.
+2. **Health:** Poll `GET /global/health` with exponential backoff until ready.
+3. **Auth:** Set provider API keys via the SDK's auth methods.
+4. **Monitor:** Health check every 30s, auto-restart on crash (max 3 retries, exponential backoff).
+5. **Stop:** SIGTERM on shutdown, wait 10s, SIGKILL if needed.
+
+Subprocess stdout/stderr captured and logged via `slog` at DEBUG level.
 
 ### Session Management
 
@@ -180,7 +216,7 @@ New chats get a new session via `client.Session.Create()`. The mapping is stored
 
 ### Per-Chat System Prompt
 
-Each chat has a `system_prompt` (equivalent of NanoClaw's CLAUDE.md). Prepended to every prompt sent to OpenCode:
+Each chat has a `system_prompt` stored in the database (single source of truth). Prepended to every prompt sent to OpenCode:
 
 ```go
 func buildPrompt(chat Chat, userMessage string) string {
@@ -195,11 +231,11 @@ func buildPrompt(chat Chat, userMessage string) string {
 }
 ```
 
-The agent can also modify its own system prompt (by writing to `chats/{name}/system-prompt.md`), enabling it to "remember" things about a chat across sessions.
+The agent can request system prompt changes via a tool/command that writes to the database, not the filesystem. This keeps the DB as the single source of truth.
 
 ### Prompt Execution
 
-MVP uses synchronous prompts:
+MVP uses synchronous prompts (each in its own goroutine, limited by semaphore):
 
 ```go
 result := client.Session.Prompt({
@@ -219,13 +255,11 @@ OpenCode agents configured via `.opencode/agents/`:
 ```
 .opencode/
 ├── agents/
-│   ├── default.md        # General-purpose assistant
-│   ├── coder.md          # Code-focused agent
-│   └── casual.md         # Casual conversation
+│   └── default.md        # General-purpose assistant
 └── config.json           # Provider and model defaults
 ```
 
-Users switch agents per-chat via `/agent <name>`.
+Per-chat agent switching (`/agent <name>`) deferred to Phase 2.
 
 ## Skills System
 
@@ -246,46 +280,50 @@ triggers:
 
 Skills are instructions for the AI agent, not executables.
 
-### Skill Types
+### Built-in Skills
 
-**Built-in skills** (`skills/`):
+Shipped with Druzhok (`skills/`):
 - `/setup` — guided first-time installation
 - `/customize` — change chat behavior, system prompt, model
 - `/debug` — troubleshooting (logs, OpenCode health, session state)
-- `/status` — show current config, active chats, scheduled tasks
 
-**Per-chat skills** (`chats/{name}/skills/`) — future, for container isolation.
+### Message Routing Priority
+
+When a message arrives from Telegram:
+
+1. **Built-in commands** — checked first, handled directly by Druzhok without OpenCode:
+
+| Command | Action |
+|---------|--------|
+| `/start` | Register chat, create user/chat DB records |
+| `/stop` | Pause chat |
+| `/reset` | Clear OpenCode session, start fresh |
+| `/prompt` | Show current system prompt |
+| `/prompt <text>` | Set new system prompt (admin only) |
+| `/model <id>` | Switch model for this chat (admin only) |
+
+2. **Skill triggers** — if the message matches a skill's trigger pattern, load the skill markdown and send it as a prompt to OpenCode along with the user's message.
+
+3. **Regular message** — sent directly to the chat's OpenCode session.
 
 ### Skill Invocation
 
 ```
 User sends "/debug" in Telegram
-  → handler.go detects "/" prefix
-  → loader.go reads skills/debug/SKILL.md
-  → Sends skill content as prompt to OpenCode session
+  → handler.go checks built-in commands → no match
+  → handler.go checks skill triggers → matches skills/debug/SKILL.md
+  → Loads skill content
+  → Sends as prompt to OpenCode session:
+    "{skill content}\n\nUser request: /debug"
   → Agent follows instructions, responds
   → Response sent back to Telegram
 ```
 
-Skills with arguments combine skill content + user input:
+Skills with arguments:
 ```
 "/customize speak only in Russian"
   → "{skill content}\n\nUser request: speak only in Russian"
 ```
-
-### Built-in Commands (Not Skills)
-
-Handled directly by Druzhok without OpenCode:
-
-| Command | Action |
-|---------|--------|
-| `/start` | Register chat, create DB record |
-| `/stop` | Pause chat |
-| `/agent <name>` | Switch agent for this chat |
-| `/model <id>` | Switch model for this chat |
-| `/reset` | Clear session, start fresh |
-| `/prompt` | Show current system prompt |
-| `/prompt <text>` | Set new system prompt |
 
 ## Credential Management
 
@@ -293,9 +331,11 @@ Handled directly by Druzhok without OpenCode:
 
 ```
 ~/.config/druzhok/
-├── config.yaml          # Non-secret config
+├── config.yaml          # Non-secret config (default model, timezone, etc.)
 └── credentials.yaml     # Secrets (0600 permissions)
 ```
+
+Separate from the project directory. Never committed to git.
 
 ```yaml
 # credentials.yaml
@@ -337,14 +377,7 @@ Welcome to Druzhok! Let's get you set up.
    ✓ Send a message to your bot to start!
 ```
 
-### Runtime Reconfiguration
-
-Via Telegram (admin only):
-```
-/config telegram_token <new-token>
-/config model <provider/model>
-/config provider add openai <key>
-```
+Runtime credential changes via Telegram deferred to Phase 2 (security concern: keys visible in chat history).
 
 ## Error Handling and Reliability
 
@@ -364,8 +397,8 @@ opencode serve crashes
 Messages are never lost:
 
 1. Telegram message arrives → saved to SQLite (`status: pending`)
-2. Router picks it up → `status: processing`
-3. OpenCode responds → `status: completed`, store response
+2. Processor picks it up (in a goroutine) → `status: processing`
+3. OpenCode responds → `status: completed`, store assistant response
 4. Sent to Telegram → `status: sent`
 5. Any step fails → status stays, retry on next poll cycle
 
@@ -411,9 +444,8 @@ Table-driven tests per package:
 |---------|----------|
 | `internal/db` | CRUD, migrations, edge cases |
 | `internal/telegram` | Message parsing, command detection, response splitting |
-| `internal/router` | Prompt building, status transitions |
+| `internal/processor` | Prompt building, status transitions, concurrency |
 | `internal/opencode` | Client wrapper (mocked HTTP), session management |
-| `internal/scheduler` | Cron parsing, next-run, task lifecycle |
 | `internal/skills` | Discovery, frontmatter parsing, trigger matching |
 
 ### Integration Tests
@@ -435,10 +467,29 @@ Against real SQLite + mock OpenCode server:
 - [ ] Long response → split across Telegram messages
 - [ ] Multiple chats → isolated sessions
 
-## Future Evolution
+## Future Evolution (Phase 2+)
 
-### Multi-Tenant (Phase 2)
+### Scheduled Tasks
 
+```sql
+CREATE TABLE scheduled_tasks (
+    id              TEXT PRIMARY KEY,
+    user_id         TEXT NOT NULL REFERENCES users(id),
+    chat_id         TEXT NOT NULL REFERENCES chats(id),
+    prompt          TEXT NOT NULL,
+    schedule_type   TEXT NOT NULL CHECK(schedule_type IN ('cron', 'interval', 'once')),
+    schedule_value  TEXT NOT NULL,
+    status          TEXT NOT NULL DEFAULT 'active',
+    next_run        DATETIME,
+    last_run        DATETIME,
+    last_result     TEXT,
+    created_at      DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+```
+
+### Multi-Tenant
+
+Each user gets their own `opencode serve` in a Docker container:
 ```
 users/
 ├── user-123/
@@ -449,7 +500,11 @@ users/
     └── ...
 ```
 
-Each user gets their own `opencode serve` in a Docker container. User directories become container volumes.
+User directories become container volumes.
+
+### Per-Chat Agent Switching
+
+`/agent <name>` command to switch OpenCode agents per chat.
 
 ### Additional Channels
 
@@ -458,3 +513,7 @@ Channel abstraction designed for extensibility. Future: WhatsApp, Slack, Discord
 ### Streaming Responses
 
 Async prompts + SSE event subscription for real-time "typing" effect in Telegram via message editing.
+
+### Credential Management via Telegram
+
+`/config` command for runtime credential changes (with proper security measures).
