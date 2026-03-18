@@ -82,6 +82,42 @@ func (d *DB) GetPendingMessages() ([]Message, error) {
 	return msgs, nil
 }
 
+// GetRecentMessages returns the last N messages for a chat, ordered oldest first.
+// Used to build conversation context for the agent.
+func (d *DB) GetRecentMessages(chatID string, limit int) ([]Message, error) {
+	rows, err := d.conn.Query(`
+		SELECT id, chat_id, tg_message_id, role, text, status, created_at
+		FROM messages
+		WHERE chat_id = ? AND status IN ('completed', 'sent')
+		ORDER BY created_at DESC
+		LIMIT ?
+	`, chatID, limit)
+	if err != nil {
+		return nil, fmt.Errorf("get recent messages query: %w", err)
+	}
+	defer rows.Close()
+
+	var msgs []Message
+	for rows.Next() {
+		var m Message
+		if err := rows.Scan(
+			&m.ID, &m.ChatID, &m.TgMessageID, &m.Role, &m.Text, &m.Status, &m.CreatedAt,
+		); err != nil {
+			return nil, fmt.Errorf("get recent messages scan: %w", err)
+		}
+		msgs = append(msgs, m)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("get recent messages rows: %w", err)
+	}
+
+	// Reverse to oldest-first order.
+	for i, j := 0, len(msgs)-1; i < j; i, j = i+1, j-1 {
+		msgs[i], msgs[j] = msgs[j], msgs[i]
+	}
+	return msgs, nil
+}
+
 // getMessageByID is an internal helper that fetches a single message by UUID.
 func (d *DB) getMessageByID(id string) (*Message, error) {
 	row := d.conn.QueryRow(

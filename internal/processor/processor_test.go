@@ -3,40 +3,69 @@ package processor
 import (
 	"strings"
 	"testing"
+
+	"github.com/igorkuznetsov/druzhok/internal/db"
 )
 
 func TestBuildPrompt(t *testing.T) {
 	tests := []struct {
 		name         string
 		systemPrompt string
+		history      []db.Message
 		userMessage  string
 		wantContains []string
 		wantAbsent   []string
 	}{
 		{
-			name:         "no system prompt returns user message as-is",
+			name:         "no system prompt no history",
 			systemPrompt: "",
+			history:      nil,
 			userMessage:  "Hello, world!",
 			wantContains: []string{"Hello, world!"},
-			wantAbsent:   []string{"<system-context>"},
+			wantAbsent:   []string{"<system-context>", "<conversation-history>"},
 		},
 		{
-			name:         "with system prompt wraps in tags and includes user message",
+			name:         "with system prompt",
 			systemPrompt: "You are a helpful assistant.",
+			history:      nil,
 			userMessage:  "What is Go?",
 			wantContains: []string{
 				"<system-context>",
 				"You are a helpful assistant.",
-				"</system-context>",
 				"What is Go?",
 			},
-			wantAbsent: []string{},
+		},
+		{
+			name:         "with history",
+			systemPrompt: "",
+			history: []db.Message{
+				{Role: "user", Text: "Hi there"},
+				{Role: "assistant", Text: "Hello! How can I help?"},
+			},
+			userMessage: "What did we talk about?",
+			wantContains: []string{
+				"<conversation-history>",
+				"Hi there",
+				"Hello! How can I help?",
+				"What did we talk about?",
+			},
+		},
+		{
+			name:         "history strips internal tags from assistant messages",
+			systemPrompt: "",
+			history: []db.Message{
+				{Role: "user", Text: "Build a game"},
+				{Role: "assistant", Text: "<internal>writing code...</internal>Done! Game is ready."},
+			},
+			userMessage: "Thanks",
+			wantContains: []string{"Done! Game is ready.", "Thanks"},
+			wantAbsent:   []string{"writing code"},
 		},
 	}
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			got := BuildPrompt(tc.systemPrompt, tc.userMessage)
+			got := BuildPrompt(tc.systemPrompt, tc.history, tc.userMessage)
 
 			for _, want := range tc.wantContains {
 				if !strings.Contains(got, want) {

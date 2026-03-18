@@ -34,15 +34,45 @@ func New(database *db.DB, client *opencode.Client, maxConcurrent int) *Processor
 }
 
 // BuildPrompt constructs the prompt string that will be sent to OpenCode.
-// When systemPrompt is empty the user message is returned unchanged.
-// When systemPrompt is non-empty it is wrapped in <system-context> tags
-// and prepended to the user message.
-func BuildPrompt(systemPrompt, userMessage string) string {
-	if systemPrompt == "" {
-		return userMessage
+// It includes system prompt, conversation history, and the new user message.
+func BuildPrompt(systemPrompt string, history []db.Message, userMessage string) string {
+	var parts []string
+
+	if systemPrompt != "" {
+		parts = append(parts, fmt.Sprintf("<system-context>\n%s\n</system-context>", systemPrompt))
 	}
-	return fmt.Sprintf("<system-context>\n%s\n</system-context>\n\n%s", systemPrompt, userMessage)
+
+	if len(history) > 0 {
+		parts = append(parts, FormatHistory(history))
+	}
+
+	parts = append(parts, userMessage)
+	return strings.Join(parts, "\n\n")
 }
+
+// FormatHistory formats recent messages as XML context for the agent.
+func FormatHistory(messages []db.Message) string {
+	var lines []string
+	for _, m := range messages {
+		role := m.Role
+		text := m.Text
+		// Strip internal tags from assistant messages in history
+		if role == "assistant" {
+			text = StripInternalTags(text)
+			if text == "" {
+				continue
+			}
+		}
+		lines = append(lines, fmt.Sprintf("<message role=\"%s\">%s</message>", role, text))
+	}
+	if len(lines) == 0 {
+		return ""
+	}
+	return fmt.Sprintf("<conversation-history>\n%s\n</conversation-history>", strings.Join(lines, "\n"))
+}
+
+// maxHistoryMessages is the number of recent messages to include as context.
+const maxHistoryMessages = 20
 
 // StripInternalTags removes <internal>...</internal> blocks from agent output.
 // Only the text outside these tags is shown to the user in Telegram.
@@ -90,9 +120,14 @@ func (p *Processor) Process(ctx context.Context, msg db.Message, chat *db.Chat) 
 		log.Debug("processor: new session created", "session_id", sessionID)
 	}
 
-	// 4. Build prompt and send to OpenCode.
-	prompt := BuildPrompt(chat.SystemPrompt, msg.Text)
-	log.Debug("processor: sending prompt", "session_id", sessionID, "prompt_len", len(prompt))
+	// 4. Fetch recent conversation history and build prompt.
+	history, err := p.db.GetRecentMessages(chat.ID, maxHistoryMessages)
+	if err != nil {
+		log.Warn("processor: failed to fetch history, continuing without", "error", err)
+		history = nil
+	}
+	prompt := BuildPrompt(chat.SystemPrompt, history, msg.Text)
+	log.Debug("processor: sending prompt", "session_id", sessionID, "prompt_len", len(prompt), "history_msgs", len(history))
 
 	responseText, err := p.client.SendPrompt(ctx, sessionID, prompt)
 	if err != nil {
