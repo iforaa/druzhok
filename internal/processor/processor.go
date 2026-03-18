@@ -120,14 +120,22 @@ func (p *Processor) Process(ctx context.Context, msg db.Message, chat *db.Chat) 
 		log.Debug("processor: new session created", "session_id", sessionID)
 	}
 
-	// 4. Fetch recent conversation history and build prompt.
-	history, err := p.db.GetRecentMessages(chat.ID, maxHistoryMessages)
-	if err != nil {
-		log.Warn("processor: failed to fetch history, continuing without", "error", err)
-		history = nil
+	// 4. Build prompt. OpenCode maintains session state natively, so we
+	// only need to include the system prompt — no history injection needed.
+	// History is only injected when the session is brand new (no prior messages
+	// in OpenCode yet) to carry over context from before a session reset.
+	var history []db.Message
+	if chat.OcSessionID == "" || sessionID != chat.OcSessionID {
+		// New session — inject recent history so agent has context.
+		var histErr error
+		history, histErr = p.db.GetRecentMessages(chat.ID, maxHistoryMessages)
+		if histErr != nil {
+			log.Warn("processor: failed to fetch history, continuing without", "error", histErr)
+			history = nil
+		}
 	}
 	prompt := BuildPrompt(chat.SystemPrompt, history, msg.Text)
-	log.Debug("processor: sending prompt", "session_id", sessionID, "prompt_len", len(prompt), "history_msgs", len(history))
+	log.Debug("processor: sending prompt", "session_id", sessionID, "prompt_len", len(prompt))
 
 	responseText, err := p.client.SendPrompt(ctx, sessionID, prompt)
 	if err != nil {
