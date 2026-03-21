@@ -18,6 +18,7 @@ type Manager struct {
 	networkName string
 	dataDir     string
 	proxyURL    string
+	extraEnv    []string
 }
 
 type CreateOpts struct {
@@ -27,12 +28,12 @@ type CreateOpts struct {
 	Model         string
 }
 
-func NewManager(image, networkName, dataDir, proxyURL string) (*Manager, error) {
+func NewManager(image, networkName, dataDir, proxyURL string, extraEnv []string) (*Manager, error) {
 	cli, err := client.NewClientWithOpts(client.FromEnv, client.WithAPIVersionNegotiation())
 	if err != nil {
 		return nil, err
 	}
-	return &Manager{cli: cli, image: image, networkName: networkName, dataDir: dataDir, proxyURL: proxyURL}, nil
+	return &Manager{cli: cli, image: image, networkName: networkName, dataDir: dataDir, proxyURL: proxyURL, extraEnv: extraEnv}, nil
 }
 
 func (m *Manager) CreateAndStart(ctx context.Context, opts CreateOpts) (string, error) {
@@ -45,12 +46,13 @@ func (m *Manager) CreateAndStart(ctx context.Context, opts CreateOpts) (string, 
 	resp, err := m.cli.ContainerCreate(ctx,
 		&container.Config{
 			Image: m.image,
-			Env: []string{
+			Env: append([]string{
 				"DRUZHOK_TELEGRAM_TOKEN=" + opts.TelegramToken,
 				"DRUZHOK_PROXY_URL=" + m.proxyURL,
 				"DRUZHOK_PROXY_KEY=" + opts.ProxyKey,
 				"DRUZHOK_WORKSPACE_DIR=/data/workspace",
-			},
+				"DRUZHOK_CONFIG_PATH=/data/druzhok.json",
+			}, m.extraEnv...),
 		},
 		&container.HostConfig{
 			Mounts: []mount.Mount{
