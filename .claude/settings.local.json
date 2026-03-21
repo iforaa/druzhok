@@ -54,7 +54,26 @@
       "Bash(/dev/null cd:*)",
       "Bash(source /Users/igorkuznetsov/Documents/druzhok/.env curl -s \"https://api.tokenfactory.nebius.com/v1/chat/completions\" -H \"Content-Type: application/json\" -H \"Authorization: Bearer $NEBIUS_API_KEY\" -d '{\"\"\"\"model\"\"\"\":\"\"\"\"moonshotai/Kimi-K2.5-fast\"\"\"\",\"\"\"\"messages\"\"\"\":[{\"\"\"\"role\"\"\"\":\"\"\"\"user\"\"\"\",\"\"\"\"content\"\"\"\":\"\"\"\"привет\"\"\"\"}],\"\"\"\"max_tokens\"\"\"\":100}')",
       "Bash(source /Users/igorkuznetsov/Documents/druzhok/.env curl -s \"https://api.tokenfactory.nebius.com/v1/chat/completions\" -H \"Content-Type: application/json\" -H \"Authorization: Bearer $NEBIUS_API_KEY\" -d '{\"\"\"\"model\"\"\"\":\"\"\"\"moonshotai/Kimi-K2.5-fast\"\"\"\",\"\"\"\"messages\"\"\"\":[{\"\"\"\"role\"\"\"\":\"\"\"\"user\"\"\"\",\"\"\"\"content\"\"\"\":\"\"\"\"привет, кто ты?\"\"\"\"}],\"\"\"\"max_tokens\"\"\"\":2048}')",
-      "Bash(python3 -m json.tool)"
+      "Bash(python3 -m json.tool)",
+      "Bash(cd /Users/igorkuznetsov/Documents/druzhok/services/orchestrator go get github.com/docker/docker/client go get github.com/docker/docker/api/types/container go get github.com/docker/docker/api/types/mount go get github.com/docker/docker/api/types/network go get modernc.org/sqlite go mod tidy)",
+      "Bash(cd /Users/igorkuznetsov/Documents/druzhok/services/orchestrator go get github.com/docker/docker@v28.1.1)",
+      "Bash(cd /Users/igorkuznetsov/Documents/druzhok/services/orchestrator go mod tidy)",
+      "Bash(cd /Users/igorkuznetsov/Documents/druzhok docker build -f docker/Dockerfile.instance -t druzhok-instance .)",
+      "Bash(podman machine:*)",
+      "Bash(podman --version)",
+      "Bash(vfkit --version)",
+      "Bash(brew upgrade:*)",
+      "Bash(1 brew:*)",
+      "Bash(open -a OrbStack)",
+      "Bash(orbctl status:*)",
+      "Bash(orbctl start:*)",
+      "Bash(source /Users/igorkuznetsov/Documents/druzhok/.env)",
+      "Read(//var/run/**)",
+      "Bash(1 docker:*)",
+      "Bash(source /Users/igorkuznetsov/Documents/druzhok/.env curl -s -X POST http://localhost:9090/instances -H \"Content-Type: application/json\" -d \"{:*)",
+      "Bash(pkill -f \"./orchestrator\")",
+      "Bash(rm -f data/orchestrator.db)",
+      "Bash(rm -rf data/instances/igor)"
     ]
   }
 }

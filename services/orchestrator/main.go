@@ -30,16 +30,8 @@ func main() {
 	}
 	defer store.Close()
 
-	// Docker manager
-	// Pass provider API keys to containers so they can call the proxy or providers directly
-	var extraEnv []string
-	for _, key := range []string{"NEBIUS_API_KEY", "NEBIUS_BASE_URL", "ANTHROPIC_API_KEY", "OPENAI_API_KEY"} {
-		if v := os.Getenv(key); v != "" {
-			extraEnv = append(extraEnv, key+"="+v)
-		}
-	}
-
-	docker, err := dockermgr.NewManager(cfg.DockerImage, cfg.DockerNetwork, cfg.DataDir, cfg.ProxyURL, extraEnv)
+	// Docker manager — instances get proxy key only, no provider API keys
+	docker, err := dockermgr.NewManager(cfg.DockerImage, cfg.DockerNetwork, cfg.DataDir, cfg.ProxyURL, nil)
 	if err != nil {
 		log.Fatalf("Failed to connect to Docker: %v", err)
 	}
