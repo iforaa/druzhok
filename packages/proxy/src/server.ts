@@ -3,7 +3,7 @@ import { createAuthenticator } from "./auth.js";
 import { loadProxyConfig, loadRegistry, type ProxyConfig, type InstanceRegistry } from "./config.js";
 import { registerHealthRoute } from "./health.js";
 import { createRateLimiter } from "./rate-limit.js";
-import { parseModelId, resolveProvider } from "./providers/router.js";
+import { parseModelId, resolveProviderWithHint } from "./providers/router.js";
 import { forwardToOpenAICompat, forwardEmbeddingsToOpenAICompat } from "./providers/openai-compat.js";
 import { forwardToAnthropic, translateAnthropicStreamEvent, translateAnthropicResponse, createStreamState, type AnthropicStreamEvent } from "./providers/anthropic.js";
 import { randomUUID } from "node:crypto";
@@ -69,11 +69,13 @@ export async function createProxyServer(overrides?: {
     }
 
     const parsed = parseModelId(modelId);
-    const provider = resolveProvider(parsed.provider, config.providers);
-    if (!provider) {
+    const resolved = resolveProviderWithHint(parsed.provider, config.providers);
+    if (!resolved) {
       reply.code(400).send({ error: `No provider configured for: ${parsed.provider}` });
       return;
     }
+    const { provider, useFullModelId } = resolved;
+    const effectiveModel = useFullModelId ? modelId : parsed.model;
 
     const isStream = body.stream === true;
 
@@ -82,14 +84,15 @@ export async function createProxyServer(overrides?: {
         const upstream = await forwardToOpenAICompat({
           baseUrl: provider.baseUrl,
           apiKey: provider.apiKey,
-          model: parsed.model,
+          model: effectiveModel,
           body,
           stream: isStream,
         });
 
         reply.code(upstream.status);
+        const skipHeaders = new Set(["transfer-encoding", "content-encoding", "content-length"]);
         for (const [k, v] of upstream.headers) {
-          if (k.toLowerCase() !== "transfer-encoding") {
+          if (!skipHeaders.has(k.toLowerCase())) {
             reply.header(k, v);
           }
         }
@@ -107,7 +110,7 @@ export async function createProxyServer(overrides?: {
         const upstream = await forwardToAnthropic({
           apiKey: provider.apiKey,
           baseUrl: provider.baseUrl,
-          model: parsed.model,
+          model: effectiveModel,
           body,
           stream: isStream,
         });
