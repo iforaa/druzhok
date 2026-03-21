@@ -15,9 +15,12 @@ describe("createMemoryWatcher", () => {
   it("calls onChange when a memory file is modified", async () => {
     const onChange = vi.fn();
     const watcher = createMemoryWatcher(workspace, { onChange, debounceMs: 50 });
+    writeFileSync(join(workspace, "MEMORY.md"), "initial");
     watcher.start();
+    // Wait for watchFile poll to register, then modify
+    await new Promise((r) => setTimeout(r, 150));
     writeFileSync(join(workspace, "MEMORY.md"), "new fact");
-    await new Promise((r) => setTimeout(r, 200));
+    await new Promise((r) => setTimeout(r, 300));
     expect(onChange).toHaveBeenCalled();
     watcher.stop();
   });

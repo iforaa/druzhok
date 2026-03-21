@@ -1,13 +1,14 @@
-import { watch, type FSWatcher } from "node:fs";
+import { watch, watchFile, unwatchFile, type FSWatcher, type StatWatcher } from "node:fs";
 import { join } from "node:path";
-import { existsSync } from "node:fs";
+import { existsSync, statSync } from "node:fs";
 
 export type MemoryWatcherOpts = { onChange: () => void; debounceMs?: number };
 export type MemoryWatcher = { start(): void; stop(): void };
 
 export function createMemoryWatcher(workspace: string, opts: MemoryWatcherOpts): MemoryWatcher {
   const debounceMs = opts.debounceMs ?? 1500;
-  const watchers: FSWatcher[] = [];
+  const fsWatchers: FSWatcher[] = [];
+  const watchedFiles: string[] = [];
   let debounceTimer: ReturnType<typeof setTimeout> | null = null;
   let stopped = false;
 
@@ -19,16 +20,26 @@ export function createMemoryWatcher(workspace: string, opts: MemoryWatcherOpts):
 
   return {
     start() {
+      // Poll MEMORY.md (works reliably across all platforms, including temp dirs on macOS)
       const memoryMd = join(workspace, "MEMORY.md");
-      if (existsSync(memoryMd)) { try { watchers.push(watch(memoryMd, triggerChange)); } catch {} }
+      watchFile(memoryMd, { interval: Math.max(100, debounceMs / 2) }, (curr, prev) => {
+        if (curr.mtimeMs !== prev.mtimeMs) triggerChange();
+      });
+      watchedFiles.push(memoryMd);
+
+      // Watch memory/ directory with fs.watch (good for directory-level events)
       const memoryDir = join(workspace, "memory");
-      if (existsSync(memoryDir)) { try { watchers.push(watch(memoryDir, { recursive: true }, triggerChange)); } catch {} }
+      if (existsSync(memoryDir)) {
+        try { fsWatchers.push(watch(memoryDir, { recursive: true }, triggerChange)); } catch {}
+      }
     },
     stop() {
       stopped = true;
       if (debounceTimer) clearTimeout(debounceTimer);
-      for (const w of watchers) { try { w.close(); } catch {} }
-      watchers.length = 0;
+      for (const f of watchedFiles) { try { unwatchFile(f); } catch {} }
+      for (const w of fsWatchers) { try { w.close(); } catch {} }
+      watchedFiles.length = 0;
+      fsWatchers.length = 0;
     },
   };
 }
