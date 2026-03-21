@@ -36,6 +36,7 @@ func (h *Handlers) Register(mux *http.ServeMux) {
 	mux.HandleFunc("DELETE /instances/{id}", h.DeleteInstance)
 	mux.HandleFunc("POST /instances/{id}/restart", h.RestartInstance)
 	mux.HandleFunc("PUT /instances/{id}/config", h.UpdateConfig)
+	mux.HandleFunc("GET /instances/{id}/logs", h.GetInstanceLogs)
 	mux.HandleFunc("GET /instances/{id}/workspace", h.ListWorkspaceFiles)
 	mux.HandleFunc("GET /instances/{id}/workspace/{path...}", h.GetWorkspaceFile)
 }
@@ -218,6 +219,26 @@ func (h *Handlers) UpdateConfig(w http.ResponseWriter, r *http.Request) {
 	}
 
 	h.RestartInstance(w, r)
+}
+
+func (h *Handlers) GetInstanceLogs(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	inst, err := h.Store.Get(id)
+	if err != nil {
+		jsonError(w, "instance not found", http.StatusNotFound)
+		return
+	}
+	if inst.ContainerID == "" {
+		jsonError(w, "no container", http.StatusNotFound)
+		return
+	}
+	logs, err := h.Docker.Logs(r.Context(), inst.ContainerID, 100)
+	if err != nil {
+		jsonError(w, fmt.Sprintf("logs error: %v", err), http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	w.Write([]byte(logs))
 }
 
 type FileEntry struct {

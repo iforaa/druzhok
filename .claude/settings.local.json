@@ -74,7 +74,10 @@
       "Bash(pkill -f \"./orchestrator\")",
       "Bash(rm -f data/orchestrator.db)",
       "Bash(rm -rf data/instances/igor)",
-      "Bash(pkill -f packages/proxy/dist/index.js 2)"
+      "Bash(pkill -f packages/proxy/dist/index.js 2)",
+      "Bash(1 cd:*)",
+      "Bash(cd /Users/igorkuznetsov/Documents/druzhok docker build --no-cache -f docker/Dockerfile.instance -t druzhok-instance .)",
+      "Bash(source /Users/igorkuznetsov/Documents/druzhok/.env curl -s -X POST http://localhost:9090/instances -H \"Content-Type: application/json\" -d \"{\"\"name\"\":\"\"igor\"\",\"\"telegramToken\"\":\"\"$DRUZHOK_TELEGRAM_TOKEN\"\",\"\"model\"\":\"\"nebius/zai-org/GLM-5\"\"}\")"
     ]
   }
 }

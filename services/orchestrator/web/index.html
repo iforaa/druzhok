@@ -81,6 +81,13 @@ h2 { font-size: 18px; margin-bottom: 12px; color: #ccc; }
     </tbody>
   </table>
 
+  <div class="workspace" id="logs-panel" style="display:none">
+    <button class="btn btn-secondary back-btn" onclick="closeLogs()">Назад</button>
+    <h2 id="logs-title">Логи</h2>
+    <button class="btn btn-secondary" onclick="refreshLogs()" style="margin-bottom:12px">Обновить</button>
+    <pre class="file-content" id="logs-content" style="max-height:600px"></pre>
+  </div>
+
   <div class="workspace" id="workspace-panel">
     <button class="btn btn-secondary back-btn" onclick="closeWorkspace()">Назад</button>
     <h2 id="workspace-title">Workspace</h2>
@@ -108,6 +115,7 @@ async function loadInstances() {
         <td><span class="status ${inst.status}">${inst.status}</span></td>
         <td class="token" title="${inst.proxyKey}">${inst.proxyKey}</td>
         <td>
+          <button class="btn btn-secondary" onclick="event.stopPropagation(); showLogs('${inst.id}')">Логи</button>
           <button class="btn btn-secondary" onclick="event.stopPropagation(); restartInstance('${inst.id}')">Перезапуск</button>
           <button class="btn btn-danger" onclick="event.stopPropagation(); deleteInstance('${inst.id}')">Стоп</button>
         </td>
@@ -162,6 +170,28 @@ async function openWorkspace(id) {
 function closeWorkspace() {
   document.getElementById('workspace-panel').style.display = 'none';
   currentInstance = null;
+}
+
+let logsInstance = null;
+async function showLogs(id) {
+  logsInstance = id;
+  document.getElementById('logs-panel').style.display = 'block';
+  document.getElementById('logs-title').textContent = `Логи: ${id}`;
+  await refreshLogs();
+}
+async function refreshLogs() {
+  if (!logsInstance) return;
+  try {
+    const res = await fetch(API + `/instances/${logsInstance}/logs`);
+    const text = await res.text();
+    document.getElementById('logs-content').textContent = text;
+  } catch (err) {
+    document.getElementById('logs-content').textContent = 'Ошибка: ' + err.message;
+  }
+}
+function closeLogs() {
+  document.getElementById('logs-panel').style.display = 'none';
+  logsInstance = null;
 }
 
 async function browseDir(path) {
