@@ -16,6 +16,7 @@ export type AgentRunOpts = {
   onToolCallStart?: (toolName: string) => void;
   onToolCallEnd?: (toolName: string) => void;
   onSpawnWorker?: (task: string) => void;
+  onSendFile?: (filePath: string, caption?: string) => Promise<void>;
   signal?: AbortSignal;
 };
 
@@ -66,6 +67,7 @@ async function getOrCreateSession(opts: {
   apiKey: string;
   chatSystemPrompt?: string;
   onSpawnWorker?: (task: string) => void;
+  onSendFile?: (filePath: string, caption?: string) => Promise<void>;
 }): Promise<AgentSession> {
   const cached = sessionCache.get(opts.sessionKey);
   if (cached) return cached;
@@ -75,6 +77,33 @@ async function getOrCreateSession(opts: {
 
   // Custom tools
   const customTools: ToolDefinition[] = [];
+
+  if (opts.onSendFile) {
+    const onSend = opts.onSendFile;
+    customTools.push({
+      name: "send_file",
+      label: "Send File",
+      description: "Send a file to the user via Telegram. Use this to send documents, images, PDFs, etc. The file must exist on disk.",
+      parameters: Type.Object({
+        path: Type.String({ description: "Absolute path to the file to send" }),
+        caption: Type.Optional(Type.String({ description: "Optional caption for the file" })),
+      }),
+      async execute(_toolCallId, params: { path: string; caption?: string }) {
+        try {
+          await onSend(params.path, params.caption);
+          return {
+            content: [{ type: "text" as const, text: `File sent: ${params.path}` }],
+            details: {},
+          };
+        } catch (err) {
+          return {
+            content: [{ type: "text" as const, text: `Failed to send file: ${err instanceof Error ? err.message : String(err)}` }],
+            details: {},
+          };
+        }
+      },
+    });
+  }
 
   if (opts.onSpawnWorker) {
     const onSpawn = opts.onSpawnWorker;
@@ -152,6 +181,7 @@ export async function runAgent(opts: AgentRunOpts): Promise<AgentRunResult> {
       apiKey,
       chatSystemPrompt: opts.chatSystemPrompt,
       onSpawnWorker: opts.onSpawnWorker,
+      onSendFile: opts.onSendFile,
     });
 
     // Collect assistant text from events for this prompt

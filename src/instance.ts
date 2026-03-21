@@ -75,10 +75,16 @@ async function main() {
 
   // Dispatcher — uses main lane, pi-coding-agent reads workspace files automatically
   // The runAgent wrapper now supports spawn_worker via onSpawnWorker callback
-  const createRunAgentWithSpawn = (chatId: string) => {
+  const createRunAgentWithExtras = (chatId: string) => {
     return async (opts: Parameters<typeof runAgent>[0]) => {
       return runAgent({
         ...opts,
+        onSendFile: async (filePath, caption) => {
+          const { InputFile } = await import("grammy");
+          await bot.api.sendDocument(Number(chatId), new InputFile(filePath), {
+            caption: caption ?? undefined,
+          });
+        },
         onSpawnWorker: (task) => {
           spawnWorker({
             task,
@@ -143,7 +149,7 @@ async function main() {
     // Create a dispatcher with spawn_worker wired to this chat
     const dispatcher = createRunDispatcher({
       channel,
-      runAgent: createRunAgentWithSpawn(chatId),
+      runAgent: createRunAgentWithExtras(chatId),
       config: {
         proxyUrl: config.proxyUrl,
         proxyKey: config.proxyKey,

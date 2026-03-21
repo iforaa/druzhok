@@ -15,16 +15,35 @@ export type Delivery = {
   deleteMessage(chatId: string, messageId: number): Promise<void>;
 };
 
+/**
+ * Try sending as HTML, fall back to plain text if Telegram rejects the markup.
+ */
+async function sendWithFallback(
+  api: TelegramApi,
+  chatId: string,
+  text: string,
+): Promise<{ message_id: number }> {
+  try {
+    return await api.sendMessage(chatId, markdownToTelegramHtml(text), { parse_mode: "HTML" });
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    if (msg.includes("can't parse entities") || msg.includes("Bad Request")) {
+      // HTML was broken — send as plain text
+      return await api.sendMessage(chatId, text, {});
+    }
+    throw err;
+  }
+}
+
 export function createDelivery(api: TelegramApi): Delivery {
   return {
     async sendMessage(chatId, payload) {
       const text = payload.text?.trim();
       if (!text) return { delivered: false };
-      const html = markdownToTelegramHtml(text);
-      const chunks = chunkText(html, TELEGRAM_MAX_LENGTH);
+      const chunks = chunkText(text, TELEGRAM_MAX_LENGTH);
       let lastMessageId: number | undefined;
       for (const chunk of chunks) {
-        const result = await api.sendMessage(chatId, chunk, { parse_mode: "HTML" });
+        const result = await sendWithFallback(api, chatId, chunk);
         lastMessageId = result.message_id;
       }
       return { delivered: true, messageId: lastMessageId };
@@ -32,13 +51,18 @@ export function createDelivery(api: TelegramApi): Delivery {
     async editMessage(chatId, messageId, payload) {
       const text = payload.text?.trim();
       if (!text) return;
-      const html = markdownToTelegramHtml(text);
-      const truncated = html.slice(0, TELEGRAM_MAX_LENGTH);
       try {
-        await api.editMessageText(chatId, messageId, truncated, { parse_mode: "HTML" });
+        const html = markdownToTelegramHtml(text);
+        await api.editMessageText(chatId, messageId, html.slice(0, TELEGRAM_MAX_LENGTH), { parse_mode: "HTML" });
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
-        if (!msg.includes("not modified")) throw err;
+        if (msg.includes("not modified")) return;
+        if (msg.includes("can't parse entities") || msg.includes("Bad Request")) {
+          // Fallback to plain text
+          await api.editMessageText(chatId, messageId, text.slice(0, TELEGRAM_MAX_LENGTH), {});
+          return;
+        }
+        throw err;
       }
     },
     async deleteMessage(chatId, messageId) {
