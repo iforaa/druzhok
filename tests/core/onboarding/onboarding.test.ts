@@ -62,7 +62,7 @@ describe("onboarding", () => {
   });
 
   describe("buildNamePromptMessage", () => {
-    it("asks for a name", () => { expect(buildNamePromptMessage()).toContain("call me"); });
+    it("asks for a name", () => { expect(buildNamePromptMessage()).toContain("называть"); });
   });
 
   describe("buildNameConfirmationMessage", () => {

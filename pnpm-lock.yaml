@@ -7,6 +7,19 @@ settings:
 importers:
 
   .:
+    dependencies:
+      '@druzhok/core':
+        specifier: workspace:*
+        version: link:packages/core
+      '@druzhok/shared':
+        specifier: workspace:*
+        version: link:packages/shared
+      '@druzhok/telegram':
+        specifier: workspace:*
+        version: link:packages/telegram
+      grammy:
+        specifier: ^1.41.0
+        version: 1.41.1
     devDependencies:
       '@types/better-sqlite3':
         specifier: ^7.6.0

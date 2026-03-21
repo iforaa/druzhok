@@ -2,15 +2,6 @@ import { Bot } from "grammy";
 import { loadInstanceConfig } from "@druzhok/core";
 import { parseInterval, createHeartbeatManager, readMemoryFile, createSkillRegistry } from "@druzhok/core";
 import { createRunDispatcher, runAgent } from "@druzhok/core";
-import {
-  checkOnboardingState,
-  saveBotName,
-  readBotName,
-  buildNamePromptMessage,
-  buildNameConfirmationMessage,
-  buildIntroSystemPrompt,
-  markIntroComplete,
-} from "@druzhok/core";
 import { buildInboundContext, parseCommand, createDelivery, createDraftStream } from "@druzhok/telegram";
 import type { Channel, ReplyPayload, DeliveryResult, DraftStream, DraftStreamOpts } from "@druzhok/shared";
 import { join } from "node:path";
@@ -21,7 +12,7 @@ async function main() {
 
   if (!config.telegramToken) { console.error("DRUZHOK_TELEGRAM_TOKEN is required"); process.exit(1); }
 
-  // Initialize workspace
+  // Initialize workspace from template if needed
   const workspace = config.workspaceDir;
   if (!existsSync(workspace)) {
     const templateDir = join(import.meta.dirname ?? ".", "..", "workspace-template");
@@ -35,17 +26,7 @@ async function main() {
     }
   }
 
-  // Load skills
-  const skills = createSkillRegistry(join(workspace, "skills"));
-  console.log(`Loaded ${skills.list().length} skills`);
-
-  // Read workspace files (OpenClaw convention)
-  const agentsMd = readMemoryFile(join(workspace, "AGENTS.md"));
-  const soulMd = readMemoryFile(join(workspace, "SOUL.md"));
-  const identityMd = readMemoryFile(join(workspace, "IDENTITY.md"));
-  const userMd = readMemoryFile(join(workspace, "USER.md"));
-
-  // Setup Grammy bot
+  // Grammy bot
   const bot = new Bot(config.telegramToken);
   const delivery = createDelivery({
     sendMessage: async (chatId, text, opts) => {
@@ -85,8 +66,8 @@ async function main() {
     async setReaction() {},
   };
 
-  // Run dispatcher (recreated during onboarding when AGENTS.md changes)
-  const dispatcherOpts = {
+  // Dispatcher — pi-coding-agent reads workspace files (AGENTS.md, SOUL.md, etc.) automatically
+  const dispatcher = createRunDispatcher({
     channel,
     runAgent,
     config: {
@@ -96,64 +77,32 @@ async function main() {
       workspaceDir: workspace,
       chats: config.chats,
     },
-    agentsMd,
-    soulMd,
-    identityMd,
-    userMd,
-    skillsList: skills.list(),
-  };
-  let dispatcher = createRunDispatcher(dispatcherOpts);
+  });
 
-  // Grammy message handler
+  // Message handler — all messages go through the agent
   bot.on("message", async (ctx) => {
     if (ctx.message.from?.is_bot) return;
     const text = ctx.message.text ?? ctx.message.caption ?? "";
-    const senderName = [ctx.message.from?.first_name, ctx.message.from?.last_name].filter(Boolean).join(" ") || "User";
 
-    // Commands
+    // Built-in commands
     if (text.startsWith("/")) {
       const parsed = parseCommand(text);
       if (parsed) {
         switch (parsed.command) {
-          case "start": {
-            const state = checkOnboardingState(workspace);
-            if (state === "needs_name") {
-              await ctx.reply(buildNamePromptMessage());
-            } else {
-              const botName = readBotName(workspace) ?? "your assistant";
-              await ctx.reply(`Hello! I'm ${botName}. Send me a message!`);
-            }
-            return;
-          }
-          case "stop": await ctx.reply("Paused. Send /start to resume."); return;
-          case "reset": await ctx.reply("Session reset!"); return;
+          case "start": await ctx.reply("Напиши мне что-нибудь!"); return;
+          case "stop": await ctx.reply("На паузе. Отправь /start чтобы продолжить."); return;
+          case "reset": await ctx.reply("Сессия сброшена!"); return;
           case "model":
-            await ctx.reply(parsed.args ? `Model: ${parsed.args}` : `Model: ${config.defaultModel}`);
+            await ctx.reply(parsed.args ? `Модель: ${parsed.args}` : `Модель: ${config.defaultModel}`);
             return;
           case "prompt":
-            await ctx.reply(parsed.args ? "System prompt updated." : "Use /prompt <text> to set.");
+            await ctx.reply(parsed.args ? "Системный промпт обновлён." : "Используй /prompt <текст> чтобы задать.");
             return;
         }
       }
     }
 
-    // Onboarding flow
-    const onboardState = checkOnboardingState(workspace);
-
-    if (onboardState === "needs_name") {
-      // User is providing the bot's name
-      const botName = text.trim().replace(/[^\p{L}\p{N}\s_-]/gu, "").trim() || "Druzhok";
-      saveBotName(workspace, botName);
-      // Reload identity for the dispatcher
-      dispatcher = createRunDispatcher({
-        ...dispatcherOpts,
-        identityMd: readMemoryFile(join(workspace, "IDENTITY.md")),
-      });
-      await ctx.reply(buildNameConfirmationMessage(botName, senderName));
-      return;
-    }
-
-    // Build context and dispatch to agent
+    // Dispatch to agent
     const update = {
       message: {
         message_id: ctx.message.message_id,
@@ -165,37 +114,14 @@ async function main() {
         message_thread_id: ctx.message.message_thread_id,
       },
     };
-
-    const inboundCtx = buildInboundContext(update);
-
-    // If needs_intro, add onboarding system prompt and mark complete after
-    if (onboardState === "needs_intro") {
-      const introPrompt = buildIntroSystemPrompt(senderName);
-      // Temporarily add intro instructions to the dispatch
-      // Temporarily add intro instructions
-      dispatcher = createRunDispatcher({
-        ...dispatcherOpts,
-        userMd: (dispatcherOpts.userMd ?? "") + "\n\n" + introPrompt,
-      });
-      await dispatcher.dispatch(inboundCtx);
-      // Mark intro done and restore normal dispatcher
-      markIntroComplete(workspace, senderName);
-      dispatcher = createRunDispatcher({
-        ...dispatcherOpts,
-        userMd: readMemoryFile(join(workspace, "USER.md")),
-      });
-      return;
-    }
-
-    await dispatcher.dispatch(inboundCtx);
+    await dispatcher.dispatch(buildInboundContext(update));
   });
 
   // Heartbeat
-  let heartbeat: ReturnType<typeof createHeartbeatManager> | null = null;
   if (config.heartbeat.enabled) {
     const intervalMs = parseInterval(config.heartbeat.every);
     if (intervalMs) {
-      heartbeat = createHeartbeatManager({
+      const heartbeat = createHeartbeatManager({
         intervalMs,
         readHeartbeatMd: () => readMemoryFile(join(workspace, "HEARTBEAT.md")),
         onTick: async () => console.log("Heartbeat tick"),
@@ -211,14 +137,8 @@ async function main() {
   bot.start({ onStart: (info) => console.log(`  Bot @${info.username} is running`) });
 
   // Graceful shutdown
-  const stop = async () => {
-    console.log("Shutting down...");
-    heartbeat?.stop();
-    await bot.stop();
-    console.log("Done.");
-  };
-  process.on("SIGTERM", () => void stop().then(() => process.exit(0)));
-  process.on("SIGINT", () => void stop().then(() => process.exit(0)));
+  process.on("SIGTERM", async () => { await bot.stop(); process.exit(0); });
+  process.on("SIGINT", async () => { await bot.stop(); process.exit(0); });
 }
 
 main().catch((err) => { console.error("Fatal:", err); process.exit(1); });

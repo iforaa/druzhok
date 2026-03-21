@@ -3,12 +3,19 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "build": "tsc -b tsconfig.build.json",
+    "build": "tsc -b tsconfig.build.json && tsc -p tsconfig.instance.json",
     "dev": "tsc -b tsconfig.build.json --watch",
     "test": "vitest run",
     "test:watch": "vitest",
+    "start": "node dist/instance.js",
     "proxy": "node packages/proxy/dist/index.js",
-    "clean": "rm -rf packages/*/dist"
+    "clean": "rm -rf packages/*/dist dist/"
+  },
+  "dependencies": {
+    "@druzhok/shared": "workspace:*",
+    "@druzhok/core": "workspace:*",
+    "@druzhok/telegram": "workspace:*",
+    "grammy": "^1.41.0"
   },
   "devDependencies": {
     "typescript": "^5.8.0",

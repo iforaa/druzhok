@@ -31,7 +31,7 @@ export function checkOnboardingState(workspace: string): OnboardingState {
  * Generate the "what's your name" greeting.
  */
 export function buildNamePromptMessage(): string {
-  return "Hey! I'm your new AI assistant. Before we start — what would you like to call me?";
+  return "Привет! Я твой новый AI-ассистент. Прежде чем начнём — как бы ты хотел меня называть?";
 }
 
 /**
@@ -70,7 +70,7 @@ export function readBotName(workspace: string): string | null {
  * Build the confirmation message after naming.
  */
 export function buildNameConfirmationMessage(botName: string, senderName: string): string {
-  return `Got it, I'm **${botName}**! Nice to meet you, ${senderName}.\n\nTell me a bit about yourself — your preferences, what you'd like help with, any rules I should follow — or just ask me anything and we'll figure it out as we go.`;
+  return `Отлично, я ${botName}! Приятно познакомиться, ${senderName}.\n\nРасскажи немного о себе — что тебе интересно, чем могу помочь, какие-нибудь правила — или просто спроси что-нибудь, разберёмся по ходу.`;
 }
 
 /**

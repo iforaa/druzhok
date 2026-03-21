@@ -30,7 +30,6 @@ describe("createRunDispatcher", () => {
       channel,
       runAgent: async () => ({ payloads: [{ text: "Hello!" }] }),
       config: { proxyUrl: "http://proxy:8080", proxyKey: "key", defaultModel: "openai/gpt-4o", workspaceDir: "/tmp/workspace", chats: {} },
-      agentsMd: "You are helpful.", soulMd: null, identityMd: null, userMd: null, skillsList: [],
     });
     await dispatcher.dispatch(baseContext());
     expect(channel.sendMessage).toHaveBeenCalledWith("123", expect.objectContaining({ text: "Hello!" }));
@@ -41,7 +40,6 @@ describe("createRunDispatcher", () => {
     const dispatcher = createRunDispatcher({
       channel, runAgent: async () => ({ payloads: [{ text: "response" }] }),
       config: { proxyUrl: "", proxyKey: "", defaultModel: "", workspaceDir: "/tmp", chats: {} },
-      agentsMd: null, soulMd: null, identityMd: null, userMd: null, skillsList: [],
     });
     await dispatcher.dispatch(baseContext());
     expect(channel.sendTyping).toHaveBeenCalledWith("123");
@@ -52,7 +50,6 @@ describe("createRunDispatcher", () => {
     const dispatcher = createRunDispatcher({
       channel, runAgent: async () => ({ payloads: [{ text: "NO_REPLY" }] }),
       config: { proxyUrl: "", proxyKey: "", defaultModel: "", workspaceDir: "/tmp", chats: {} },
-      agentsMd: null, soulMd: null, identityMd: null, userMd: null, skillsList: [],
     });
     await dispatcher.dispatch(baseContext());
     expect(channel.sendMessage).not.toHaveBeenCalled();
@@ -63,7 +60,6 @@ describe("createRunDispatcher", () => {
     const dispatcher = createRunDispatcher({
       channel, runAgent: async () => { throw new Error("Provider down"); },
       config: { proxyUrl: "", proxyKey: "", defaultModel: "", workspaceDir: "/tmp", chats: {} },
-      agentsMd: null, soulMd: null, identityMd: null, userMd: null, skillsList: [],
     });
     await dispatcher.dispatch(baseContext());
     expect(channel.sendMessage).toHaveBeenCalledWith("123", expect.objectContaining({ isError: true }));
@@ -77,7 +73,6 @@ describe("createRunDispatcher", () => {
       runAgent: async (opts) => { capturedModel = opts.model; return { payloads: [{ text: "ok" }] }; },
       config: { proxyUrl: "", proxyKey: "", defaultModel: "openai/gpt-4o", workspaceDir: "/tmp",
         chats: { "telegram:dm:456": { model: "anthropic/claude-sonnet-4-20250514" } } },
-      agentsMd: null, soulMd: null, identityMd: null, userMd: null, skillsList: [],
     });
     await dispatcher.dispatch(baseContext());
     expect(capturedModel).toBe("anthropic/claude-sonnet-4-20250514");

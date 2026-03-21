@@ -1,0 +1,8 @@
+{
+  "defaultModel": "nebius/moonshotai/Kimi-K2.5-fast",
+  "workspaceDir": "workspace",
+  "chats": {},
+  "heartbeat": {
+    "enabled": false
+  }
+}

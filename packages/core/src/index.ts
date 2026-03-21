@@ -14,7 +14,6 @@ export * from "./heartbeat/parse-interval.js";
 export * from "./heartbeat/heartbeat.js";
 export * from "./skills/loader.js";
 export * from "./skills/registry.js";
-export * from "./runtime/system-prompt.js";
 export * from "./runtime/session-store.js";
 export * from "./runtime/agent-run.js";
 export * from "./runtime/run-dispatcher.js";
