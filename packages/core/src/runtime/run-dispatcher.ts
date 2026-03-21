@@ -1,4 +1,4 @@
-import type { InboundContext, ReplyPayload, Channel } from "@druzhok/shared";
+import type { InboundContext, Channel } from "@druzhok/shared";
 import { processReplyPayloads } from "../reply/pipeline.js";
 import type { AgentRunOpts, AgentRunResult } from "./agent-run.js";
 
@@ -12,13 +12,16 @@ export type RunDispatcherOpts = {
   runAgent: (opts: AgentRunOpts) => Promise<AgentRunResult>;
   config: RunDispatcherConfig;
   agentsMd: string | null;
+  soulMd: string | null;
+  identityMd: string | null;
+  userMd: string | null;
   skillsList: Array<{ name: string; description: string }>;
 };
 
 export type RunDispatcher = { dispatch(ctx: InboundContext): Promise<void> };
 
 export function createRunDispatcher(opts: RunDispatcherOpts): RunDispatcher {
-  const { channel, runAgent, config, agentsMd, skillsList } = opts;
+  const { channel, runAgent, config, agentsMd, soulMd, identityMd, userMd, skillsList } = opts;
   return {
     async dispatch(ctx: InboundContext): Promise<void> {
       await channel.sendTyping(ctx.chatId).catch(() => {});
@@ -28,7 +31,12 @@ export function createRunDispatcher(opts: RunDispatcherOpts): RunDispatcher {
       try {
         const result = await runAgent({
           prompt: ctx.body,
-          systemPromptCtx: { agentsMd, chatSystemPrompt, skillsList, defaultModel: model, workspaceDir: config.workspaceDir },
+          systemPromptCtx: {
+            agentsMd, soulMd, identityMd, userMd,
+            chatSystemPrompt, skillsList, defaultModel: model,
+            workspaceDir: config.workspaceDir,
+            chatType: ctx.chatType,
+          },
           sessionDir: config.workspaceDir, proxyUrl: config.proxyUrl, proxyKey: config.proxyKey, model,
         });
         const filtered = processReplyPayloads(result.payloads, { showReasoning: false, sentTexts: [], isHeartbeat: false });

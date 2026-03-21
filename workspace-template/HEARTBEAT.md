@@ -1,4 +1,4 @@
-# Heartbeat Tasks
+# Heartbeat — Периодические задачи
 
-<!-- Add tasks here for the bot to check periodically -->
-<!-- Example: - Check ~/projects/myapp for build failures -->
+<!-- Добавь задачи для периодической проверки -->
+<!-- Пример: - Проверь ~/projects/myapp на ошибки сборки -->
