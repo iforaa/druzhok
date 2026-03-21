@@ -11,6 +11,7 @@ export default defineConfig({
       "@druzhok/shared": path.resolve(__dirname, "packages/shared/src"),
       "@druzhok/proxy": path.resolve(__dirname, "packages/proxy/src"),
       "@druzhok/core": path.resolve(__dirname, "packages/core/src"),
+      "@druzhok/telegram": path.resolve(__dirname, "packages/telegram/src"),
     },
   },
 });
