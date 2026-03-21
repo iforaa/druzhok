@@ -1,8 +1,9 @@
+node_modules/
+dist/
+*.tsbuildinfo
+.env
 data/
 *.db
 *.db-wal
 *.db-shm
-.env
 credentials.yaml
-spike/
-nanoclaw/

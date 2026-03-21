@@ -1,6 +1,6 @@
 # Druzhok
 
-Telegram bot backed by OpenCode's multi-model AI runtime. Each chat gets its own OpenCode session; messages are persisted in SQLite and retried on failure.
+Personal AI assistant as a Telegram bot. TypeScript monorepo with pi-agent-core runtime, pluggable channels, OpenClaw-style memory, and a central LLM proxy.
 
 ## Commits
 
@@ -9,27 +9,40 @@ Always use `/my-commit` skill for committing changes. Never use raw git commit c
 ## Development Commands
 
 ```bash
-make build   # compile to bin/druzhok
-make run     # go run ./cmd/druzhok
-make test    # go test ./internal/... -v
-make clean   # remove bin/ and data/
+pnpm build          # compile all packages
+pnpm test           # run all tests (vitest)
+pnpm test:watch     # watch mode
+pnpm dev            # watch mode build
+pnpm proxy          # start proxy server
+pnpm clean          # remove dist/ dirs
+```
+
+## Project Structure
+
+```
+packages/
+├── shared/          # Types (ReplyPayload, Channel, DraftStream) + token helpers
+├── core/            # Agent runtime, memory, reply pipeline, heartbeat, skills
+├── telegram/        # Telegram channel (Grammy bot, delivery, streaming)
+└── proxy/           # Central LLM proxy (auth, rate limit, provider routing)
+docker/              # Dockerfiles for proxy and instance
+workspace-template/  # Default workspace for new instances
+tests/               # All test files (mirroring package structure)
+docs/                # Design specs and implementation plans
 ```
 
 ## Key Files
 
 | Path | Purpose |
 |------|---------|
-| `cmd/druzhok/main.go` | Entry point — wires all components, command dispatch |
-| `internal/config/config.go` | Config loading: credentials file, env overrides, defaults |
-| `internal/db/` | SQLite layer — users, chats, messages |
-| `internal/opencode/server.go` | Spawns and monitors the OpenCode subprocess |
-| `internal/opencode/client.go` | HTTP client for the OpenCode REST API |
-| `internal/processor/processor.go` | Sends prompts to OpenCode, persists responses, semaphore concurrency |
-| `internal/telegram/bot.go` | Telegram long-poll bot, message dispatch |
-| `internal/telegram/handler.go` | Command classification logic |
-| `internal/skills/` | Skill loader and registry |
-| `skills/` | Built-in skill definitions (SKILL.md files) |
-| `docs/superpowers/specs/2026-03-18-druzhok-design.md` | Full design specification |
+| `packages/core/src/runtime/` | Agent run wrapper, run dispatcher, system prompt builder, session store |
+| `packages/core/src/memory/` | Memory files, chunker, BM25, embeddings, hybrid search, flush, watcher |
+| `packages/core/src/reply/` | Reply pipeline, filters, lane manager, streaming coordinator |
+| `packages/core/src/heartbeat/` | Heartbeat timer and interval parser |
+| `packages/core/src/skills/` | Skill loader and registry |
+| `packages/telegram/src/` | Bot, context builder, commands, delivery, draft stream, format |
+| `packages/proxy/src/` | Fastify server, auth, rate limit, provider routing, Anthropic translation |
+| `docs/superpowers/specs/2026-03-21-druzhok-v2-design.md` | Full design specification |
 
 ## Telegram Commands
 
@@ -37,42 +50,29 @@ make clean   # remove bin/ and data/
 |---------|-------------|
 | `/start` | Register chat and resume if paused |
 | `/stop` | Pause the chat |
-| `/reset` | Delete current OpenCode session and start fresh |
-| `/prompt [text]` | Show or set the system prompt (set requires admin) |
-| `/model <model-id>` | Switch AI model for this chat (admin only) |
-
-## Skills
-
-Skills are matched against incoming message text via regex triggers defined in each `SKILL.md` front-matter.
-
-| Skill | Trigger | Description |
-|-------|---------|-------------|
-| `setup` | `/setup` | Guided first-time installation and configuration |
-| `customize` | `/customize` | Change chat behavior, system prompt, or model |
-| `debug` | `/debug` | Troubleshoot OpenCode server and session issues |
+| `/reset` | Delete current session and start fresh |
+| `/prompt [text]` | Show or set the system prompt |
+| `/model <model-id>` | Switch AI model for this chat |
 
 ## Configuration
 
-**Credentials file:** `~/.config/druzhok/credentials.yaml`
-
-```yaml
-telegram:
-  bot_token: "..."
-providers:
-  anthropic:
-    api_key: "..."
-  openai:
-    api_key: "..."
-```
-
-**Environment variable overrides:**
+**Environment variables (instance):**
 
 | Variable | Purpose |
 |----------|---------|
 | `DRUZHOK_TELEGRAM_TOKEN` | Telegram bot token |
+| `DRUZHOK_PROXY_URL` | URL of the central proxy |
+| `DRUZHOK_PROXY_KEY` | Instance API key for proxy auth |
+
+**Environment variables (proxy):**
+
+| Variable | Purpose |
+|----------|---------|
 | `ANTHROPIC_API_KEY` | Anthropic API key |
 | `OPENAI_API_KEY` | OpenAI API key |
-| `DRUZHOK_LOG_LEVEL` | Log level: debug / info / warn / error |
-| `DRUZHOK_OPENCODE_PORT` | OpenCode server port (default 4096) |
+| `NEBIUS_API_KEY` | Nebius API key |
+| `NEBIUS_BASE_URL` | Nebius endpoint (default: `https://api.tokenfactory.nebius.com/v1/`) |
 
-**OpenCode binary:** `/Users/igorkuznetsov/.opencode/bin/opencode` (or first `opencode` found in PATH)
+**Config file:** `druzhok.json` for non-secret settings (memory, heartbeat, per-chat prompts, model).
+
+See `.env.example` for all variables.
