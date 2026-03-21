@@ -30,7 +30,7 @@ export async function createProxyServer(overrides?: {
   app.addHook("onRequest", async (request, reply) => {
     const requestId = randomUUID();
     reply.header("X-Request-Id", requestId);
-    (request as Record<string, unknown>).__requestId = requestId;
+    (request as unknown as Record<string, unknown>).__requestId = requestId;
   });
 
   // Auth + rate limit hook for /v1/* routes
@@ -56,7 +56,7 @@ export async function createProxyServer(overrides?: {
       return;
     }
 
-    (request as Record<string, unknown>).__instance = authResult.instance;
+    (request as unknown as Record<string, unknown>).__instance = authResult.instance;
   });
 
   // POST /v1/chat/completions
