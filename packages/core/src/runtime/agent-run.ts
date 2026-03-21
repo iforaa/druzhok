@@ -1,5 +1,5 @@
 import type { ReplyPayload } from "@druzhok/shared";
-import { createAgentSession, codingTools } from "@mariozechner/pi-coding-agent";
+import { createAgentSession, codingTools, AuthStorage } from "@mariozechner/pi-coding-agent";
 import type { AgentSessionEvent } from "@mariozechner/pi-coding-agent";
 import type { Model } from "@mariozechner/pi-ai";
 
@@ -53,10 +53,15 @@ export async function runAgent(opts: AgentRunOpts): Promise<AgentRunResult> {
   const model = buildModel(opts.model, baseUrl, apiKey);
 
   try {
+    // Create auth storage with the API key for the model's provider
+    const authStorage = AuthStorage.inMemory();
+    authStorage.setRuntimeApiKey("openai", apiKey);
+
     const { session } = await createAgentSession({
       cwd: opts.workspaceDir,
       model,
       tools: codingTools,
+      authStorage,
     });
 
     // Append per-chat customization if present
