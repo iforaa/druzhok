@@ -1,5 +1,10 @@
-# Example docker-compose for running Druzhok
+# Druzhok Multi-Tenant Setup
 # Copy to docker-compose.yml and fill in your values
+#
+# Usage:
+#   1. docker compose up -d proxy orchestrator
+#   2. curl -X POST http://localhost:9090/instances -d '{"name":"alice","telegramToken":"BOT_TOKEN"}'
+#   3. The orchestrator creates a container for alice automatically
 
 services:
   proxy:
@@ -9,30 +14,39 @@ services:
     ports:
       - "8080:8080"
     environment:
-      - ANTHROPIC_API_KEY=sk-ant-your-key
-      - OPENAI_API_KEY=sk-your-key
-      - NEBIUS_API_KEY=your-nebius-key
-      - NEBIUS_BASE_URL=https://api.studio.nebius.com/v1/
+      - NEBIUS_API_KEY=${NEBIUS_API_KEY}
+      - NEBIUS_BASE_URL=${NEBIUS_BASE_URL:-https://api.tokenfactory.us-central1.nebius.com/v1/}
       - DRUZHOK_PROXY_PORT=8080
-      - DRUZHOK_PROXY_REGISTRY_PATH=/etc/druzhok/instances.json
+      - DRUZHOK_PROXY_REGISTRY_PATH=/data/proxy/instances.json
     volumes:
-      - ./instances.json:/etc/druzhok/instances.json:ro
+      - ../data/proxy:/data/proxy:ro
+    networks:
+      - druzhok-net
     restart: unless-stopped
 
-  instance:
+  orchestrator:
     build:
-      context: ..
-      dockerfile: docker/Dockerfile.instance
+      context: ../services/orchestrator
+    ports:
+      - "9090:9090"
     environment:
-      - DRUZHOK_TELEGRAM_TOKEN=your-bot-token
-      - DRUZHOK_PROXY_URL=http://proxy:8080
-      - DRUZHOK_PROXY_KEY=your-instance-key
-      - DRUZHOK_WORKSPACE_DIR=/data/workspace
+      - ORCHESTRATOR_PORT=9090
+      - ORCHESTRATOR_DATA_DIR=/data
+      - ORCHESTRATOR_PROXY_URL=http://proxy:8080
+      - ORCHESTRATOR_DOCKER_IMAGE=druzhok-instance
+      - ORCHESTRATOR_DOCKER_NETWORK=druzhok-net
+      - ORCHESTRATOR_INSTANCES_JSON=/data/proxy/instances.json
+      - ORCHESTRATOR_WORKSPACE_TEMPLATE=/app/workspace-template
     volumes:
-      - instance-data:/data
+      - ../data:/data
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ../workspace-template:/app/workspace-template:ro
+    networks:
+      - druzhok-net
     depends_on:
       - proxy
     restart: unless-stopped
 
-volumes:
-  instance-data:
+networks:
+  druzhok-net:
+    driver: bridge
