@@ -1,5 +1,5 @@
 {
-  "defaultModel": "nebius/moonshotai/Kimi-K2.5-fast",
+  "defaultModel": "nebius/zai-org/GLM-5",
   "workspaceDir": "workspace",
   "chats": {},
   "heartbeat": {

@@ -49,7 +49,12 @@
       "Bash(cd /Users/igorkuznetsov/Documents/druzhok git status --short)",
       "Bash(pkill -f \"node dist/instance.js\")",
       "Bash(docker:*)",
-      "Bash(cd /Users/igorkuznetsov/Documents/druzhok docker build -f docker/Dockerfile.proxy -t druzhok-proxy .)"
+      "Bash(cd /Users/igorkuznetsov/Documents/druzhok docker build -f docker/Dockerfile.proxy -t druzhok-proxy .)",
+      "Bash(pkill -f 'node dist/instance.js' 2)",
+      "Bash(/dev/null cd:*)",
+      "Bash(source /Users/igorkuznetsov/Documents/druzhok/.env curl -s \"https://api.tokenfactory.nebius.com/v1/chat/completions\" -H \"Content-Type: application/json\" -H \"Authorization: Bearer $NEBIUS_API_KEY\" -d '{\"\"\"\"model\"\"\"\":\"\"\"\"moonshotai/Kimi-K2.5-fast\"\"\"\",\"\"\"\"messages\"\"\"\":[{\"\"\"\"role\"\"\"\":\"\"\"\"user\"\"\"\",\"\"\"\"content\"\"\"\":\"\"\"\"привет\"\"\"\"}],\"\"\"\"max_tokens\"\"\"\":100}')",
+      "Bash(source /Users/igorkuznetsov/Documents/druzhok/.env curl -s \"https://api.tokenfactory.nebius.com/v1/chat/completions\" -H \"Content-Type: application/json\" -H \"Authorization: Bearer $NEBIUS_API_KEY\" -d '{\"\"\"\"model\"\"\"\":\"\"\"\"moonshotai/Kimi-K2.5-fast\"\"\"\",\"\"\"\"messages\"\"\"\":[{\"\"\"\"role\"\"\"\":\"\"\"\"user\"\"\"\",\"\"\"\"content\"\"\"\":\"\"\"\"привет, кто ты?\"\"\"\"}],\"\"\"\"max_tokens\"\"\"\":2048}')",
+      "Bash(python3 -m json.tool)"
     ]
   }
 }
