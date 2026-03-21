@@ -168,7 +168,11 @@ export async function abortRun(sessionKey: string): Promise<boolean> {
  * Sessions are cached per sessionKey for conversation continuity.
  */
 export async function runAgent(opts: AgentRunOpts): Promise<AgentRunResult> {
-  const baseUrl = opts.proxyUrl || process.env.NEBIUS_BASE_URL || "https://api.tokenfactory.nebius.com/v1/";
+  let baseUrl = opts.proxyUrl || process.env.NEBIUS_BASE_URL || "https://api.tokenfactory.nebius.com/v1/";
+  // Ensure base URL ends with /v1 for OpenAI SDK compatibility
+  if (baseUrl && !baseUrl.match(/\/v1\/?$/)) {
+    baseUrl = baseUrl.replace(/\/$/, "") + "/v1";
+  }
   const apiKey = opts.proxyKey || process.env.NEBIUS_API_KEY || "";
   const model = buildModel(opts.model, baseUrl, apiKey);
   const sessionKey = opts.sessionKey ?? "default";
@@ -227,9 +231,14 @@ export async function runAgent(opts: AgentRunOpts): Promise<AgentRunResult> {
     });
 
     // Track for abort
+    console.log(`[agent-run] prompting model=${model.id} baseUrl=${model.baseUrl} prompt="${opts.prompt.slice(0, 40)}"`);
     activeRuns.set(sessionKey, { abort: () => session.abort() });
     try {
       await session.prompt(opts.prompt);
+      console.log(`[agent-run] prompt completed, fullText length=${fullText.length}`);
+    } catch (promptErr) {
+      console.error(`[agent-run] prompt error:`, promptErr);
+      throw promptErr;
     } finally {
       activeRuns.delete(sessionKey);
     }

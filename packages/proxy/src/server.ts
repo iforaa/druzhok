@@ -68,6 +68,7 @@ export async function createProxyServer(overrides?: {
       return;
     }
 
+    console.log(`[proxy] model=${modelId} max_tokens=${body.max_tokens} max_completion_tokens=${body.max_completion_tokens} stream=${body.stream}`);
     const parsed = parseModelId(modelId);
     const resolved = resolveProviderWithHint(parsed.provider, config.providers);
     if (!resolved) {

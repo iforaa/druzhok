@@ -106,6 +106,7 @@ async function main() {
 
   // Message handler
   bot.on("message", async (ctx) => {
+    console.log(`[bot] message received from ${ctx.message.from?.first_name}`);
     if (ctx.message.from?.is_bot) return;
     const text = ctx.message.text ?? ctx.message.caption ?? "";
     const chatId = String(ctx.message.chat.id);
