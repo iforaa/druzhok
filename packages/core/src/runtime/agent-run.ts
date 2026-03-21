@@ -1,7 +1,8 @@
 import type { ReplyPayload } from "@druzhok/shared";
 import { createAgentSession, codingTools, AuthStorage } from "@mariozechner/pi-coding-agent";
-import type { AgentSession, AgentSessionEvent } from "@mariozechner/pi-coding-agent";
+import type { AgentSession, AgentSessionEvent, ToolDefinition } from "@mariozechner/pi-coding-agent";
 import type { Model } from "@mariozechner/pi-ai";
+import { Type } from "@mariozechner/pi-ai";
 
 export type AgentRunOpts = {
   prompt: string;
@@ -14,6 +15,7 @@ export type AgentRunOpts = {
   onTextDelta?: (text: string, isReasoning: boolean) => void;
   onToolCallStart?: (toolName: string) => void;
   onToolCallEnd?: (toolName: string) => void;
+  onSpawnWorker?: (task: string) => void;
   signal?: AbortSignal;
 };
 
@@ -63,6 +65,7 @@ async function getOrCreateSession(opts: {
   model: Model<"openai-completions">;
   apiKey: string;
   chatSystemPrompt?: string;
+  onSpawnWorker?: (task: string) => void;
 }): Promise<AgentSession> {
   const cached = sessionCache.get(opts.sessionKey);
   if (cached) return cached;
@@ -70,10 +73,33 @@ async function getOrCreateSession(opts: {
   const authStorage = AuthStorage.inMemory();
   authStorage.setRuntimeApiKey("openai", opts.apiKey);
 
+  // Custom tools
+  const customTools: ToolDefinition[] = [];
+
+  if (opts.onSpawnWorker) {
+    const onSpawn = opts.onSpawnWorker;
+    customTools.push({
+      name: "spawn_worker",
+      label: "Spawn Worker",
+      description: "Spawn a background worker for a long-running task. The worker runs independently and sends results to the user when done. Use this when a task will take a long time and you want to keep the conversation responsive.",
+      parameters: Type.Object({
+        task: Type.String({ description: "Detailed description of what the worker should do" }),
+      }),
+      async execute(_toolCallId, params: { task: string }) {
+        onSpawn(params.task);
+        return {
+          content: [{ type: "text" as const, text: "Worker spawned. I'll notify the user when it's done." }],
+          details: {},
+        };
+      },
+    });
+  }
+
   const { session } = await createAgentSession({
     cwd: opts.workspaceDir,
     model: opts.model,
     tools: codingTools,
+    customTools,
     authStorage,
   });
 
@@ -91,6 +117,21 @@ async function getOrCreateSession(opts: {
 
 export function clearSession(sessionKey: string): void {
   sessionCache.delete(sessionKey);
+  activeRuns.delete(sessionKey);
+}
+
+// Track active runs for abort support
+const activeRuns = new Map<string, { abort: () => Promise<void> }>();
+
+/**
+ * Abort the active run for a session. Returns true if a run was aborted.
+ */
+export async function abortRun(sessionKey: string): Promise<boolean> {
+  const run = activeRuns.get(sessionKey);
+  if (!run) return false;
+  await run.abort();
+  activeRuns.delete(sessionKey);
+  return true;
 }
 
 /**
@@ -110,6 +151,7 @@ export async function runAgent(opts: AgentRunOpts): Promise<AgentRunResult> {
       model,
       apiKey,
       chatSystemPrompt: opts.chatSystemPrompt,
+      onSpawnWorker: opts.onSpawnWorker,
     });
 
     // Collect assistant text from events for this prompt
@@ -154,7 +196,13 @@ export async function runAgent(opts: AgentRunOpts): Promise<AgentRunResult> {
       }
     });
 
-    await session.prompt(opts.prompt);
+    // Track for abort
+    activeRuns.set(sessionKey, { abort: () => session.abort() });
+    try {
+      await session.prompt(opts.prompt);
+    } finally {
+      activeRuns.delete(sessionKey);
+    }
     unsubscribe();
 
     const payloads: ReplyPayload[] = [];

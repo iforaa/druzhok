@@ -1,9 +1,11 @@
 import { Bot } from "grammy";
 import { loadInstanceConfig } from "@druzhok/core";
-import { parseInterval, createHeartbeatManager, readMemoryFile, createSkillRegistry } from "@druzhok/core";
-import { createRunDispatcher, runAgent, clearSession } from "@druzhok/core";
+import { parseInterval, createHeartbeatManager, readMemoryFile } from "@druzhok/core";
+import { createRunDispatcher, runAgent, clearSession, abortRun } from "@druzhok/core";
+import { spawnWorker } from "@druzhok/core";
+import { enqueue } from "@druzhok/core";
 import { buildInboundContext, parseCommand, createDelivery, createDraftStream } from "@druzhok/telegram";
-import type { Channel, ReplyPayload, DeliveryResult, DraftStream, DraftStreamOpts } from "@druzhok/shared";
+import type { Channel, DraftStream, DraftStreamOpts } from "@druzhok/shared";
 import { join } from "node:path";
 import { existsSync, mkdirSync, cpSync } from "node:fs";
 
@@ -66,30 +68,48 @@ async function main() {
     async setReaction() {},
   };
 
-  // Dispatcher — pi-coding-agent reads workspace files (AGENTS.md, SOUL.md, etc.) automatically
-  const dispatcher = createRunDispatcher({
-    channel,
-    runAgent,
-    config: {
-      proxyUrl: config.proxyUrl,
-      proxyKey: config.proxyKey,
-      defaultModel: config.defaultModel,
-      workspaceDir: workspace,
-      chats: config.chats,
-    },
-  });
+  // Helper to send text to a chat
+  const sendToChat = async (chatId: string, text: string) => {
+    await delivery.sendMessage(chatId, { text });
+  };
 
-  // Message handler — all messages go through the agent
+  // Dispatcher — uses main lane, pi-coding-agent reads workspace files automatically
+  // The runAgent wrapper now supports spawn_worker via onSpawnWorker callback
+  const createRunAgentWithSpawn = (chatId: string) => {
+    return async (opts: Parameters<typeof runAgent>[0]) => {
+      return runAgent({
+        ...opts,
+        onSpawnWorker: (task) => {
+          spawnWorker({
+            task,
+            notify: true,
+            workspaceDir: workspace,
+            proxyUrl: config.proxyUrl,
+            proxyKey: config.proxyKey,
+            model: config.defaultModel,
+            onResult: async (payloads) => {
+              for (const p of payloads) {
+                if (p.text) await sendToChat(chatId, `🔧 Фоновая задача завершена:\n\n${p.text}`);
+              }
+            },
+          });
+        },
+      });
+    };
+  };
+
+  // Message handler
   bot.on("message", async (ctx) => {
     if (ctx.message.from?.is_bot) return;
     const text = ctx.message.text ?? ctx.message.caption ?? "";
+    const chatId = String(ctx.message.chat.id);
 
-    // Built-in commands (only /stop, /reset, /model, /prompt handled directly)
+    // Commands
     if (text.startsWith("/")) {
       const parsed = parseCommand(text);
       if (parsed) {
         switch (parsed.command) {
-          case "start": break; // fall through to agent — let it handle onboarding
+          case "start": break; // fall through to agent
           case "stop": await ctx.reply("На паузе. Отправь /start чтобы продолжить."); return;
           case "reset": {
             const resetUpdate = { message: { message_id: ctx.message.message_id, date: ctx.message.date, chat: { id: ctx.message.chat.id, type: ctx.message.chat.type as "private" | "group" | "supergroup" | "channel" }, from: ctx.message.from ? { id: ctx.message.from.id, first_name: ctx.message.from.first_name, is_bot: ctx.message.from.is_bot } : undefined, text: "" } };
@@ -105,15 +125,34 @@ async function main() {
             return;
         }
       }
+      // /abort — not in parseCommand's known list, handle directly
+      if (text.startsWith("/abort")) {
+        const abortUpdate = { message: { message_id: ctx.message.message_id, date: ctx.message.date, chat: { id: ctx.message.chat.id, type: ctx.message.chat.type as "private" | "group" | "supergroup" | "channel" }, from: ctx.message.from ? { id: ctx.message.from.id, first_name: ctx.message.from.first_name, is_bot: ctx.message.from.is_bot } : undefined, text: "" } };
+        const sessionKey = buildInboundContext(abortUpdate).sessionKey;
+        const aborted = await abortRun(sessionKey);
+        await ctx.reply(aborted ? "Отменено." : "Нечего отменять.");
+        return;
+      }
     }
 
-    // For /start, give the agent a meaningful prompt instead of raw command
+    // For /start, give agent a meaningful prompt
     const agentText = text === "/start"
       ? `Пользователь ${ctx.message.from?.first_name ?? "User"} только что запустил бота. Представься и начни знакомство.`
       : text;
 
-    // Dispatch to agent
-    console.log(`[msg] from=${ctx.message.from?.first_name} text="${agentText.slice(0, 50)}"`);
+    // Create a dispatcher with spawn_worker wired to this chat
+    const dispatcher = createRunDispatcher({
+      channel,
+      runAgent: createRunAgentWithSpawn(chatId),
+      config: {
+        proxyUrl: config.proxyUrl,
+        proxyKey: config.proxyKey,
+        defaultModel: config.defaultModel,
+        workspaceDir: workspace,
+        chats: config.chats,
+      },
+    });
+
     const update = {
       message: {
         message_id: ctx.message.message_id,
@@ -127,7 +166,6 @@ async function main() {
     };
     try {
       await dispatcher.dispatch(buildInboundContext(update));
-      console.log(`[msg] dispatch done`);
     } catch (err) {
       console.error(`[msg] dispatch error:`, err);
     }
@@ -137,14 +175,19 @@ async function main() {
     console.error("[bot] Grammy error:", err);
   });
 
-  // Heartbeat
+  // Heartbeat — runs in cron lane (parallel to main)
   if (config.heartbeat.enabled) {
     const intervalMs = parseInterval(config.heartbeat.every);
     if (intervalMs) {
       const heartbeat = createHeartbeatManager({
         intervalMs,
         readHeartbeatMd: () => readMemoryFile(join(workspace, "HEARTBEAT.md")),
-        onTick: async () => console.log("Heartbeat tick"),
+        onTick: async () => {
+          await enqueue("cron", async () => {
+            console.log("Heartbeat tick in cron lane");
+            // TODO: run agent with heartbeat prompt
+          });
+        },
       });
       heartbeat.start();
     }
@@ -156,7 +199,6 @@ async function main() {
 
   bot.start({ onStart: (info) => console.log(`  Bot @${info.username} is running`) });
 
-  // Graceful shutdown
   process.on("SIGTERM", async () => { await bot.stop(); process.exit(0); });
   process.on("SIGINT", async () => { await bot.stop(); process.exit(0); });
 }

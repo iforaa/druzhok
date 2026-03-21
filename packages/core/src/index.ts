@@ -17,5 +17,7 @@ export * from "./skills/registry.js";
 export * from "./runtime/session-store.js";
 export * from "./runtime/agent-run.js";
 export * from "./runtime/run-dispatcher.js";
+export * from "./runtime/command-queue.js";
+export * from "./runtime/subagent.js";
 export * from "./memory/watcher.js";
 export * from "./onboarding/onboarding.js";
