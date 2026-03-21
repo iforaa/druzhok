@@ -1,7 +1,7 @@
 import { Bot } from "grammy";
 import { loadInstanceConfig } from "@druzhok/core";
 import { parseInterval, createHeartbeatManager, readMemoryFile, createSkillRegistry } from "@druzhok/core";
-import { createRunDispatcher, runAgent } from "@druzhok/core";
+import { createRunDispatcher, runAgent, clearSession } from "@druzhok/core";
 import { buildInboundContext, parseCommand, createDelivery, createDraftStream } from "@druzhok/telegram";
 import type { Channel, ReplyPayload, DeliveryResult, DraftStream, DraftStreamOpts } from "@druzhok/shared";
 import { join } from "node:path";
@@ -84,14 +84,19 @@ async function main() {
     if (ctx.message.from?.is_bot) return;
     const text = ctx.message.text ?? ctx.message.caption ?? "";
 
-    // Built-in commands
+    // Built-in commands (only /stop, /reset, /model, /prompt handled directly)
     if (text.startsWith("/")) {
       const parsed = parseCommand(text);
       if (parsed) {
         switch (parsed.command) {
-          case "start": await ctx.reply("Напиши мне что-нибудь!"); return;
+          case "start": break; // fall through to agent — let it handle onboarding
           case "stop": await ctx.reply("На паузе. Отправь /start чтобы продолжить."); return;
-          case "reset": await ctx.reply("Сессия сброшена!"); return;
+          case "reset": {
+            const resetUpdate = { message: { message_id: ctx.message.message_id, date: ctx.message.date, chat: { id: ctx.message.chat.id, type: ctx.message.chat.type as "private" | "group" | "supergroup" | "channel" }, from: ctx.message.from ? { id: ctx.message.from.id, first_name: ctx.message.from.first_name, is_bot: ctx.message.from.is_bot } : undefined, text: "" } };
+            clearSession(buildInboundContext(resetUpdate).sessionKey);
+            await ctx.reply("Сессия сброшена!");
+            return;
+          }
           case "model":
             await ctx.reply(parsed.args ? `Модель: ${parsed.args}` : `Модель: ${config.defaultModel}`);
             return;
@@ -102,19 +107,34 @@ async function main() {
       }
     }
 
+    // For /start, give the agent a meaningful prompt instead of raw command
+    const agentText = text === "/start"
+      ? `Пользователь ${ctx.message.from?.first_name ?? "User"} только что запустил бота. Представься и начни знакомство.`
+      : text;
+
     // Dispatch to agent
+    console.log(`[msg] from=${ctx.message.from?.first_name} text="${agentText.slice(0, 50)}"`);
     const update = {
       message: {
         message_id: ctx.message.message_id,
         date: ctx.message.date,
         chat: { id: ctx.message.chat.id, type: ctx.message.chat.type as "private" | "group" | "supergroup" | "channel" },
         from: ctx.message.from ? { id: ctx.message.from.id, first_name: ctx.message.from.first_name, last_name: ctx.message.from.last_name, is_bot: ctx.message.from.is_bot } : undefined,
-        text: ctx.message.text,
+        text: agentText,
         caption: ctx.message.caption,
         message_thread_id: ctx.message.message_thread_id,
       },
     };
-    await dispatcher.dispatch(buildInboundContext(update));
+    try {
+      await dispatcher.dispatch(buildInboundContext(update));
+      console.log(`[msg] dispatch done`);
+    } catch (err) {
+      console.error(`[msg] dispatch error:`, err);
+    }
+  });
+
+  bot.catch((err) => {
+    console.error("[bot] Grammy error:", err);
   });
 
   // Heartbeat

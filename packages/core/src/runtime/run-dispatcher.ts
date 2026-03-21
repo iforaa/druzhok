@@ -33,6 +33,7 @@ export function createRunDispatcher(opts: RunDispatcherOpts): RunDispatcher {
           proxyUrl: config.proxyUrl,
           proxyKey: config.proxyKey,
           model,
+          sessionKey: ctx.sessionKey,
         });
         const filtered = processReplyPayloads(result.payloads, { showReasoning: false, sentTexts: [], isHeartbeat: false });
         for (const payload of filtered) { await channel.sendMessage(ctx.chatId, payload); }
