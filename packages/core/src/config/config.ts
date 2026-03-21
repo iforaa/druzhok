@@ -51,7 +51,7 @@ export function loadInstanceConfig(opts?: {
   configPath?: string;
   overrides?: Partial<ConfigFileShape>;
 }): InstanceConfig {
-  const file = loadConfigFile(opts?.configPath ?? "druzhok.json");
+  const file = loadConfigFile(opts?.configPath ?? process.env.DRUZHOK_CONFIG_PATH ?? "druzhok.json");
   const merged = { ...file, ...opts?.overrides };
 
   return {
