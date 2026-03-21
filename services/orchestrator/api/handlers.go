@@ -36,6 +36,8 @@ func (h *Handlers) Register(mux *http.ServeMux) {
 	mux.HandleFunc("DELETE /instances/{id}", h.DeleteInstance)
 	mux.HandleFunc("POST /instances/{id}/restart", h.RestartInstance)
 	mux.HandleFunc("PUT /instances/{id}/config", h.UpdateConfig)
+	mux.HandleFunc("GET /instances/{id}/workspace", h.ListWorkspaceFiles)
+	mux.HandleFunc("GET /instances/{id}/workspace/{path...}", h.GetWorkspaceFile)
 }
 
 func (h *Handlers) ListInstances(w http.ResponseWriter, r *http.Request) {
@@ -216,6 +218,91 @@ func (h *Handlers) UpdateConfig(w http.ResponseWriter, r *http.Request) {
 	}
 
 	h.RestartInstance(w, r)
+}
+
+type FileEntry struct {
+	Name  string `json:"name"`
+	IsDir bool   `json:"isDir"`
+	Size  int64  `json:"size"`
+}
+
+func (h *Handlers) ListWorkspaceFiles(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	if _, err := h.Store.Get(id); err != nil {
+		jsonError(w, "instance not found", http.StatusNotFound)
+		return
+	}
+
+	dir := filepath.Join(h.DataDir, "instances", id, "workspace")
+	sub := r.URL.Query().Get("path")
+	if sub != "" {
+		dir = filepath.Join(dir, sub)
+	}
+
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		jsonError(w, "cannot read directory", http.StatusNotFound)
+		return
+	}
+
+	files := []FileEntry{}
+	for _, e := range entries {
+		info, _ := e.Info()
+		size := int64(0)
+		if info != nil {
+			size = info.Size()
+		}
+		files = append(files, FileEntry{Name: e.Name(), IsDir: e.IsDir(), Size: size})
+	}
+	jsonResponse(w, files)
+}
+
+func (h *Handlers) GetWorkspaceFile(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	if _, err := h.Store.Get(id); err != nil {
+		jsonError(w, "instance not found", http.StatusNotFound)
+		return
+	}
+
+	filePath := r.PathValue("path")
+	fullPath := filepath.Join(h.DataDir, "instances", id, "workspace", filePath)
+
+	// Security: prevent path traversal
+	absBase, _ := filepath.Abs(filepath.Join(h.DataDir, "instances", id, "workspace"))
+	absTarget, _ := filepath.Abs(fullPath)
+	if len(absTarget) < len(absBase) || absTarget[:len(absBase)] != absBase {
+		jsonError(w, "access denied", http.StatusForbidden)
+		return
+	}
+
+	info, err := os.Stat(fullPath)
+	if err != nil {
+		jsonError(w, "file not found", http.StatusNotFound)
+		return
+	}
+
+	if info.IsDir() {
+		entries, _ := os.ReadDir(fullPath)
+		files := []FileEntry{}
+		for _, e := range entries {
+			eInfo, _ := e.Info()
+			size := int64(0)
+			if eInfo != nil {
+				size = eInfo.Size()
+			}
+			files = append(files, FileEntry{Name: e.Name(), IsDir: e.IsDir(), Size: size})
+		}
+		jsonResponse(w, files)
+		return
+	}
+
+	data, err := os.ReadFile(fullPath)
+	if err != nil {
+		jsonError(w, "cannot read file", http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	w.Write(data)
 }
 
 func jsonResponse(w http.ResponseWriter, data interface{}) {

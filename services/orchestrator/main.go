@@ -53,6 +53,15 @@ func main() {
 	// HTTP server
 	mux := http.NewServeMux()
 
+	// Serve dashboard
+	mux.HandleFunc("GET /", func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/" {
+			http.NotFound(w, r)
+			return
+		}
+		http.ServeFile(w, r, "web/index.html")
+	})
+
 	mux.HandleFunc("GET /health", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.Write([]byte(`{"status":"ok"}`))

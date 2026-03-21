@@ -1,0 +1,240 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Druzhok — Dashboard</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #0f1117; color: #e0e0e0; }
+.container { max-width: 1100px; margin: 0 auto; padding: 20px; }
+h1 { font-size: 24px; margin-bottom: 20px; color: #fff; }
+h2 { font-size: 18px; margin-bottom: 12px; color: #ccc; }
+
+/* Instances table */
+.instances-table { width: 100%; border-collapse: collapse; margin-bottom: 30px; }
+.instances-table th, .instances-table td { padding: 10px 14px; text-align: left; border-bottom: 1px solid #1e2130; }
+.instances-table th { color: #888; font-weight: 500; font-size: 13px; text-transform: uppercase; }
+.instances-table tr:hover { background: #1a1d2e; cursor: pointer; }
+.status { display: inline-block; padding: 3px 10px; border-radius: 12px; font-size: 12px; font-weight: 600; }
+.status.running { background: #0d3320; color: #4ade80; }
+.status.stopped { background: #3b1c1c; color: #f87171; }
+.status.error { background: #3b2e1c; color: #fbbf24; }
+.token { font-family: monospace; font-size: 12px; color: #888; max-width: 200px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.btn { padding: 6px 14px; border: none; border-radius: 6px; cursor: pointer; font-size: 13px; font-weight: 500; }
+.btn-danger { background: #dc2626; color: #fff; }
+.btn-primary { background: #2563eb; color: #fff; }
+.btn-secondary { background: #374151; color: #e0e0e0; }
+.btn:hover { opacity: 0.85; }
+
+/* Create form */
+.create-form { background: #1a1d2e; padding: 20px; border-radius: 10px; margin-bottom: 30px; }
+.create-form h2 { margin-bottom: 16px; }
+.form-row { display: flex; gap: 12px; margin-bottom: 12px; flex-wrap: wrap; }
+.form-row input, .form-row select { padding: 8px 12px; border: 1px solid #2d3048; border-radius: 6px; background: #0f1117; color: #e0e0e0; font-size: 14px; flex: 1; min-width: 200px; }
+.form-row input:focus { outline: none; border-color: #2563eb; }
+
+/* Workspace viewer */
+.workspace { background: #1a1d2e; padding: 20px; border-radius: 10px; margin-bottom: 30px; display: none; }
+.workspace h2 { margin-bottom: 12px; }
+.breadcrumb { font-size: 13px; color: #888; margin-bottom: 12px; }
+.breadcrumb a { color: #60a5fa; text-decoration: none; }
+.breadcrumb a:hover { text-decoration: underline; }
+.file-list { list-style: none; }
+.file-list li { padding: 8px 12px; border-bottom: 1px solid #1e2130; display: flex; align-items: center; gap: 10px; cursor: pointer; }
+.file-list li:hover { background: #252840; }
+.file-icon { font-size: 16px; }
+.file-name { flex: 1; }
+.file-size { color: #666; font-size: 12px; }
+.file-content { background: #0f1117; padding: 16px; border-radius: 8px; white-space: pre-wrap; font-family: monospace; font-size: 13px; line-height: 1.5; max-height: 500px; overflow-y: auto; margin-top: 12px; }
+.back-btn { margin-bottom: 16px; }
+</style>
+</head>
+<body>
+<div class="container">
+  <h1>Druzhok Dashboard</h1>
+
+  <div class="create-form">
+    <h2>Новый экземпляр</h2>
+    <div class="form-row">
+      <input id="create-name" placeholder="Имя (например: alice)" />
+      <input id="create-token" placeholder="Telegram Bot Token" />
+      <select id="create-model">
+        <option value="nebius/zai-org/GLM-5">GLM-5</option>
+        <option value="nebius/moonshotai/Kimi-K2.5-fast">Kimi K2.5 Fast</option>
+        <option value="nebius/moonshotai/Kimi-K2-Instruct">Kimi K2 Instruct</option>
+        <option value="nebius/Qwen/Qwen3-235B-A22B-Instruct-2507">Qwen3 235B</option>
+        <option value="nebius/meta-llama/Llama-3.3-70B-Instruct-fast">Llama 3.3 70B</option>
+        <option value="nebius/deepseek-ai/DeepSeek-V3-0324">DeepSeek V3</option>
+      </select>
+      <button class="btn btn-primary" onclick="createInstance()">Создать</button>
+    </div>
+  </div>
+
+  <h2>Экземпляры</h2>
+  <table class="instances-table">
+    <thead>
+      <tr><th>Имя</th><th>Модель</th><th>Статус</th><th>Proxy Key</th><th>Действия</th></tr>
+    </thead>
+    <tbody id="instances-body">
+      <tr><td colspan="5" style="color:#666">Загрузка...</td></tr>
+    </tbody>
+  </table>
+
+  <div class="workspace" id="workspace-panel">
+    <button class="btn btn-secondary back-btn" onclick="closeWorkspace()">Назад</button>
+    <h2 id="workspace-title">Workspace</h2>
+    <div class="breadcrumb" id="workspace-breadcrumb"></div>
+    <div id="workspace-content"></div>
+  </div>
+</div>
+
+<script>
+const API = '';
+
+async function loadInstances() {
+  try {
+    const res = await fetch(API + '/instances');
+    const instances = await res.json();
+    const tbody = document.getElementById('instances-body');
+    if (!instances.length) {
+      tbody.innerHTML = '<tr><td colspan="5" style="color:#666">Нет экземпляров</td></tr>';
+      return;
+    }
+    tbody.innerHTML = instances.map(inst => `
+      <tr onclick="openWorkspace('${inst.id}')">
+        <td><strong>${inst.name}</strong></td>
+        <td style="font-size:13px">${inst.model}</td>
+        <td><span class="status ${inst.status}">${inst.status}</span></td>
+        <td class="token" title="${inst.proxyKey}">${inst.proxyKey}</td>
+        <td>
+          <button class="btn btn-secondary" onclick="event.stopPropagation(); restartInstance('${inst.id}')">Перезапуск</button>
+          <button class="btn btn-danger" onclick="event.stopPropagation(); deleteInstance('${inst.id}')">Стоп</button>
+        </td>
+      </tr>
+    `).join('');
+  } catch (err) {
+    document.getElementById('instances-body').innerHTML =
+      `<tr><td colspan="5" style="color:#f87171">Ошибка: ${err.message}</td></tr>`;
+  }
+}
+
+async function createInstance() {
+  const name = document.getElementById('create-name').value.trim();
+  const token = document.getElementById('create-token').value.trim();
+  const model = document.getElementById('create-model').value;
+  if (!name || !token) { alert('Заполни имя и токен'); return; }
+  try {
+    const res = await fetch(API + '/instances', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name, telegramToken: token, model })
+    });
+    if (!res.ok) { const err = await res.json(); alert(err.error); return; }
+    document.getElementById('create-name').value = '';
+    document.getElementById('create-token').value = '';
+    loadInstances();
+  } catch (err) { alert(err.message); }
+}
+
+async function deleteInstance(id) {
+  if (!confirm(`Остановить ${id}?`)) return;
+  await fetch(API + `/instances/${id}`, { method: 'DELETE' });
+  loadInstances();
+}
+
+async function restartInstance(id) {
+  await fetch(API + `/instances/${id}/restart`, { method: 'POST' });
+  loadInstances();
+}
+
+let currentInstance = null;
+let currentPath = '';
+
+async function openWorkspace(id) {
+  currentInstance = id;
+  currentPath = '';
+  document.getElementById('workspace-panel').style.display = 'block';
+  document.getElementById('workspace-title').textContent = `Workspace: ${id}`;
+  await browseDir('');
+}
+
+function closeWorkspace() {
+  document.getElementById('workspace-panel').style.display = 'none';
+  currentInstance = null;
+}
+
+async function browseDir(path) {
+  currentPath = path;
+  const url = path
+    ? API + `/instances/${currentInstance}/workspace/${path}`
+    : API + `/instances/${currentInstance}/workspace`;
+  const res = await fetch(url);
+  const entries = await res.json();
+
+  // Breadcrumb
+  const parts = path ? path.split('/') : [];
+  let bc = `<a href="#" onclick="browseDir(''); return false;">workspace</a>`;
+  let accumulated = '';
+  for (const p of parts) {
+    accumulated += (accumulated ? '/' : '') + p;
+    const acc = accumulated;
+    bc += ` / <a href="#" onclick="browseDir('${acc}'); return false;">${p}</a>`;
+  }
+  document.getElementById('workspace-breadcrumb').innerHTML = bc;
+
+  // File list
+  const html = '<ul class="file-list">' + entries.map(e => {
+    const fullPath = path ? path + '/' + e.name : e.name;
+    const icon = e.isDir ? '📁' : '📄';
+    const size = e.isDir ? '' : formatSize(e.size);
+    const onclick = e.isDir
+      ? `browseDir('${fullPath}')`
+      : `viewFile('${fullPath}')`;
+    return `<li onclick="${onclick}">
+      <span class="file-icon">${icon}</span>
+      <span class="file-name">${e.name}</span>
+      <span class="file-size">${size}</span>
+    </li>`;
+  }).join('') + '</ul>';
+  document.getElementById('workspace-content').innerHTML = html;
+}
+
+async function viewFile(path) {
+  const url = API + `/instances/${currentInstance}/workspace/${path}`;
+  const res = await fetch(url);
+  const text = await res.text();
+
+  const parts = path.split('/');
+  let bc = `<a href="#" onclick="browseDir(''); return false;">workspace</a>`;
+  let accumulated = '';
+  for (let i = 0; i < parts.length - 1; i++) {
+    accumulated += (accumulated ? '/' : '') + parts[i];
+    const acc = accumulated;
+    bc += ` / <a href="#" onclick="browseDir('${acc}'); return false;">${parts[i]}</a>`;
+  }
+  bc += ` / ${parts[parts.length - 1]}`;
+  document.getElementById('workspace-breadcrumb').innerHTML = bc;
+
+  const parentDir = parts.slice(0, -1).join('/');
+  document.getElementById('workspace-content').innerHTML = `
+    <button class="btn btn-secondary" onclick="browseDir('${parentDir}')" style="margin-bottom:12px">← Назад</button>
+    <div class="file-content">${escapeHtml(text)}</div>
+  `;
+}
+
+function formatSize(bytes) {
+  if (bytes < 1024) return bytes + ' B';
+  if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
+  return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
+}
+
+function escapeHtml(text) {
+  return text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+
+loadInstances();
+setInterval(loadInstances, 10000);
+</script>
+</body>
+</html>
