@@ -5,6 +5,10 @@ defmodule Druzhok.Telegram.API do
 
   @base_url "https://api.telegram.org/bot"
 
+  def get_me(token) do
+    call(token, "getMe", %{})
+  end
+
   def get_updates(token, offset, timeout \\ 30) do
     call(token, "getUpdates", %{offset: offset, timeout: timeout})
   end
@@ -35,6 +39,19 @@ defmodule Druzhok.Telegram.API do
     case Finch.build(:post, url, headers, body) |> Finch.request(PiCore.Finch) do
       {:ok, %{status: 200, body: resp}} -> {:ok, Jason.decode!(resp)}
       {:ok, %{body: resp}} -> {:error, resp}
+      {:error, reason} -> {:error, reason}
+    end
+  end
+
+  def get_file(token, file_id) do
+    call(token, "getFile", %{file_id: file_id})
+  end
+
+  def download_file(token, file_path) do
+    url = "https://api.telegram.org/file/bot#{token}/#{file_path}"
+    case Finch.build(:get, url) |> Finch.request(PiCore.Finch, receive_timeout: 30_000) do
+      {:ok, %{status: 200, body: body}} -> {:ok, body}
+      {:ok, %{status: status}} -> {:error, "HTTP #{status}"}
       {:error, reason} -> {:error, reason}
     end
   end

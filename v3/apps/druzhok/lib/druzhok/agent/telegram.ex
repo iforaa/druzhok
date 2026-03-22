@@ -2,6 +2,12 @@ defmodule Druzhok.Agent.Telegram do
   @moduledoc """
   Per-user Telegram bot GenServer. Long-polls for updates, dispatches
   messages to per-chat PiCore.Session processes, delivers responses via streaming edits.
+
+  Routing:
+    - DM from owner -> normal agent conversation
+    - DM from stranger -> pairing flow (generate activation code)
+    - Group chat (approved) -> respond only on triggers (@mention, name, reply)
+    - Group chat (pending/unknown) -> create pending record, notify once
   """
   use GenServer
 
@@ -19,6 +25,10 @@ defmodule Druzhok.Agent.Telegram do
     :chat_id,
     :instance_name,
     :poll_task,
+    :bot_id,
+    :bot_username,
+    :bot_name,
+    :workspace,
     # Streaming state
     :draft_message_id,
     :draft_text,
@@ -39,8 +49,52 @@ defmodule Druzhok.Agent.Telegram do
       instance_name: opts[:instance_name],
     }
 
+    # Fetch bot identity and workspace asynchronously
+    me = self()
+    token = opts.token
+    instance_name = opts[:instance_name]
+
+    Task.start(fn ->
+      case API.get_me(token) do
+        {:ok, %{"id" => id, "username" => username}} ->
+          GenServer.cast(me, {:set_bot_info, id, username})
+        _ -> :ok
+      end
+
+      workspace = case :persistent_term.get({:druzhok_session_config, instance_name}, nil) do
+        %{workspace: ws} -> ws
+        _ -> nil
+      end
+
+      if workspace do
+        GenServer.cast(me, {:set_workspace, workspace})
+        case File.read(Path.join(workspace, "IDENTITY.md")) do
+          {:ok, content} ->
+            case Regex.run(~r/\*\*(?:Имя|Name):\*\*\s*(.+)/iu, content) do
+              [_, name] -> GenServer.cast(me, {:set_bot_name, String.trim(name)})
+              _ -> :ok
+            end
+          _ -> :ok
+        end
+      end
+    end)
+
     send(self(), :start_poll)
     {:ok, state}
+  end
+
+  # --- Bot identity casts ---
+
+  def handle_cast({:set_bot_info, id, username}, state) do
+    {:noreply, %{state | bot_id: id, bot_username: username}}
+  end
+
+  def handle_cast({:set_bot_name, name}, state) do
+    {:noreply, %{state | bot_name: name}}
+  end
+
+  def handle_cast({:set_workspace, workspace}, state) do
+    {:noreply, %{state | workspace: workspace}}
   end
 
   # --- Polling (async — never blocks the GenServer) ---
@@ -198,53 +252,188 @@ defmodule Druzhok.Agent.Telegram do
     %{state | draft_message_id: nil, draft_text: nil, last_edit_at: nil}
   end
 
-  # --- Update handling ---
+  # --- Update handling / Routing ---
 
   defp handle_update(%{"update_id" => update_id} = update, state) do
     state = %{state | offset: update_id + 1}
 
     case extract_message(update) do
       nil -> state
-      {chat_id, text, sender_name, file} ->
-        state = %{state | chat_id: chat_id, draft_message_id: nil, draft_text: nil, last_edit_at: nil}
+      {chat_id, chat_type, text, sender_id, sender_name, file, chat_title} ->
+        is_reply = is_reply_to_bot?(update, state)
 
-        # Download and save file if present
-        saved_file = if file, do: save_incoming_file(file, chat_id, state), else: nil
+        case chat_type do
+          "private" ->
+            handle_dm(chat_id, text, sender_id, sender_name, file, state)
 
-        prompt_text = build_prompt(text, sender_name, saved_file)
-        emit(state, :user_message, %{text: prompt_text, sender: sender_name, chat_id: chat_id})
-        API.send_chat_action(state.token, chat_id)
+          type when type in ["group", "supergroup"] ->
+            handle_group(chat_id, text, sender_id, sender_name, file, is_reply, chat_title, state)
 
-        case parse_command(text) do
-          {:command, "start"} ->
-            dispatch_prompt("User #{sender_name} just started the bot. Introduce yourself.", chat_id, false, state)
-            state
-
-          {:command, "reset"} ->
-            dispatch_session(chat_id, state, &PiCore.Session.reset/1)
-            API.send_message(state.token, chat_id, "Session reset!")
-            state
-
-          {:command, "abort"} ->
-            dispatch_session(chat_id, state, &PiCore.Session.abort/1)
-            API.send_message(state.token, chat_id, "Aborted.")
-            state
-
-          :text ->
-            dispatch_prompt(prompt_text, chat_id, false, state)
-            state
+          _ -> state
         end
     end
   end
+
+  # --- DM handling with pairing ---
+
+  defp handle_dm(chat_id, text, sender_id, sender_name, file, state) do
+    instance = Druzhok.Repo.get_by(Druzhok.Instance, name: state.instance_name)
+    state = %{state | chat_id: chat_id, draft_message_id: nil, draft_text: nil, last_edit_at: nil}
+
+    cond do
+      # Owner exists and this is the owner
+      instance && instance.owner_telegram_id == sender_id ->
+        process_owner_message(chat_id, text, sender_name, file, false, state)
+
+      # Owner exists but this is someone else
+      instance && instance.owner_telegram_id ->
+        API.send_message(state.token, chat_id, "This bot is private.")
+        state
+
+      # No owner — handle pairing
+      true ->
+        handle_pairing(chat_id, sender_id, sender_name, state)
+    end
+  end
+
+  defp handle_pairing(chat_id, sender_id, sender_name, state) do
+    case Druzhok.Pairing.get_pending(state.instance_name) do
+      %{telegram_user_id: ^sender_id, code: code} ->
+        API.send_message(state.token, chat_id, "Your activation code: #{code}\nEnter it in the dashboard.")
+        state
+
+      %{} ->
+        API.send_message(state.token, chat_id, "This bot is not available.")
+        state
+
+      nil ->
+        case Druzhok.Pairing.create_code(state.instance_name, sender_id, nil, sender_name) do
+          {:ok, pairing} ->
+            emit(state, :pairing_requested, %{text: "Pairing: #{pairing.code}", code: pairing.code, user: sender_name})
+            API.send_message(state.token, chat_id, "Your activation code: #{pairing.code}\nEnter it in the dashboard.")
+          _ ->
+            API.send_message(state.token, chat_id, "Error generating activation code.")
+        end
+        state
+    end
+  end
+
+  # --- Group handling with triggers ---
+
+  defp handle_group(chat_id, text, sender_id, sender_name, file, is_reply_to_bot, chat_title, state) do
+    chat = Druzhok.AllowedChat.get(state.instance_name, chat_id)
+
+    cond do
+      chat && chat.status == "approved" ->
+        if triggered?(text, is_reply_to_bot, state) do
+          state = %{state | chat_id: chat_id, draft_message_id: nil, draft_text: nil, last_edit_at: nil}
+          instance = Druzhok.Repo.get_by(Druzhok.Instance, name: state.instance_name)
+
+          case parse_command(text) do
+            {:command, "reset"} ->
+              if instance && instance.owner_telegram_id == sender_id do
+                dispatch_session(chat_id, state, &PiCore.Session.reset/1)
+                API.send_message(state.token, chat_id, "Session reset!")
+              end
+              state
+
+            {:command, "abort"} ->
+              if instance && instance.owner_telegram_id == sender_id do
+                dispatch_session(chat_id, state, &PiCore.Session.abort/1)
+                API.send_message(state.token, chat_id, "Aborted.")
+              end
+              state
+
+            _ ->
+              process_owner_message(chat_id, text, sender_name, file, true, state)
+          end
+        else
+          state
+        end
+
+      chat && chat.status == "rejected" ->
+        state
+
+      true ->
+        # Pending or unknown — create pending record
+        Druzhok.AllowedChat.upsert_pending(state.instance_name, chat_id, "group", chat_title)
+
+        if mentioned_by_username?(text, state) && (is_nil(chat) || !chat.info_sent) do
+          API.send_message(state.token, chat_id, "This bot requires approval. Ask the admin to approve this group in the dashboard.")
+          Druzhok.AllowedChat.mark_info_sent(state.instance_name, chat_id)
+        end
+
+        state
+    end
+  end
+
+  # --- Shared message processing (used by both DM owner and approved group) ---
+
+  defp process_owner_message(chat_id, text, sender_name, file, is_group, state) do
+    saved_file = if file, do: save_incoming_file(file, chat_id, state), else: nil
+    prompt_text = build_prompt(text, sender_name, saved_file)
+    emit(state, :user_message, %{text: prompt_text, sender: sender_name, chat_id: chat_id})
+    API.send_chat_action(state.token, chat_id)
+
+    case parse_command(text) do
+      {:command, "start"} ->
+        dispatch_prompt("User #{sender_name} just started the bot. Introduce yourself.", chat_id, is_group, state)
+        state
+
+      {:command, "reset"} ->
+        dispatch_session(chat_id, state, &PiCore.Session.reset/1)
+        API.send_message(state.token, chat_id, "Session reset!")
+        state
+
+      {:command, "abort"} ->
+        dispatch_session(chat_id, state, &PiCore.Session.abort/1)
+        API.send_message(state.token, chat_id, "Aborted.")
+        state
+
+      :text ->
+        dispatch_prompt(prompt_text, chat_id, is_group, state)
+        state
+    end
+  end
+
+  # --- Trigger detection ---
+
+  defp triggered?(text, is_reply_to_bot, state) do
+    is_reply_to_bot ||
+    mentioned_by_username?(text, state) ||
+    name_mentioned?(text, state)
+  end
+
+  defp mentioned_by_username?(_text, %{bot_username: nil}), do: false
+  defp mentioned_by_username?(text, %{bot_username: username}) do
+    String.contains?(String.downcase(text), "@" <> String.downcase(username))
+  end
+
+  defp name_mentioned?(_text, %{bot_name: nil}), do: false
+  defp name_mentioned?(text, %{bot_name: name}) do
+    Regex.match?(~r/\b#{Regex.escape(name)}\b/iu, text)
+  end
+
+  defp is_reply_to_bot?(update, state) do
+    case get_in(update, ["message", "reply_to_message", "from", "id"]) do
+      nil -> false
+      id -> id == state.bot_id
+    end
+  end
+
+  # --- Message extraction ---
 
   defp extract_message(%{"message" => msg}) do
     from = msg["from"]
     if from && !from["is_bot"] do
       chat_id = msg["chat"]["id"]
+      chat_type = msg["chat"]["type"] || "private"
       text = msg["text"] || msg["caption"] || ""
+      sender_id = from["id"]
       name = [from["first_name"], from["last_name"]] |> Enum.reject(&is_nil/1) |> Enum.join(" ")
       file = extract_file(msg)
-      {chat_id, text, name, file}
+      chat_title = msg["chat"]["title"]
+      {chat_id, chat_type, text, sender_id, name, file, chat_title}
     else
       nil
     end
