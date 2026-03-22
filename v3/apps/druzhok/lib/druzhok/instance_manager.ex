@@ -108,6 +108,53 @@ defmodule Druzhok.InstanceManager do
     end
   end
 
+  def approve_pairing(instance_name) do
+    case Druzhok.Pairing.approve(instance_name) do
+      {:ok, pairing} ->
+        Druzhok.Events.broadcast(instance_name, %{type: :pairing_approved, user: pairing.display_name})
+        {:ok, pairing}
+      error -> error
+    end
+  end
+
+  def approve_group(instance_name, chat_id) do
+    case Druzhok.AllowedChat.approve(instance_name, chat_id) do
+      {:ok, chat} ->
+        Druzhok.Events.broadcast(instance_name, %{type: :group_approved, title: chat.title})
+        {:ok, chat}
+      error -> error
+    end
+  end
+
+  def reject_group(instance_name, chat_id) do
+    case Druzhok.AllowedChat.reject(instance_name, chat_id) do
+      {:ok, chat} ->
+        Druzhok.Events.broadcast(instance_name, %{type: :group_rejected, title: chat.title})
+        # Terminate group session if running
+        case Registry.lookup(Druzhok.Registry, {instance_name, :session, chat_id}) do
+          [{pid, _}] -> GenServer.stop(pid, :normal, 5_000)
+          [] -> :ok
+        end
+        {:ok, chat}
+      error -> error
+    end
+  end
+
+  def get_pairing(instance_name) do
+    Druzhok.Pairing.get_pending(instance_name)
+  end
+
+  def get_groups(instance_name) do
+    Druzhok.AllowedChat.groups_for_instance(instance_name)
+  end
+
+  def get_owner(instance_name) do
+    case Druzhok.Repo.get_by(Druzhok.Instance, name: instance_name) do
+      nil -> nil
+      inst -> inst.owner_telegram_id
+    end
+  end
+
   defp find_sup_pid(name) do
     case Registry.lookup(Druzhok.Registry, {name, :sup}) do
       [{pid, _}] -> pid
