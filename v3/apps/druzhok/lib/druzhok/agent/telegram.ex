@@ -31,13 +31,14 @@ defmodule Druzhok.Agent.Telegram do
       session_pid: opts.session_pid,
     }
 
-    send(self(), :poll)
+    if opts.session_pid, do: send(self(), :poll)
     {:ok, state}
   end
 
   # --- Polling ---
 
   def handle_cast({:set_session, pid}, state) do
+    unless state.session_pid, do: send(self(), :poll)
     {:noreply, %{state | session_pid: pid}}
   end
 
