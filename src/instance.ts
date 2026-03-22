@@ -85,6 +85,17 @@ async function main() {
             caption: caption ?? undefined,
           });
         },
+        onSetReminder: (minutes, message) => {
+          console.log(`[reminder] set for ${minutes}m: "${message}"`);
+          setTimeout(async () => {
+            try {
+              await sendToChat(chatId, `⏰ Напоминание: ${message}`);
+              console.log(`[reminder] delivered: "${message}"`);
+            } catch (err) {
+              console.error(`[reminder] delivery failed:`, err);
+            }
+          }, minutes * 60 * 1000);
+        },
         onSpawnWorker: (task) => {
           spawnWorker({
             task,

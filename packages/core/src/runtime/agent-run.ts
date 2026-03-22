@@ -17,6 +17,7 @@ export type AgentRunOpts = {
   onToolCallEnd?: (toolName: string) => void;
   onSpawnWorker?: (task: string) => void;
   onSendFile?: (filePath: string, caption?: string) => Promise<void>;
+  onSetReminder?: (minutes: number, message: string) => void;
   signal?: AbortSignal;
 };
 
@@ -68,6 +69,7 @@ async function getOrCreateSession(opts: {
   chatSystemPrompt?: string;
   onSpawnWorker?: (task: string) => void;
   onSendFile?: (filePath: string, caption?: string) => Promise<void>;
+  onSetReminder?: (minutes: number, message: string) => void;
 }): Promise<AgentSession> {
   const cached = sessionCache.get(opts.sessionKey);
   if (cached) return cached;
@@ -101,6 +103,32 @@ async function getOrCreateSession(opts: {
             details: {},
           };
         }
+      },
+    });
+  }
+
+  if (opts.onSetReminder) {
+    const onRemind = opts.onSetReminder;
+    customTools.push({
+      name: "set_reminder",
+      label: "Set Reminder",
+      description: "Set a one-time reminder. After the specified number of minutes, the message will be sent to the user. Use this when the user asks to be reminded about something.",
+      parameters: Type.Object({
+        minutes: Type.Number({ description: "Number of minutes from now" }),
+        message: Type.String({ description: "Reminder message to send to the user" }),
+      }),
+      async execute(_toolCallId, params: { minutes: number; message: string }) {
+        if (params.minutes < 1 || params.minutes > 1440) {
+          return {
+            content: [{ type: "text" as const, text: "Minutes must be between 1 and 1440 (24 hours)" }],
+            details: {},
+          };
+        }
+        onRemind(params.minutes, params.message);
+        return {
+          content: [{ type: "text" as const, text: `Reminder set for ${params.minutes} minutes from now: "${params.message}"` }],
+          details: {},
+        };
       },
     });
   }
@@ -186,6 +214,7 @@ export async function runAgent(opts: AgentRunOpts): Promise<AgentRunResult> {
       chatSystemPrompt: opts.chatSystemPrompt,
       onSpawnWorker: opts.onSpawnWorker,
       onSendFile: opts.onSendFile,
+      onSetReminder: opts.onSetReminder,
     });
 
     // Collect assistant text from events for this prompt
