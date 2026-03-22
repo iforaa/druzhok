@@ -551,15 +551,25 @@ defmodule DruzhokWebWeb.DashboardLive do
   end
 
   defp list_workspace_files(instance) do
-    if instance[:sandbox] == "docker" do
-      case Druzhok.Sandbox.Docker.list_dir(instance.name, "/workspace") do
-        {:ok, entries} ->
-          entries
-          |> Enum.map(fn entry ->
-            %{path: entry.name, is_dir: entry.type == "directory", size: entry[:size] || 0}
+    if instance[:sandbox] in ["docker", "firecracker"] do
+      mod = Druzhok.Sandbox.impl(instance[:sandbox])
+      case mod.list_dir(instance.name, "/workspace") do
+        {:ok, data} when is_binary(data) ->
+          case Jason.decode(data) do
+            {:ok, entries} when is_list(entries) ->
+              entries
+              |> Enum.map(fn e ->
+                %{path: e["name"], is_dir: e["is_dir"] == true, size: e["size"] || 0}
+              end)
+              |> Enum.sort_by(& {!&1.is_dir, &1.path})
+            _ -> []
+          end
+        {:ok, entries} when is_list(entries) ->
+          Enum.map(entries, fn e ->
+            %{path: e[:name] || e["name"], is_dir: e[:is_dir] || e["is_dir"], size: e[:size] || e["size"] || 0}
           end)
           |> Enum.sort_by(& {!&1.is_dir, &1.path})
-        {:error, _} -> []
+        _ -> []
       end
     else
       workspace = instance_workspace(instance.name)
