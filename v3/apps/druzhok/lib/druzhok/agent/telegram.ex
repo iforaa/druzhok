@@ -1,7 +1,7 @@
 defmodule Druzhok.Agent.Telegram do
   @moduledoc """
   Per-user Telegram bot GenServer. Long-polls for updates, dispatches
-  messages to a PiCore.Session, delivers responses via streaming edits.
+  messages to per-chat PiCore.Session processes, delivers responses via streaming edits.
   """
   use GenServer
 
@@ -16,7 +16,6 @@ defmodule Druzhok.Agent.Telegram do
 
   defstruct [
     :token,
-    :session_pid,
     :chat_id,
     :instance_name,
     :poll_task,
@@ -37,20 +36,14 @@ defmodule Druzhok.Agent.Telegram do
   def init(opts) do
     state = %__MODULE__{
       token: opts.token,
-      session_pid: opts.session_pid,
       instance_name: opts[:instance_name],
     }
 
-    if opts.session_pid, do: send(self(), :start_poll)
+    send(self(), :start_poll)
     {:ok, state}
   end
 
   # --- Polling (async — never blocks the GenServer) ---
-
-  def handle_cast({:set_session, pid}, state) do
-    unless state.session_pid, do: send(self(), :start_poll)
-    {:noreply, %{state | session_pid: pid}}
-  end
 
   def handle_call(:get_chat_id, _from, state) do
     {:reply, state.chat_id, state}
@@ -86,7 +79,16 @@ defmodule Druzhok.Agent.Telegram do
     {:noreply, state}
   end
 
-  # --- Streaming deltas from PiCore (individual chunks) ---
+  # --- Streaming deltas from PiCore (with chat_id) ---
+
+  def handle_info({:pi_delta, chunk, chat_id}, state) when is_binary(chunk) do
+    state = %{state | chat_id: chat_id}
+    accumulated = (state.draft_text || "") <> chunk
+    state = handle_streaming_delta(accumulated, %{state | draft_text: accumulated})
+    {:noreply, state}
+  end
+
+  # --- Streaming deltas from PiCore (without chat_id, backward compat) ---
 
   def handle_info({:pi_delta, chunk}, state) when is_binary(chunk) do
     accumulated = (state.draft_text || "") <> chunk
@@ -94,7 +96,16 @@ defmodule Druzhok.Agent.Telegram do
     {:noreply, state}
   end
 
-  # --- Final response from PiCore ---
+  # --- Final response from PiCore (with chat_id) ---
+
+  def handle_info({:pi_response, %{text: text, chat_id: chat_id}}, state) when is_binary(text) and text != "" do
+    state = %{state | chat_id: chat_id}
+    emit(state, :agent_reply, %{text: text})
+    state = finalize_response(text, state)
+    {:noreply, state}
+  end
+
+  # --- Final response from PiCore (without chat_id, backward compat) ---
 
   def handle_info({:pi_response, %{text: text}}, state) when is_binary(text) and text != "" do
     emit(state, :agent_reply, %{text: text})
@@ -126,10 +137,11 @@ defmodule Druzhok.Agent.Telegram do
 
   defp handle_streaming_delta(text, state) do
     now = System.monotonic_time(:millisecond)
+    display_text = strip_artifacts(text)
 
     cond do
-      is_nil(state.draft_message_id) and String.length(text) >= @min_chars_first_send ->
-        case API.send_message(state.token, state.chat_id, text) do
+      is_nil(state.draft_message_id) and String.length(display_text) >= @min_chars_first_send ->
+        case API.send_message(state.token, state.chat_id, display_text) do
           {:ok, %{"message_id" => msg_id}} ->
             %{state | draft_message_id: msg_id, draft_text: text, last_edit_at: now}
           _ ->
@@ -140,7 +152,7 @@ defmodule Druzhok.Agent.Telegram do
         %{state | draft_text: text}
 
       now - (state.last_edit_at || 0) >= @edit_interval_ms ->
-        case API.edit_message_text(state.token, state.chat_id, state.draft_message_id, text) do
+        case API.edit_message_text(state.token, state.chat_id, state.draft_message_id, display_text) do
           {:error, reason} ->
             Logger.warning("Telegram edit failed: #{inspect(reason)}")
           _ -> :ok
@@ -158,11 +170,9 @@ defmodule Druzhok.Agent.Telegram do
 
     result = cond do
       state.draft_message_id ->
-        # Always do final edit with HTML formatting
         API.edit_message_text(state.token, state.chat_id, state.draft_message_id, html, html_opts)
 
       state.chat_id ->
-        # No draft started — send as new message with HTML
         API.send_message(state.token, state.chat_id, html, html_opts)
 
       true -> :ok
@@ -176,7 +186,6 @@ defmodule Druzhok.Agent.Telegram do
         else
           Logger.error("Telegram finalize failed: #{reason_str}")
           emit(state, :error, %{text: "Telegram send failed: #{reason_str}"})
-          # Fallback: send plain text without HTML if parsing failed
           if state.draft_message_id do
             API.edit_message_text(state.token, state.chat_id, state.draft_message_id, text)
           else
@@ -196,30 +205,33 @@ defmodule Druzhok.Agent.Telegram do
 
     case extract_message(update) do
       nil -> state
-      {chat_id, text, sender_name} ->
+      {chat_id, text, sender_name, file} ->
         state = %{state | chat_id: chat_id, draft_message_id: nil, draft_text: nil, last_edit_at: nil}
 
-        emit(state, :user_message, %{text: text, sender: sender_name, chat_id: chat_id})
+        # Download and save file if present
+        saved_file = if file, do: save_incoming_file(file, chat_id, state), else: nil
+
+        prompt_text = build_prompt(text, sender_name, saved_file)
+        emit(state, :user_message, %{text: prompt_text, sender: sender_name, chat_id: chat_id})
         API.send_chat_action(state.token, chat_id)
 
         case parse_command(text) do
           {:command, "start"} ->
-            prompt = "User #{sender_name} just started the bot. Introduce yourself."
-            dispatch_prompt(prompt, state)
+            dispatch_prompt("User #{sender_name} just started the bot. Introduce yourself.", chat_id, false, state)
             state
 
           {:command, "reset"} ->
-            dispatch_session(state, &PiCore.Session.reset/1)
+            dispatch_session(chat_id, state, &PiCore.Session.reset/1)
             API.send_message(state.token, chat_id, "Session reset!")
             state
 
           {:command, "abort"} ->
-            dispatch_session(state, &PiCore.Session.abort/1)
+            dispatch_session(chat_id, state, &PiCore.Session.abort/1)
             API.send_message(state.token, chat_id, "Aborted.")
             state
 
           :text ->
-            dispatch_prompt(text, state)
+            dispatch_prompt(prompt_text, chat_id, false, state)
             state
         end
     end
@@ -231,12 +243,59 @@ defmodule Druzhok.Agent.Telegram do
       chat_id = msg["chat"]["id"]
       text = msg["text"] || msg["caption"] || ""
       name = [from["first_name"], from["last_name"]] |> Enum.reject(&is_nil/1) |> Enum.join(" ")
-      {chat_id, text, name}
+      file = extract_file(msg)
+      {chat_id, text, name, file}
     else
       nil
     end
   end
   defp extract_message(_), do: nil
+
+  defp extract_file(msg) do
+    cond do
+      msg["document"] -> %{file_id: msg["document"]["file_id"], name: msg["document"]["file_name"] || "document"}
+      msg["photo"] -> %{file_id: List.last(msg["photo"])["file_id"], name: "photo.jpg"}
+      msg["voice"] -> %{file_id: msg["voice"]["file_id"], name: "voice.ogg"}
+      msg["audio"] -> %{file_id: msg["audio"]["file_id"], name: msg["audio"]["file_name"] || "audio.mp3"}
+      msg["video"] -> %{file_id: msg["video"]["file_id"], name: msg["video"]["file_name"] || "video.mp4"}
+      msg["sticker"] -> %{file_id: msg["sticker"]["file_id"], name: "sticker.webp"}
+      true -> nil
+    end
+  end
+
+  defp save_incoming_file(%{file_id: file_id, name: name}, chat_id, state) do
+    with {:ok, %{"file_path" => tg_path}} <- API.get_file(state.token, file_id),
+         {:ok, content} <- API.download_file(state.token, tg_path) do
+      # Resolve workspace from the session for this chat
+      workspace = case Registry.lookup(Druzhok.Registry, {state.instance_name, :session, chat_id}) do
+        [{pid, _}] ->
+          try do GenServer.call(pid, :get_workspace, 5_000) rescue _ -> nil catch _ -> nil end
+        [] ->
+          # No session yet — read workspace from persistent_term config
+          case :persistent_term.get({:druzhok_session_config, state.instance_name}, nil) do
+            %{workspace: ws} -> ws
+            _ -> nil
+          end
+      end
+
+      if workspace do
+        inbox = Path.join(workspace, "inbox")
+        File.mkdir_p!(inbox)
+        dest = Path.join(inbox, name)
+        File.write!(dest, content)
+        emit(state, :file_received, %{text: "Saved #{name} to inbox/"})
+        "inbox/#{name}"
+      else
+        nil
+      end
+    else
+      _ -> nil
+    end
+  end
+
+  defp build_prompt(text, _sender, nil), do: text
+  defp build_prompt("", _sender, file_path), do: "User sent a file: #{file_path}"
+  defp build_prompt(text, _sender, file_path), do: "#{text}\n\n[User attached a file: #{file_path}]"
 
   defp parse_command("/start" <> _), do: {:command, "start"}
   defp parse_command("/reset" <> _), do: {:command, "reset"}
@@ -244,15 +303,21 @@ defmodule Druzhok.Agent.Telegram do
   defp parse_command("/" <> _), do: :text
   defp parse_command(_), do: :text
 
-  defp dispatch_prompt(text, state) do
-    case Registry.lookup(Druzhok.Registry, {state.instance_name, :session}) do
+  defp dispatch_prompt(text, chat_id, group, state) do
+    case Registry.lookup(Druzhok.Registry, {state.instance_name, :session, chat_id}) do
       [{pid, _}] -> PiCore.Session.prompt(pid, text)
-      [] -> :ok
+      [] ->
+        case Druzhok.Instance.SessionSup.start_session(state.instance_name, chat_id, %{group: group}) do
+          {:ok, pid} -> PiCore.Session.prompt(pid, text)
+          {:error, reason} ->
+            Logger.error("Failed to start session for chat #{chat_id}: #{inspect(reason)}")
+            :ok
+        end
     end
   end
 
-  defp dispatch_session(state, fun) do
-    case Registry.lookup(Druzhok.Registry, {state.instance_name, :session}) do
+  defp dispatch_session(chat_id, state, fun) do
+    case Registry.lookup(Druzhok.Registry, {state.instance_name, :session, chat_id}) do
       [{pid, _}] -> fun.(pid)
       [] -> :ok
     end
@@ -262,4 +327,6 @@ defmodule Druzhok.Agent.Telegram do
   defp emit(%{instance_name: name}, type, data) do
     Events.broadcast(name, Map.put(data, :type, type))
   end
+
+  defp strip_artifacts(text), do: PiCore.Sanitize.strip_artifacts(text)
 end

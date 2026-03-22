@@ -108,9 +108,14 @@ defmodule Druzhok.Scheduler do
   # --- Private ---
 
   defp lookup_session(state) do
-    case Registry.lookup(Druzhok.Registry, {state.instance_name, :session}) do
-      [{pid, _}] -> pid
-      [] -> nil
+    # Find the owner's DM session (per-chat sessions keyed by chat_id)
+    case Druzhok.Repo.get_by(Druzhok.Instance, name: state.instance_name) do
+      %{owner_telegram_id: owner_id} when not is_nil(owner_id) ->
+        case Registry.lookup(Druzhok.Registry, {state.instance_name, :session, owner_id}) do
+          [{pid, _}] -> pid
+          [] -> nil
+        end
+      _ -> nil
     end
   end
 

@@ -8,13 +8,17 @@ defmodule Druzhok.InstanceManager do
   alias Druzhok.{Instance, Repo}
 
   def create(name, opts) do
+    provider = opts[:provider] || Druzhok.Model.get_provider(opts.model)
+    {api_url, api_key} = resolve_credentials(provider, opts)
+
     config = %{
       name: name,
       token: opts.telegram_token,
       model: opts.model,
+      provider: provider_atom(provider),
       workspace: opts.workspace,
-      api_url: opts.api_url,
-      api_key: opts.api_key,
+      api_url: api_url,
+      api_key: api_key,
       heartbeat_interval: opts[:heartbeat_interval] || 0,
     }
 
@@ -56,10 +60,32 @@ defmodule Druzhok.InstanceManager do
   end
 
   def update_model(name, model) do
-    case lookup(name, :session) do
+    provider = Druzhok.Model.get_provider(model)
+    {api_url, api_key} = resolve_credentials(provider, %{})
+    model_opts = %{
+      provider: provider_atom(provider),
+      api_url: api_url,
+      api_key: api_key,
+    }
+
+    # Update all active per-chat sessions
+    Registry.select(Druzhok.Registry, [
+      {{{name, :session, :_}, :"$1", :_}, [], [:"$1"]}
+    ])
+    |> Enum.each(fn pid -> PiCore.Session.set_model(pid, model, model_opts) end)
+
+    # Update persistent_term config so new sessions get the updated model
+    case :persistent_term.get({:druzhok_session_config, name}, nil) do
       nil -> :ok
-      pid -> PiCore.Session.set_model(pid, model)
+      config ->
+        :persistent_term.put({:druzhok_session_config, name}, %{config |
+          model: model,
+          provider: provider_atom(provider),
+          api_url: api_url,
+          api_key: api_key,
+        })
     end
+
     case Repo.get_by(Instance, name: name) do
       nil -> :ok
       inst -> Repo.update(Instance.changeset(inst, %{model: model}))
@@ -120,6 +146,17 @@ defmodule Druzhok.InstanceManager do
         |> Repo.update()
     end
   end
+
+  defp resolve_credentials(provider, _opts) do
+    url = Druzhok.Settings.api_url(provider)
+    key = Druzhok.Settings.api_key(provider)
+    {url, key}
+  end
+
+  defp provider_atom("anthropic"), do: :anthropic
+  defp provider_atom("openai"), do: :openai
+  defp provider_atom(a) when is_atom(a), do: a
+  defp provider_atom(_), do: :openai
 
   defp ensure_workspace(workspace) do
     unless File.exists?(workspace) do

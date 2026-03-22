@@ -1,7 +1,7 @@
 defmodule Druzhok.Instance.Sup do
   @moduledoc """
-  Per-instance Supervisor. Starts Telegram, Session, and Scheduler as
-  supervised children, all registered in Druzhok.Registry.
+  Per-instance Supervisor. Starts Telegram, SessionSup (DynamicSupervisor),
+  and Scheduler as supervised children, all registered in Druzhok.Registry.
   """
   use Supervisor
 
@@ -22,9 +22,9 @@ defmodule Druzhok.Instance.Sup do
   def init(config) do
     name = config.name
 
-    on_delta = fn chunk ->
+    on_delta = fn chunk, chat_id ->
       case Registry.lookup(Druzhok.Registry, {name, :telegram}) do
-        [{pid, _}] -> send(pid, {:pi_delta, chunk})
+        [{pid, _}] -> send(pid, {:pi_delta, chunk, chat_id})
         [] -> :ok
       end
     end
@@ -46,23 +46,27 @@ defmodule Druzhok.Instance.Sup do
       end
     end
 
+    # Store session config in persistent_term for SessionSup.start_session
+    :persistent_term.put({:druzhok_session_config, name}, %{
+      workspace: config.workspace,
+      model: config.model,
+      provider: config[:provider],
+      api_url: config.api_url,
+      api_key: config.api_key,
+      instance_name: name,
+      on_delta: on_delta,
+      on_event: on_event,
+      extra_tool_context: %{send_file_fn: send_file_fn},
+    })
+
     children = [
       {Druzhok.Agent.Telegram, %{
         token: config.token,
-        session_pid: nil,
         instance_name: name,
         registry_name: {:via, Registry, {Druzhok.Registry, {name, :telegram}}},
       }},
-      {PiCore.Session, %{
-        name: {:via, Registry, {Druzhok.Registry, {name, :session}}},
-        workspace: config.workspace,
-        model: config.model,
-        api_url: config.api_url,
-        api_key: config.api_key,
-        instance_name: name,
-        on_delta: on_delta,
-        on_event: on_event,
-        extra_tool_context: %{send_file_fn: send_file_fn},
+      {Druzhok.Instance.SessionSup, %{
+        registry_name: {:via, Registry, {Druzhok.Registry, {name, :session_sup}}},
       }},
       {Druzhok.Scheduler, %{
         instance_name: name,
@@ -71,19 +75,6 @@ defmodule Druzhok.Instance.Sup do
         registry_name: {:via, Registry, {Druzhok.Registry, {name, :scheduler}}},
       }},
     ]
-
-    # Wire Telegram → Session after children start
-    Task.start(fn ->
-      Process.sleep(100)
-      case Registry.lookup(Druzhok.Registry, {name, :session}) do
-        [{session_pid, _}] ->
-          case Registry.lookup(Druzhok.Registry, {name, :telegram}) do
-            [{telegram_pid, _}] -> GenServer.cast(telegram_pid, {:set_session, session_pid})
-            _ -> :ok
-          end
-        _ -> :ok
-      end
-    end)
 
     Supervisor.init(children, strategy: :one_for_one, max_restarts: 3, max_seconds: 60)
   end

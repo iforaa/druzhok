@@ -23,40 +23,40 @@ defmodule Druzhok.SupervisionTest do
     %{name: name}
   end
 
-  test "telegram crash doesn't affect session", %{name: name} do
+  test "telegram crash doesn't affect session_sup", %{name: name} do
     [{tg_pid, _}] = Registry.lookup(Druzhok.Registry, {name, :telegram})
-    [{sess_pid, _}] = Registry.lookup(Druzhok.Registry, {name, :session})
+    [{sess_sup_pid, _}] = Registry.lookup(Druzhok.Registry, {name, :session_sup})
 
     Process.exit(tg_pid, :kill)
     Process.sleep(200)
 
-    assert Process.alive?(sess_pid)
+    assert Process.alive?(sess_sup_pid)
     [{new_tg_pid, _}] = Registry.lookup(Druzhok.Registry, {name, :telegram})
     assert new_tg_pid != tg_pid
   end
 
-  test "session crash doesn't affect telegram", %{name: name} do
+  test "session_sup crash doesn't affect telegram", %{name: name} do
     [{tg_pid, _}] = Registry.lookup(Druzhok.Registry, {name, :telegram})
-    [{sess_pid, _}] = Registry.lookup(Druzhok.Registry, {name, :session})
+    [{sess_sup_pid, _}] = Registry.lookup(Druzhok.Registry, {name, :session_sup})
 
-    Process.exit(sess_pid, :kill)
+    Process.exit(sess_sup_pid, :kill)
     Process.sleep(200)
 
     assert Process.alive?(tg_pid)
-    [{new_sess_pid, _}] = Registry.lookup(Druzhok.Registry, {name, :session})
-    assert new_sess_pid != sess_pid
+    [{new_sess_sup_pid, _}] = Registry.lookup(Druzhok.Registry, {name, :session_sup})
+    assert new_sess_sup_pid != sess_sup_pid
   end
 
-  test "scheduler crash doesn't affect telegram or session", %{name: name} do
+  test "scheduler crash doesn't affect telegram or session_sup", %{name: name} do
     [{tg_pid, _}] = Registry.lookup(Druzhok.Registry, {name, :telegram})
-    [{sess_pid, _}] = Registry.lookup(Druzhok.Registry, {name, :session})
+    [{sess_sup_pid, _}] = Registry.lookup(Druzhok.Registry, {name, :session_sup})
     [{sched_pid, _}] = Registry.lookup(Druzhok.Registry, {name, :scheduler})
 
     Process.exit(sched_pid, :kill)
     Process.sleep(200)
 
     assert Process.alive?(tg_pid)
-    assert Process.alive?(sess_pid)
+    assert Process.alive?(sess_sup_pid)
     [{new_sched_pid, _}] = Registry.lookup(Druzhok.Registry, {name, :scheduler})
     assert new_sched_pid != sched_pid
   end
@@ -75,7 +75,7 @@ defmodule Druzhok.SupervisionTest do
     Process.sleep(200)
 
     assert Registry.lookup(Druzhok.Registry, {name, :telegram}) == []
-    assert Registry.lookup(Druzhok.Registry, {name, :session}) == []
+    assert Registry.lookup(Druzhok.Registry, {name, :session_sup}) == []
     assert Registry.lookup(Druzhok.Registry, {name, :scheduler}) == []
   end
 
@@ -104,7 +104,7 @@ defmodule Druzhok.SupervisionTest do
     Process.sleep(1000)
 
     assert Registry.lookup(Druzhok.Registry, {name, :telegram}) == []
-    assert Registry.lookup(Druzhok.Registry, {name, :session}) == []
+    assert Registry.lookup(Druzhok.Registry, {name, :session_sup}) == []
     assert Registry.lookup(Druzhok.Registry, {name, :sup}) == []
 
     File.rm_rf!(workspace)

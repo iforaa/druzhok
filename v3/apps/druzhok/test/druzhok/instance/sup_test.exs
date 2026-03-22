@@ -30,7 +30,7 @@ defmodule Druzhok.Instance.SupTest do
     Process.sleep(200)
 
     assert [{_, _}] = Registry.lookup(Druzhok.Registry, {name, :telegram})
-    assert [{_, _}] = Registry.lookup(Druzhok.Registry, {name, :session})
+    assert [{_, _}] = Registry.lookup(Druzhok.Registry, {name, :session_sup})
     assert [{_, _}] = Registry.lookup(Druzhok.Registry, {name, :scheduler})
     assert [{^sup_pid, _}] = Registry.lookup(Druzhok.Registry, {name, :sup})
 
