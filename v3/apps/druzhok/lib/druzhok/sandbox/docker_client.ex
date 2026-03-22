@@ -44,8 +44,8 @@ defmodule Druzhok.Sandbox.DockerClient do
     container_name = "druzhok-#{db_id}-#{instance_name}"
 
     case start_container(container_name, secret) do
-      {:ok, port} ->
-        case connect_with_retry("127.0.0.1", port, secret, 10, 500) do
+      {:ok, {host, port}} ->
+        case connect_with_retry(host, port, secret, 10, 500) do
           {:ok, socket} ->
             :inet.setopts(socket, active: true)
             Logger.info("Sandbox started for #{instance_name} on port #{port}")
@@ -246,22 +246,16 @@ defmodule Druzhok.Sandbox.DockerClient do
                  "no-new-privileges",
                  "-e",
                  "SANDBOX_SECRET=#{secret}",
-                 "-p",
-                 "0:9999",
                  "druzhok-sandbox:latest"
                ],
                stderr_to_stdout: true
              ) do
           {_, 0} ->
-            # Get assigned port
-            case System.cmd("docker", ["port", container_name, "9999"]) do
-              {port_str, 0} ->
-                port =
-                  port_str
-                  |> String.trim()
-                  |> String.split(":")
-                  |> List.last()
-                  |> String.to_integer()
+            # Get container IP directly (works inside Docker-in-Docker)
+            case System.cmd("docker", ["inspect", "-f", "{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}", container_name]) do
+              {ip_str, 0} ->
+                ip = String.trim(ip_str)
+                port = 9999
 
                 {:ok, port}
 

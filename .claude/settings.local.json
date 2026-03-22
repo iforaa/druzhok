@@ -124,7 +124,8 @@
       "Bash(__NEW_LINE_31da3070c7dd6d59__ docker:*)",
       "Bash(__NEW_LINE_31da3070c7dd6d59__ sleep:*)",
       "Bash(gzip)",
-      "Bash(rsync -avz --progress /tmp/druzhok-image.tar.gz igor@158.160.25.25:/tmp/)"
+      "Bash(rsync -avz --progress /tmp/druzhok-image.tar.gz igor@158.160.25.25:/tmp/)",
+      "Bash(rsync -az --exclude '_build' --exclude 'deps' --exclude 'data' --exclude '.git' --exclude 'node_modules' --exclude '.elixir_ls' --exclude 'v2' /Users/igorkuznetsov/Documents/druzhok/ igor@158.160.25.25:~/druzhok-docker/)"
     ]
   }
 }
