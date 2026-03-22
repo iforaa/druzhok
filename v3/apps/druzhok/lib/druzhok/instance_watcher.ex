@@ -24,6 +24,7 @@ defmodule Druzhok.InstanceWatcher do
 
       {name, state} ->
         Logger.error("Instance #{name} supervisor crashed: #{inspect(reason)}")
+        :persistent_term.erase({:druzhok_session_config, name})
 
         try do
           Druzhok.Events.broadcast(name, %{type: :instance_crashed, reason: inspect(reason)})

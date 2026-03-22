@@ -57,9 +57,11 @@ defmodule Druzhok.Pairing do
         case Druzhok.Repo.get_by(Druzhok.Instance, name: instance_name) do
           nil -> {:error, :instance_not_found}
           instance ->
-            Druzhok.Repo.update(Druzhok.Instance.changeset(instance, %{owner_telegram_id: pairing.telegram_user_id}))
-            Druzhok.Repo.delete(pairing)
-            {:ok, pairing}
+            Druzhok.Repo.transaction(fn ->
+              Druzhok.Repo.update!(Druzhok.Instance.changeset(instance, %{owner_telegram_id: pairing.telegram_user_id}))
+              Druzhok.Repo.delete!(pairing)
+              pairing
+            end)
         end
     end
   end

@@ -28,8 +28,9 @@ defmodule Druzhok.Agent.Telegram do
     :bot_id,
     :bot_username,
     :bot_name,
+    :bot_name_regex,
     :workspace,
-    # Streaming state
+    :owner_telegram_id,
     :draft_message_id,
     :draft_text,
     :last_edit_at,
@@ -90,11 +91,17 @@ defmodule Druzhok.Agent.Telegram do
   end
 
   def handle_cast({:set_bot_name, name}, state) do
-    {:noreply, %{state | bot_name: name}}
+    regex = Regex.compile!("\\b#{Regex.escape(name)}\\b", "iu")
+    {:noreply, %{state | bot_name: name, bot_name_regex: regex}}
   end
 
   def handle_cast({:set_workspace, workspace}, state) do
-    {:noreply, %{state | workspace: workspace}}
+    # Also load owner_telegram_id from DB
+    owner_id = case Druzhok.Repo.get_by(Druzhok.Instance, name: state.instance_name) do
+      %{owner_telegram_id: id} -> id
+      _ -> nil
+    end
+    {:noreply, %{state | workspace: workspace, owner_telegram_id: owner_id}}
   end
 
   # --- Polling (async — never blocks the GenServer) ---
@@ -277,20 +284,25 @@ defmodule Druzhok.Agent.Telegram do
   # --- DM handling with pairing ---
 
   defp handle_dm(chat_id, text, sender_id, sender_name, file, state) do
-    instance = Druzhok.Repo.get_by(Druzhok.Instance, name: state.instance_name)
     state = %{state | chat_id: chat_id, draft_message_id: nil, draft_text: nil, last_edit_at: nil}
+    # Refresh owner from DB if not cached (happens once after pairing approval)
+    state = if is_nil(state.owner_telegram_id) do
+      case Druzhok.Repo.get_by(Druzhok.Instance, name: state.instance_name) do
+        %{owner_telegram_id: id} when not is_nil(id) -> %{state | owner_telegram_id: id}
+        _ -> state
+      end
+    else
+      state
+    end
 
     cond do
-      # Owner exists and this is the owner
-      instance && instance.owner_telegram_id == sender_id ->
+      state.owner_telegram_id == sender_id ->
         process_owner_message(chat_id, text, sender_name, file, false, state)
 
-      # Owner exists but this is someone else
-      instance && instance.owner_telegram_id ->
+      state.owner_telegram_id != nil ->
         API.send_message(state.token, chat_id, "This bot is private.")
         state
 
-      # No owner — handle pairing
       true ->
         handle_pairing(chat_id, sender_id, sender_name, state)
     end
@@ -327,18 +339,17 @@ defmodule Druzhok.Agent.Telegram do
       chat && chat.status == "approved" ->
         if triggered?(text, is_reply_to_bot, state) do
           state = %{state | chat_id: chat_id, draft_message_id: nil, draft_text: nil, last_edit_at: nil}
-          instance = Druzhok.Repo.get_by(Druzhok.Instance, name: state.instance_name)
 
           case parse_command(text) do
             {:command, "reset"} ->
-              if instance && instance.owner_telegram_id == sender_id do
+              if state.owner_telegram_id == sender_id do
                 dispatch_session(chat_id, state, &PiCore.Session.reset/1)
                 API.send_message(state.token, chat_id, "Session reset!")
               end
               state
 
             {:command, "abort"} ->
-              if instance && instance.owner_telegram_id == sender_id do
+              if state.owner_telegram_id == sender_id do
                 dispatch_session(chat_id, state, &PiCore.Session.abort/1)
                 API.send_message(state.token, chat_id, "Aborted.")
               end
@@ -409,10 +420,8 @@ defmodule Druzhok.Agent.Telegram do
     String.contains?(String.downcase(text), "@" <> String.downcase(username))
   end
 
-  defp name_mentioned?(_text, %{bot_name: nil}), do: false
-  defp name_mentioned?(text, %{bot_name: name}) do
-    Regex.match?(~r/\b#{Regex.escape(name)}\b/iu, text)
-  end
+  defp name_mentioned?(_text, %{bot_name_regex: nil}), do: false
+  defp name_mentioned?(text, %{bot_name_regex: regex}), do: Regex.match?(regex, text)
 
   defp is_reply_to_bot?(update, state) do
     case get_in(update, ["message", "reply_to_message", "from", "id"]) do

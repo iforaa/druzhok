@@ -13,4 +13,7 @@ defmodule PiCore.Tools.PathGuard do
       {:error, "Access denied: path outside workspace"}
     end
   end
+
+  def sandbox_path("/" <> _ = path), do: path
+  def sandbox_path(path), do: "/workspace/#{path}"
 end

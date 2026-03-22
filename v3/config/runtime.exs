@@ -86,4 +86,6 @@ end
 config :pi_core,
   api_key: System.get_env("NEBIUS_API_KEY"),
   api_url:
-    System.get_env("NEBIUS_BASE_URL") || "https://api.tokenfactory.us-central1.nebius.com/v1"
+    System.get_env("NEBIUS_BASE_URL") || "https://api.tokenfactory.us-central1.nebius.com/v1",
+  anthropic_api_key: System.get_env("ANTHROPIC_API_KEY"),
+  anthropic_api_url: System.get_env("ANTHROPIC_API_URL") || "https://api.anthropic.com"

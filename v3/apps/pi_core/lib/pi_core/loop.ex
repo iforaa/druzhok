@@ -12,6 +12,7 @@ defmodule PiCore.Loop do
     tool_context = opts[:tool_context] || %{}
     openai_tools = Schema.to_openai_list(tools)
 
+    emit(opts, %{type: :loop_start, tool_count: length(tools), message_count: length(opts.messages), model: opts[:model]})
     loop(opts, openai_tools, tools, tool_context, [], 0)
   end
 
@@ -44,15 +45,29 @@ defmodule PiCore.Loop do
             else: base
       end)
 
+    emit(opts, %{type: :llm_start, iteration: iterations, message_count: length(llm_messages)})
+    t0 = System.monotonic_time(:millisecond)
+
     llm_opts = %{
       system_prompt: opts.system_prompt,
       messages: llm_messages,
       tools: openai_tools,
-      on_delta: opts[:on_delta]
+      on_delta: opts[:on_delta],
+      on_event: opts[:on_event]
     }
 
     case opts.llm_fn.(llm_opts) do
       {:ok, result} ->
+        result = %{result | content: PiCore.Sanitize.strip_artifacts(result.content || "")}
+
+        elapsed = System.monotonic_time(:millisecond) - t0
+        has_tools = result.tool_calls != nil and result.tool_calls != []
+        content_len = String.length(result.content || "")
+
+        emit(opts, %{type: :llm_done, iteration: iterations, elapsed_ms: elapsed,
+                     has_tool_calls: has_tools, content_length: content_len,
+                     reasoning_length: String.length(result.reasoning || "")})
+
         assistant_msg = %Message{
           role: "assistant",
           content: result.content,
@@ -62,34 +77,52 @@ defmodule PiCore.Loop do
 
         new_messages = new_messages ++ [assistant_msg]
 
-        if result.tool_calls == nil || result.tool_calls == [] do
+        if !has_tools do
           {:ok, new_messages}
         else
-          tool_results = execute_tool_calls(result.tool_calls, tools, tool_context)
+          for call <- result.tool_calls do
+            name = get_in(call, ["function", "name"])
+            args = get_in(call, ["function", "arguments"]) || "{}"
+            emit(opts, %{type: :tool_call, name: name, arguments: args})
+          end
+
+          tool_results = execute_tool_calls(result.tool_calls, tools, tool_context, opts)
+
+          for tr <- tool_results do
+            emit(opts, %{type: :tool_result, name: tr.tool_name, is_error: tr.is_error,
+                         content: String.slice(tr.content || "", 0, 500)})
+          end
+
           new_messages = new_messages ++ tool_results
           loop(opts, openai_tools, tools, tool_context, new_messages, iterations + 1)
         end
 
       {:error, reason} ->
+        elapsed = System.monotonic_time(:millisecond) - t0
+        emit(opts, %{type: :llm_error, iteration: iterations, elapsed_ms: elapsed, error: inspect(reason)})
         {:error, reason}
     end
   end
 
-  defp execute_tool_calls(tool_calls, tools, context) do
+  defp execute_tool_calls(tool_calls, tools, context, opts) do
     Enum.map(tool_calls, fn call ->
       tool_name = get_in(call, ["function", "name"])
       raw_args = get_in(call, ["function", "arguments"]) || "{}"
       tool_call_id = call["id"]
 
-      tool = Enum.find(tools, &(&1.name == tool_name))
+      # Case-insensitive lookup — some models emit wrong casing
+      tool_name_down = String.downcase(tool_name)
+      tool = Enum.find(tools, &(&1.name == tool_name_down || &1.name == tool_name))
+
+      t0 = System.monotonic_time(:millisecond)
 
       {content, is_error} =
         if tool do
           case Jason.decode(raw_args) do
             {:ok, args} ->
               case tool.execute.(args, context) do
-                {:ok, output} -> {to_string(output), false}
-                {:error, reason} -> {to_string(reason), true}
+                {:ok, output} -> {truncate_output(to_string(output)), false}
+                {:error, reason} -> {truncate_output(to_string(reason)), true}
               end
 
             {:error, _} ->
@@ -98,6 +131,9 @@ defmodule PiCore.Loop do
         else
           {"Tool #{tool_name} not found", true}
         end
+
+      elapsed = System.monotonic_time(:millisecond) - t0
+      emit(opts, %{type: :tool_exec, name: tool_name, elapsed_ms: elapsed, is_error: is_error})
 
       %Message{
         role: "toolResult",
@@ -108,5 +144,17 @@ defmodule PiCore.Loop do
         timestamp: System.os_time(:millisecond)
       }
     end)
+  end
+
+  defp emit(opts, event) do
+    if on_event = opts[:on_event], do: on_event.(event)
+  end
+
+  @max_tool_output 8_000
+
+  defp truncate_output(text) when byte_size(text) <= @max_tool_output, do: text
+  defp truncate_output(text) do
+    truncated = String.slice(text, 0, @max_tool_output)
+    truncated <> "\n\n[Output truncated — #{byte_size(text)} bytes total, showing first #{@max_tool_output}]"
   end
 end

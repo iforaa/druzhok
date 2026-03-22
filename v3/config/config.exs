@@ -55,5 +55,11 @@ config :phoenix, :json_library, Jason
 # of this file so it overrides the configuration defined above.
 import_config "#{config_env()}.exs"
 
+config :druzhok, Druzhok.Repo,
+  database: System.get_env("DATABASE_PATH") || Path.expand("../data/druzhok.db", __DIR__)
+
+config :druzhok,
+  ecto_repos: [Druzhok.Repo]
+
 config :pi_core,
   default_api_url: "https://api.tokenfactory.us-central1.nebius.com/v1"

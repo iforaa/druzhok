@@ -1,0 +1,11 @@
+v2/
+v3/_build/
+v3/deps/
+v3/data/
+v3/.elixir_ls/
+.git/
+.claude/
+data/
+node_modules/
+*.md
+docs/

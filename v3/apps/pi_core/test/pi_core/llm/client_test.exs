@@ -1,9 +1,9 @@
 defmodule PiCore.LLM.ClientTest do
   use ExUnit.Case
-  alias PiCore.LLM.Client
+  alias PiCore.LLM.OpenAI
 
   test "build_request creates correct body" do
-    request = Client.build_request(%{
+    request = OpenAI.build_request(%{
       model: "zai-org/GLM-5", api_url: "https://example.com/v1", api_key: "test-key",
       system_prompt: "You are helpful",
       messages: [%{role: "user", content: "hello"}],
@@ -20,7 +20,7 @@ defmodule PiCore.LLM.ClientTest do
 
   test "build_request includes tools when present" do
     tools = [%{type: "function", function: %{name: "bash", description: "Run", parameters: %{type: "object", properties: %{command: %{type: "string"}}, required: ["command"]}}}]
-    request = Client.build_request(%{
+    request = OpenAI.build_request(%{
       model: "test", api_url: "https://example.com/v1", api_key: "k",
       system_prompt: "test", messages: [], tools: tools, max_tokens: 100, stream: false
     })
@@ -29,7 +29,7 @@ defmodule PiCore.LLM.ClientTest do
   end
 
   test "build_request omits tools when empty" do
-    request = Client.build_request(%{
+    request = OpenAI.build_request(%{
       model: "test", api_url: "https://example.com/v1", api_key: "k",
       system_prompt: "test", messages: [], tools: [], max_tokens: 100, stream: false
     })

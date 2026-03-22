@@ -28,6 +28,9 @@ defmodule Druzhok.MixProject do
     [
       {:pi_core, in_umbrella: true},
       {:jason, "~> 1.4"},
+      {:phoenix_pubsub, "~> 2.1"},
+      {:ecto_sql, "~> 3.12"},
+      {:ecto_sqlite3, "~> 0.17"},
     ]
   end
 end

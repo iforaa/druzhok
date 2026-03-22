@@ -36,7 +36,12 @@ defmodule Druzhok.Sandbox.DockerClient do
   def init(opts) do
     instance_name = opts.instance_name
     secret = :crypto.strong_rand_bytes(16) |> Base.encode64()
-    container_name = "druzhok-#{instance_name}"
+    # Use DB id + name for unique container naming
+    db_id = case Druzhok.Repo.get_by(Druzhok.Instance, name: instance_name) do
+      %{id: id} -> id
+      _ -> :rand.uniform(99999)
+    end
+    container_name = "druzhok-#{db_id}-#{instance_name}"
 
     case start_container(container_name, secret) do
       {:ok, port} ->
@@ -45,13 +50,17 @@ defmodule Druzhok.Sandbox.DockerClient do
             :inet.setopts(socket, active: true)
             Logger.info("Sandbox started for #{instance_name} on port #{port}")
 
-            {:ok,
-             %__MODULE__{
-               socket: socket,
-               container: container_name,
-               instance_name: instance_name,
-               secret: secret
-             }}
+            state = %__MODULE__{
+              socket: socket,
+              container: container_name,
+              instance_name: instance_name,
+              secret: secret
+            }
+
+            # Initialize workspace with template files if empty
+            init_workspace(state)
+
+            {:ok, state}
 
           {:error, reason} ->
             cleanup_container(container_name)
@@ -76,7 +85,7 @@ defmodule Druzhok.Sandbox.DockerClient do
   def handle_call({:exec, command}, from, state) do
     {id, state} = next_id(state)
     send_request(state.socket, %{id: id, type: "exec", command: command})
-    pending = Map.put(state.pending, id, %{from: from, type: :exec, stdout: "", stderr: ""})
+    pending = Map.put(state.pending, id, %{from: from, type: :exec, stdout: [], stderr: []})
     {:noreply, %{state | pending: pending}}
   end
 
@@ -114,12 +123,14 @@ defmodule Druzhok.Sandbox.DockerClient do
 
   def handle_info({:tcp_closed, _socket}, state) do
     Logger.error("Sandbox TCP connection closed for #{state.instance_name}")
-    {:stop, :tcp_closed, state}
+    reply_all_pending(state, {:error, :sandbox_disconnected})
+    {:stop, :tcp_closed, %{state | pending: %{}}}
   end
 
   def handle_info({:tcp_error, _socket, reason}, state) do
     Logger.error("Sandbox TCP error for #{state.instance_name}: #{inspect(reason)}")
-    {:stop, {:tcp_error, reason}, state}
+    reply_all_pending(state, {:error, :sandbox_disconnected})
+    {:stop, {:tcp_error, reason}, %{state | pending: %{}}}
   end
 
   def handle_info(_msg, state), do: {:noreply, state}
@@ -145,7 +156,7 @@ defmodule Druzhok.Sandbox.DockerClient do
          %{type: :exec} = pending,
          state
        ) do
-    pending = %{pending | stdout: pending.stdout <> data}
+    pending = %{pending | stdout: [pending.stdout | data]}
     %{state | pending: Map.put(state.pending, id, pending)}
   end
 
@@ -155,12 +166,12 @@ defmodule Druzhok.Sandbox.DockerClient do
          %{type: :exec} = pending,
          state
        ) do
-    pending = %{pending | stderr: pending.stderr <> data}
+    pending = %{pending | stderr: [pending.stderr | data]}
     %{state | pending: Map.put(state.pending, id, pending)}
   end
 
   defp handle_response(id, %{"type" => "exit", "code" => code}, %{type: :exec} = pending, state) do
-    GenServer.reply(pending.from, {:ok, %{stdout: pending.stdout, stderr: pending.stderr, exit_code: code}})
+    GenServer.reply(pending.from, {:ok, %{stdout: IO.iodata_to_binary(pending.stdout), stderr: IO.iodata_to_binary(pending.stderr), exit_code: code}})
     %{state | pending: Map.delete(state.pending, id)}
   end
 
@@ -182,7 +193,16 @@ defmodule Druzhok.Sandbox.DockerClient do
   end
 
   defp send_request(socket, request) do
-    :gen_tcp.send(socket, Jason.encode!(request) <> "\n")
+    case :gen_tcp.send(socket, Jason.encode!(request) <> "\n") do
+      :ok -> :ok
+      {:error, reason} -> {:error, reason}
+    end
+  end
+
+  defp reply_all_pending(state, reply) do
+    for {_id, %{from: from}} <- state.pending do
+      GenServer.reply(from, reply)
+    end
   end
 
   defp split_lines(buffer) do
@@ -264,11 +284,11 @@ defmodule Druzhok.Sandbox.DockerClient do
 
         case :gen_tcp.recv(socket, 0, 5_000) do
           {:ok, data} ->
-            if String.contains?(data, "auth_ok") do
-              {:ok, socket}
-            else
-              :gen_tcp.close(socket)
-              {:error, "Auth failed"}
+            case Jason.decode(String.trim(data)) do
+              {:ok, %{"type" => "auth_ok"}} -> {:ok, socket}
+              _ ->
+                :gen_tcp.close(socket)
+                {:error, "Auth failed"}
             end
 
           _ ->
@@ -279,6 +299,53 @@ defmodule Druzhok.Sandbox.DockerClient do
       {:error, _} ->
         Process.sleep(delay)
         connect_with_retry(host, port, secret, retries - 1, delay)
+    end
+  end
+
+  defp init_workspace(state) do
+    # Check if workspace has files already (container volume persists across restarts)
+    check = Jason.encode!(%{id: "init-check", type: "ls", path: "/workspace"}) <> "\n"
+    :inet.setopts(state.socket, active: false)
+    :gen_tcp.send(state.socket, check)
+    case :gen_tcp.recv(state.socket, 0, 5_000) do
+      {:ok, data} ->
+        case Jason.decode(String.trim(data)) do
+          {:ok, %{"type" => "result", "data" => entries_json}} ->
+            entries = case Jason.decode(entries_json) do
+              {:ok, list} when is_list(list) -> list
+              _ -> []
+            end
+            if entries == [] do
+              copy_workspace_template(state)
+            end
+          _ ->
+            copy_workspace_template(state)
+        end
+      _ ->
+        copy_workspace_template(state)
+    end
+    :inet.setopts(state.socket, active: true)
+  end
+
+  defp copy_workspace_template(state) do
+    template = Path.join([File.cwd!(), "..", "workspace-template"]) |> Path.expand()
+    if File.exists?(template) do
+      template
+      |> File.ls!()
+      |> Enum.each(fn name ->
+        path = Path.join(template, name)
+        if File.regular?(path) do
+          content = File.read!(path)
+          msg = Jason.encode!(%{id: "init-#{name}", type: "write", path: "/workspace/#{name}", content: content}) <> "\n"
+          :gen_tcp.send(state.socket, msg)
+          :gen_tcp.recv(state.socket, 0, 5_000)
+        end
+      end)
+      # Create memory dir
+      msg = Jason.encode!(%{id: "init-mem", type: "mkdir", path: "/workspace/memory"}) <> "\n"
+      :gen_tcp.send(state.socket, msg)
+      :gen_tcp.recv(state.socket, 0, 5_000)
+      Logger.info("Workspace template copied to sandbox for #{state.instance_name}")
     end
   end
 

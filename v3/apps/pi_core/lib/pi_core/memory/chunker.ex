@@ -34,7 +34,7 @@ defmodule PiCore.Memory.Chunker do
     do_build(lines, file, target, overlap, chunks, current_start)
   end
 
-  defp do_build(lines, file, target, overlap, chunks, current_start) when current_start >= length(lines) do
+  defp do_build(lines, _file, _target, _overlap, chunks, current_start) when current_start >= length(lines) do
     Enum.reverse(chunks)
   end
 

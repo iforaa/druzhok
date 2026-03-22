@@ -51,6 +51,5 @@ defmodule PiCore.Tools.Edit do
     end
   end
 
-  defp sandbox_path("/" <> _ = path), do: path
-  defp sandbox_path(path), do: "/workspace/#{path}"
+  defp sandbox_path(path), do: PiCore.Tools.PathGuard.sandbox_path(path)
 end

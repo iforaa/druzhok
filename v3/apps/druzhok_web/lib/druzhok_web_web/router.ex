@@ -10,18 +10,25 @@ defmodule DruzhokWebWeb.Router do
     plug :put_secure_browser_headers
   end
 
-  pipeline :api do
-    plug :accepts, ["json"]
+  pipeline :auth do
+    plug DruzhokWebWeb.Auth
   end
 
+  # Public routes
   scope "/", DruzhokWebWeb do
     pipe_through :browser
 
-    live "/", DashboardLive
+    live "/login", LoginLive
+    post "/auth/session", AuthController, :create_session
+    get "/auth/logout", AuthController, :logout
   end
 
-  # Other scopes may use custom stacks.
-  # scope "/api", DruzhokWebWeb do
-  #   pipe_through :api
-  # end
+  # Protected routes
+  scope "/", DruzhokWebWeb do
+    pipe_through [:browser, :auth]
+
+    live "/", DashboardLive
+    live "/instances/:name", DashboardLive
+    live "/settings", SettingsLive
+  end
 end
