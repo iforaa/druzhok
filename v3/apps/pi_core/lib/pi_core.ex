@@ -1,18 +1,10 @@
 defmodule PiCore do
   @moduledoc """
-  Documentation for `PiCore`.
+  PiCore - Agent loop library.
   """
 
-  @doc """
-  Hello world.
-
-  ## Examples
-
-      iex> PiCore.hello()
-      :world
-
-  """
-  def hello do
-    :world
-  end
+  defdelegate start_session(opts), to: PiCore.Session, as: :start_link
+  defdelegate prompt(pid, text), to: PiCore.Session
+  defdelegate abort(pid), to: PiCore.Session
+  defdelegate reset(pid), to: PiCore.Session
 end
