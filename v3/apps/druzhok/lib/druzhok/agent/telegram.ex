@@ -106,14 +106,18 @@ defmodule Druzhok.Agent.Telegram do
   end
 
   defp finalize_response(text, state) do
-    if state.draft_message_id do
-      # Edit draft with final text
-      if text != state.draft_text do
+    cond do
+      # Draft exists — do final edit
+      state.draft_message_id && text != (state.draft_text || "") ->
         API.edit_message_text(state.token, state.chat_id, state.draft_message_id, text)
-      end
-    else
-      # No draft was created (very short response) — send fresh
-      API.send_message(state.token, state.chat_id, text)
+
+      # No draft but we have text — send as new message
+      # (response was too short for streaming, or draft was reset)
+      is_nil(state.draft_message_id) && state.chat_id ->
+        API.send_message(state.token, state.chat_id, text)
+
+      # Draft exists with same text — nothing to do
+      true -> :ok
     end
 
     # Reset streaming state
@@ -128,7 +132,7 @@ defmodule Druzhok.Agent.Telegram do
     case extract_message(update) do
       nil -> state
       {chat_id, text, sender_name} ->
-        state = %{state | chat_id: chat_id, draft_message_id: nil, draft_text: nil}
+        state = %{state | chat_id: chat_id, draft_message_id: nil, draft_text: nil, last_edit_at: nil}
 
         API.send_chat_action(state.token, chat_id)
 
