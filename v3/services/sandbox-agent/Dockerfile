@@ -1,0 +1,14 @@
+FROM golang:1.22-alpine AS builder
+WORKDIR /build
+COPY go.mod main.go ./
+RUN CGO_ENABLED=0 go build -ldflags="-s -w" -o sandbox-agent .
+
+FROM alpine:3.20
+RUN apk add --no-cache \
+    bash python3 py3-pip nodejs npm git curl wget \
+    build-base openssh-client jq
+COPY --from=builder /build/sandbox-agent /usr/local/bin/sandbox-agent
+RUN mkdir -p /workspace
+WORKDIR /workspace
+EXPOSE 9999
+ENTRYPOINT ["sandbox-agent"]
