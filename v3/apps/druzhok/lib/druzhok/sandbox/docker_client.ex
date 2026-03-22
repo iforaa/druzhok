@@ -220,7 +220,6 @@ defmodule Druzhok.Sandbox.DockerClient do
         {:error, "Docker not installed"}
 
       _ ->
-        # Remove old container if exists
         System.cmd("docker", ["rm", "-f", container_name], stderr_to_stdout: true)
 
         case System.cmd(
@@ -251,16 +250,12 @@ defmodule Druzhok.Sandbox.DockerClient do
                stderr_to_stdout: true
              ) do
           {_, 0} ->
-            # Get container IP directly (works inside Docker-in-Docker)
             case System.cmd("docker", ["inspect", "-f", "{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}", container_name]) do
               {ip_str, 0} ->
-                ip = String.trim(ip_str)
-                port = 9999
-
-                {:ok, port}
+                {:ok, {String.trim(ip_str), 9999}}
 
               _ ->
-                {:error, "Failed to get container port"}
+                {:error, "Failed to get container IP"}
             end
 
           {output, _} ->
