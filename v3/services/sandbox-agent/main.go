@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"flag"
 	"fmt"
 	"io"
 	"log"
@@ -14,6 +15,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/mdlayher/vsock"
 )
 
 const (
@@ -57,29 +60,37 @@ type FileStat struct {
 }
 
 func main() {
+	useVsock := flag.Bool("vsock", false, "Listen on vsock instead of TCP")
+	flag.Parse()
+
 	secret := os.Getenv("SANDBOX_SECRET")
-	if secret == "" {
-		log.Fatal("SANDBOX_SECRET env var is required")
-	}
 
 	// Ensure workspace directory exists.
 	if err := os.MkdirAll(workspaceDir, 0o755); err != nil {
 		log.Printf("warning: could not create %s: %v", workspaceDir, err)
 	}
 
-	ln, err := net.Listen("tcp", listenAddr)
-	if err != nil {
-		log.Fatalf("failed to listen on %s: %v", listenAddr, err)
+	var listener net.Listener
+	var err error
+
+	if *useVsock {
+		listener, err = vsock.Listen(9999, nil)
+		log.Println("Listening on vsock port 9999")
+	} else {
+		listener, err = net.Listen("tcp", listenAddr)
+		log.Println("Listening on TCP :9999")
 	}
-	log.Printf("sandbox-agent listening on %s", listenAddr)
+	if err != nil {
+		log.Fatal(err)
+	}
 
 	// Accept only one connection.
-	conn, err := ln.Accept()
+	conn, err := listener.Accept()
 	if err != nil {
 		log.Fatalf("accept error: %v", err)
 	}
 	log.Printf("accepted connection from %s", conn.RemoteAddr())
-	ln.Close() // Stop accepting new connections.
+	listener.Close() // Stop accepting new connections.
 
 	handleConnection(conn, secret)
 }
@@ -103,7 +114,11 @@ func handleConnection(conn net.Conn, secret string) {
 	scanner := bufio.NewScanner(conn)
 	scanner.Buffer(make([]byte, 0, maxScannerBuf), maxScannerBuf)
 
-	authenticated := false
+	// If no secret set, skip auth requirement (vsock mode, already isolated).
+	authenticated := secret == ""
+	if authenticated {
+		log.Println("no SANDBOX_SECRET set, skipping auth")
+	}
 
 	for scanner.Scan() {
 		line := scanner.Text()
