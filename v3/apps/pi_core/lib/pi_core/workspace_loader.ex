@@ -7,8 +7,9 @@ defmodule PiCore.WorkspaceLoader.Default do
 
   @files ["AGENTS.md", "SOUL.md", "IDENTITY.md", "USER.md", "BOOTSTRAP.md"]
 
-  def load(workspace, _opts) do
-    @files
+  def load(workspace, opts) do
+    files = if opts[:group], do: @files -- ["USER.md"], else: @files
+    files
     |> Enum.map(fn file ->
       path = Path.join(workspace, file)
       case File.read(path) do

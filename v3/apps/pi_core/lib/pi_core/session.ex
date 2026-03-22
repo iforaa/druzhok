@@ -7,9 +7,11 @@ defmodule PiCore.Session do
   alias PiCore.Compaction
 
   defstruct [
-    :workspace, :model, :api_url, :api_key,
+    :workspace, :model, :provider, :api_url, :api_key,
     :system_prompt, :tools, :on_delta, :on_event, :caller, :llm_fn,
     :workspace_loader, :instance_name, :extra_tool_context,
+    :chat_id, :idle_timer,
+    group: false,
     messages: [],
     active_task: nil,
     parallel_tasks: %{}
@@ -34,21 +36,23 @@ defmodule PiCore.Session do
     GenServer.cast(pid, :reset)
   end
 
-  def set_model(pid, model) do
-    GenServer.cast(pid, {:set_model, model})
+  def set_model(pid, model, opts \\ %{}) do
+    GenServer.cast(pid, {:set_model, model, opts})
   end
 
   # --- Callbacks ---
 
   def init(opts) do
     loader = opts[:workspace_loader] || PiCore.WorkspaceLoader.Default
-    base_prompt = loader.load(opts.workspace, %{})
+    group = opts[:group] || false
+    base_prompt = loader.load(opts.workspace, %{group: group})
     system_prompt = append_model_info(base_prompt, opts.model)
     tools = opts[:tools] || default_tools()
 
     state = %__MODULE__{
       workspace: opts.workspace,
       model: opts.model,
+      provider: opts[:provider],
       api_url: opts.api_url,
       api_key: opts.api_key,
       system_prompt: system_prompt,
@@ -59,13 +63,17 @@ defmodule PiCore.Session do
       llm_fn: opts[:llm_fn],
       workspace_loader: loader,
       instance_name: opts[:instance_name],
-      extra_tool_context: opts[:extra_tool_context] || %{}
+      extra_tool_context: opts[:extra_tool_context] || %{},
+      chat_id: opts[:chat_id],
+      group: group
     }
 
+    state = schedule_idle_timeout(state)
     {:ok, state}
   end
 
   def handle_cast({:prompt, text}, state) do
+    state = schedule_idle_timeout(state)
     user_msg = %Loop.Message{role: "user", content: text, timestamp: System.os_time(:millisecond)}
 
     if state.active_task do
@@ -82,16 +90,23 @@ defmodule PiCore.Session do
     end
   end
 
+  def handle_call(:get_workspace, _from, state) do
+    {:reply, state.workspace, state}
+  end
+
   def handle_cast({:set_caller, pid}, state) do
     {:noreply, %{state | caller: pid}}
   end
 
-  def handle_cast({:set_model, model}, state) do
-    # Rebuild system prompt with new model info
+  def handle_cast({:set_model, model, opts}, state) do
     loader = state.workspace_loader
-    base_prompt = loader.load(state.workspace, %{})
+    base_prompt = loader.load(state.workspace, %{group: state.group})
     system_prompt = append_model_info(base_prompt, model)
-    {:noreply, %{state | model: model, system_prompt: system_prompt}}
+    state = %{state | model: model, system_prompt: system_prompt}
+    state = if opts[:provider], do: %{state | provider: opts[:provider]}, else: state
+    state = if opts[:api_url], do: %{state | api_url: opts[:api_url]}, else: state
+    state = if opts[:api_key], do: %{state | api_key: opts[:api_key]}, else: state
+    {:noreply, state}
   end
 
   def handle_cast(:abort, state) do
@@ -142,11 +157,19 @@ defmodule PiCore.Session do
       else
         state.caller
       end
-      if pid, do: send(pid, {:pi_response, %{text: "Error: #{inspect(reason)}", prompt_id: ref, error: true}})
+      payload = %{text: "Error: #{inspect(reason)}", prompt_id: ref, error: true}
+      payload = if state.chat_id, do: Map.put(payload, :chat_id, state.chat_id), else: payload
+      if pid, do: send(pid, {:pi_response, payload})
       {:noreply, %{state | active_task: nil}}
     else
       {:noreply, %{state | parallel_tasks: Map.delete(state.parallel_tasks, ref)}}
     end
+  end
+
+  @idle_timeout_ms 2 * 60 * 60 * 1000
+
+  def handle_info(:idle_timeout, state) do
+    {:stop, :normal, state}
   end
 
   # Catch-all for unexpected messages
@@ -167,8 +190,16 @@ defmodule PiCore.Session do
           state.caller
         end
 
-        if pid, do: send(pid, {:pi_response, %{text: msg.content, prompt_id: ref}})
+        payload = %{text: msg.content, prompt_id: ref}
+        payload = if state.chat_id, do: Map.put(payload, :chat_id, state.chat_id), else: payload
+        if pid, do: send(pid, {:pi_response, payload})
     end
+  end
+
+  defp schedule_idle_timeout(state) do
+    if state.idle_timer, do: Process.cancel_timer(state.idle_timer)
+    timer = Process.send_after(self(), :idle_timeout, @idle_timeout_ms)
+    %{state | idle_timer: timer}
   end
 
   defp run_prompt(messages, state) do
@@ -181,6 +212,12 @@ defmodule PiCore.Session do
       keep_recent: 10
     })
 
+    wrapped_on_delta = if state.on_delta && state.chat_id do
+      fn chunk -> state.on_delta.(chunk, state.chat_id) end
+    else
+      state.on_delta
+    end
+
     Loop.run(%{
       system_prompt: state.system_prompt,
       messages: compacted_messages,
@@ -188,7 +225,7 @@ defmodule PiCore.Session do
       tool_context: Map.merge(state.extra_tool_context, %{workspace: state.workspace, instance_name: state.instance_name}),
       llm_fn: llm_fn,
       model: state.model,
-      on_delta: state.on_delta,
+      on_delta: wrapped_on_delta,
       on_event: state.on_event
     })
   end
@@ -197,6 +234,7 @@ defmodule PiCore.Session do
     Retry.with_retry(fn ->
       Client.completion(%{
         model: state.model,
+        provider: state.provider,
         api_url: state.api_url,
         api_key: state.api_key,
         system_prompt: opts.system_prompt,
