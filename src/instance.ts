@@ -182,22 +182,23 @@ async function main() {
     console.error("[bot] Grammy error:", err);
   });
 
-  // Heartbeat — runs in cron lane (parallel to main)
-  if (config.heartbeat.enabled) {
-    const intervalMs = parseInterval(config.heartbeat.every);
-    if (intervalMs) {
-      const heartbeat = createHeartbeatManager({
-        intervalMs,
-        readHeartbeatMd: () => readMemoryFile(join(workspace, "HEARTBEAT.md")),
-        onTick: async () => {
-          await enqueue("cron", async () => {
-            console.log("Heartbeat tick in cron lane");
-            // TODO: run agent with heartbeat prompt
-          });
-        },
-      });
-      heartbeat.start();
-    }
+  // Heartbeat — always runs, HEARTBEAT.md content is the switch
+  // Empty/missing HEARTBEAT.md → tick skipped (no API call)
+  // HEARTBEAT.md with content → agent runs
+  const heartbeatInterval = parseInterval(config.heartbeat.every || "30m");
+  if (heartbeatInterval) {
+    const heartbeat = createHeartbeatManager({
+      intervalMs: heartbeatInterval,
+      readHeartbeatMd: () => readMemoryFile(join(workspace, "HEARTBEAT.md")),
+      onTick: async () => {
+        await enqueue("cron", async () => {
+          console.log("[heartbeat] tick — running agent");
+          // TODO: run agent with heartbeat prompt and deliver to configured chat
+        });
+      },
+    });
+    heartbeat.start();
+    console.log(`  Heartbeat: every ${config.heartbeat.every || "30m"} (HEARTBEAT.md controls activation)`);
   }
 
   console.log("Druzhok starting...");

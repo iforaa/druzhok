@@ -14,7 +14,6 @@ export type InstanceConfig = {
   defaultModel: string;
   chats: Record<string, ChatConfig>;
   heartbeat: {
-    enabled: boolean;
     every: string;
     deliverTo: string;
     prompt?: string;
@@ -63,7 +62,6 @@ export function loadInstanceConfig(opts?: {
     defaultModel: merged.defaultModel ?? "openai/gpt-4o",
     chats: merged.chats ?? {},
     heartbeat: {
-      enabled: merged.heartbeat?.enabled ?? false,
       every: merged.heartbeat?.every ?? "30m",
       deliverTo: merged.heartbeat?.deliverTo ?? "",
       prompt: merged.heartbeat?.prompt,

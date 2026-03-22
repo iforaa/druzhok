@@ -81,7 +81,8 @@
       "Bash(/dev/null docker:*)",
       "Bash(1 echo:*)",
       "Bash(source /Users/igorkuznetsov/Documents/druzhok/.env curl -s \"$NEBIUS_BASE_URL/models\" -H \"Authorization: Bearer $NEBIUS_API_KEY\")",
-      "Bash(1 sleep:*)"
+      "Bash(1 sleep:*)",
+      "Bash(cd /Users/igorkuznetsov/Documents/druzhok pnpm test -- tests/core/config.test.ts)"
     ]
   }
 }

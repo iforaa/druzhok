@@ -42,8 +42,10 @@ describe("resolveProvider", () => {
     const result = resolveProvider("openai", providers);
     expect(result).toEqual({ type: "openai-compat", apiKey: "sk-test", baseUrl: "https://api.openai.com/v1/" });
   });
-  it("returns null for unconfigured provider", () => {
-    expect(resolveProvider("google", providers)).toBeNull();
+  it("falls through unknown provider to default (nebius)", () => {
+    const result = resolveProvider("google", providers);
+    expect(result).not.toBeNull();
+    expect(result?.type).toBe("openai-compat");
   });
   it("resolves default to first configured provider", () => {
     const result = resolveProvider("default", providers);
