@@ -3,6 +3,8 @@ defmodule PiCore.Session do
 
   alias PiCore.Loop
   alias PiCore.LLM.Client
+  alias PiCore.LLM.Retry
+  alias PiCore.Compaction
 
   defstruct [
     :workspace, :model, :api_url, :api_key,
@@ -131,9 +133,16 @@ defmodule PiCore.Session do
   defp run_prompt(messages, state) do
     llm_fn = state.llm_fn || &default_llm_fn(state, &1)
 
+    # Compact if conversation is too long
+    {compacted_messages, _did_compact} = Compaction.maybe_compact(messages, %{
+      llm_fn: llm_fn,
+      max_messages: 40,
+      keep_recent: 10
+    })
+
     Loop.run(%{
       system_prompt: state.system_prompt,
-      messages: messages,
+      messages: compacted_messages,
       tools: state.tools,
       tool_context: %{workspace: state.workspace},
       llm_fn: llm_fn,
@@ -142,17 +151,19 @@ defmodule PiCore.Session do
   end
 
   defp default_llm_fn(state, opts) do
-    Client.completion(%{
-      model: state.model,
-      api_url: state.api_url,
-      api_key: state.api_key,
-      system_prompt: opts.system_prompt,
-      messages: opts.messages,
-      tools: opts.tools,
-      max_tokens: 16384,
-      stream: true,
-      on_delta: opts[:on_delta]
-    })
+    Retry.with_retry(fn ->
+      Client.completion(%{
+        model: state.model,
+        api_url: state.api_url,
+        api_key: state.api_key,
+        system_prompt: opts.system_prompt,
+        messages: opts.messages,
+        tools: opts.tools,
+        max_tokens: 16384,
+        stream: true,
+        on_delta: opts[:on_delta]
+      })
+    end)
   end
 
   defp default_tools do
@@ -160,7 +171,9 @@ defmodule PiCore.Session do
       PiCore.Tools.Bash.new(),
       PiCore.Tools.Read.new(),
       PiCore.Tools.Write.new(),
-      PiCore.Tools.Edit.new()
+      PiCore.Tools.Edit.new(),
+      PiCore.Tools.Find.new(),
+      PiCore.Tools.Grep.new(),
     ]
   end
 end
