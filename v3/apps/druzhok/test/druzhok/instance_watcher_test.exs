@@ -4,7 +4,7 @@ defmodule Druzhok.InstanceWatcherTest do
   alias Druzhok.InstanceWatcher
 
   setup do
-    start_supervised!(InstanceWatcher)
+    # InstanceWatcher is already started by the application supervision tree
     :ok
   end
 
