@@ -13,6 +13,7 @@ defmodule Druzhok.Sandbox do
 
   def impl(sandbox_type) do
     case sandbox_type do
+      "firecracker" -> Druzhok.Sandbox.Firecracker
       "docker" -> Druzhok.Sandbox.Docker
       _ -> Druzhok.Sandbox.Local
     end

@@ -20,10 +20,10 @@ defmodule Druzhok.InstanceManager do
       api_url: api_url,
       api_key: api_key,
       heartbeat_interval: opts[:heartbeat_interval] || 0,
-      sandbox: opts[:sandbox] || "local",
+      sandbox: opts[:sandbox] || detect_sandbox(),
     }
 
-    ensure_workspace(config.workspace)
+    if config.sandbox not in ["docker", "firecracker"], do: ensure_workspace(config.workspace)
 
     case DynamicSupervisor.start_child(Druzhok.InstanceDynSup, {Druzhok.Instance.Sup, config}) do
       {:ok, sup_pid} ->
@@ -154,6 +154,26 @@ defmodule Druzhok.InstanceManager do
     case Druzhok.Repo.get_by(Druzhok.Instance, name: instance_name) do
       nil -> nil
       inst -> inst.owner_telegram_id
+    end
+  end
+
+  defp detect_sandbox do
+    fc_bin = System.get_env("FIRECRACKER_BIN") || "/usr/local/bin/firecracker"
+    fc_kernel = System.get_env("FIRECRACKER_KERNEL") || "/opt/firecracker/vmlinux"
+    fc_rootfs = System.get_env("FIRECRACKER_ROOTFS") || "/opt/firecracker/rootfs.ext4"
+
+    cond do
+      File.exists?(fc_bin) and File.exists?(fc_kernel) and File.exists?(fc_rootfs) ->
+        "firecracker"
+
+      System.find_executable("docker") != nil ->
+        case System.cmd("docker", ["image", "inspect", "druzhok-sandbox:latest"], stderr_to_stdout: true) do
+          {_, 0} -> "docker"
+          _ -> "local"
+        end
+
+      true ->
+        "local"
     end
   end
 

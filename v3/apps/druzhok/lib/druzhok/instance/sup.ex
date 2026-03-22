@@ -46,19 +46,14 @@ defmodule Druzhok.Instance.Sup do
       end
     end
 
-    # Build sandbox functions based on config
     sandbox_fns = case config[:sandbox] do
-      "docker" ->
+      type when type in ["docker", "firecracker"] ->
+        mod = Druzhok.Sandbox.impl(type)
         %{
-          exec: fn command ->
-            case Druzhok.Sandbox.Docker.exec(name, command) do
-              {:ok, %{stdout: out, exit_code: 0}} -> {:ok, %{stdout: out, stderr: "", exit_code: 0}}
-              other -> other
-            end
-          end,
-          read_file: fn path -> Druzhok.Sandbox.Docker.read_file(name, path) end,
-          write_file: fn path, content -> Druzhok.Sandbox.Docker.write_file(name, path, content) end,
-          list_dir: fn path -> Druzhok.Sandbox.Docker.list_dir(name, path) end,
+          exec: fn command -> mod.exec(name, command) end,
+          read_file: fn path -> mod.read_file(name, path) end,
+          write_file: fn path, content -> mod.write_file(name, path, content) end,
+          list_dir: fn path -> mod.list_dir(name, path) end,
         }
       _ -> nil
     end
@@ -79,6 +74,11 @@ defmodule Druzhok.Instance.Sup do
     sandbox_children = case config[:sandbox] do
       "docker" ->
         [{Druzhok.Sandbox.DockerClient, %{
+          instance_name: name,
+          registry_name: {:via, Registry, {Druzhok.Registry, {name, :sandbox}}},
+        }}]
+      "firecracker" ->
+        [{Druzhok.Sandbox.FirecrackerClient, %{
           instance_name: name,
           registry_name: {:via, Registry, {Druzhok.Registry, {name, :sandbox}}},
         }}]
