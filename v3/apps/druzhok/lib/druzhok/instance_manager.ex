@@ -20,6 +20,7 @@ defmodule Druzhok.InstanceManager do
       api_url: api_url,
       api_key: api_key,
       heartbeat_interval: opts[:heartbeat_interval] || 0,
+      sandbox: opts[:sandbox] || "local",
     }
 
     ensure_workspace(config.workspace)
@@ -43,6 +44,7 @@ defmodule Druzhok.InstanceManager do
       nil -> :ok
       sup_pid -> DynamicSupervisor.terminate_child(Druzhok.InstanceDynSup, sup_pid)
     end
+    :persistent_term.erase({:druzhok_session_config, name})
     case Repo.get_by(Instance, name: name) do
       nil -> :ok
       inst -> Repo.update(Instance.changeset(inst, %{active: false}))
@@ -55,7 +57,7 @@ defmodule Druzhok.InstanceManager do
     Repo.all(from i in Instance, where: i.active == true)
     |> Enum.map(fn inst ->
       alive = Registry.lookup(Druzhok.Registry, {inst.name, :telegram}) != []
-      %{name: inst.name, model: inst.model, heartbeat_interval: inst.heartbeat_interval, alive: alive}
+      %{name: inst.name, model: inst.model, heartbeat_interval: inst.heartbeat_interval, sandbox: inst.sandbox || "local", alive: alive}
     end)
   end
 
@@ -178,6 +180,7 @@ defmodule Druzhok.InstanceManager do
           telegram_token: opts.telegram_token,
           model: opts.model,
           workspace: opts.workspace,
+          sandbox: opts[:sandbox] || "local",
           active: true,
         })
         |> Repo.insert()
@@ -188,6 +191,7 @@ defmodule Druzhok.InstanceManager do
           telegram_token: opts.telegram_token,
           model: opts.model,
           workspace: opts.workspace,
+          sandbox: opts[:sandbox] || "local",
           active: true,
         })
         |> Repo.update()

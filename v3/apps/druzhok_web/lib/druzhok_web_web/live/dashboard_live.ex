@@ -82,14 +82,16 @@ defmodule DruzhokWebWeb.DashboardLive do
     {:noreply, assign(socket, show_create: !socket.assigns.show_create)}
   end
 
-  def handle_event("create", %{"name" => name, "token" => token, "model" => model}, socket) do
+  def handle_event("create", %{"name" => name, "token" => token, "model" => model} = params, socket) do
     if name != "" and token != "" do
       workspace = instance_workspace(name)
+      sandbox = params["sandbox"] || "local"
 
       case Druzhok.InstanceManager.create(name, %{
         workspace: workspace,
         model: model,
         telegram_token: token,
+        sandbox: sandbox,
       }) do
         {:ok, _instance} ->
           {:noreply, assign(socket,
@@ -146,10 +148,17 @@ defmodule DruzhokWebWeb.DashboardLive do
     if socket.assigns.selected do
       instance = get_instance(socket.assigns.selected, socket)
       if instance do
-        full_path = Path.join(instance_workspace(socket.assigns.selected), path)
-        content = case File.read(full_path) do
-          {:ok, c} -> c
-          {:error, _} -> "Cannot read file"
+        content = if instance[:sandbox] == "docker" do
+          case Druzhok.Sandbox.Docker.read_file(instance.name, "/workspace/#{path}") do
+            {:ok, c} -> c
+            {:error, _} -> "Cannot read file"
+          end
+        else
+          full_path = Path.join(instance_workspace(socket.assigns.selected), path)
+          case File.read(full_path) do
+            {:ok, c} -> c
+            {:error, _} -> "Cannot read file"
+          end
         end
         {:noreply, assign(socket, file_content: %{path: path, content: content})}
       else
@@ -214,6 +223,10 @@ defmodule DruzhokWebWeb.DashboardLive do
             <select name="model" class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-gray-900">
               <option :for={{id, label, _provider} <- @models} value={id}><%= label %></option>
             </select>
+            <select name="sandbox" class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-gray-900">
+              <option value="local">Local</option>
+              <option value="docker">Docker</option>
+            </select>
             <button type="submit" class="w-full bg-gray-900 hover:bg-gray-800 px-3 py-2 rounded-lg text-sm font-medium text-white transition">
               Create
             </button>
@@ -265,6 +278,8 @@ defmodule DruzhokWebWeb.DashboardLive do
           <div class="px-6 py-3 border-b border-gray-200 flex items-center gap-4">
             <button phx-click="back" class="text-gray-400 hover:text-gray-900 transition text-sm">&larr;</button>
             <h2 class="text-sm font-semibold flex-1"><%= @selected %></h2>
+            <% sb = selected_sandbox(@instances, @selected) %>
+            <span class={"px-2 py-0.5 rounded text-[10px] font-medium #{if sb == "docker", do: "bg-blue-100 text-blue-700", else: "bg-gray-100 text-gray-500"}"}><%= sb %></span>
 
             <form phx-change="change_model" class="flex items-center">
               <input type="hidden" name="name" value={@selected} />
@@ -502,6 +517,13 @@ defmodule DruzhokWebWeb.DashboardLive do
     end
   end
 
+  defp selected_sandbox(instances, name) do
+    case Enum.find(instances, &(&1.name == name)) do
+      nil -> "local"
+      inst -> inst[:sandbox] || "local"
+    end
+  end
+
   defp heartbeat_options do
     [
       {0, "Off"},
@@ -529,17 +551,29 @@ defmodule DruzhokWebWeb.DashboardLive do
   end
 
   defp list_workspace_files(instance) do
-    workspace = instance_workspace(instance.name)
-    if File.exists?(workspace) do
-      File.ls!(workspace)
-      |> Enum.map(fn name ->
-        path = Path.join(workspace, name)
-        stat = File.stat!(path)
-        %{path: name, is_dir: stat.type == :directory, size: stat.size}
-      end)
-      |> Enum.sort_by(& {!&1.is_dir, &1.path})
+    if instance[:sandbox] == "docker" do
+      case Druzhok.Sandbox.Docker.list_dir(instance.name, "/workspace") do
+        {:ok, entries} ->
+          entries
+          |> Enum.map(fn entry ->
+            %{path: entry.name, is_dir: entry.type == "directory", size: entry[:size] || 0}
+          end)
+          |> Enum.sort_by(& {!&1.is_dir, &1.path})
+        {:error, _} -> []
+      end
     else
-      []
+      workspace = instance_workspace(instance.name)
+      if File.exists?(workspace) do
+        File.ls!(workspace)
+        |> Enum.map(fn name ->
+          path = Path.join(workspace, name)
+          stat = File.stat!(path)
+          %{path: name, is_dir: stat.type == :directory, size: stat.size}
+        end)
+        |> Enum.sort_by(& {!&1.is_dir, &1.path})
+      else
+        []
+      end
     end
   end
 

@@ -46,6 +46,23 @@ defmodule Druzhok.Instance.Sup do
       end
     end
 
+    # Build sandbox functions based on config
+    sandbox_fns = case config[:sandbox] do
+      "docker" ->
+        %{
+          exec: fn command ->
+            case Druzhok.Sandbox.Docker.exec(name, command) do
+              {:ok, %{stdout: out, exit_code: 0}} -> {:ok, %{stdout: out, stderr: "", exit_code: 0}}
+              other -> other
+            end
+          end,
+          read_file: fn path -> Druzhok.Sandbox.Docker.read_file(name, path) end,
+          write_file: fn path, content -> Druzhok.Sandbox.Docker.write_file(name, path, content) end,
+          list_dir: fn path -> Druzhok.Sandbox.Docker.list_dir(name, path) end,
+        }
+      _ -> nil
+    end
+
     # Store session config in persistent_term for SessionSup.start_session
     :persistent_term.put({:druzhok_session_config, name}, %{
       workspace: config.workspace,
@@ -56,8 +73,17 @@ defmodule Druzhok.Instance.Sup do
       instance_name: name,
       on_delta: on_delta,
       on_event: on_event,
-      extra_tool_context: %{send_file_fn: send_file_fn},
+      extra_tool_context: %{send_file_fn: send_file_fn, sandbox: sandbox_fns},
     })
+
+    sandbox_children = case config[:sandbox] do
+      "docker" ->
+        [{Druzhok.Sandbox.DockerClient, %{
+          instance_name: name,
+          registry_name: {:via, Registry, {Druzhok.Registry, {name, :sandbox}}},
+        }}]
+      _ -> []
+    end
 
     children = [
       {Druzhok.Agent.Telegram, %{
@@ -74,7 +100,7 @@ defmodule Druzhok.Instance.Sup do
         heartbeat_interval: config.heartbeat_interval,
         registry_name: {:via, Registry, {Druzhok.Registry, {name, :scheduler}}},
       }},
-    ]
+    ] ++ sandbox_children
 
     Supervisor.init(children, strategy: :one_for_one, max_restarts: 3, max_seconds: 60)
   end

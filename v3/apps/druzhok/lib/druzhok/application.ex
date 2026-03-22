@@ -27,10 +27,9 @@ defmodule Druzhok.Application do
       case Druzhok.InstanceManager.create(inst.name, %{
         workspace: inst.workspace,
         model: inst.model,
-        api_url: Application.get_env(:pi_core, :api_url),
-        api_key: Application.get_env(:pi_core, :api_key),
         telegram_token: inst.telegram_token,
         heartbeat_interval: inst.heartbeat_interval || 0,
+        sandbox: inst.sandbox || "local",
       }) do
         {:ok, _} ->
           require Logger
