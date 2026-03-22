@@ -4,6 +4,12 @@ import type { AgentSession, AgentSessionEvent, ToolDefinition } from "@mariozech
 import type { Model } from "@mariozechner/pi-ai";
 import { Type } from "@mariozechner/pi-ai";
 
+export type ToolCallbacks = {
+  onSpawnWorker?: (task: string) => void;
+  onSendFile?: (filePath: string, caption?: string) => Promise<void>;
+  onSetReminder?: (minutes: number, message: string) => void;
+};
+
 export type AgentRunOpts = {
   prompt: string;
   workspaceDir: string;
@@ -12,12 +18,10 @@ export type AgentRunOpts = {
   proxyKey: string;
   model: string;
   sessionKey?: string;
+  tools?: ToolCallbacks;
   onTextDelta?: (text: string, isReasoning: boolean) => void;
   onToolCallStart?: (toolName: string) => void;
   onToolCallEnd?: (toolName: string) => void;
-  onSpawnWorker?: (task: string) => void;
-  onSendFile?: (filePath: string, caption?: string) => Promise<void>;
-  onSetReminder?: (minutes: number, message: string) => void;
   signal?: AbortSignal;
 };
 
@@ -67,9 +71,7 @@ async function getOrCreateSession(opts: {
   model: Model<"openai-completions">;
   apiKey: string;
   chatSystemPrompt?: string;
-  onSpawnWorker?: (task: string) => void;
-  onSendFile?: (filePath: string, caption?: string) => Promise<void>;
-  onSetReminder?: (minutes: number, message: string) => void;
+  tools?: ToolCallbacks;
 }): Promise<AgentSession> {
   const cached = sessionCache.get(opts.sessionKey);
   if (cached) return cached;
@@ -80,8 +82,8 @@ async function getOrCreateSession(opts: {
   // Custom tools
   const customTools: ToolDefinition[] = [];
 
-  if (opts.onSendFile) {
-    const onSend = opts.onSendFile;
+  if (opts.tools?.onSendFile) {
+    const onSend = opts.tools.onSendFile;
     customTools.push({
       name: "send_file",
       label: "Send File",
@@ -107,8 +109,8 @@ async function getOrCreateSession(opts: {
     });
   }
 
-  if (opts.onSetReminder) {
-    const onRemind = opts.onSetReminder;
+  if (opts.tools?.onSetReminder) {
+    const onRemind = opts.tools.onSetReminder;
     customTools.push({
       name: "set_reminder",
       label: "Set Reminder",
@@ -133,8 +135,8 @@ async function getOrCreateSession(opts: {
     });
   }
 
-  if (opts.onSpawnWorker) {
-    const onSpawn = opts.onSpawnWorker;
+  if (opts.tools?.onSpawnWorker) {
+    const onSpawn = opts.tools.onSpawnWorker;
     customTools.push({
       name: "spawn_worker",
       label: "Spawn Worker",
@@ -212,9 +214,7 @@ export async function runAgent(opts: AgentRunOpts): Promise<AgentRunResult> {
       model,
       apiKey,
       chatSystemPrompt: opts.chatSystemPrompt,
-      onSpawnWorker: opts.onSpawnWorker,
-      onSendFile: opts.onSendFile,
-      onSetReminder: opts.onSetReminder,
+      tools: opts.tools,
     });
 
     // Collect assistant text from events for this prompt

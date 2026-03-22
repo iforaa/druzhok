@@ -74,42 +74,42 @@ async function main() {
   };
 
   // Dispatcher — uses main lane, pi-coding-agent reads workspace files automatically
-  // The runAgent wrapper now supports spawn_worker via onSpawnWorker callback
-  const createRunAgentWithExtras = (chatId: string) => {
+  // Tool callbacks wired to this chat's Telegram delivery
+  const createRunAgentForChat = (chatId: string) => {
     return async (opts: Parameters<typeof runAgent>[0]) => {
       return runAgent({
         ...opts,
-        onSendFile: async (filePath, caption) => {
-          const { InputFile } = await import("grammy");
-          await bot.api.sendDocument(Number(chatId), new InputFile(filePath), {
-            caption: caption ?? undefined,
-          });
-        },
-        onSetReminder: (minutes, message) => {
-          console.log(`[reminder] set for ${minutes}m: "${message}"`);
-          setTimeout(async () => {
-            try {
-              await sendToChat(chatId, `⏰ Напоминание: ${message}`);
-              console.log(`[reminder] delivered: "${message}"`);
-            } catch (err) {
-              console.error(`[reminder] delivery failed:`, err);
-            }
-          }, minutes * 60 * 1000);
-        },
-        onSpawnWorker: (task) => {
-          spawnWorker({
-            task,
-            notify: true,
-            workspaceDir: workspace,
-            proxyUrl: config.proxyUrl,
-            proxyKey: config.proxyKey,
-            model: config.defaultModel,
-            onResult: async (payloads) => {
-              for (const p of payloads) {
-                if (p.text) await sendToChat(chatId, `🔧 Фоновая задача завершена:\n\n${p.text}`);
+        tools: {
+          onSendFile: async (filePath, caption) => {
+            const { InputFile } = await import("grammy");
+            await bot.api.sendDocument(Number(chatId), new InputFile(filePath), {
+              caption: caption ?? undefined,
+            });
+          },
+          onSetReminder: (minutes, message) => {
+            setTimeout(async () => {
+              try {
+                await sendToChat(chatId, `⏰ Напоминание: ${message}`);
+              } catch (err) {
+                console.error(`[reminder] failed:`, err);
               }
-            },
-          });
+            }, minutes * 60 * 1000);
+          },
+          onSpawnWorker: (task) => {
+            spawnWorker({
+              task,
+              notify: true,
+              workspaceDir: workspace,
+              proxyUrl: config.proxyUrl,
+              proxyKey: config.proxyKey,
+              model: config.defaultModel,
+              onResult: async (payloads) => {
+                for (const p of payloads) {
+                  if (p.text) await sendToChat(chatId, `🔧 Фоновая задача завершена:\n\n${p.text}`);
+                }
+              },
+            });
+          },
         },
       });
     };
@@ -161,7 +161,7 @@ async function main() {
     // Create a dispatcher with spawn_worker wired to this chat
     const dispatcher = createRunDispatcher({
       channel,
-      runAgent: createRunAgentWithExtras(chatId),
+      runAgent: createRunAgentForChat(chatId),
       config: {
         proxyUrl: config.proxyUrl,
         proxyKey: config.proxyKey,
