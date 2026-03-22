@@ -8,7 +8,19 @@ defmodule Druzhok.InstanceManager do
     workspace = opts.workspace
     ensure_workspace(workspace)
 
-    # Start session
+    # Start telegram bot first (we need its PID for on_delta)
+    # Use a temporary self-referencing approach
+    {:ok, telegram_pid} = Druzhok.Agent.Telegram.start_link(%{
+      token: opts.telegram_token,
+      session_pid: nil,  # will be set after session starts
+    })
+
+    # Create on_delta callback that sends streaming text to telegram
+    on_delta = fn delta ->
+      send(telegram_pid, {:pi_delta, delta})
+    end
+
+    # Start session with on_delta and caller pointing to telegram
     {:ok, session_pid} = PiCore.Session.start_link(%{
       workspace: workspace,
       model: opts.model,
@@ -16,17 +28,12 @@ defmodule Druzhok.InstanceManager do
       api_key: opts.api_key,
       workspace_loader: opts[:workspace_loader],
       tools: opts[:tools],
-      caller: nil  # telegram process will set itself
+      caller: telegram_pid,
+      on_delta: on_delta,
     })
 
-    # Start telegram bot pointing to this session
-    {:ok, telegram_pid} = Druzhok.Agent.Telegram.start_link(%{
-      token: opts.telegram_token,
-      session_pid: session_pid,
-    })
-
-    # Update session caller to telegram PID so responses go there
-    GenServer.cast(session_pid, {:set_caller, telegram_pid})
+    # Update telegram with the session PID
+    GenServer.cast(telegram_pid, {:set_session, session_pid})
 
     {:ok, %{name: name, session: session_pid, telegram: telegram_pid}}
   end
