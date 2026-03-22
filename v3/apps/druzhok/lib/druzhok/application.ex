@@ -6,6 +6,7 @@ defmodule Druzhok.Application do
   def start(_type, _args) do
     children = [
       {Registry, keys: :unique, name: Druzhok.Registry},
+      %{id: Druzhok.InstanceRegistry, start: {Agent, :start_link, [fn -> [] end, [name: Druzhok.InstanceRegistry]]}},
     ]
 
     opts = [strategy: :one_for_one, name: Druzhok.Supervisor]

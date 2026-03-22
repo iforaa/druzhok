@@ -35,12 +35,17 @@ defmodule Druzhok.InstanceManager do
     # Update telegram with the session PID
     GenServer.cast(telegram_pid, {:set_session, session_pid})
 
-    {:ok, %{name: name, session: session_pid, telegram: telegram_pid}}
+    instance = %{name: name, model: opts.model, session: session_pid, telegram: telegram_pid}
+    Agent.update(Druzhok.InstanceRegistry, &[instance | &1])
+    {:ok, instance}
   end
 
-  def stop(%{session: session, telegram: telegram}) do
+  def stop(%{name: name, session: session, telegram: telegram}) do
     try do GenServer.stop(telegram, :normal, 5_000) rescue _ -> :ok catch _ -> :ok end
     try do GenServer.stop(session, :normal, 5_000) rescue _ -> :ok catch _ -> :ok end
+    Agent.update(Druzhok.InstanceRegistry, fn list ->
+      Enum.reject(list, & &1.name == name)
+    end)
     :ok
   end
 
