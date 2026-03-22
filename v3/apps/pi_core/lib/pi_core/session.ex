@@ -134,7 +134,15 @@ defmodule PiCore.Session do
   # Task failed
   def handle_info({:DOWN, ref, :process, _pid, reason}, state) do
     if state.active_task && state.active_task.ref == ref do
-      send(state.caller, {:pi_response, %{text: "Error: #{inspect(reason)}", prompt_id: ref, error: true}})
+      pid = if state.instance_name do
+        case Registry.lookup(Druzhok.Registry, {state.instance_name, :telegram}) do
+          [{p, _}] -> p
+          [] -> nil
+        end
+      else
+        state.caller
+      end
+      if pid, do: send(pid, {:pi_response, %{text: "Error: #{inspect(reason)}", prompt_id: ref, error: true}})
       {:noreply, %{state | active_task: nil}}
     else
       {:noreply, %{state | parallel_tasks: Map.delete(state.parallel_tasks, ref)}}
@@ -149,7 +157,17 @@ defmodule PiCore.Session do
   defp deliver_last_assistant(new_messages, ref, state) do
     case Enum.find(Enum.reverse(new_messages), &(&1.role == "assistant")) do
       nil -> :ok
-      msg -> send(state.caller, {:pi_response, %{text: msg.content, prompt_id: ref}})
+      msg ->
+        pid = if state.instance_name do
+          case Registry.lookup(Druzhok.Registry, {state.instance_name, :telegram}) do
+            [{p, _}] -> p
+            [] -> nil
+          end
+        else
+          state.caller
+        end
+
+        if pid, do: send(pid, {:pi_response, %{text: msg.content, prompt_id: ref}})
     end
   end
 

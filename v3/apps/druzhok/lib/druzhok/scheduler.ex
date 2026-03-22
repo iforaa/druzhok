@@ -12,7 +12,6 @@ defmodule Druzhok.Scheduler do
 
   defstruct [
     :instance_name,
-    :session_pid,
     :workspace,
     :heartbeat_interval,  # minutes, 0 = disabled
     :heartbeat_timer,
@@ -33,7 +32,6 @@ defmodule Druzhok.Scheduler do
   def init(opts) do
     state = %__MODULE__{
       instance_name: opts.instance_name,
-      session_pid: opts[:session_pid],
       workspace: opts.workspace,
       heartbeat_interval: opts[:heartbeat_interval] || 0,
     }
@@ -73,7 +71,10 @@ defmodule Druzhok.Scheduler do
         if content != "" and not all_comments?(content) do
           Druzhok.Events.broadcast(state.instance_name, %{type: :heartbeat, text: "Heartbeat tick"})
           prompt = "HEARTBEAT\n\n#{content}"
-          PiCore.Session.prompt(state.session_pid, prompt)
+          case lookup_session(state) do
+            nil -> :ok
+            pid -> PiCore.Session.prompt(pid, prompt)
+          end
         end
 
       {:error, _} -> :ok
@@ -91,7 +92,10 @@ defmodule Druzhok.Scheduler do
     for reminder <- pending do
       Druzhok.Events.broadcast(state.instance_name, %{type: :reminder, text: "Reminder: #{reminder.message}"})
       prompt = "REMINDER: #{reminder.message}"
-      PiCore.Session.prompt(state.session_pid, prompt)
+      case lookup_session(state) do
+        nil -> :ok
+        pid -> PiCore.Session.prompt(pid, prompt)
+      end
       Druzhok.Reminder.mark_fired(reminder.id)
     end
 
@@ -102,6 +106,13 @@ defmodule Druzhok.Scheduler do
   def handle_info(_msg, state), do: {:noreply, state}
 
   # --- Private ---
+
+  defp lookup_session(state) do
+    case Registry.lookup(Druzhok.Registry, {state.instance_name, :session}) do
+      [{pid, _}] -> pid
+      [] -> nil
+    end
+  end
 
   defp schedule_heartbeat(%{heartbeat_interval: 0} = state), do: state
   defp schedule_heartbeat(%{heartbeat_interval: minutes} = state) when minutes > 0 do

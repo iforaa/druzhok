@@ -205,21 +205,21 @@ defmodule Druzhok.Agent.Telegram do
         case parse_command(text) do
           {:command, "start"} ->
             prompt = "User #{sender_name} just started the bot. Introduce yourself."
-            PiCore.Session.prompt(state.session_pid, prompt)
+            dispatch_prompt(prompt, state)
             state
 
           {:command, "reset"} ->
-            PiCore.Session.reset(state.session_pid)
+            dispatch_session(state, &PiCore.Session.reset/1)
             API.send_message(state.token, chat_id, "Session reset!")
             state
 
           {:command, "abort"} ->
-            PiCore.Session.abort(state.session_pid)
+            dispatch_session(state, &PiCore.Session.abort/1)
             API.send_message(state.token, chat_id, "Aborted.")
             state
 
           :text ->
-            PiCore.Session.prompt(state.session_pid, text)
+            dispatch_prompt(text, state)
             state
         end
     end
@@ -243,6 +243,20 @@ defmodule Druzhok.Agent.Telegram do
   defp parse_command("/abort" <> _), do: {:command, "abort"}
   defp parse_command("/" <> _), do: :text
   defp parse_command(_), do: :text
+
+  defp dispatch_prompt(text, state) do
+    case Registry.lookup(Druzhok.Registry, {state.instance_name, :session}) do
+      [{pid, _}] -> PiCore.Session.prompt(pid, text)
+      [] -> :ok
+    end
+  end
+
+  defp dispatch_session(state, fun) do
+    case Registry.lookup(Druzhok.Registry, {state.instance_name, :session}) do
+      [{pid, _}] -> fun.(pid)
+      [] -> :ok
+    end
+  end
 
   defp emit(%{instance_name: nil}, _type, _data), do: :ok
   defp emit(%{instance_name: name}, type, data) do
