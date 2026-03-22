@@ -63,6 +63,11 @@ func (m *Manager) CreateAndStart(ctx context.Context, opts CreateOpts) (string, 
 				},
 			},
 			RestartPolicy: container.RestartPolicy{Name: "unless-stopped"},
+			Resources: container.Resources{
+				Memory:    1024 * 1024 * 1024, // 1GB
+				CPUQuota:  100000,              // 1 CPU core
+				CPUPeriod: 100000,
+			},
 		},
 		&network.NetworkingConfig{
 			EndpointsConfig: map[string]*network.EndpointSettings{
