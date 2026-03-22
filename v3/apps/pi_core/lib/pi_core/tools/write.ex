@@ -13,6 +13,15 @@ defmodule PiCore.Tools.Write do
     }
   end
 
+  def execute(%{"path" => path, "content" => content}, %{sandbox: %{write_file: write_fn}}) do
+    sandbox_path = sandbox_path(path)
+
+    case write_fn.(sandbox_path, content) do
+      :ok -> {:ok, "Written: #{path}"}
+      {:error, reason} -> {:error, "Cannot write #{path}: #{reason}"}
+    end
+  end
+
   def execute(%{"path" => path, "content" => content}, %{workspace: workspace}) do
     case PathGuard.resolve(workspace, path) do
       {:ok, full_path} ->
@@ -22,4 +31,7 @@ defmodule PiCore.Tools.Write do
       {:error, reason} -> {:error, reason}
     end
   end
+
+  defp sandbox_path("/" <> _ = path), do: path
+  defp sandbox_path(path), do: "/workspace/#{path}"
 end

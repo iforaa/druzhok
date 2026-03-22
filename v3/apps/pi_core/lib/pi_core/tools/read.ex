@@ -10,6 +10,15 @@ defmodule PiCore.Tools.Read do
     }
   end
 
+  def execute(%{"path" => path}, %{sandbox: %{read_file: read_fn}}) do
+    sandbox_path = sandbox_path(path)
+
+    case read_fn.(sandbox_path) do
+      {:ok, content} -> {:ok, content}
+      {:error, reason} -> {:error, "Cannot read #{path}: #{reason}"}
+    end
+  end
+
   def execute(%{"path" => path}, %{workspace: workspace}) do
     with {:ok, full_path} <- PathGuard.resolve(workspace, path),
          {:ok, content} <- File.read(full_path) do
@@ -19,4 +28,7 @@ defmodule PiCore.Tools.Read do
       {:error, reason} -> {:error, reason}
     end
   end
+
+  defp sandbox_path("/" <> _ = path), do: path
+  defp sandbox_path(path), do: "/workspace/#{path}"
 end
