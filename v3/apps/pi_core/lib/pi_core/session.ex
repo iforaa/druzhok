@@ -178,6 +178,7 @@ defmodule PiCore.Session do
       PiCore.Tools.Edit.new(),
       PiCore.Tools.Find.new(),
       PiCore.Tools.Grep.new(),
+      PiCore.Tools.MemorySearch.new(),
     ]
   end
 end
