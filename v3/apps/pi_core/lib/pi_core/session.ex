@@ -8,15 +8,18 @@ defmodule PiCore.Session do
 
   defstruct [
     :workspace, :model, :api_url, :api_key,
-    :system_prompt, :tools, :on_delta, :caller, :llm_fn,
-    :workspace_loader,
+    :system_prompt, :tools, :on_delta, :on_event, :caller, :llm_fn,
+    :workspace_loader, :instance_name, :extra_tool_context,
     messages: [],
     active_task: nil,
     parallel_tasks: %{}
   ]
 
   def start_link(opts) do
-    GenServer.start_link(__MODULE__, opts)
+    case opts[:name] do
+      nil -> GenServer.start_link(__MODULE__, opts)
+      name -> GenServer.start_link(__MODULE__, opts, name: name)
+    end
   end
 
   def prompt(pid, text) do
@@ -31,11 +34,16 @@ defmodule PiCore.Session do
     GenServer.cast(pid, :reset)
   end
 
+  def set_model(pid, model) do
+    GenServer.cast(pid, {:set_model, model})
+  end
+
   # --- Callbacks ---
 
   def init(opts) do
     loader = opts[:workspace_loader] || PiCore.WorkspaceLoader.Default
-    system_prompt = loader.load(opts.workspace, %{})
+    base_prompt = loader.load(opts.workspace, %{})
+    system_prompt = append_model_info(base_prompt, opts.model)
     tools = opts[:tools] || default_tools()
 
     state = %__MODULE__{
@@ -46,9 +54,12 @@ defmodule PiCore.Session do
       system_prompt: system_prompt,
       tools: tools,
       on_delta: opts[:on_delta],
+      on_event: opts[:on_event],
       caller: opts[:caller] || self(),
       llm_fn: opts[:llm_fn],
-      workspace_loader: loader
+      workspace_loader: loader,
+      instance_name: opts[:instance_name],
+      extra_tool_context: opts[:extra_tool_context] || %{}
     }
 
     {:ok, state}
@@ -73,6 +84,14 @@ defmodule PiCore.Session do
 
   def handle_cast({:set_caller, pid}, state) do
     {:noreply, %{state | caller: pid}}
+  end
+
+  def handle_cast({:set_model, model}, state) do
+    # Rebuild system prompt with new model info
+    loader = state.workspace_loader
+    base_prompt = loader.load(state.workspace, %{})
+    system_prompt = append_model_info(base_prompt, model)
+    {:noreply, %{state | model: model, system_prompt: system_prompt}}
   end
 
   def handle_cast(:abort, state) do
@@ -148,9 +167,11 @@ defmodule PiCore.Session do
       system_prompt: state.system_prompt,
       messages: compacted_messages,
       tools: state.tools,
-      tool_context: %{workspace: state.workspace},
+      tool_context: Map.merge(state.extra_tool_context, %{workspace: state.workspace, instance_name: state.instance_name}),
       llm_fn: llm_fn,
-      on_delta: state.on_delta
+      model: state.model,
+      on_delta: state.on_delta,
+      on_event: state.on_event
     })
   end
 
@@ -165,7 +186,8 @@ defmodule PiCore.Session do
         tools: opts.tools,
         max_tokens: 16384,
         stream: true,
-        on_delta: opts[:on_delta]
+        on_delta: opts[:on_delta],
+        on_event: opts[:on_event]
       })
     end)
   end
@@ -179,6 +201,12 @@ defmodule PiCore.Session do
       PiCore.Tools.Find.new(),
       PiCore.Tools.Grep.new(),
       PiCore.Tools.MemorySearch.new(),
+      PiCore.Tools.SetReminder.new(),
+      PiCore.Tools.SendFile.new(),
     ]
+  end
+
+  defp append_model_info(prompt, model) do
+    prompt <> "\n\n## Модель\n\nТы работаешь на модели `#{model}`. Если спросят какая ты модель — отвечай именно это. Не говори что ты Claude, GPT или другая модель — это неправда."
   end
 end

@@ -5,7 +5,11 @@ defmodule Druzhok.Agent.Telegram do
   """
   use GenServer
 
+  require Logger
+
   alias Druzhok.Telegram.API
+  alias Druzhok.Telegram.Format
+  alias Druzhok.Events
 
   @min_chars_first_send 30
   @edit_interval_ms 1_000
@@ -14,6 +18,8 @@ defmodule Druzhok.Agent.Telegram do
     :token,
     :session_pid,
     :chat_id,
+    :instance_name,
+    :poll_task,
     # Streaming state
     :draft_message_id,
     :draft_text,
@@ -22,43 +28,67 @@ defmodule Druzhok.Agent.Telegram do
   ]
 
   def start_link(opts) do
-    GenServer.start_link(__MODULE__, opts)
+    case opts[:registry_name] do
+      nil -> GenServer.start_link(__MODULE__, opts)
+      name -> GenServer.start_link(__MODULE__, opts, name: name)
+    end
   end
 
   def init(opts) do
     state = %__MODULE__{
       token: opts.token,
       session_pid: opts.session_pid,
+      instance_name: opts[:instance_name],
     }
 
-    if opts.session_pid, do: send(self(), :poll)
+    if opts.session_pid, do: send(self(), :start_poll)
     {:ok, state}
   end
 
-  # --- Polling ---
+  # --- Polling (async — never blocks the GenServer) ---
 
   def handle_cast({:set_session, pid}, state) do
-    unless state.session_pid, do: send(self(), :poll)
+    unless state.session_pid, do: send(self(), :start_poll)
     {:noreply, %{state | session_pid: pid}}
   end
 
-  def handle_info(:poll, state) do
-    case API.get_updates(state.token, state.offset) do
+  def handle_call(:get_chat_id, _from, state) do
+    {:reply, state.chat_id, state}
+  end
+
+  def handle_info(:start_poll, state) do
+    state = start_async_poll(state)
+    {:noreply, state}
+  end
+
+  # Poll task completed successfully
+  def handle_info({ref, {:poll_result, result}}, state) when state.poll_task != nil and ref == state.poll_task.ref do
+    Process.demonitor(ref, [:flush])
+    state = %{state | poll_task: nil}
+
+    case result do
       {:ok, updates} when is_list(updates) ->
         state = Enum.reduce(updates, state, &handle_update(&1, &2))
-        send(self(), :poll)
+        state = start_async_poll(state)
         {:noreply, state}
 
       {:error, _reason} ->
-        Process.send_after(self(), :poll, 5_000)
+        Process.send_after(self(), :start_poll, 5_000)
         {:noreply, state}
     end
+  end
+
+  # Poll task crashed
+  def handle_info({:DOWN, ref, :process, _pid, reason}, state) when state.poll_task != nil and ref == state.poll_task.ref do
+    Logger.warning("Poll task crashed: #{inspect(reason)}")
+    state = %{state | poll_task: nil}
+    Process.send_after(self(), :start_poll, 5_000)
+    {:noreply, state}
   end
 
   # --- Streaming deltas from PiCore (individual chunks) ---
 
   def handle_info({:pi_delta, chunk}, state) when is_binary(chunk) do
-    # Accumulate chunks into draft_text
     accumulated = (state.draft_text || "") <> chunk
     state = handle_streaming_delta(accumulated, %{state | draft_text: accumulated})
     {:noreply, state}
@@ -67,7 +97,13 @@ defmodule Druzhok.Agent.Telegram do
   # --- Final response from PiCore ---
 
   def handle_info({:pi_response, %{text: text}}, state) when is_binary(text) and text != "" do
+    emit(state, :agent_reply, %{text: text})
     state = finalize_response(text, state)
+    {:noreply, state}
+  end
+
+  def handle_info({:pi_response, %{error: true, text: text}}, state) do
+    emit(state, :error, %{text: text})
     {:noreply, state}
   end
 
@@ -75,13 +111,23 @@ defmodule Druzhok.Agent.Telegram do
 
   def handle_info(_msg, state), do: {:noreply, state}
 
+  # --- Async polling ---
+
+  defp start_async_poll(state) do
+    token = state.token
+    offset = state.offset
+    task = Task.async(fn ->
+      {:poll_result, API.get_updates(token, offset)}
+    end)
+    %{state | poll_task: task}
+  end
+
   # --- Streaming logic ---
 
   defp handle_streaming_delta(text, state) do
     now = System.monotonic_time(:millisecond)
 
     cond do
-      # No draft yet — wait for enough text, then send first message
       is_nil(state.draft_message_id) and String.length(text) >= @min_chars_first_send ->
         case API.send_message(state.token, state.chat_id, text) do
           {:ok, %{"message_id" => msg_id}} ->
@@ -90,37 +136,56 @@ defmodule Druzhok.Agent.Telegram do
             %{state | draft_text: text}
         end
 
-      # No draft yet but not enough text — just buffer
       is_nil(state.draft_message_id) ->
         %{state | draft_text: text}
 
-      # Draft exists — edit if enough time has passed
       now - (state.last_edit_at || 0) >= @edit_interval_ms ->
-        API.edit_message_text(state.token, state.chat_id, state.draft_message_id, text)
+        case API.edit_message_text(state.token, state.chat_id, state.draft_message_id, text) do
+          {:error, reason} ->
+            Logger.warning("Telegram edit failed: #{inspect(reason)}")
+          _ -> :ok
+        end
         %{state | draft_text: text, last_edit_at: now}
 
-      # Too soon to edit — just buffer
       true ->
         %{state | draft_text: text}
     end
   end
 
   defp finalize_response(text, state) do
-    cond do
-      # Draft exists — do final edit
-      state.draft_message_id && text != (state.draft_text || "") ->
-        API.edit_message_text(state.token, state.chat_id, state.draft_message_id, text)
+    html = Format.to_telegram_html(text)
+    html_opts = %{parse_mode: "HTML"}
 
-      # No draft but we have text — send as new message
-      # (response was too short for streaming, or draft was reset)
-      is_nil(state.draft_message_id) && state.chat_id ->
-        API.send_message(state.token, state.chat_id, text)
+    result = cond do
+      state.draft_message_id ->
+        # Always do final edit with HTML formatting
+        API.edit_message_text(state.token, state.chat_id, state.draft_message_id, html, html_opts)
 
-      # Draft exists with same text — nothing to do
+      state.chat_id ->
+        # No draft started — send as new message with HTML
+        API.send_message(state.token, state.chat_id, html, html_opts)
+
       true -> :ok
     end
 
-    # Reset streaming state
+    case result do
+      {:error, reason} ->
+        reason_str = inspect(reason)
+        if String.contains?(reason_str, "not modified") do
+          :ok
+        else
+          Logger.error("Telegram finalize failed: #{reason_str}")
+          emit(state, :error, %{text: "Telegram send failed: #{reason_str}"})
+          # Fallback: send plain text without HTML if parsing failed
+          if state.draft_message_id do
+            API.edit_message_text(state.token, state.chat_id, state.draft_message_id, text)
+          else
+            API.send_message(state.token, state.chat_id, text)
+          end
+        end
+      _ -> :ok
+    end
+
     %{state | draft_message_id: nil, draft_text: nil, last_edit_at: nil}
   end
 
@@ -134,22 +199,23 @@ defmodule Druzhok.Agent.Telegram do
       {chat_id, text, sender_name} ->
         state = %{state | chat_id: chat_id, draft_message_id: nil, draft_text: nil, last_edit_at: nil}
 
+        emit(state, :user_message, %{text: text, sender: sender_name, chat_id: chat_id})
         API.send_chat_action(state.token, chat_id)
 
         case parse_command(text) do
           {:command, "start"} ->
-            prompt = "Пользователь #{sender_name} только что запустил бота. Представься и начни знакомство."
+            prompt = "User #{sender_name} just started the bot. Introduce yourself."
             PiCore.Session.prompt(state.session_pid, prompt)
             state
 
           {:command, "reset"} ->
             PiCore.Session.reset(state.session_pid)
-            API.send_message(state.token, chat_id, "Сессия сброшена!")
+            API.send_message(state.token, chat_id, "Session reset!")
             state
 
           {:command, "abort"} ->
             PiCore.Session.abort(state.session_pid)
-            API.send_message(state.token, chat_id, "Отменено.")
+            API.send_message(state.token, chat_id, "Aborted.")
             state
 
           :text ->
@@ -177,4 +243,9 @@ defmodule Druzhok.Agent.Telegram do
   defp parse_command("/abort" <> _), do: {:command, "abort"}
   defp parse_command("/" <> _), do: :text
   defp parse_command(_), do: :text
+
+  defp emit(%{instance_name: nil}, _type, _data), do: :ok
+  defp emit(%{instance_name: name}, type, data) do
+    Events.broadcast(name, Map.put(data, :type, type))
+  end
 end
