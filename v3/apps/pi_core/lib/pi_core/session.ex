@@ -71,6 +71,10 @@ defmodule PiCore.Session do
     end
   end
 
+  def handle_cast({:set_caller, pid}, state) do
+    {:noreply, %{state | caller: pid}}
+  end
+
   def handle_cast(:abort, state) do
     if state.active_task do
       Task.shutdown(state.active_task, :brutal_kill)
