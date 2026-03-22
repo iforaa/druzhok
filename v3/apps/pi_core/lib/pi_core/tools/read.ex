@@ -1,5 +1,5 @@
 defmodule PiCore.Tools.Read do
-  alias PiCore.Tools.Tool
+  alias PiCore.Tools.{Tool, PathGuard}
 
   def new do
     %Tool{
@@ -11,15 +11,12 @@ defmodule PiCore.Tools.Read do
   end
 
   def execute(%{"path" => path}, %{workspace: workspace}) do
-    full_path = Path.join(workspace, path) |> Path.expand()
-    workspace_abs = Path.expand(workspace)
-    if String.starts_with?(full_path, workspace_abs) do
-      case File.read(full_path) do
-        {:ok, content} -> {:ok, content}
-        {:error, reason} -> {:error, "Cannot read #{path}: #{reason}"}
-      end
+    with {:ok, full_path} <- PathGuard.resolve(workspace, path),
+         {:ok, content} <- File.read(full_path) do
+      {:ok, content}
     else
-      {:error, "Access denied: path outside workspace"}
+      {:error, reason} when is_atom(reason) -> {:error, "Cannot read #{path}: #{reason}"}
+      {:error, reason} -> {:error, reason}
     end
   end
 end

@@ -38,16 +38,11 @@ defmodule PiCore.LLM.Retry do
     end
   end
 
+  @retryable_patterns ["timeout", "ECONNREFUSED", "ECONNRESET"]
+
   defp retryable?(reason) do
-    cond do
-      String.contains?(reason, "timeout") -> true
-      String.contains?(reason, "ECONNREFUSED") -> true
-      String.contains?(reason, "ECONNRESET") -> true
-      Enum.any?(@retryable_statuses, &String.contains?(reason, "HTTP #{&1}")) -> true
-      String.contains?(reason, "HTTP error: 429") -> true
-      String.contains?(reason, "HTTP error: 5") -> true
-      true -> false
-    end
+    Enum.any?(@retryable_patterns, &String.contains?(reason, &1)) ||
+      Enum.any?(@retryable_statuses, &String.contains?(reason, "#{&1}"))
   end
 
   defp calculate_delay(attempt, initial_delay, max_delay) do
