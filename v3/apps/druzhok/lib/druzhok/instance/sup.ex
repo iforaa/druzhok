@@ -5,6 +5,15 @@ defmodule Druzhok.Instance.Sup do
   """
   use Supervisor
 
+  def child_spec(config) do
+    %{
+      id: {__MODULE__, config.name},
+      start: {__MODULE__, :start_link, [config]},
+      restart: :temporary,
+      type: :supervisor,
+    }
+  end
+
   def start_link(config) do
     name = {:via, Registry, {Druzhok.Registry, {config.name, :sup}}}
     Supervisor.start_link(__MODULE__, config, name: name)
