@@ -4,19 +4,25 @@ defmodule DruzhokWebWeb.DashboardLive do
   @max_events 200
 
   @impl true
-  def mount(_params, _session, socket) do
+  def mount(_params, session, socket) do
     if connected?(socket) do
       :timer.send_interval(5_000, self(), :refresh)
       Druzhok.Events.subscribe_all()
     end
 
+    current_user = case session["user_id"] do
+      nil -> nil
+      id -> Druzhok.Repo.get(Druzhok.User, id)
+    end
+
     models = Druzhok.Model.list()
     default_model = case models do
-      [{id, _} | _] -> id
+      [{id, _, _} | _] -> id
       _ -> ""
     end
 
     {:ok, assign(socket,
+      current_user: current_user,
       instances: list_instances(),
       models: models,
       create_form: %{"name" => "", "token" => "", "model" => default_model},
@@ -25,7 +31,10 @@ defmodule DruzhokWebWeb.DashboardLive do
       workspace_files: [],
       file_content: nil,
       events: [],
-      show_create: false
+      show_create: false,
+      pairing: nil,
+      owner: nil,
+      groups: []
     )}
   end
 
@@ -36,17 +45,25 @@ defmodule DruzhokWebWeb.DashboardLive do
 
   @impl true
   def handle_params(%{"name" => name}, _uri, socket) do
-    case get_instance_from(socket.assigns.instances, name) do
+    case get_instance(name, socket) do
       nil ->
         {:noreply, socket |> assign(selected: nil) |> push_patch(to: "/")}
       instance ->
         files = list_workspace_files(instance)
-        {:noreply, assign(socket, selected: name, workspace_files: files, file_content: nil, events: [])}
+        {:noreply, assign(socket,
+          selected: name,
+          workspace_files: files,
+          file_content: nil,
+          events: [],
+          pairing: Druzhok.InstanceManager.get_pairing(name),
+          owner: Druzhok.InstanceManager.get_owner(name),
+          groups: Druzhok.InstanceManager.get_groups(name)
+        )}
     end
   end
 
   def handle_params(_params, _uri, socket) do
-    {:noreply, assign(socket, selected: nil, workspace_files: [], file_content: nil, events: [])}
+    {:noreply, assign(socket, selected: nil, workspace_files: [], file_content: nil, events: [], pairing: nil, owner: nil, groups: [])}
   end
 
   def handle_info({:druzhok_event, instance_name, event}, socket) do
@@ -67,13 +84,11 @@ defmodule DruzhokWebWeb.DashboardLive do
 
   def handle_event("create", %{"name" => name, "token" => token, "model" => model}, socket) do
     if name != "" and token != "" do
-      workspace = Path.join([File.cwd!(), "..", "data", "instances", name, "workspace"])
+      workspace = instance_workspace(name)
 
       case Druzhok.InstanceManager.create(name, %{
         workspace: workspace,
         model: model,
-        api_url: Application.get_env(:pi_core, :api_url),
-        api_key: Application.get_env(:pi_core, :api_key),
         telegram_token: token,
       }) do
         {:ok, _instance} ->
@@ -107,7 +122,7 @@ defmodule DruzhokWebWeb.DashboardLive do
   end
 
   def handle_event("select", %{"name" => name}, socket) do
-    case get_instance(name) do
+    case get_instance(name, socket) do
       nil ->
         {:noreply, socket}
       instance ->
@@ -129,7 +144,7 @@ defmodule DruzhokWebWeb.DashboardLive do
 
   def handle_event("view_file", %{"path" => path}, socket) do
     if socket.assigns.selected do
-      instance = get_instance(socket.assigns.selected)
+      instance = get_instance(socket.assigns.selected, socket)
       if instance do
         full_path = Path.join(instance_workspace(socket.assigns.selected), path)
         content = case File.read(full_path) do
@@ -156,6 +171,24 @@ defmodule DruzhokWebWeb.DashboardLive do
       |> push_patch(to: "/")}
   end
 
+  def handle_event("approve_pairing", %{"name" => name}, socket) do
+    Druzhok.InstanceManager.approve_pairing(name)
+    {:noreply, assign(socket,
+      pairing: Druzhok.InstanceManager.get_pairing(name),
+      owner: Druzhok.InstanceManager.get_owner(name)
+    )}
+  end
+
+  def handle_event("approve_group", %{"name" => name, "chat_id" => chat_id}, socket) do
+    Druzhok.InstanceManager.approve_group(name, String.to_integer(chat_id))
+    {:noreply, assign(socket, groups: Druzhok.InstanceManager.get_groups(name))}
+  end
+
+  def handle_event("reject_group", %{"name" => name, "chat_id" => chat_id}, socket) do
+    Druzhok.InstanceManager.reject_group(name, String.to_integer(chat_id))
+    {:noreply, assign(socket, groups: Druzhok.InstanceManager.get_groups(name))}
+  end
+
   @impl true
   def render(assigns) do
     ~H"""
@@ -179,7 +212,7 @@ defmodule DruzhokWebWeb.DashboardLive do
             <input name="token" value={@create_form["token"]} placeholder="Telegram bot token"
                    class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-gray-900 focus:border-gray-900" />
             <select name="model" class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-gray-900">
-              <option :for={{id, label} <- @models} value={id}><%= label %></option>
+              <option :for={{id, label, _provider} <- @models} value={id}><%= label %></option>
             </select>
             <button type="submit" class="w-full bg-gray-900 hover:bg-gray-800 px-3 py-2 rounded-lg text-sm font-medium text-white transition">
               Create
@@ -198,6 +231,20 @@ defmodule DruzhokWebWeb.DashboardLive do
             <div class="flex-1 min-w-0">
               <div class="text-sm font-medium truncate"><%= inst.name %></div>
               <div class="text-xs text-gray-400 truncate"><%= model_short(inst.model) %></div>
+            </div>
+          </div>
+        </div>
+
+        <%!-- User footer --%>
+        <div :if={@current_user} class="p-4 border-t border-gray-200">
+          <div class="flex items-center justify-between">
+            <div class="min-w-0">
+              <div class="text-sm font-medium truncate"><%= @current_user.email %></div>
+              <div class="text-xs text-gray-400"><%= @current_user.role %></div>
+            </div>
+            <div class="flex gap-2">
+              <a :if={@current_user.role == "admin"} href="/settings" class="text-xs text-gray-400 hover:text-gray-900 transition">Settings</a>
+              <a href="/auth/logout" class="text-xs text-gray-400 hover:text-gray-900 transition">Logout</a>
             </div>
           </div>
         </div>
@@ -222,7 +269,7 @@ defmodule DruzhokWebWeb.DashboardLive do
             <form phx-change="change_model" class="flex items-center">
               <input type="hidden" name="name" value={@selected} />
               <select name="model" class="border border-gray-300 rounded-lg px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-gray-900">
-                <%= for {id, label} <- @models do %>
+                <%= for {id, label, _provider} <- @models do %>
                   <option value={id} selected={id == selected_model(@instances, @selected)}><%= label %></option>
                 <% end %>
               </select>
@@ -254,6 +301,10 @@ defmodule DruzhokWebWeb.DashboardLive do
             <button phx-click="tab" phx-value-tab="files"
                     class={"px-4 py-2.5 text-sm font-medium border-b-2 transition #{if @tab == :files, do: "border-gray-900 text-gray-900", else: "border-transparent text-gray-400 hover:text-gray-600"}"}>
               Files
+            </button>
+            <button phx-click="tab" phx-value-tab="security"
+                    class={"px-4 py-2.5 text-sm font-medium border-b-2 transition #{if @tab == :security, do: "border-gray-900 text-gray-900", else: "border-transparent text-gray-400 hover:text-gray-600"}"}>
+              Security
             </button>
           </div>
 
@@ -300,6 +351,59 @@ defmodule DruzhokWebWeb.DashboardLive do
                   <span :if={!file.is_dir} class="text-xs text-gray-300 font-mono w-6">&mdash;</span>
                   <span class="flex-1 text-sm"><%= file.path %></span>
                   <span :if={!file.is_dir} class="text-xs text-gray-400 font-mono"><%= format_size(file.size) %></span>
+                </div>
+              </div>
+            </div>
+
+            <%!-- Security tab --%>
+            <div :if={@tab == :security} class="p-6 space-y-6">
+              <%!-- Owner section --%>
+              <div class="bg-white rounded-xl border border-gray-200 p-4">
+                <h3 class="text-sm font-semibold mb-3">Owner</h3>
+                <div :if={@owner}>
+                  <span class="text-sm text-gray-600">Telegram ID: <%= @owner %></span>
+                </div>
+                <div :if={!@owner && @pairing}>
+                  <div class="flex items-center justify-between">
+                    <div>
+                      <div class="text-sm">Pending pairing from <b><%= @pairing.display_name %></b></div>
+                      <div class="text-xs text-gray-500 font-mono mt-1">Code: <%= @pairing.code %></div>
+                    </div>
+                    <button phx-click="approve_pairing" phx-value-name={@selected}
+                            class="bg-gray-900 hover:bg-gray-800 text-white rounded-lg px-3 py-1.5 text-sm font-medium transition">
+                      Approve
+                    </button>
+                  </div>
+                </div>
+                <div :if={!@owner && !@pairing} class="text-sm text-gray-400">
+                  No owner yet. Send a message to the bot to start pairing.
+                </div>
+              </div>
+
+              <%!-- Groups section --%>
+              <div class="bg-white rounded-xl border border-gray-200 p-4">
+                <h3 class="text-sm font-semibold mb-3">Groups</h3>
+                <div :if={@groups == []} class="text-sm text-gray-400">
+                  No groups yet. Add the bot to a Telegram group.
+                </div>
+                <div :for={group <- @groups} class="flex items-center justify-between py-2 border-b border-gray-100 last:border-0">
+                  <div>
+                    <div class="text-sm font-medium"><%= group.title || "Chat #{group.chat_id}" %></div>
+                    <div class="text-xs text-gray-400"><%= group.chat_type %> &middot; <%= group.status %></div>
+                  </div>
+                  <div :if={group.status == "pending"} class="flex gap-2">
+                    <button phx-click="approve_group" phx-value-name={@selected} phx-value-chat_id={group.chat_id}
+                            class="bg-gray-900 hover:bg-gray-800 text-white rounded-lg px-3 py-1 text-xs font-medium transition">
+                      Approve
+                    </button>
+                    <button phx-click="reject_group" phx-value-name={@selected} phx-value-chat_id={group.chat_id}
+                            class="border border-gray-300 hover:bg-gray-100 rounded-lg px-3 py-1 text-xs font-medium transition">
+                      Reject
+                    </button>
+                  </div>
+                  <span :if={group.status == "approved"} class="text-xs text-green-600 font-medium">Approved</span>
+                  <span :if={group.status == "rejected"} class="text-xs text-red-500 font-medium">Rejected</span>
+                  <span :if={group.status == "removed"} class="text-xs text-gray-400 font-medium">Removed</span>
                 </div>
               </div>
             </div>
@@ -416,12 +520,8 @@ defmodule DruzhokWebWeb.DashboardLive do
     Druzhok.InstanceManager.list()
   end
 
-  defp get_instance(name) do
-    Enum.find(list_instances(), & &1.name == name)
-  end
-
-  defp get_instance_from(instances, name) do
-    Enum.find(instances, & &1.name == name)
+  defp get_instance(name, socket) do
+    Enum.find(socket.assigns.instances, & &1.name == name)
   end
 
   defp instance_workspace(name) do
