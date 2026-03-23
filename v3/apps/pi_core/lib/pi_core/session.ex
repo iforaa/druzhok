@@ -45,7 +45,9 @@ defmodule PiCore.Session do
   def init(opts) do
     loader = opts[:workspace_loader] || PiCore.WorkspaceLoader.Default
     group = opts[:group] || false
-    base_prompt = loader.load(opts.workspace, %{group: group})
+    sandbox = get_in(opts, [:extra_tool_context, :sandbox])
+    read_fn = if sandbox, do: sandbox.read_file, else: nil
+    base_prompt = loader.load(opts.workspace, %{group: group, read_fn: read_fn})
     system_prompt = append_model_info(base_prompt, opts.model)
     tools = opts[:tools] || default_tools()
 

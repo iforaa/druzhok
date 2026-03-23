@@ -23,7 +23,7 @@ defmodule Druzhok.InstanceManager do
       sandbox: opts[:sandbox] || detect_sandbox(),
     }
 
-    if config.sandbox not in ["docker", "firecracker"], do: ensure_workspace(config.workspace)
+    ensure_workspace(config.workspace)
 
     case DynamicSupervisor.start_child(Druzhok.InstanceDynSup, {Druzhok.Instance.Sup, config}) do
       {:ok, sup_pid} ->
@@ -231,13 +231,26 @@ defmodule Druzhok.InstanceManager do
 
   defp ensure_workspace(workspace) do
     unless File.exists?(workspace) do
-      template = Path.join([File.cwd!(), "..", "workspace-template"]) |> Path.expand()
-      if File.exists?(template) do
+      template = find_workspace_template()
+      if template do
         File.cp_r!(template, workspace)
       else
         File.mkdir_p!(workspace)
         File.mkdir_p!(Path.join(workspace, "memory"))
       end
     end
+  end
+
+  defp find_workspace_template do
+    candidates = [
+      System.get_env("WORKSPACE_TEMPLATE_PATH"),
+      Path.join(File.cwd!(), "workspace-template"),
+      Path.join([File.cwd!(), "..", "workspace-template"]) |> Path.expand()
+    ]
+
+    Enum.find(candidates, fn
+      nil -> false
+      path -> File.exists?(path)
+    end)
   end
 end
