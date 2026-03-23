@@ -46,7 +46,7 @@ Foundation for all budget decisions. Uses `byte_size / 4` heuristic. Using byte 
 - `estimate(text)` — estimated token count for a string
 - `estimate_message(message)` — handles `Loop.Message`, counts content + tool call arguments + tool name overhead
 - `estimate_messages(messages)` — sums a list
-- `estimate_tools(tools)` — tokens for tool definitions (name + description + parameter schema JSON)
+- `estimate_tools(tools)` — tokens for tool definitions in OpenAI format (after `Schema.to_openai_list/1`), counting name + description + parameter schema JSON
 
 ### Special cases
 
@@ -171,7 +171,7 @@ Future optimization: tool subsetting per model size (e.g., drop `grep` and `find
 
 ## 4. Conversation History Budget
 
-### Budget: configurable ratio of context window (default 55%)
+### Budget: configurable ratio of context window (default 50%)
 
 ### 4a. Reasoning stripping (always applied, free win)
 
@@ -322,7 +322,12 @@ Session.init/1
   └── store budget in state
 
 Session.run_prompt/2
-  ├── Compaction.maybe_compact(messages, budget.history)
+  ├── Compaction.maybe_compact(messages, %{
+  │     budget: budget.history,
+  │     llm_fn: llm_fn,
+  │     keep_recent_ratio: 0.3
+  │   })
+  ├── SessionStore.sanitize_for_persistence(messages, budget)  # before save
   └── Loop.run(messages, budget, ...)
         ├── transform_messages(messages, budget)
         │   ├── strip reasoning from old assistant messages
@@ -367,7 +372,8 @@ If after all budgeting the total still exceeds the context window, a final guard
 
 | Module | Changes |
 |--------|---------|
-| `PiCore.Session` | Add `budget` field, pass to Loop/Compaction |
+| `PiCore.Loop.Message` | Add `metadata` field (map) for compaction summary identification |
+| `PiCore.Session` | Add `budget` field, pass to Loop/Compaction, recompute on model change |
 | `PiCore.Loop` | Add `transform_messages/1`, context-aware `truncate_output/1` |
 | `PiCore.Compaction` | Token-based trigger, iterative summarization, structured summaries |
 | `PiCore.WorkspaceLoader.Default` | Delegate to `PromptBudget` |
