@@ -27,7 +27,9 @@ defmodule PiCore.MixProject do
   defp deps do
     [
       {:finch, "~> 0.19"},
-      {:jason, "~> 1.4"}
+      {:jason, "~> 1.4"},
+      {:bumblebee, "~> 0.6"},
+      {:nx, "~> 0.9"}
     ]
   end
 end
