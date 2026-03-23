@@ -9,12 +9,11 @@ defmodule PiCore.WorkspaceLoader.Default do
 
   def load(workspace, opts) do
     files = if opts[:group], do: @files -- ["USER.md"], else: @files
-    read_fn = opts[:read_fn] || (&File.read/1)
 
     files
     |> Enum.map(fn file ->
-      path = if read_fn == (&File.read/1), do: Path.join(workspace, file), else: "/workspace/#{file}"
-      case read_fn.(path) do
+      path = Path.join(workspace, file)
+      case File.read(path) do
         {:ok, content} -> content
         {:error, _} -> nil
       end

@@ -37,6 +37,7 @@ defmodule Druzhok.Sandbox.DockerClient do
   @impl true
   def init(opts) do
     instance_name = opts.instance_name
+    workspace = opts[:workspace]
     secret = :crypto.strong_rand_bytes(16) |> Base.encode64()
     # Use DB id + name for unique container naming
     db_id = case Druzhok.Repo.get_by(Druzhok.Instance, name: instance_name) do
@@ -45,7 +46,10 @@ defmodule Druzhok.Sandbox.DockerClient do
     end
     container_name = "druzhok-#{db_id}-#{instance_name}"
 
-    case start_container(container_name, secret) do
+    # Resolve absolute host workspace path for volume mount
+    host_workspace = if workspace, do: Path.expand(workspace), else: nil
+
+    case start_container(container_name, secret, host_workspace) do
       {:ok, {host, port}} ->
         case connect_with_retry(host, port, secret, 10, 500) do
           {:ok, socket} ->
@@ -59,7 +63,8 @@ defmodule Druzhok.Sandbox.DockerClient do
               secret: secret
             }
 
-            Protocol.init_workspace(state)
+            # If no shared volume, fall back to TCP-based workspace init
+            unless host_workspace, do: Protocol.init_workspace(state)
 
             {:ok, state}
 
@@ -130,13 +135,19 @@ defmodule Druzhok.Sandbox.DockerClient do
 
   # --- Docker-specific private helpers ---
 
-  defp start_container(container_name, secret) do
+  defp start_container(container_name, secret, host_workspace) do
     case System.find_executable("docker") do
       nil ->
         {:error, "Docker not installed"}
 
       _ ->
         System.cmd("docker", ["rm", "-f", container_name], stderr_to_stdout: true)
+
+        volume_args = if host_workspace do
+          ["-v", "#{host_workspace}:/workspace"]
+        else
+          []
+        end
 
         case System.cmd(
                "docker",
@@ -160,9 +171,8 @@ defmodule Druzhok.Sandbox.DockerClient do
                  "--security-opt",
                  "no-new-privileges",
                  "-e",
-                 "SANDBOX_SECRET=#{secret}",
-                 "druzhok-sandbox:latest"
-               ],
+                 "SANDBOX_SECRET=#{secret}"
+               ] ++ volume_args ++ ["druzhok-sandbox:latest"],
                stderr_to_stdout: true
              ) do
           {_, 0} ->
