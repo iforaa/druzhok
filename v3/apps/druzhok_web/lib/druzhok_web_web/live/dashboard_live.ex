@@ -206,6 +206,25 @@ defmodule DruzhokWebWeb.DashboardLive do
     {:noreply, assign(socket, groups: Druzhok.InstanceManager.get_groups(name))}
   end
 
+  def handle_event("update_group_activation", %{"name" => name, "chat_id" => chat_id, "activation" => activation}, socket) do
+    chat_id = String.to_integer(chat_id)
+    Druzhok.AllowedChat.set_activation(name, chat_id, activation)
+    if activation == "buffer", do: Druzhok.GroupBuffer.clear(name, chat_id)
+    groups = Druzhok.AllowedChat.groups_for_instance(name)
+    {:noreply, assign(socket, groups: groups)}
+  end
+
+  def handle_event("update_group_buffer_size", %{"name" => name, "chat_id" => chat_id, "value" => size}, socket) do
+    chat_id = String.to_integer(chat_id)
+    size = size |> String.to_integer() |> max(1) |> min(500)
+    case Druzhok.AllowedChat.get(name, chat_id) do
+      nil -> :ok
+      chat -> Druzhok.AllowedChat.changeset(chat, %{buffer_size: size}) |> Druzhok.Repo.update()
+    end
+    groups = Druzhok.AllowedChat.groups_for_instance(name)
+    {:noreply, assign(socket, groups: groups)}
+  end
+
   @impl true
   def render(assigns) do
     ~H"""
