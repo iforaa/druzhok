@@ -131,7 +131,8 @@
       "Bash(MIX_ENV=test mix test apps/pi_core/)",
       "Bash(elixir -e \":*)",
       "Bash(MIX_ENV=test mix test)",
-      "WebFetch(domain:api.github.com)"
+      "WebFetch(domain:api.github.com)",
+      "Bash(MIX_ENV=test mix ecto.migrate)"
     ]
   }
 }

@@ -9,13 +9,16 @@ defmodule Druzhok.Model do
     field :label, :string
     field :provider, :string, default: "openai"
     field :position, :integer, default: 0
+    field :context_window, :integer, default: 32_000
+    field :supports_reasoning, :boolean, default: false
+    field :supports_tools, :boolean, default: true
 
     timestamps()
   end
 
   def changeset(model, attrs) do
     model
-    |> cast(attrs, [:model_id, :label, :provider, :position])
+    |> cast(attrs, [:model_id, :label, :provider, :position, :context_window, :supports_reasoning, :supports_tools])
     |> validate_required([:model_id, :label])
     |> unique_constraint(:model_id)
   end
