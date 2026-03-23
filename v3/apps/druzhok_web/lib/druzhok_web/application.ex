@@ -7,6 +7,10 @@ defmodule DruzhokWeb.Application do
 
   @impl true
   def start(_type, _args) do
+    if :ets.whereis(:auth_rate_limit) == :undefined do
+      :ets.new(:auth_rate_limit, [:set, :public, :named_table])
+    end
+
     children = [
       DruzhokWebWeb.Telemetry,
       {DNSCluster, query: Application.get_env(:druzhok_web, :dns_cluster_query) || :ignore},
