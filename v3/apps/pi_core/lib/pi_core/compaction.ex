@@ -15,7 +15,7 @@ defmodule PiCore.Compaction do
         if total_tokens <= budget.history do
           {messages, false}
         else
-          compact(messages, budget, opts[:llm_fn])
+          compact(messages, budget, opts)
         end
 
       nil ->
@@ -30,11 +30,18 @@ defmodule PiCore.Compaction do
     end
   end
 
-  defp compact(messages, budget, llm_fn) do
+  defp compact(messages, budget, opts) do
+    llm_fn = opts[:llm_fn]
     keep_budget = TokenBudget.keep_recent_budget(budget)
     {old, recent} = split_keeping_turns(messages, keep_budget)
 
     {existing_summary, old_without_summary} = extract_existing_summary(old)
+
+    # Memory flush: save important context before discarding
+    if opts[:memory_flush] && opts[:workspace] do
+      PiCore.Memory.Flush.flush(old_without_summary, opts[:llm_fn], opts[:workspace], opts[:timezone] || "UTC")
+    end
+
     version = if existing_summary, do: existing_summary.metadata[:version] + 1, else: 1
 
     summary_text = if llm_fn do
