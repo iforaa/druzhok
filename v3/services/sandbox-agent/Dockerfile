@@ -8,7 +8,7 @@ RUN CGO_ENABLED=0 go build -ldflags="-s -w" -o sandbox-agent .
 FROM alpine:3.20
 RUN apk add --no-cache \
     bash python3 py3-pip nodejs npm git curl wget \
-    build-base openssh-client jq
+    build-base openssh-client jq ca-certificates
 COPY --from=builder /build/sandbox-agent /usr/local/bin/sandbox-agent
 RUN mkdir -p /workspace
 WORKDIR /workspace
