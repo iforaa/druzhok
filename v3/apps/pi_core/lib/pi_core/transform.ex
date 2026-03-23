@@ -4,7 +4,6 @@ defmodule PiCore.Transform do
   Operates on copies — canonical messages stay intact.
   """
 
-  alias PiCore.Loop.Message
   alias PiCore.TokenEstimator
   alias PiCore.TokenBudget
 

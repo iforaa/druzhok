@@ -101,10 +101,6 @@ defmodule PiCore.Session do
     end
   end
 
-  def handle_call(:get_workspace, _from, state) do
-    {:reply, state.workspace, state}
-  end
-
   def handle_cast({:set_caller, pid}, state) do
     {:noreply, %{state | caller: pid}}
   end
@@ -146,6 +142,10 @@ defmodule PiCore.Session do
   def handle_cast(:reset, state) do
     PiCore.SessionStore.clear(state.workspace)
     {:noreply, %{state | messages: [], active_task: nil, parallel_tasks: %{}}}
+  end
+
+  def handle_call(:get_workspace, _from, state) do
+    {:reply, state.workspace, state}
   end
 
   # Task completed successfully
