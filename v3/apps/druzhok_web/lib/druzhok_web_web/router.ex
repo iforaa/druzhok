@@ -30,5 +30,6 @@ defmodule DruzhokWebWeb.Router do
     live "/", DashboardLive
     live "/instances/:name", DashboardLive
     live "/settings", SettingsLive
+    live "/models", ModelsLive
   end
 end
