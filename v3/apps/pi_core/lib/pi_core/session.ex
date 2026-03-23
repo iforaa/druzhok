@@ -166,7 +166,6 @@ defmodule PiCore.Session do
     end
   end
 
-  @idle_timeout_ms 2 * 60 * 60 * 1000
 
   def handle_info(:idle_timeout, state) do
     {:stop, :normal, state}
@@ -198,7 +197,7 @@ defmodule PiCore.Session do
 
   defp schedule_idle_timeout(state) do
     if state.idle_timer, do: Process.cancel_timer(state.idle_timer)
-    timer = Process.send_after(self(), :idle_timeout, @idle_timeout_ms)
+    timer = Process.send_after(self(), :idle_timeout, PiCore.Config.idle_timeout_ms())
     %{state | idle_timer: timer}
   end
 
@@ -208,8 +207,8 @@ defmodule PiCore.Session do
     # Compact if conversation is too long
     {compacted_messages, _did_compact} = Compaction.maybe_compact(messages, %{
       llm_fn: llm_fn,
-      max_messages: 40,
-      keep_recent: 10
+      max_messages: PiCore.Config.compaction_max_messages(),
+      keep_recent: PiCore.Config.compaction_keep_recent()
     })
 
     wrapped_on_delta = if state.on_delta && state.chat_id do
@@ -240,7 +239,7 @@ defmodule PiCore.Session do
         system_prompt: opts.system_prompt,
         messages: opts.messages,
         tools: opts.tools,
-        max_tokens: 16384,
+        max_tokens: PiCore.Config.default_max_tokens(),
         stream: true,
         on_delta: opts[:on_delta],
         on_event: opts[:on_event]

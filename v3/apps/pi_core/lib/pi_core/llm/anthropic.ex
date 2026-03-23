@@ -4,7 +4,6 @@ defmodule PiCore.LLM.Anthropic do
   """
   alias PiCore.LLM.Client.Result
 
-  @api_version "2023-06-01"
 
   def completion(opts) do
     url = String.trim_trailing(opts.api_url || "https://api.anthropic.com", "/") <> "/v1/messages"
@@ -15,7 +14,7 @@ defmodule PiCore.LLM.Anthropic do
 
     body = %{
       model: opts.model,
-      max_tokens: opts[:max_tokens] || 16384,
+      max_tokens: opts[:max_tokens] || PiCore.Config.default_max_tokens(),
       system: opts.system_prompt || "",
       messages: messages,
       stream: opts[:stream] || false,
@@ -25,7 +24,7 @@ defmodule PiCore.LLM.Anthropic do
     headers = [
       {"content-type", "application/json"},
       {"x-api-key", opts.api_key},
-      {"anthropic-version", @api_version},
+      {"anthropic-version", PiCore.Config.anthropic_api_version()},
       {"accept-encoding", "identity"}
     ]
 

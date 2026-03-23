@@ -5,8 +5,6 @@ defmodule PiCore.Loop do
     defstruct [:role, :content, :tool_calls, :tool_call_id, :tool_name, :is_error, :timestamp]
   end
 
-  @max_iterations 20
-
   def run(opts) do
     tools = opts[:tools] || []
     tool_context = opts[:tool_context] || %{}
@@ -16,12 +14,10 @@ defmodule PiCore.Loop do
     loop(opts, openai_tools, tools, tool_context, [], 0)
   end
 
-  defp loop(_opts, _openai_tools, _tools, _tool_context, _messages, iterations)
-       when iterations > @max_iterations do
-    {:error, "Too many iterations (#{iterations})"}
-  end
-
   defp loop(opts, openai_tools, tools, tool_context, new_messages, iterations) do
+    if iterations > PiCore.Config.max_iterations() do
+      {:error, "Too many iterations (#{iterations})"}
+    else
     all_messages = opts.messages ++ new_messages
 
     llm_messages =
@@ -102,6 +98,7 @@ defmodule PiCore.Loop do
         emit(opts, %{type: :llm_error, iteration: iterations, elapsed_ms: elapsed, error: inspect(reason)})
         {:error, reason}
     end
+    end
   end
 
   defp execute_tool_calls(tool_calls, tools, context, opts) do
@@ -150,11 +147,14 @@ defmodule PiCore.Loop do
     if on_event = opts[:on_event], do: on_event.(event)
   end
 
-  @max_tool_output 8_000
-
-  defp truncate_output(text) when byte_size(text) <= @max_tool_output, do: text
   defp truncate_output(text) do
-    truncated = String.slice(text, 0, @max_tool_output)
-    truncated <> "\n\n[Output truncated — #{byte_size(text)} bytes total, showing first #{@max_tool_output}]"
+    max = PiCore.Config.max_tool_output()
+
+    if byte_size(text) <= max do
+      text
+    else
+      truncated = String.slice(text, 0, max)
+      truncated <> "\n\n[Output truncated — #{byte_size(text)} bytes total, showing first #{max}]"
+    end
   end
 end
