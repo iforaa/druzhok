@@ -16,9 +16,8 @@ defmodule Druzhok.Agent.Telegram do
   alias Druzhok.Telegram.API
   alias Druzhok.Telegram.Format
   alias Druzhok.Events
-
-  @min_chars_first_send 30
-  @edit_interval_ms 1_000
+  alias Druzhok.Agent.Router
+  alias Druzhok.Agent.Streamer
 
   defstruct [
     :token,
@@ -31,9 +30,7 @@ defmodule Druzhok.Agent.Telegram do
     :bot_name_regex,
     :workspace,
     :owner_telegram_id,
-    :draft_message_id,
-    :draft_text,
-    :last_edit_at,
+    :streamer,
     offset: 0
   ]
 
@@ -48,6 +45,7 @@ defmodule Druzhok.Agent.Telegram do
     state = %__MODULE__{
       token: opts.token,
       instance_name: opts[:instance_name],
+      streamer: Streamer.new(),
     }
 
     # Fetch bot identity and workspace asynchronously
@@ -144,16 +142,16 @@ defmodule Druzhok.Agent.Telegram do
 
   def handle_info({:pi_delta, chunk, chat_id}, state) when is_binary(chunk) do
     state = %{state | chat_id: chat_id}
-    accumulated = (state.draft_text || "") <> chunk
-    state = handle_streaming_delta(accumulated, %{state | draft_text: accumulated})
+    streamer = Streamer.append(state.streamer, chunk)
+    state = handle_streaming_delta(%{state | streamer: streamer})
     {:noreply, state}
   end
 
   # --- Streaming deltas from PiCore (without chat_id, backward compat) ---
 
   def handle_info({:pi_delta, chunk}, state) when is_binary(chunk) do
-    accumulated = (state.draft_text || "") <> chunk
-    state = handle_streaming_delta(accumulated, %{state | draft_text: accumulated})
+    streamer = Streamer.append(state.streamer, chunk)
+    state = handle_streaming_delta(%{state | streamer: streamer})
     {:noreply, state}
   end
 
@@ -196,42 +194,45 @@ defmodule Druzhok.Agent.Telegram do
 
   # --- Streaming logic ---
 
-  defp handle_streaming_delta(text, state) do
+  defp handle_streaming_delta(state) do
     now = System.monotonic_time(:millisecond)
-    display_text = strip_artifacts(text)
+    streamer = state.streamer
+    display_text = strip_artifacts(Streamer.text(streamer))
 
     cond do
-      is_nil(state.draft_message_id) and String.length(display_text) >= @min_chars_first_send ->
+      Streamer.should_send?(streamer) ->
         case API.send_message(state.token, state.chat_id, display_text) do
           {:ok, %{"message_id" => msg_id}} ->
-            %{state | draft_message_id: msg_id, draft_text: text, last_edit_at: now}
+            %{state | streamer: Streamer.mark_sent(streamer, now, msg_id)}
           _ ->
-            %{state | draft_text: text}
+            state
         end
 
-      is_nil(state.draft_message_id) ->
-        %{state | draft_text: text}
+      is_nil(streamer.message_id) ->
+        # Not enough chars yet, just keep accumulating
+        state
 
-      now - (state.last_edit_at || 0) >= @edit_interval_ms ->
-        case API.edit_message_text(state.token, state.chat_id, state.draft_message_id, display_text) do
+      Streamer.should_edit?(streamer, now) ->
+        case API.edit_message_text(state.token, state.chat_id, streamer.message_id, display_text) do
           {:error, reason} ->
             Logger.warning("Telegram edit failed: #{inspect(reason)}")
           _ -> :ok
         end
-        %{state | draft_text: text, last_edit_at: now}
+        %{state | streamer: Streamer.mark_sent(streamer, now)}
 
       true ->
-        %{state | draft_text: text}
+        state
     end
   end
 
   defp finalize_response(text, state) do
     html = Format.to_telegram_html(text)
     html_opts = %{parse_mode: "HTML"}
+    streamer = state.streamer
 
     result = cond do
-      state.draft_message_id ->
-        API.edit_message_text(state.token, state.chat_id, state.draft_message_id, html, html_opts)
+      streamer.message_id ->
+        API.edit_message_text(state.token, state.chat_id, streamer.message_id, html, html_opts)
 
       state.chat_id ->
         API.send_message(state.token, state.chat_id, html, html_opts)
@@ -247,8 +248,8 @@ defmodule Druzhok.Agent.Telegram do
         else
           Logger.error("Telegram finalize failed: #{reason_str}")
           emit(state, :error, %{text: "Telegram send failed: #{reason_str}"})
-          if state.draft_message_id do
-            API.edit_message_text(state.token, state.chat_id, state.draft_message_id, text)
+          if streamer.message_id do
+            API.edit_message_text(state.token, state.chat_id, streamer.message_id, text)
           else
             API.send_message(state.token, state.chat_id, text)
           end
@@ -256,7 +257,7 @@ defmodule Druzhok.Agent.Telegram do
       _ -> :ok
     end
 
-    %{state | draft_message_id: nil, draft_text: nil, last_edit_at: nil}
+    %{state | streamer: Streamer.reset(streamer)}
   end
 
   # --- Update handling / Routing ---
@@ -264,10 +265,10 @@ defmodule Druzhok.Agent.Telegram do
   defp handle_update(%{"update_id" => update_id} = update, state) do
     state = %{state | offset: update_id + 1}
 
-    case extract_message(update) do
+    case Router.extract_message(update) do
       nil -> state
       {chat_id, chat_type, text, sender_id, sender_name, file, chat_title} ->
-        is_reply = is_reply_to_bot?(update, state)
+        is_reply = Router.reply_to_bot?(update, state.bot_id)
 
         case chat_type do
           "private" ->
@@ -284,7 +285,7 @@ defmodule Druzhok.Agent.Telegram do
   # --- DM handling with pairing ---
 
   defp handle_dm(chat_id, text, sender_id, sender_name, file, state) do
-    state = %{state | chat_id: chat_id, draft_message_id: nil, draft_text: nil, last_edit_at: nil}
+    state = %{state | chat_id: chat_id, streamer: Streamer.reset(state.streamer)}
     # Refresh owner from DB if not cached (happens once after pairing approval)
     state = if is_nil(state.owner_telegram_id) do
       case Druzhok.Repo.get_by(Druzhok.Instance, name: state.instance_name) do
@@ -337,10 +338,10 @@ defmodule Druzhok.Agent.Telegram do
 
     cond do
       chat && chat.status == "approved" ->
-        if triggered?(text, is_reply_to_bot, state) do
-          state = %{state | chat_id: chat_id, draft_message_id: nil, draft_text: nil, last_edit_at: nil}
+        if is_reply_to_bot || Router.triggered?(text, state.bot_username, state.bot_name_regex) do
+          state = %{state | chat_id: chat_id, streamer: Streamer.reset(state.streamer)}
 
-          case parse_command(text) do
+          case Router.parse_command(text) do
             {:command, "reset"} ->
               if state.owner_telegram_id == sender_id do
                 dispatch_session(chat_id, state, &PiCore.Session.reset/1)
@@ -369,7 +370,7 @@ defmodule Druzhok.Agent.Telegram do
         # Pending or unknown — create pending record
         Druzhok.AllowedChat.upsert_pending(state.instance_name, chat_id, "group", chat_title)
 
-        if mentioned_by_username?(text, state) && (is_nil(chat) || !chat.info_sent) do
+        if Router.mentioned_by_username?(text, state.bot_username) && (is_nil(chat) || !chat.info_sent) do
           API.send_message(state.token, chat_id, "This bot requires approval. Ask the admin to approve this group in the dashboard.")
           Druzhok.AllowedChat.mark_info_sent(state.instance_name, chat_id)
         end
@@ -386,7 +387,7 @@ defmodule Druzhok.Agent.Telegram do
     emit(state, :user_message, %{text: prompt_text, sender: sender_name, chat_id: chat_id})
     API.send_chat_action(state.token, chat_id)
 
-    case parse_command(text) do
+    case Router.parse_command(text) do
       {:command, "start"} ->
         dispatch_prompt("User #{sender_name} just started the bot. Introduce yourself.", chat_id, is_group, state)
         state
@@ -404,60 +405,6 @@ defmodule Druzhok.Agent.Telegram do
       :text ->
         dispatch_prompt(prompt_text, chat_id, is_group, state)
         state
-    end
-  end
-
-  # --- Trigger detection ---
-
-  defp triggered?(text, is_reply_to_bot, state) do
-    is_reply_to_bot ||
-    mentioned_by_username?(text, state) ||
-    name_mentioned?(text, state)
-  end
-
-  defp mentioned_by_username?(_text, %{bot_username: nil}), do: false
-  defp mentioned_by_username?(text, %{bot_username: username}) do
-    String.contains?(String.downcase(text), "@" <> String.downcase(username))
-  end
-
-  defp name_mentioned?(_text, %{bot_name_regex: nil}), do: false
-  defp name_mentioned?(text, %{bot_name_regex: regex}), do: Regex.match?(regex, text)
-
-  defp is_reply_to_bot?(update, state) do
-    case get_in(update, ["message", "reply_to_message", "from", "id"]) do
-      nil -> false
-      id -> id == state.bot_id
-    end
-  end
-
-  # --- Message extraction ---
-
-  defp extract_message(%{"message" => msg}) do
-    from = msg["from"]
-    if from && !from["is_bot"] do
-      chat_id = msg["chat"]["id"]
-      chat_type = msg["chat"]["type"] || "private"
-      text = msg["text"] || msg["caption"] || ""
-      sender_id = from["id"]
-      name = [from["first_name"], from["last_name"]] |> Enum.reject(&is_nil/1) |> Enum.join(" ")
-      file = extract_file(msg)
-      chat_title = msg["chat"]["title"]
-      {chat_id, chat_type, text, sender_id, name, file, chat_title}
-    else
-      nil
-    end
-  end
-  defp extract_message(_), do: nil
-
-  defp extract_file(msg) do
-    cond do
-      msg["document"] -> %{file_id: msg["document"]["file_id"], name: msg["document"]["file_name"] || "document"}
-      msg["photo"] -> %{file_id: List.last(msg["photo"])["file_id"], name: "photo.jpg"}
-      msg["voice"] -> %{file_id: msg["voice"]["file_id"], name: "voice.ogg"}
-      msg["audio"] -> %{file_id: msg["audio"]["file_id"], name: msg["audio"]["file_name"] || "audio.mp3"}
-      msg["video"] -> %{file_id: msg["video"]["file_id"], name: msg["video"]["file_name"] || "video.mp4"}
-      msg["sticker"] -> %{file_id: msg["sticker"]["file_id"], name: "sticker.webp"}
-      true -> nil
     end
   end
 
@@ -494,12 +441,6 @@ defmodule Druzhok.Agent.Telegram do
   defp build_prompt(text, _sender, nil), do: text
   defp build_prompt("", _sender, file_path), do: "User sent a file: #{file_path}"
   defp build_prompt(text, _sender, file_path), do: "#{text}\n\n[User attached a file: #{file_path}]"
-
-  defp parse_command("/start" <> _), do: {:command, "start"}
-  defp parse_command("/reset" <> _), do: {:command, "reset"}
-  defp parse_command("/abort" <> _), do: {:command, "abort"}
-  defp parse_command("/" <> _), do: :text
-  defp parse_command(_), do: :text
 
   defp dispatch_prompt(text, chat_id, group, state) do
     case Registry.lookup(Druzhok.Registry, {state.instance_name, :session, chat_id}) do
