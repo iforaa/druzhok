@@ -24,19 +24,26 @@ defmodule Druzhok.EmbeddingCache do
 
   @impl true
   def put(instance_name, entry) do
-    existing = Druzhok.Repo.get_by(__MODULE__, instance_name: instance_name, chunk_hash: entry.chunk_hash)
-    record = existing || %__MODULE__{}
+    now = DateTime.utc_now() |> DateTime.truncate(:second)
 
-    record
+    %__MODULE__{}
     |> changeset(%{
       instance_name: instance_name,
       file: entry.file,
       chunk_hash: entry.chunk_hash,
       chunk_text: entry.chunk_text,
       embedding: :erlang.term_to_binary(entry.embedding),
-      model_name: entry[:model_name] || "all-MiniLM-L6-v2"
+      model_name: entry[:model_name] || "voyage-3.5"
     })
-    |> Druzhok.Repo.insert_or_update()
+    |> Druzhok.Repo.insert(
+      on_conflict: [set: [
+        embedding: :erlang.term_to_binary(entry.embedding),
+        chunk_text: entry.chunk_text,
+        file: entry.file,
+        updated_at: now
+      ]],
+      conflict_target: [:instance_name, :chunk_hash]
+    )
 
     :ok
   end

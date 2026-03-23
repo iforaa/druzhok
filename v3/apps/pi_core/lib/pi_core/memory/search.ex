@@ -107,34 +107,52 @@ defmodule PiCore.Memory.Search do
   end
 
   defp get_chunk_vectors(chunks, instance_name, cache_mod, opts) do
-    Enum.map(chunks, fn chunk ->
-      hash = VectorMath.chunk_hash(chunk.text)
+    # Split into cached and uncached, preserving original index
+    indexed = Enum.with_index(chunks)
 
-      cached = if cache_mod && instance_name do
-        case cache_mod.get(instance_name, hash) do
-          {:ok, vec} -> vec
-          :miss -> nil
+    {cached_entries, uncached_entries} =
+      Enum.split_with(indexed, fn {chunk, _idx} ->
+        if cache_mod && instance_name do
+          cache_mod.get(instance_name, VectorMath.chunk_hash(chunk.text)) != :miss
+        else
+          false
         end
-      end
+      end)
 
-      if cached do
-        cached
-      else
-        case EmbeddingClient.embed(chunk.text, opts) do
-          {:ok, vec} ->
+    # Load cached vectors
+    cached_map = Map.new(cached_entries, fn {chunk, idx} ->
+      {:ok, vec} = cache_mod.get(instance_name, VectorMath.chunk_hash(chunk.text))
+      {idx, vec}
+    end)
+
+    # Batch embed all uncached chunks in one API call
+    uncached_map = if uncached_entries == [] do
+      %{}
+    else
+      texts = Enum.map(uncached_entries, fn {chunk, _} -> chunk.text end)
+      case EmbeddingClient.embed_batch(texts, opts) do
+        {:ok, vectors} ->
+          Enum.zip(uncached_entries, vectors)
+          |> Map.new(fn {{chunk, idx}, vec} ->
+            # Cache the new embedding
             if cache_mod && instance_name do
               cache_mod.put(instance_name, %{
                 file: chunk.file,
-                chunk_hash: hash,
+                chunk_hash: VectorMath.chunk_hash(chunk.text),
                 chunk_text: String.slice(chunk.text, 0, 500),
                 embedding: vec
               })
             end
-            vec
-          {:error, _} -> nil
-        end
+            {idx, vec}
+          end)
+        {:error, _} ->
+          Map.new(uncached_entries, fn {_, idx} -> {idx, nil} end)
       end
-    end)
+    end
+
+    # Reassemble in original order
+    all_vecs = Map.merge(cached_map, uncached_map)
+    Enum.map(0..(length(chunks) - 1), fn idx -> Map.get(all_vecs, idx) end)
   end
 
   defp list_memory_files(workspace) do
