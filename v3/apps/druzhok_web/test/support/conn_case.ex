@@ -31,7 +31,29 @@ defmodule DruzhokWebWeb.ConnCase do
     end
   end
 
-  setup _tags do
+  setup tags do
+    pid = Ecto.Adapters.SQL.Sandbox.start_owner!(Druzhok.Repo, shared: !tags[:async])
+    on_exit(fn -> Ecto.Adapters.SQL.Sandbox.stop_owner(pid) end)
+
     {:ok, conn: Phoenix.ConnTest.build_conn()}
+  end
+
+  @doc """
+  Creates a user and returns an authenticated connection with the user in session.
+  """
+  def log_in_user(%Plug.Conn{} = conn, attrs \\ %{}) do
+    attrs = Map.merge(%{email: "test@example.com", password: "testpassword123"}, attrs)
+
+    {:ok, user} =
+      %Druzhok.User{}
+      |> Druzhok.User.changeset(Map.take(attrs, [:email, :password]))
+      |> Druzhok.Repo.insert()
+
+    conn =
+      conn
+      |> Phoenix.ConnTest.init_test_session(%{})
+      |> Plug.Conn.put_session(:user_id, user.id)
+
+    %{conn: conn, user: user}
   end
 end

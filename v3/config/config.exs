@@ -51,15 +51,15 @@ config :logger, :console,
 # Use Jason for JSON parsing in Phoenix
 config :phoenix, :json_library, Jason
 
-# Import environment specific config. This must remain at the bottom
-# of this file so it overrides the configuration defined above.
-import_config "#{config_env()}.exs"
-
 config :druzhok, Druzhok.Repo,
   database: System.get_env("DATABASE_PATH") || Path.expand("../data/druzhok.db", __DIR__)
 
 config :druzhok,
   ecto_repos: [Druzhok.Repo]
+
+# Import environment specific config. This must remain at the bottom
+# of this file so it overrides the configuration defined above.
+import_config "#{config_env()}.exs"
 
 config :pi_core,
   default_api_url: "https://api.tokenfactory.us-central1.nebius.com/v1"

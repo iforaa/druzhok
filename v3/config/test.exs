@@ -7,6 +7,11 @@ config :druzhok_web, DruzhokWebWeb.Endpoint,
   secret_key_base: "dk6+68Q+SfukfdlWipXSF22+INXhmiKB/luzWJ3q57M7Ckfa6I4XYV6RWiFO2deE",
   server: false
 
+# Use a separate test database
+config :druzhok, Druzhok.Repo,
+  database: Path.expand("../data/druzhok_test.db", __DIR__),
+  pool: Ecto.Adapters.SQL.Sandbox
+
 # Print only warnings and errors during test
 config :logger, level: :warning
 
