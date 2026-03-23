@@ -158,17 +158,26 @@ defmodule Druzhok.Agent.Telegram do
 
   def handle_info({:pi_response, %{text: text, chat_id: chat_id}}, state) when is_binary(text) and text != "" do
     state = %{state | chat_id: chat_id}
-    emit(state, :agent_reply, %{text: text})
-    state = finalize_response(text, state)
-    {:noreply, state}
+
+    if silent_reply?(text) do
+      {:noreply, %{state | streamer: Streamer.reset(state.streamer)}}
+    else
+      emit(state, :agent_reply, %{text: text})
+      state = finalize_response(text, state)
+      {:noreply, state}
+    end
   end
 
   # --- Final response from PiCore (without chat_id, backward compat) ---
 
   def handle_info({:pi_response, %{text: text}}, state) when is_binary(text) and text != "" do
-    emit(state, :agent_reply, %{text: text})
-    state = finalize_response(text, state)
-    {:noreply, state}
+    if silent_reply?(text) do
+      {:noreply, %{state | streamer: Streamer.reset(state.streamer)}}
+    else
+      emit(state, :agent_reply, %{text: text})
+      state = finalize_response(text, state)
+      {:noreply, state}
+    end
   end
 
   def handle_info({:pi_response, %{error: true, text: text}}, state) do
@@ -334,25 +343,21 @@ defmodule Druzhok.Agent.Telegram do
     end
   end
 
-  # --- Group handling with triggers ---
+  # --- Group handling ---
 
   defp handle_group(chat_id, text, sender_id, sender_name, file, is_reply_to_bot, chat_title, state) do
     chat = Druzhok.AllowedChat.get(state.instance_name, chat_id)
 
     cond do
       chat && chat.status == "approved" ->
-        if is_reply_to_bot || Router.triggered?(text, state.bot_username, state.bot_name_regex) do
-          state = %{state | chat_id: chat_id, streamer: Streamer.reset(state.streamer)}
-          process_owner_message(chat_id, text, sender_id, sender_name, file, true, state)
-        else
-          state
-        end
+        state = %{state | chat_id: chat_id, streamer: Streamer.reset(state.streamer)}
+        is_triggered = is_reply_to_bot || Router.triggered?(text, state.bot_username, state.bot_name_regex)
+        process_group_message(chat_id, text, sender_id, sender_name, file, is_triggered, state)
 
       chat && chat.status == "rejected" ->
         state
 
       true ->
-        # Pending or unknown — create pending record
         Druzhok.AllowedChat.upsert_pending(state.instance_name, chat_id, "group", chat_title)
 
         if Router.mentioned_by_username?(text, state.bot_username) && (is_nil(chat) || !chat.info_sent) do
@@ -360,6 +365,41 @@ defmodule Druzhok.Agent.Telegram do
           Druzhok.AllowedChat.mark_info_sent(state.instance_name, chat_id)
         end
 
+        state
+    end
+  end
+
+  # All group messages go to LLM with context about who's speaking and whether bot was addressed
+  defp process_group_message(chat_id, text, sender_id, sender_name, file, is_triggered, state) do
+    is_owner = state.owner_telegram_id == sender_id
+
+    # Commands only from owner
+    case Router.parse_command(text) do
+      {:command, "reset"} when is_owner ->
+        dispatch_session(chat_id, state, &PiCore.Session.reset/1)
+        API.send_message(state.token, chat_id, "Session reset!")
+        state
+
+      {:command, "abort"} when is_owner ->
+        dispatch_session(chat_id, state, &PiCore.Session.abort/1)
+        API.send_message(state.token, chat_id, "Aborted.")
+        state
+
+      {:command, "start"} ->
+        prompt = "[#{sender_name} started the bot in group chat]"
+        dispatch_prompt(prompt, chat_id, true, state)
+        state
+
+      _ ->
+        saved_file = if file, do: save_incoming_file(file, chat_id, state), else: nil
+        prompt = build_group_prompt(text, sender_name, saved_file, is_triggered)
+        emit(state, :user_message, %{text: prompt, sender: sender_name, chat_id: chat_id})
+
+        if is_triggered do
+          API.send_chat_action(state.token, chat_id)
+        end
+
+        dispatch_prompt(prompt, chat_id, true, state)
         state
     end
   end
@@ -431,6 +471,12 @@ defmodule Druzhok.Agent.Telegram do
   defp build_prompt("", _sender, file_path), do: "User sent a file: #{file_path}"
   defp build_prompt(text, _sender, file_path), do: "#{text}\n\n[User attached a file: #{file_path}]"
 
+  defp build_group_prompt(text, sender_name, file, is_triggered) do
+    base = "[#{sender_name}]: #{text}"
+    base = if file, do: base <> "\n[attached: #{file}]", else: base
+    if is_triggered, do: base <> "\n[обращение к тебе — ответ обязателен]", else: base
+  end
+
   defp dispatch_prompt(text, chat_id, group, state) do
     case Registry.lookup(Druzhok.Registry, {state.instance_name, :session, chat_id}) do
       [{pid, _}] -> PiCore.Session.prompt(pid, text)
@@ -457,4 +503,9 @@ defmodule Druzhok.Agent.Telegram do
   end
 
   defp strip_artifacts(text), do: PiCore.Sanitize.strip_artifacts(text)
+
+  defp silent_reply?(text) do
+    trimmed = String.trim(text)
+    trimmed == "[NO_REPLY]" or trimmed == ""
+  end
 end

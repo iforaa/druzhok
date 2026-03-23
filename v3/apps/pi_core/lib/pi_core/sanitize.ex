@@ -11,6 +11,7 @@ defmodule PiCore.Sanitize do
     |> then(&Regex.replace(~r/<invoke\b[^>]*>[\s\S]*?<\/invoke>/i, &1, ""))
     |> then(&Regex.replace(~r/<\/?minimax:tool_call>/i, &1, ""))
     |> then(&Regex.replace(~r/<\s*\/?(?:think(?:ing)?|thought|antthinking)\s*>/i, &1, ""))
+    |> then(&Regex.replace(~r/\[NO_REPLY\]/i, &1, ""))
     |> String.trim()
   end
 end
