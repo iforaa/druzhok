@@ -6,8 +6,8 @@ defmodule PiCore.Memory.EmbeddingClient do
   Configure: `%{embedding_api_url: "https://api.voyageai.com/v1", embedding_api_key: "...", embedding_model: "voyage-3.5"}`
   """
 
-  @default_url "https://api.voyageai.com/v1"
-  @default_model "voyage-3.5"
+  @default_url "https://api.tokenfactory.nebius.com/v1"
+  @default_model "BAAI/bge-multilingual-gemma2"
 
   def embed(text, opts) do
     case embed_batch([text], opts) do

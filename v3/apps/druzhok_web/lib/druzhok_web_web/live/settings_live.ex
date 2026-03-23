@@ -24,9 +24,9 @@ defmodule DruzhokWebWeb.SettingsLive do
         response_reserve_ratio: Druzhok.Settings.get("response_reserve_ratio") || "0.10",
         default_context_window: Druzhok.Settings.get("default_context_window") || "32000",
         token_estimation_divisor: Druzhok.Settings.get("token_estimation_divisor") || "4",
-        embedding_api_url: Druzhok.Settings.get("embedding_api_url") || "",
-        embedding_api_key: mask(Druzhok.Settings.get("embedding_api_key")),
-        embedding_model: Druzhok.Settings.get("embedding_model") || "voyage-3.5",
+        embedding_api_url: Druzhok.Settings.get("embedding_api_url") || "https://api.tokenfactory.nebius.com/v1",
+        embedding_api_key: mask(Druzhok.Settings.get("embedding_api_key") || Druzhok.Settings.get("nebius_api_key")),
+        embedding_model: Druzhok.Settings.get("embedding_model") || "BAAI/bge-multilingual-gemma2",
         saved: false
       )}
     end
@@ -73,7 +73,7 @@ defmodule DruzhokWebWeb.SettingsLive do
       token_estimation_divisor: Druzhok.Settings.get("token_estimation_divisor") || "4",
       embedding_api_url: Druzhok.Settings.get("embedding_api_url") || "",
       embedding_api_key: mask(Druzhok.Settings.get("embedding_api_key")),
-      embedding_model: Druzhok.Settings.get("embedding_model") || "voyage-3.5",
+      embedding_model: Druzhok.Settings.get("embedding_model") || "BAAI/bge-multilingual-gemma2",
       saved: true
     )}
   end
@@ -165,11 +165,11 @@ defmodule DruzhokWebWeb.SettingsLive do
 
           <div class="bg-white rounded-xl border border-gray-200 p-6">
             <h2 class="text-sm font-semibold mb-4">Embeddings (for memory search)</h2>
-            <p class="text-xs text-gray-500 mb-4">OpenAI-compatible embeddings API. Supports Voyage AI, Nebius, OpenAI, etc.</p>
+            <p class="text-xs text-gray-500 mb-4">OpenAI-compatible embeddings API. Default: Nebius (bge-multilingual-gemma2). Also supports Voyage AI, OpenAI, etc.</p>
             <div class="space-y-3">
               <div>
                 <label class="block text-xs text-gray-500 mb-1">API URL</label>
-                <input name="embedding_api_url" value={@embedding_api_url} placeholder="https://api.voyageai.com/v1"
+                <input name="embedding_api_url" value={@embedding_api_url} placeholder="https://api.tokenfactory.nebius.com/v1"
                        class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm font-mono focus:outline-none focus:ring-1 focus:ring-gray-900" />
               </div>
               <div>
@@ -179,7 +179,7 @@ defmodule DruzhokWebWeb.SettingsLive do
               </div>
               <div>
                 <label class="block text-xs text-gray-500 mb-1">Model</label>
-                <input name="embedding_model" value={@embedding_model} placeholder="voyage-3.5"
+                <input name="embedding_model" value={@embedding_model} placeholder="BAAI/bge-multilingual-gemma2"
                        class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm font-mono focus:outline-none focus:ring-1 focus:ring-gray-900" />
               </div>
             </div>
