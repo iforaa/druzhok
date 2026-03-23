@@ -11,12 +11,14 @@ defmodule Druzhok.AllowedChat do
     field :telegram_user_id, :integer
     field :status, :string, default: "pending"
     field :info_sent, :boolean, default: false
+    field :activation, :string, default: "buffer"
+    field :buffer_size, :integer, default: 50
     timestamps()
   end
 
   def changeset(chat, attrs) do
     chat
-    |> cast(attrs, [:instance_name, :chat_id, :chat_type, :title, :telegram_user_id, :status, :info_sent])
+    |> cast(attrs, [:instance_name, :chat_id, :chat_type, :title, :telegram_user_id, :status, :info_sent, :activation, :buffer_size])
     |> validate_required([:instance_name, :chat_id, :chat_type])
     |> unique_constraint([:instance_name, :chat_id])
   end
@@ -61,6 +63,13 @@ defmodule Druzhok.AllowedChat do
     case get(instance_name, chat_id) do
       nil -> :ok
       chat -> chat |> changeset(%{info_sent: true}) |> Druzhok.Repo.update()
+    end
+  end
+
+  def set_activation(instance_name, chat_id, activation) when activation in ["buffer", "always"] do
+    case get(instance_name, chat_id) do
+      nil -> {:error, :not_found}
+      chat -> chat |> changeset(%{activation: activation}) |> Druzhok.Repo.update()
     end
   end
 
