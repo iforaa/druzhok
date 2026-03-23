@@ -58,6 +58,8 @@ defmodule Druzhok.Sandbox.FirecrackerClient do
     cleanup_files(api_socket, vsock_path, rootfs_path)
 
     # Copy base rootfs so each VM gets its own writable image
+    # TODO: Use copy-on-write (overlayfs/btrfs snapshot) instead of full copy
+    # Current: ~100MB per instance, grows linearly
     case File.cp(base_rootfs, rootfs_path) do
       :ok -> :ok
       {:error, reason} ->
