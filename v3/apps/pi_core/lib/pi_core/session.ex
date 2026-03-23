@@ -10,7 +10,7 @@ defmodule PiCore.Session do
     :workspace, :model, :provider, :api_url, :api_key,
     :system_prompt, :tools, :on_delta, :on_event, :caller, :llm_fn,
     :workspace_loader, :instance_name, :extra_tool_context,
-    :chat_id, :idle_timer, :budget, :model_info_fn,
+    :chat_id, :idle_timer, :budget, :model_info_fn, :timezone,
     group: false,
     messages: [],
     active_task: nil,
@@ -76,7 +76,8 @@ defmodule PiCore.Session do
       chat_id: opts[:chat_id],
       group: group,
       budget: budget,
-      model_info_fn: model_info_fn
+      model_info_fn: model_info_fn,
+      timezone: opts[:timezone] || "UTC"
     }
 
     state = schedule_idle_timeout(state)
@@ -231,7 +232,13 @@ defmodule PiCore.Session do
 
     # Compact if conversation is too long
     compaction_opts = if state.budget do
-      %{budget: state.budget, llm_fn: llm_fn}
+      %{
+        budget: state.budget,
+        llm_fn: llm_fn,
+        workspace: state.workspace,
+        timezone: state.timezone || "UTC",
+        memory_flush: true
+      }
     else
       %{llm_fn: llm_fn, max_messages: PiCore.Config.compaction_max_messages(), keep_recent: PiCore.Config.compaction_keep_recent()}
     end
@@ -284,6 +291,7 @@ defmodule PiCore.Session do
       PiCore.Tools.Find.new(),
       PiCore.Tools.Grep.new(),
       PiCore.Tools.MemorySearch.new(),
+      PiCore.Tools.MemoryWrite.new(),
       PiCore.Tools.SetReminder.new(),
       PiCore.Tools.SendFile.new(),
     ]

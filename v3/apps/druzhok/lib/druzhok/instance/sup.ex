@@ -68,7 +68,8 @@ defmodule Druzhok.Instance.Sup do
       instance_name: name,
       on_delta: on_delta,
       on_event: on_event,
-      extra_tool_context: %{send_file_fn: send_file_fn, sandbox: sandbox_fns},
+      timezone: config[:timezone] || "UTC",
+      extra_tool_context: %{send_file_fn: send_file_fn, sandbox: sandbox_fns, embedding_cache: Druzhok.EmbeddingCache},
       model_info_fn: fn action, model_name ->
         case action do
           :context_window -> Druzhok.ModelInfo.context_window(model_name)
