@@ -9,21 +9,17 @@ defmodule PiCore.LLM.Client do
   end
 
   def completion(opts) do
-    provider = opts[:provider] || detect_provider(opts)
-
-    case provider do
+    case detect_provider(opts) do
       :anthropic -> PiCore.LLM.Anthropic.completion(opts)
       _ -> PiCore.LLM.OpenAI.completion(opts)
     end
   end
 
-  defp detect_provider(opts) do
-    model = opts[:model] || ""
-    api_url = opts[:api_url] || ""
-
+  def detect_provider(opts) do
     cond do
-      String.starts_with?(model, "claude") -> :anthropic
-      String.contains?(api_url, "anthropic") -> :anthropic
+      opts[:provider] == "anthropic" -> :anthropic
+      String.starts_with?(opts[:model] || "", "claude") -> :anthropic
+      String.contains?(opts[:api_url] || "", "anthropic") -> :anthropic
       true -> :openai
     end
   end

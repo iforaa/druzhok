@@ -28,6 +28,21 @@ defmodule PiCore.LLM.ClientTest do
     assert length(body["tools"]) == 1
   end
 
+  test "uses explicit provider when given" do
+    opts = %{provider: "anthropic", model: "some-custom-model", api_url: "https://example.com"}
+    assert PiCore.LLM.Client.detect_provider(opts) == :anthropic
+  end
+
+  test "falls back to heuristic when no provider" do
+    opts = %{model: "claude-sonnet-4-20250514", api_url: "https://api.anthropic.com"}
+    assert PiCore.LLM.Client.detect_provider(opts) == :anthropic
+  end
+
+  test "detects openai by default" do
+    opts = %{model: "gpt-4", api_url: "https://api.openai.com"}
+    assert PiCore.LLM.Client.detect_provider(opts) == :openai
+  end
+
   test "build_request omits tools when empty" do
     request = OpenAI.build_request(%{
       model: "test", api_url: "https://example.com/v1", api_key: "k",
