@@ -157,7 +157,7 @@ defmodule Druzhok.Sandbox.Protocol do
 
   @doc "Copy workspace template files to sandbox via TCP."
   def copy_workspace_template(state) do
-    template = Path.join([File.cwd!(), "..", "workspace-template"]) |> Path.expand()
+    template = find_workspace_template()
 
     if File.exists?(template) do
       template
@@ -177,6 +177,21 @@ defmodule Druzhok.Sandbox.Protocol do
       :gen_tcp.send(state.socket, msg)
       :gen_tcp.recv(state.socket, 0, 5_000)
       Logger.info("Workspace template copied to sandbox for #{state.instance_name}")
+    else
+      Logger.warning("Workspace template not found, tried multiple paths")
     end
+  end
+
+  defp find_workspace_template do
+    candidates = [
+      System.get_env("WORKSPACE_TEMPLATE_PATH"),
+      Path.join(File.cwd!(), "workspace-template"),
+      Path.join([File.cwd!(), "..", "workspace-template"]) |> Path.expand()
+    ]
+
+    Enum.find(candidates, fn
+      nil -> false
+      path -> File.exists?(path)
+    end)
   end
 end

@@ -130,7 +130,8 @@
       "Bash(find /Users/igorkuznetsov/Documents/druzhok/v3 -type f \\\\\\(-name *_test.exs -o -name *_test.go -o -name test_*.exs -o -name test_*.go -o -path */test/* \\\\\\))",
       "Bash(MIX_ENV=test mix test apps/pi_core/)",
       "Bash(elixir -e \":*)",
-      "Bash(MIX_ENV=test mix test)"
+      "Bash(MIX_ENV=test mix test)",
+      "WebFetch(domain:api.github.com)"
     ]
   }
 }
