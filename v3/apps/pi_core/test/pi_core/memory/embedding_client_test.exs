@@ -3,31 +3,32 @@ defmodule PiCore.Memory.EmbeddingClientTest do
 
   alias PiCore.Memory.EmbeddingClient
 
-  test "embed returns error when no API key configured" do
-    assert {:error, msg} = EmbeddingClient.embed("hello", %{})
-    assert msg =~ "not configured"
+  test "embed returns error when no URL configured" do
+    assert {:error, msg} = EmbeddingClient.embed("hello", %{embedding_api_key: "k", embedding_model: "m"})
+    assert msg =~ "URL"
   end
 
-  test "embed_batch returns error when no API key configured" do
-    assert {:error, _} = EmbeddingClient.embed_batch(["hello", "world"], %{})
+  test "embed returns error when no key configured" do
+    assert {:error, msg} = EmbeddingClient.embed("hello", %{embedding_api_url: "http://x", embedding_model: "m"})
+    assert msg =~ "key"
   end
 
-  test "defaults to Voyage API URL when only key provided" do
-    # Will fail to connect but proves default URL is used
-    result = EmbeddingClient.embed("hello", %{
-      embedding_api_key: "test-key"
-    })
-    # Should attempt voyage API, not error about missing config
-    assert {:error, msg} = result
-    refute msg =~ "not configured"
+  test "embed returns error when no model configured" do
+    assert {:error, msg} = EmbeddingClient.embed("hello", %{embedding_api_url: "http://x", embedding_api_key: "k"})
+    assert msg =~ "model"
   end
 
-  test "uses custom URL when provided" do
+  test "embed returns error for all empty opts" do
+    assert {:error, _} = EmbeddingClient.embed("hello", %{})
+  end
+
+  test "attempts API call when fully configured" do
     result = EmbeddingClient.embed("hello", %{
       embedding_api_url: "http://localhost:19999",
       embedding_api_key: "test-key",
       embedding_model: "test-model"
     })
-    assert {:error, _} = result
+    assert {:error, msg} = result
+    assert msg =~ "request failed"
   end
 end

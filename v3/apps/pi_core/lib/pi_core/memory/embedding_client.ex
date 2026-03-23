@@ -6,9 +6,6 @@ defmodule PiCore.Memory.EmbeddingClient do
   Configure: `%{embedding_api_url: "https://api.voyageai.com/v1", embedding_api_key: "...", embedding_model: "voyage-3.5"}`
   """
 
-  @default_url "https://api.tokenfactory.nebius.com/v1"
-  @default_model "BAAI/bge-multilingual-gemma2"
-
   def embed(text, opts) do
     case embed_batch([text], opts) do
       {:ok, [vec]} -> {:ok, vec}
@@ -17,14 +14,19 @@ defmodule PiCore.Memory.EmbeddingClient do
   end
 
   def embed_batch(texts, opts) when is_list(texts) do
-    api_url = opts[:embedding_api_url] || @default_url
+    api_url = opts[:embedding_api_url]
     api_key = opts[:embedding_api_key]
-    model = opts[:embedding_model] || @default_model
+    model = opts[:embedding_model]
 
-    if is_nil(api_key) do
-      {:error, "Embedding API key not configured (set embedding_api_key in Settings)"}
-    else
-      do_request(texts, api_url, api_key, model)
+    cond do
+      is_nil(api_url) or api_url == "" ->
+        {:error, "Embedding API URL not configured (set in Settings > Embeddings)"}
+      is_nil(api_key) or api_key == "" ->
+        {:error, "Embedding API key not configured (set in Settings > Embeddings)"}
+      is_nil(model) or model == "" ->
+        {:error, "Embedding model not configured (set in Settings > Embeddings)"}
+      true ->
+        do_request(texts, api_url, api_key, model)
     end
   end
 

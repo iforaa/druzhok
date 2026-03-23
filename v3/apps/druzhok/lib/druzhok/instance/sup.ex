@@ -73,9 +73,9 @@ defmodule Druzhok.Instance.Sup do
         send_file_fn: send_file_fn,
         sandbox: sandbox_fns,
         embedding_cache: Druzhok.EmbeddingCache,
-        embedding_api_url: Druzhok.Settings.get("embedding_api_url") || "https://api.tokenfactory.nebius.com/v1",
-        embedding_api_key: Druzhok.Settings.get("embedding_api_key") || Druzhok.Settings.get("nebius_api_key"),
-        embedding_model: Druzhok.Settings.get("embedding_model") || "BAAI/bge-multilingual-gemma2"
+        embedding_api_url: Druzhok.Settings.get("embedding_api_url"),
+        embedding_api_key: Druzhok.Settings.get("embedding_api_key"),
+        embedding_model: Druzhok.Settings.get("embedding_model")
       },
       model_info_fn: fn action, model_name ->
         case action do

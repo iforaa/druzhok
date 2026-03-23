@@ -24,9 +24,9 @@ defmodule DruzhokWebWeb.SettingsLive do
         response_reserve_ratio: Druzhok.Settings.get("response_reserve_ratio") || "0.10",
         default_context_window: Druzhok.Settings.get("default_context_window") || "32000",
         token_estimation_divisor: Druzhok.Settings.get("token_estimation_divisor") || "4",
-        embedding_api_url: Druzhok.Settings.get("embedding_api_url") || "https://api.tokenfactory.nebius.com/v1",
-        embedding_api_key: mask(Druzhok.Settings.get("embedding_api_key") || Druzhok.Settings.get("nebius_api_key")),
-        embedding_model: Druzhok.Settings.get("embedding_model") || "BAAI/bge-multilingual-gemma2",
+        embedding_api_url: Druzhok.Settings.get("embedding_api_url") || "",
+        embedding_api_key: mask(Druzhok.Settings.get("embedding_api_key")),
+        embedding_model: Druzhok.Settings.get("embedding_model") || "",
         saved: false
       )}
     end
@@ -73,7 +73,7 @@ defmodule DruzhokWebWeb.SettingsLive do
       token_estimation_divisor: Druzhok.Settings.get("token_estimation_divisor") || "4",
       embedding_api_url: Druzhok.Settings.get("embedding_api_url") || "",
       embedding_api_key: mask(Druzhok.Settings.get("embedding_api_key")),
-      embedding_model: Druzhok.Settings.get("embedding_model") || "BAAI/bge-multilingual-gemma2",
+      embedding_model: Druzhok.Settings.get("embedding_model") || "",
       saved: true
     )}
   end
