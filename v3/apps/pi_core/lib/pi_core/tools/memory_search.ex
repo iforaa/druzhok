@@ -13,8 +13,13 @@ defmodule PiCore.Tools.MemorySearch do
     }
   end
 
-  def execute(%{"query" => query}, %{workspace: workspace}, opts) do
-    case Search.search(workspace, query, opts) do
+  def execute(%{"query" => query}, %{workspace: workspace} = context, opts) do
+    search_opts = Map.merge(opts, %{
+      instance_name: context[:instance_name],
+      embedding_cache: context[:embedding_cache]
+    })
+
+    case Search.search(workspace, query, search_opts) do
       {:ok, []} ->
         {:ok, "No relevant memories found for: #{query}"}
 

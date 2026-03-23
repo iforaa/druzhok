@@ -1,7 +1,11 @@
 defmodule PiCore.Memory.SearchTest do
-  use ExUnit.Case
+  use ExUnit.Case, async: false
 
   alias PiCore.Memory.Search
+
+  # EmbeddingServer uses BinaryBackend which is slow (~20s per embed call)
+  @moduletag timeout: 300_000
+  @moduletag :slow
 
   setup do
     dir = Path.join(System.tmp_dir!(), "pi_core_memsearch_#{:rand.uniform(100000)}")

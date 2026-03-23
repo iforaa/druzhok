@@ -4,7 +4,7 @@ defmodule PiCore.Memory.Search do
   Searches MEMORY.md and memory/*.md files.
   """
 
-  alias PiCore.Memory.{Chunker, BM25, Embeddings}
+  alias PiCore.Memory.{Chunker, BM25, VectorMath, EmbeddingServer}
 
   defmodule Result do
     defstruct [:text, :file, :start_line, :end_line, :score]
@@ -79,26 +79,62 @@ defmodule PiCore.Memory.Search do
   end
 
   defp get_vector_scores(chunks, query, opts) do
-    api_url = opts[:api_url] || Application.get_env(:pi_core, :api_url)
-    api_key = opts[:api_key] || Application.get_env(:pi_core, :api_key)
+    instance_name = opts[:instance_name]
+    cache_mod = opts[:embedding_cache]
 
-    if api_url && api_key do
-      texts = Enum.map(chunks, & &1.text)
-      all_texts = [query | texts]
+    case EmbeddingServer.embed(query) do
+      {:ok, query_vec} ->
+        chunk_vecs = get_chunk_vectors(chunks, instance_name, cache_mod)
 
-      case Embeddings.get_embeddings(all_texts, %{api_url: api_url, api_key: api_key}) do
-        {:ok, [query_vec | chunk_vecs]} ->
-          scores = chunk_vecs
-          |> Enum.with_index()
-          |> Map.new(fn {vec, i} -> {i, Embeddings.cosine_similarity(query_vec, vec)} end)
-          {:ok, scores}
+        scores = chunk_vecs
+        |> Enum.with_index()
+        |> Map.new(fn {vec, i} ->
+          score = if vec, do: VectorMath.cosine_similarity(query_vec, vec), else: 0.0
+          {i, score}
+        end)
 
-        {:error, reason} ->
-          {:error, reason}
-      end
-    else
-      {:error, "No API configured for embeddings"}
+        # Cleanup stale cache entries after search
+        if cache_mod && instance_name do
+          current_files = chunks |> Enum.map(& &1.file) |> Enum.uniq()
+          cache_mod.delete_missing_files(instance_name, current_files)
+        end
+
+        {:ok, scores}
+
+      {:error, _reason} ->
+        {:error, "Embeddings unavailable"}
     end
+  end
+
+  defp get_chunk_vectors(chunks, instance_name, cache_mod) do
+    Enum.map(chunks, fn chunk ->
+      hash = VectorMath.chunk_hash(chunk.text)
+
+      cached = if cache_mod && instance_name do
+        case cache_mod.get(instance_name, hash) do
+          {:ok, vec} -> vec
+          :miss -> nil
+        end
+      end
+
+      if cached do
+        cached
+      else
+        case EmbeddingServer.embed(chunk.text) do
+          {:ok, vec} ->
+            if cache_mod && instance_name do
+              cache_mod.put(instance_name, %{
+                file: chunk.file,
+                chunk_hash: hash,
+                chunk_text: String.slice(chunk.text, 0, 500),
+                embedding: vec
+              })
+            end
+            vec
+          {:error, _} -> nil
+        end
+      end
+    end)
   end
 
   defp list_memory_files(workspace) do
