@@ -8,8 +8,7 @@ defmodule PiCore.Application do
   @impl true
   def start(_type, _args) do
     children = [
-      {Finch, name: PiCore.Finch},
-      PiCore.Memory.EmbeddingServer
+      {Finch, name: PiCore.Finch}
     ]
 
     # See https://hexdocs.pm/elixir/Supervisor.html

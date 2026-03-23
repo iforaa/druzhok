@@ -16,7 +16,10 @@ defmodule PiCore.Tools.MemorySearch do
   def execute(%{"query" => query}, %{workspace: workspace} = context, opts) do
     search_opts = Map.merge(opts, %{
       instance_name: context[:instance_name],
-      embedding_cache: context[:embedding_cache]
+      embedding_cache: context[:embedding_cache],
+      embedding_api_url: context[:embedding_api_url],
+      embedding_api_key: context[:embedding_api_key],
+      embedding_model: context[:embedding_model]
     })
 
     case Search.search(workspace, query, search_opts) do

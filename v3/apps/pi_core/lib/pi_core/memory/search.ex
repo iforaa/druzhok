@@ -4,7 +4,7 @@ defmodule PiCore.Memory.Search do
   Searches MEMORY.md and memory/*.md files.
   """
 
-  alias PiCore.Memory.{Chunker, BM25, VectorMath, EmbeddingServer}
+  alias PiCore.Memory.{Chunker, BM25, VectorMath, EmbeddingClient}
 
   defmodule Result do
     defstruct [:text, :file, :start_line, :end_line, :score]
@@ -82,9 +82,9 @@ defmodule PiCore.Memory.Search do
     instance_name = opts[:instance_name]
     cache_mod = opts[:embedding_cache]
 
-    case EmbeddingServer.embed(query) do
+    case EmbeddingClient.embed(query, opts) do
       {:ok, query_vec} ->
-        chunk_vecs = get_chunk_vectors(chunks, instance_name, cache_mod)
+        chunk_vecs = get_chunk_vectors(chunks, instance_name, cache_mod, opts)
 
         scores = chunk_vecs
         |> Enum.with_index()
@@ -106,7 +106,7 @@ defmodule PiCore.Memory.Search do
     end
   end
 
-  defp get_chunk_vectors(chunks, instance_name, cache_mod) do
+  defp get_chunk_vectors(chunks, instance_name, cache_mod, opts) do
     Enum.map(chunks, fn chunk ->
       hash = VectorMath.chunk_hash(chunk.text)
 
@@ -120,7 +120,7 @@ defmodule PiCore.Memory.Search do
       if cached do
         cached
       else
-        case EmbeddingServer.embed(chunk.text) do
+        case EmbeddingClient.embed(chunk.text, opts) do
           {:ok, vec} ->
             if cache_mod && instance_name do
               cache_mod.put(instance_name, %{

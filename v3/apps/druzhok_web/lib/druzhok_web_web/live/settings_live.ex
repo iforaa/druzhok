@@ -24,6 +24,9 @@ defmodule DruzhokWebWeb.SettingsLive do
         response_reserve_ratio: Druzhok.Settings.get("response_reserve_ratio") || "0.10",
         default_context_window: Druzhok.Settings.get("default_context_window") || "32000",
         token_estimation_divisor: Druzhok.Settings.get("token_estimation_divisor") || "4",
+        embedding_api_url: Druzhok.Settings.get("embedding_api_url") || "",
+        embedding_api_key: mask(Druzhok.Settings.get("embedding_api_key")),
+        embedding_model: Druzhok.Settings.get("embedding_model") || "voyage-3.5",
         saved: false
       )}
     end
@@ -47,10 +50,13 @@ defmodule DruzhokWebWeb.SettingsLive do
     for key <- ["system_prompt_budget_ratio", "tool_definitions_budget_ratio",
                 "history_budget_ratio", "tool_result_budget_ratio",
                 "response_reserve_ratio", "default_context_window",
-                "token_estimation_divisor"] do
+                "token_estimation_divisor", "embedding_api_url", "embedding_model"] do
       if val = non_empty(params[key]) do
         Druzhok.Settings.set(key, val)
       end
+    end
+    if val = non_masked(params["embedding_api_key"]) do
+      Druzhok.Settings.set("embedding_api_key", val)
     end
 
     {:noreply, assign(socket,
@@ -65,6 +71,9 @@ defmodule DruzhokWebWeb.SettingsLive do
       response_reserve_ratio: Druzhok.Settings.get("response_reserve_ratio") || "0.10",
       default_context_window: Druzhok.Settings.get("default_context_window") || "32000",
       token_estimation_divisor: Druzhok.Settings.get("token_estimation_divisor") || "4",
+      embedding_api_url: Druzhok.Settings.get("embedding_api_url") || "",
+      embedding_api_key: mask(Druzhok.Settings.get("embedding_api_key")),
+      embedding_model: Druzhok.Settings.get("embedding_model") || "voyage-3.5",
       saved: true
     )}
   end
@@ -149,6 +158,28 @@ defmodule DruzhokWebWeb.SettingsLive do
               <div>
                 <label class="block text-xs text-gray-500 mb-1">Token Estimation Divisor</label>
                 <input name="token_estimation_divisor" value={@token_estimation_divisor}
+                       class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm font-mono focus:outline-none focus:ring-1 focus:ring-gray-900" />
+              </div>
+            </div>
+          </div>
+
+          <div class="bg-white rounded-xl border border-gray-200 p-6">
+            <h2 class="text-sm font-semibold mb-4">Embeddings (for memory search)</h2>
+            <p class="text-xs text-gray-500 mb-4">OpenAI-compatible embeddings API. Supports Voyage AI, Nebius, OpenAI, etc.</p>
+            <div class="space-y-3">
+              <div>
+                <label class="block text-xs text-gray-500 mb-1">API URL</label>
+                <input name="embedding_api_url" value={@embedding_api_url} placeholder="https://api.voyageai.com/v1"
+                       class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm font-mono focus:outline-none focus:ring-1 focus:ring-gray-900" />
+              </div>
+              <div>
+                <label class="block text-xs text-gray-500 mb-1">API Key</label>
+                <input name="embedding_api_key" value={@embedding_api_key} placeholder="Paste key to update"
+                       class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm font-mono focus:outline-none focus:ring-1 focus:ring-gray-900" />
+              </div>
+              <div>
+                <label class="block text-xs text-gray-500 mb-1">Model</label>
+                <input name="embedding_model" value={@embedding_model} placeholder="voyage-3.5"
                        class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm font-mono focus:outline-none focus:ring-1 focus:ring-gray-900" />
               </div>
             </div>
