@@ -144,6 +144,8 @@ defmodule Druzhok.Sandbox.DockerClient do
       _ ->
         System.cmd("docker", ["rm", "-f", container_name], stderr_to_stdout: true)
 
+        port = pick_free_port()
+
         volume_args = if host_workspace do
           ["-v", "#{host_workspace}:/workspace"]
         else
@@ -157,6 +159,8 @@ defmodule Druzhok.Sandbox.DockerClient do
                  "-d",
                  "--name",
                  container_name,
+                 "--network",
+                 "host",
                  "--memory",
                  "1g",
                  "--cpus",
@@ -172,23 +176,27 @@ defmodule Druzhok.Sandbox.DockerClient do
                  "--security-opt",
                  "no-new-privileges",
                  "-e",
-                 "SANDBOX_SECRET=#{secret}"
+                 "SANDBOX_SECRET=#{secret}",
+                 "-e",
+                 "SANDBOX_PORT=#{port}"
                ] ++ volume_args ++ ["druzhok-sandbox:latest"],
                stderr_to_stdout: true
              ) do
           {_, 0} ->
-            case System.cmd("docker", ["inspect", "-f", "{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}", container_name]) do
-              {ip_str, 0} ->
-                {:ok, {String.trim(ip_str), 9999}}
-
-              _ ->
-                {:error, "Failed to get container IP"}
-            end
+            {:ok, {"127.0.0.1", port}}
 
           {output, _} ->
             {:error, "Failed to start container: #{output}"}
         end
     end
+  end
+
+  defp pick_free_port do
+    # Let the OS assign a free port, then close the socket
+    {:ok, socket} = :gen_tcp.listen(0, [:binary, reuseaddr: true])
+    {:ok, port} = :inet.port(socket)
+    :gen_tcp.close(socket)
+    port
   end
 
   defp connect_with_retry(_host, _port, _secret, 0, _delay), do: {:error, "Connection timeout"}

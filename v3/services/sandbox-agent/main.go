@@ -19,12 +19,19 @@ import (
 	"github.com/mdlayher/vsock"
 )
 
+var listenAddr = ":9999"
+
 const (
-	listenAddr     = ":9999"
 	workspaceDir   = "/workspace"
 	execTimeout    = 5 * time.Minute
 	maxScannerBuf  = 10 * 1024 * 1024 // 10 MB max message size
 )
+
+func init() {
+	if port := os.Getenv("SANDBOX_PORT"); port != "" {
+		listenAddr = ":" + port
+	}
+}
 
 // Request represents an incoming JSON line command.
 type Request struct {
@@ -78,7 +85,7 @@ func main() {
 		log.Println("Listening on vsock port 9999")
 	} else {
 		listener, err = net.Listen("tcp", listenAddr)
-		log.Println("Listening on TCP :9999")
+		log.Printf("Listening on TCP %s", listenAddr)
 	}
 	if err != nil {
 		log.Fatal(err)

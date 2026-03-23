@@ -369,14 +369,18 @@ defmodule Druzhok.Agent.Telegram do
     end
   end
 
-  # All group messages go to LLM with context about who's speaking and whether bot was addressed
+  # Group messages: route based on activation mode
   defp process_group_message(chat_id, text, sender_id, sender_name, file, is_triggered, state) do
     is_owner = state.owner_telegram_id == sender_id
+    chat = Druzhok.AllowedChat.get(state.instance_name, chat_id)
+    activation = (chat && chat.activation) || "buffer"
+    buffer_size = (chat && chat.buffer_size) || 50
 
-    # Commands only from owner
+    # Commands always processed (regardless of mode)
     case Router.parse_command(text) do
       {:command, "reset"} when is_owner ->
         dispatch_session(chat_id, state, &PiCore.Session.reset/1)
+        Druzhok.GroupBuffer.clear(state.instance_name, chat_id)
         API.send_message(state.token, chat_id, "Session reset!")
         state
 
@@ -385,21 +389,78 @@ defmodule Druzhok.Agent.Telegram do
         API.send_message(state.token, chat_id, "Aborted.")
         state
 
+      {:command, "mode", arg} when is_owner ->
+        handle_mode_command(arg, chat_id, state)
+
       {:command, "start"} ->
         prompt = "[#{sender_name} started the bot in group chat]"
         dispatch_prompt(prompt, chat_id, true, state)
         state
 
       _ ->
-        saved_file = if file, do: save_incoming_file(file, chat_id, state), else: nil
-        prompt = build_group_prompt(text, sender_name, saved_file, is_triggered)
-        emit(state, :user_message, %{text: prompt, sender: sender_name, chat_id: chat_id})
+        case activation do
+          "always" ->
+            process_group_message_always(chat_id, text, sender_name, file, is_triggered, state)
 
-        if is_triggered do
-          API.send_chat_action(state.token, chat_id)
+          _ ->
+            process_group_message_buffer(chat_id, text, sender_name, file, is_triggered, buffer_size, state)
         end
+    end
+  end
 
-        dispatch_prompt(prompt, chat_id, true, state)
+  defp process_group_message_always(chat_id, text, sender_name, file, is_triggered, state) do
+    saved_file = if file, do: save_incoming_file(file, chat_id, state), else: nil
+    prompt = build_group_prompt(text, sender_name, saved_file, is_triggered)
+    emit(state, :user_message, %{text: prompt, sender: sender_name, chat_id: chat_id})
+
+    if is_triggered do
+      API.send_chat_action(state.token, chat_id)
+    end
+
+    dispatch_prompt(prompt, chat_id, true, state)
+    state
+  end
+
+  defp process_group_message_buffer(chat_id, text, sender_name, file, is_triggered, buffer_size, state) do
+    if is_triggered do
+      # Flush buffer and send as context
+      saved_file = if file, do: save_incoming_file(file, chat_id, state), else: nil
+      buffered = Druzhok.GroupBuffer.flush(state.instance_name, chat_id)
+      current_prompt = build_group_prompt(text, sender_name, saved_file, true)
+      prompt = Druzhok.GroupBuffer.format_context(buffered, current_prompt)
+
+      emit(state, :user_message, %{text: current_prompt, sender: sender_name, chat_id: chat_id})
+      API.send_chat_action(state.token, chat_id)
+      dispatch_prompt(prompt, chat_id, true, state)
+      state
+    else
+      # Buffer the message, no LLM call
+      file_ref = if file, do: "[#{file.name || "file"}]", else: nil
+      Druzhok.GroupBuffer.push(state.instance_name, chat_id, %{
+        sender: sender_name,
+        text: text,
+        timestamp: System.os_time(:millisecond),
+        file: file_ref
+      }, buffer_size)
+
+      emit(state, :user_message, %{text: "[#{sender_name}]: #{text}", sender: sender_name, chat_id: chat_id})
+      state
+    end
+  end
+
+  defp handle_mode_command(arg, chat_id, state) do
+    case arg do
+      mode when mode in ["buffer", "always"] ->
+        Druzhok.AllowedChat.set_activation(state.instance_name, chat_id, mode)
+        if mode == "buffer", do: Druzhok.GroupBuffer.clear(state.instance_name, chat_id)
+        label = if mode == "buffer", do: "buffer (respond only when addressed)", else: "always (see all messages)"
+        API.send_message(state.token, chat_id, "Mode: #{label}")
+        state
+
+      _ ->
+        chat = Druzhok.AllowedChat.get(state.instance_name, chat_id)
+        current = (chat && chat.activation) || "buffer"
+        API.send_message(state.token, chat_id, "Current mode: #{current}\nUsage: /mode buffer | /mode always")
         state
     end
   end
