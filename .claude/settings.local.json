@@ -132,7 +132,9 @@
       "Bash(elixir -e \":*)",
       "Bash(MIX_ENV=test mix test)",
       "WebFetch(domain:api.github.com)",
-      "Bash(MIX_ENV=test mix ecto.migrate)"
+      "Bash(MIX_ENV=test mix ecto.migrate)",
+      "Bash(python3 -c \"import sys,json; d=json.load\\(sys.stdin\\); print\\(d.get\\(''''description'''',''''''''\\), d.get\\(''''default_branch'''',''''''''\\), d.get\\(''''language'''',''''''''\\)\\)\")",
+      "Bash(python3 -c \"import sys,json; dirs=json.load\\(sys.stdin\\); [print\\(d[''''name''''], d[''''type'''']\\) for d in dirs]\")"
     ]
   }
 }

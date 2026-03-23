@@ -248,7 +248,7 @@ defmodule PiCore.Session do
       system_prompt: state.system_prompt,
       messages: compacted_messages,
       tools: state.tools,
-      tool_context: Map.merge(state.extra_tool_context, %{workspace: state.workspace, instance_name: state.instance_name}),
+      tool_context: Map.merge(state.extra_tool_context, %{workspace: state.workspace, instance_name: state.instance_name, chat_id: state.chat_id}),
       llm_fn: llm_fn,
       model: state.model,
       on_delta: wrapped_on_delta,

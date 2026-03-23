@@ -15,6 +15,7 @@ defmodule PiCore.Tools.SetReminder do
 
   def execute(%{"message" => message, "minutes_from_now" => minutes}, context, _opts) do
     instance_name = context[:instance_name]
+    chat_id = context[:chat_id]
 
     if instance_name do
       fire_at = DateTime.add(DateTime.utc_now(), trunc(minutes * 60), :second)
@@ -22,7 +23,8 @@ defmodule PiCore.Tools.SetReminder do
       case Druzhok.Reminder.create(%{
         instance_name: instance_name,
         fire_at: fire_at,
-        message: message
+        message: message,
+        chat_id: chat_id
       }) do
         {:ok, _} ->
           formatted = Calendar.strftime(fire_at, "%Y-%m-%d %H:%M UTC")

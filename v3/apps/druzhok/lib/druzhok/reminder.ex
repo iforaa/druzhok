@@ -8,13 +8,14 @@ defmodule Druzhok.Reminder do
     field :fire_at, :utc_datetime
     field :message, :string
     field :fired, :boolean, default: false
+    field :chat_id, :integer
 
     timestamps()
   end
 
   def changeset(reminder, attrs) do
     reminder
-    |> cast(attrs, [:instance_name, :fire_at, :message, :fired])
+    |> cast(attrs, [:instance_name, :fire_at, :message, :fired, :chat_id])
     |> validate_required([:instance_name, :fire_at, :message])
   end
 

@@ -92,10 +92,8 @@ defmodule Druzhok.Scheduler do
     for reminder <- pending do
       Druzhok.Events.broadcast(state.instance_name, %{type: :reminder, text: "Reminder: #{reminder.message}"})
       prompt = "REMINDER: #{reminder.message}"
-      case lookup_session(state) do
-        nil -> :ok
-        pid -> PiCore.Session.prompt(pid, prompt)
-      end
+      pid = lookup_session_for_chat(state, reminder.chat_id)
+      if pid, do: PiCore.Session.prompt(pid, prompt)
       Druzhok.Reminder.mark_fired(reminder.id)
     end
 
@@ -108,13 +106,34 @@ defmodule Druzhok.Scheduler do
   # --- Private ---
 
   defp lookup_session(state) do
-    # Find the owner's DM session (per-chat sessions keyed by chat_id)
+    lookup_session_for_chat(state, nil)
+  end
+
+  defp lookup_session_for_chat(state, chat_id) do
+    # If reminder has a chat_id, use it to find the right session (group or DM)
+    # Otherwise fall back to owner's DM session
+    target_chat_id = chat_id || owner_chat_id(state)
+
+    if target_chat_id do
+      case Registry.lookup(Druzhok.Registry, {state.instance_name, :session, target_chat_id}) do
+        [{pid, _}] -> pid
+        [] ->
+          # Session doesn't exist yet — start one (reminder might fire after restart)
+          case Druzhok.Instance.SessionSup.start_session(
+            state.instance_name, target_chat_id, %{group: chat_id != nil and chat_id < 0}
+          ) do
+            {:ok, pid} -> pid
+            _ -> nil
+          end
+      end
+    else
+      nil
+    end
+  end
+
+  defp owner_chat_id(state) do
     case Druzhok.Repo.get_by(Druzhok.Instance, name: state.instance_name) do
-      %{owner_telegram_id: owner_id} when not is_nil(owner_id) ->
-        case Registry.lookup(Druzhok.Registry, {state.instance_name, :session, owner_id}) do
-          [{pid, _}] -> pid
-          [] -> nil
-        end
+      %{owner_telegram_id: id} when not is_nil(id) -> id
       _ -> nil
     end
   end
