@@ -76,6 +76,7 @@ defmodule Druzhok.Telegram.API do
     end
   end
 
+  # RFC 2046 multipart format
   defp multipart_body(boundary, chat_id, filename, content, caption) do
     parts = [
       "--#{boundary}\r\nContent-Disposition: form-data; name=\"chat_id\"\r\n\r\n#{chat_id}\r\n",
