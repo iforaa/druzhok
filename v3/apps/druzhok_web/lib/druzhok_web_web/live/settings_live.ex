@@ -17,6 +17,13 @@ defmodule DruzhokWebWeb.SettingsLive do
         nebius_api_url: Druzhok.Settings.api_url("nebius") || "",
         anthropic_api_key: mask(Druzhok.Settings.get("anthropic_api_key")),
         anthropic_api_url: Druzhok.Settings.api_url("anthropic") || "",
+        system_prompt_ratio: Druzhok.Settings.get("system_prompt_budget_ratio") || "0.15",
+        tool_definitions_ratio: Druzhok.Settings.get("tool_definitions_budget_ratio") || "0.05",
+        history_ratio: Druzhok.Settings.get("history_budget_ratio") || "0.50",
+        tool_results_ratio: Druzhok.Settings.get("tool_result_budget_ratio") || "0.20",
+        response_reserve_ratio: Druzhok.Settings.get("response_reserve_ratio") || "0.10",
+        default_context_window: Druzhok.Settings.get("default_context_window") || "32000",
+        token_estimation_divisor: Druzhok.Settings.get("token_estimation_divisor") || "4",
         saved: false
       )}
     end
@@ -37,11 +44,27 @@ defmodule DruzhokWebWeb.SettingsLive do
       Druzhok.Settings.set("anthropic_api_url", val)
     end
 
+    for key <- ["system_prompt_budget_ratio", "tool_definitions_budget_ratio",
+                "history_budget_ratio", "tool_result_budget_ratio",
+                "response_reserve_ratio", "default_context_window",
+                "token_estimation_divisor"] do
+      if val = non_empty(params[key]) do
+        Druzhok.Settings.set(key, val)
+      end
+    end
+
     {:noreply, assign(socket,
       nebius_api_key: mask(Druzhok.Settings.get("nebius_api_key")),
       nebius_api_url: Druzhok.Settings.api_url("nebius") || "",
       anthropic_api_key: mask(Druzhok.Settings.get("anthropic_api_key")),
       anthropic_api_url: Druzhok.Settings.api_url("anthropic") || "",
+      system_prompt_ratio: Druzhok.Settings.get("system_prompt_budget_ratio") || "0.15",
+      tool_definitions_ratio: Druzhok.Settings.get("tool_definitions_budget_ratio") || "0.05",
+      history_ratio: Druzhok.Settings.get("history_budget_ratio") || "0.50",
+      tool_results_ratio: Druzhok.Settings.get("tool_result_budget_ratio") || "0.20",
+      response_reserve_ratio: Druzhok.Settings.get("response_reserve_ratio") || "0.10",
+      default_context_window: Druzhok.Settings.get("default_context_window") || "32000",
+      token_estimation_divisor: Druzhok.Settings.get("token_estimation_divisor") || "4",
       saved: true
     )}
   end
@@ -84,6 +107,48 @@ defmodule DruzhokWebWeb.SettingsLive do
               <div>
                 <label class="block text-xs text-gray-500 mb-1">API URL</label>
                 <input name="anthropic_api_url" value={@anthropic_api_url}
+                       class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm font-mono focus:outline-none focus:ring-1 focus:ring-gray-900" />
+              </div>
+            </div>
+          </div>
+
+          <div class="bg-white rounded-xl border border-gray-200 p-6">
+            <h2 class="text-sm font-semibold mb-4">Token Budget Ratios</h2>
+            <p class="text-xs text-gray-500 mb-4">Controls how the context window is divided. Must sum to 1.0 or less.</p>
+            <div class="grid grid-cols-2 gap-3">
+              <div>
+                <label class="block text-xs text-gray-500 mb-1">System Prompt</label>
+                <input name="system_prompt_budget_ratio" value={@system_prompt_ratio}
+                       class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm font-mono focus:outline-none focus:ring-1 focus:ring-gray-900" />
+              </div>
+              <div>
+                <label class="block text-xs text-gray-500 mb-1">Tool Definitions</label>
+                <input name="tool_definitions_budget_ratio" value={@tool_definitions_ratio}
+                       class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm font-mono focus:outline-none focus:ring-1 focus:ring-gray-900" />
+              </div>
+              <div>
+                <label class="block text-xs text-gray-500 mb-1">Conversation History</label>
+                <input name="history_budget_ratio" value={@history_ratio}
+                       class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm font-mono focus:outline-none focus:ring-1 focus:ring-gray-900" />
+              </div>
+              <div>
+                <label class="block text-xs text-gray-500 mb-1">Tool Results</label>
+                <input name="tool_result_budget_ratio" value={@tool_results_ratio}
+                       class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm font-mono focus:outline-none focus:ring-1 focus:ring-gray-900" />
+              </div>
+              <div>
+                <label class="block text-xs text-gray-500 mb-1">Response Reserve</label>
+                <input name="response_reserve_ratio" value={@response_reserve_ratio}
+                       class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm font-mono focus:outline-none focus:ring-1 focus:ring-gray-900" />
+              </div>
+              <div>
+                <label class="block text-xs text-gray-500 mb-1">Default Context Window</label>
+                <input name="default_context_window" value={@default_context_window}
+                       class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm font-mono focus:outline-none focus:ring-1 focus:ring-gray-900" />
+              </div>
+              <div>
+                <label class="block text-xs text-gray-500 mb-1">Token Estimation Divisor</label>
+                <input name="token_estimation_divisor" value={@token_estimation_divisor}
                        class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm font-mono focus:outline-none focus:ring-1 focus:ring-gray-900" />
               </div>
             </div>
