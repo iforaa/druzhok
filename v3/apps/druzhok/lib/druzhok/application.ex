@@ -4,6 +4,8 @@ defmodule Druzhok.Application do
 
   @impl true
   def start(_type, _args) do
+    :ets.new(:druzhok_group_buffer, [:set, :public, :named_table])
+
     children = [
       Druzhok.Repo,
       {Registry, keys: :unique, name: Druzhok.Registry},
