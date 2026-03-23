@@ -2,6 +2,7 @@ defmodule DruzhokWebWeb.DashboardLive do
   use DruzhokWebWeb, :live_view
 
   @max_events 200
+  @valid_tabs %{"logs" => :logs, "files" => :files, "security" => :security}
 
   @impl true
   def mount(_params, session, socket) do
@@ -137,7 +138,10 @@ defmodule DruzhokWebWeb.DashboardLive do
   end
 
   def handle_event("tab", %{"tab" => tab}, socket) do
-    {:noreply, assign(socket, tab: String.to_existing_atom(tab))}
+    case Map.get(@valid_tabs, tab) do
+      nil -> {:noreply, socket}
+      atom_tab -> {:noreply, assign(socket, tab: atom_tab)}
+    end
   end
 
   def handle_event("clear_events", _, socket) do
