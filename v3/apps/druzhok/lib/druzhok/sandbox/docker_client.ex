@@ -46,8 +46,9 @@ defmodule Druzhok.Sandbox.DockerClient do
     end
     container_name = "druzhok-#{db_id}-#{instance_name}"
 
-    # Resolve absolute host workspace path for volume mount
-    host_workspace = if workspace, do: Path.expand(workspace), else: nil
+    # Resolve host-absolute workspace path for volume mount
+    # Inside Docker, /data is a volume mount — we need the actual host path
+    host_workspace = if workspace, do: resolve_host_path(Path.expand(workspace)), else: nil
 
     case start_container(container_name, secret, host_workspace) do
       {:ok, {host, port}} ->
@@ -214,6 +215,23 @@ defmodule Druzhok.Sandbox.DockerClient do
       {:error, _} ->
         Process.sleep(delay)
         connect_with_retry(host, port, secret, retries - 1, delay)
+    end
+  end
+
+  defp resolve_host_path(container_path) do
+    # When running inside Docker with -v druzhok-data:/data,
+    # paths like /data/instances/... need to be translated to the
+    # actual host path for nested docker run -v mounts.
+    # Query the Docker volume mountpoint and replace the prefix.
+    case System.cmd("docker", ["volume", "inspect", "druzhok-data", "--format", "{{.Mountpoint}}"],
+           stderr_to_stdout: true) do
+      {mountpoint, 0} ->
+        host_mount = String.trim(mountpoint)
+        String.replace(container_path, ~r"^/data", host_mount)
+
+      _ ->
+        # Not in Docker or volume not found — use path as-is (local dev)
+        container_path
     end
   end
 
