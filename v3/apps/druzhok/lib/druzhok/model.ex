@@ -2,6 +2,7 @@ defmodule Druzhok.Model do
   use Ecto.Schema
   import Ecto.Changeset
   import Ecto.Query
+  require Logger
 
   schema "models" do
     field :model_id, :string
@@ -27,7 +28,9 @@ defmodule Druzhok.Model do
 
   def get_provider(model_id) do
     case Druzhok.Repo.get_by(__MODULE__, model_id: model_id) do
-      nil -> "openai"
+      nil ->
+        Logger.debug("Model #{model_id} not in DB, defaulting to openai provider")
+        "openai"
       m -> m.provider || "openai"
     end
   end
