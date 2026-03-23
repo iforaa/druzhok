@@ -12,17 +12,27 @@ OpenClaw solves this with a buffer pattern: non-triggered messages are stored in
 
 **Module**: `Druzhok.GroupBuffer`
 
-ETS-backed buffer storing recent non-triggered messages per chat_id. Fast reads/writes, no DB overhead.
+ETS-backed buffer storing recent non-triggered messages per instance+chat. Fast reads/writes, no DB overhead.
 
-**Table**: `:druzhok_group_buffer` (created in application supervision tree)
+**Table**: `:druzhok_group_buffer` — created in `Druzhok.Application.start/2` via `:ets.new(:druzhok_group_buffer, [:set, :public, :named_table])`. Public access so any process can read/write without a GenServer bottleneck. Owned by the application master process (lives for the duration of the app).
 
-**Entry format**: `{chat_id, [%{sender: String.t(), text: String.t(), timestamp: integer(), file: String.t() | nil}]}`
+**Key**: `{instance_name, chat_id}` — multi-tenant safe. Different bot instances sharing a chat_id get separate buffers.
+
+**Entry format**: `{{instance_name, chat_id}, [%{sender: String.t(), text: String.t(), timestamp: integer(), file: String.t() | nil}]}`
+
+Timestamps use `System.os_time(:millisecond)` for consistency with the rest of the codebase.
 
 **Operations**:
-- `push(chat_id, message, max_size)` — append to buffer, trim oldest if over max_size
-- `flush(chat_id)` — return all buffered messages and clear the buffer
-- `clear(chat_id)` — discard buffer without returning
-- `size(chat_id)` — current buffer length
+- `push(instance_name, chat_id, message, max_size)` — append to buffer, trim oldest if over max_size
+- `flush(instance_name, chat_id)` — return all buffered messages and clear the buffer
+- `clear(instance_name, chat_id)` — discard buffer without returning
+- `size(instance_name, chat_id)` — current buffer length
+
+**Data loss on restart**: ETS is in-memory. If the node restarts, buffered messages are lost. This is acceptable — the buffer is ephemeral context, not critical data. The bot simply has less conversational context on its first trigger after restart.
+
+**Cleanup**: `clear/2` is called when a group is rejected or removed (in `AllowedChat.reject/2` and `mark_removed/2` flows). No periodic cleanup needed — ETS entries are small and bounded by `buffer_size`.
+
+**File handling in buffer mode**: Non-triggered messages do NOT save files to workspace. Only the text reference (e.g., "[photo]", "[document: filename]") is stored in the buffer. Files are only saved when the bot is actually triggered and processes the message. This prevents busy groups from filling the workspace inbox.
 
 **Flush format**: When the bot is triggered, buffered messages are formatted as a context block prepended to the prompt:
 
@@ -63,8 +73,12 @@ Group message arrives (approved chat)
   ├── activation == "always" → send to LLM (current behavior)
   └── activation == "buffer"
         ├── triggered? → flush buffer + prepend as context + send to LLM
-        └── not triggered? → push to buffer, done (no LLM call)
+        └── not triggered? → push to buffer + emit event (for dashboard log) + done (no LLM call)
 ```
+
+**Event emission**: In buffer mode, non-triggered messages still emit a `:user_message` event so the dashboard event log shows group activity. The event just doesn't trigger an LLM call.
+
+**Messages arriving between flush and LLM response**: Go into a fresh buffer and will be included in the next trigger. This is expected behavior — the bot sees a consistent snapshot at trigger time.
 
 ### 3. Database Changes
 
@@ -89,7 +103,9 @@ No new pages needed.
 
 `/mode buffer` or `/mode always` — owner-only command in groups. Updates `allowed_chats.activation` via DB. Confirms with a message like "Switched to buffer mode."
 
-Added to the existing command parsing in `Router.parse_command/1` and handled in `telegram.ex`.
+**Command parsing**: `Router.parse_command/1` is extended to return `{:command, "mode", arg}` for commands with arguments. The existing return format `{:command, name}` is preserved for argument-less commands. Call sites in `telegram.ex` are updated to pattern match both formats.
+
+**Validation**: `buffer_size` in the dashboard is validated to be between 1 and 500. Values outside this range are clamped.
 
 ## Modified Modules
 
