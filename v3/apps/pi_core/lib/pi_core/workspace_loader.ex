@@ -13,7 +13,7 @@ defmodule PiCore.WorkspaceLoader.Default do
 
     files
     |> Enum.map(fn file ->
-      path = if read_fn == (&File.read/1), do: Path.join(workspace, file), else: file
+      path = if read_fn == (&File.read/1), do: Path.join(workspace, file), else: "/workspace/#{file}"
       case read_fn.(path) do
         {:ok, content} -> content
         {:error, _} -> nil

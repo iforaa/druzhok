@@ -102,7 +102,9 @@ defmodule PiCore.Session do
 
   def handle_cast({:set_model, model, opts}, state) do
     loader = state.workspace_loader
-    base_prompt = loader.load(state.workspace, %{group: state.group})
+    sandbox = get_in(state.extra_tool_context, [:sandbox])
+    read_fn = if sandbox, do: sandbox.read_file, else: nil
+    base_prompt = loader.load(state.workspace, %{group: state.group, read_fn: read_fn})
     system_prompt = append_model_info(base_prompt, model)
     state = %{state | model: model, system_prompt: system_prompt}
     state = if opts[:provider], do: %{state | provider: opts[:provider]}, else: state

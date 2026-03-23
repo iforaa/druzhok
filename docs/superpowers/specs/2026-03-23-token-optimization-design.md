@@ -12,6 +12,7 @@ OpenClaw and pi-mono have battle-tested patterns for token efficiency. This desi
 2. **Proportional to context window** — budgets adapt automatically per model. A bot on 8K gets aggressive caps; one on 200K relaxes them.
 3. **Lazy over eager** — load content on demand (skills, memory) rather than upfront.
 4. **Preserve what matters** — head+tail truncation keeps beginnings (structure/rules) and ends (errors/recent additions). Never blind head-only truncation.
+5. **Clean app boundaries** — `pi_core` stays database-free. All DB access lives in `druzhok` and is injected into `pi_core` via behaviours/callbacks, following the existing `WorkspaceLoader` pattern.
 
 ## Architecture Overview
 
@@ -21,8 +22,10 @@ Context Window (model-specific, user-configurable)
 │   ├── Identity: IDENTITY.md + SOUL.md (highest priority, never truncated unless huge)
 │   ├── Instructions: AGENTS.md, USER.md, BOOTSTRAP.md (per-file cap, head+tail truncation)
 │   └── Skills Catalog: tiered format (full → compact → minimal)
-├── Conversation History Budget (default 55%)
-│   ├── Compaction summary (if exists)
+├── Tool Definitions Budget (default 5%)
+│   └── JSON schemas for all registered tools (fixed cost per session)
+├── Conversation History Budget (default 50%)
+│   ├── Compaction summary (if exists, capped at 15% of history budget)
 │   ├── Recent messages (token-counted)
 │   └── Reasoning stripped on replay
 ├── Tool Results Budget (default 20%)
@@ -36,7 +39,7 @@ Context Window (model-specific, user-configurable)
 
 ### Module: `PiCore.TokenEstimator`
 
-Foundation for all budget decisions. Uses `chars / 4` heuristic (same as pi-mono — conservative, slightly overestimates).
+Foundation for all budget decisions. Uses `byte_size / 4` heuristic. Using byte size rather than character count makes this more conservative for non-Latin text (Russian/Cyrillic, which Druzhok uses heavily — UTF-8 Cyrillic is 2 bytes per char). The divisor is configurable via dashboard setting `token_estimation_divisor` (default: 4).
 
 ### Functions
 
@@ -55,25 +58,46 @@ Foundation for all budget decisions. Uses `chars / 4` heuristic (same as pi-mono
 
 ### Database-backed, dashboard-editable
 
-Model metadata lives in SQLite via Ecto as a `model_profiles` table:
+Extend the existing `models` table (migration `20260322000002`) with new columns:
 
 | Column | Type | Purpose |
 |--------|------|---------|
-| `name` | string | Model identifier (e.g., `claude-3-5-sonnet`) |
 | `context_window` | integer | Context window in tokens |
 | `supports_reasoning` | boolean | Has reasoning/thinking output |
 | `supports_tools` | boolean | Supports tool/function calling |
 
-### Lookup: `PiCore.ModelInfo.context_window(model_name)`
+Existing columns (`model_id`, `label`, `position`) are preserved.
+
+### Architecture: behaviour in pi_core, implementation in druzhok
+
+`pi_core` stays database-free. The lookup is injected via a behaviour:
+
+```elixir
+# In pi_core
+defmodule PiCore.ModelInfo do
+  @callback context_window(model_name :: String.t()) :: pos_integer()
+  @callback supports_reasoning?(model_name :: String.t()) :: boolean()
+end
+
+# In druzhok
+defmodule Druzhok.ModelInfo do
+  @behaviour PiCore.ModelInfo
+  # Queries DB, strips provider prefix, fuzzy matches, falls back to default
+end
+```
+
+Injected into `PiCore.Session` via opts, same pattern as `workspace_loader`.
+
+### Lookup logic (in `Druzhok.ModelInfo`)
 
 1. Strip provider prefix (`nebius/deepseek-ai/DeepSeek-R1` → `DeepSeek-R1`)
-2. Exact match against `model_profiles.name`
+2. Exact match against `models.model_id`
 3. Fuzzy/prefix match if no exact hit
 4. Fall back to `default_context_window` setting (default: 32K)
 
 ### Caching
 
-ETS cache with short TTL to avoid DB hits on every LLM call. Invalidated on dashboard save.
+ETS cache with short TTL. Invalidated via `Phoenix.PubSub` broadcast `{:models_updated}` on dashboard save.
 
 ### Seeding
 
@@ -99,7 +123,7 @@ Replaces `WorkspaceLoader.Default` with budget-aware prompt construction.
 
 **3. Skills catalog (lowest priority, most compressible)**
 
-Three format tiers, selected by binary search against remaining budget:
+Three format tiers, selected by fallback chain against remaining budget:
 - **Full**: `- **skill-name**: description (path)`
 - **Compact**: `- skill-name (path)`
 - **Minimal**: `- skill-name`
@@ -120,11 +144,30 @@ Always included (tiny). Current `append_model_info/2` behavior preserved.
 
 `PiCore.Truncate.head_tail(text, max_chars, head_ratio \\ 0.7, tail_ratio \\ 0.2)`
 
-Preserves first `head_ratio` and last `tail_ratio` of allowed size, with marker:
+Preserves first `head_ratio` and last `tail_ratio` of allowed size. The remaining 10% is reserved for the truncation marker itself. The marker is:
 
 ```
 ... [truncated — original was N chars, showing first/last portions] ...
 ```
+
+**Edge cases**:
+- If text is within 10% of the cap, include it in full (avoid truncating for negligible savings).
+- Minimum `max_chars` of 200 — below this, truncation does more harm than good.
+- Never split mid-line: snap head and tail boundaries to the nearest newline.
+
+## 3b. Tool Definitions Budget
+
+Tool definitions (JSON schemas) are sent with every LLM call. With 9 default tools, this is 2,000–4,000 tokens — significant on small models.
+
+### Budget: configurable ratio of context window (default 5%)
+
+This is a **fixed cost** per session — it doesn't change between iterations. The budget is checked at session init: `TokenEstimator.estimate_tools(tools)` must fit within the allocation. If it doesn't, log a warning — this means the model is too small for the registered tool set.
+
+Future optimization: tool subsetting per model size (e.g., drop `grep` and `find` on 8K models, keep only `bash` + `read` + `write`). Not in scope for this design but the budget makes the problem visible.
+
+### MEMORY.md handling
+
+`MEMORY.md` is NOT loaded into the system prompt. It is accessed lazily via the `memory_search` tool, which returns results as tool results (falling under the tool result budget). This aligns with the "lazy over eager" principle and prevents large memory files from consuming system prompt budget.
 
 ## 4. Conversation History Budget
 
@@ -142,23 +185,50 @@ Replace `length(messages) > 40` with `TokenEstimator.estimate_messages(messages)
 
 Short-message conversations can go hundreds of exchanges. Heavy tool-use conversations compact much sooner.
 
-`keep_recent` becomes token-based: keep the most recent messages fitting within 30% of the history budget (instead of fixed 10 messages).
+`keep_recent` becomes token-based: keep the most recent messages fitting within 30% of the history budget (instead of fixed 10 messages). **Never split a tool-call/tool-result sequence** — always keep complete turns. If one turn exceeds 30%, expand the keep window for that turn and let the summary absorb the cost.
 
 ### 4c. Iterative summarization
 
 When compacting, if a previous compaction summary exists, use an **update prompt** that merges new information into the existing summary rather than regenerating from scratch.
 
-Structured summary format:
+**Summary message identification**: Compaction summaries carry metadata `%{type: :compaction_summary, version: N}` so they can be reliably found in the message list. The version increments on each compaction cycle.
+
+**Summary size cap**: The compaction summary is capped at 15% of the history budget. If the summary grows beyond this after an iterative merge, it is truncated using head+tail. This prevents unbounded summary growth over many compaction cycles.
+
+**Initial compaction prompt** (no existing summary):
 
 ```
+Summarize the following conversation concisely. Use this structure:
+
 ## Goal
 ## Progress
 ## Key Decisions
 ## Files Read/Modified
 ## Next Steps
+
+Preserve UUIDs, file paths, API keys, URLs, and exact identifiers.
+
+<conversation>
+{serialized_messages}
+</conversation>
 ```
 
-Track `<read-files>` and `<modified-files>` from tool calls, carry forward across compactions. Prevents re-reading files already processed.
+**Iterative update prompt** (existing summary present):
+
+```
+Update this conversation summary with the new messages below.
+Merge new information into the existing structure. Do not repeat what is already captured.
+
+<existing-summary>
+{previous_summary}
+</existing-summary>
+
+<new-messages>
+{serialized_new_messages}
+</new-messages>
+```
+
+**File operation tracking**: `<read-files>` and `<modified-files>` are extracted from tool call messages by matching tool names (`read` → read-files, `write`/`edit` → modified-files) and pulling the file path argument. These lists are appended to the summary and carried forward across compactions.
 
 ### Module changes
 
@@ -189,7 +259,7 @@ Part of `transform_messages/1` in the Loop. Before each LLM call:
 
 ### 5c. Pre-persistence guard
 
-Before writing to `SessionStore`, cap any tool result exceeding 2x the per-result cap. Prevents unbounded session file growth and ensures reloaded sessions don't blow the budget.
+`SessionStore.sanitize_for_persistence(messages, budget)` — called by Session before `save/append`. Caps any tool result exceeding 2x the per-result cap using head+tail truncation. Prevents unbounded session file growth and ensures reloaded sessions don't blow the budget.
 
 ## 6. Skill System Integration
 
@@ -218,24 +288,27 @@ The skill system provides `list_skills(workspace) :: [{name, description, path}]
 ```elixir
 %TokenBudget{
   context_window: 128_000,
-  system_prompt: 19_200,   # 15%
-  history: 70_400,          # 55%
+  system_prompt: 19_200,    # 15%
+  tool_definitions: 6_400,  # 5%
+  history: 64_000,          # 50%
   tool_results: 25_600,     # 20%
   response_reserve: 12_800  # 10%
 }
 ```
 
-Computed once at session init. Stored in `PiCore.Session` state. Passed to Loop, Compaction, PromptBudget.
+Computed at session init and on model change. Stored in `PiCore.Session` state. Passed to Loop, Compaction, PromptBudget.
 
 ### Configuration
 
 All ratios stored in DB, editable from dashboard:
 
 - `system_prompt_budget_ratio` (default 0.15)
-- `history_budget_ratio` (default 0.55)
+- `tool_definitions_budget_ratio` (default 0.05)
+- `history_budget_ratio` (default 0.50)
 - `tool_result_budget_ratio` (default 0.20)
 - `response_reserve_ratio` (default 0.10)
 - `default_context_window` (default 32,000)
+- `token_estimation_divisor` (default 4)
 
 Per-instance overrides possible (e.g., a coding bot gets `tool_result_budget_ratio: 0.30`).
 
@@ -258,21 +331,37 @@ Session.run_prompt/2
         └── LLM call with budget-aware context
 ```
 
+### Model change handling
+
+When `Session.handle_cast({:set_model, ...})` fires:
+
+1. Recompute `TokenBudget` from the new model's context window
+2. Rebuild system prompt via `PromptBudget` with new budget
+3. Run `Compaction.maybe_compact/2` immediately — if switching from 128K to 8K, existing history may exceed the new budget
+4. Store updated budget in state
+
+This ensures mid-session model switches don't cause context overflow on the next LLM call.
+
+### Response reserve
+
+The 10% response reserve is implicitly enforced: the other four buckets total 90%, so 10% is always available for the model's output. No explicit enforcement needed — it's a design constraint, not runtime logic.
+
 ### Safety net
 
 If after all budgeting the total still exceeds the context window, a final guard in `Loop` before the LLM call drops the oldest non-summary messages until it fits. Logs a warning when this triggers.
 
 ## New Modules Summary
 
-| Module | Purpose |
-|--------|---------|
-| `PiCore.TokenEstimator` | chars/4 estimation for strings, messages, tools |
-| `PiCore.TokenBudget` | Compute and hold per-session budget allocations |
-| `PiCore.PromptBudget` | Budget-aware system prompt construction |
-| `PiCore.Truncate` | Head+tail truncation helper |
-| `PiCore.ModelInfo` | DB-backed model metadata with ETS cache |
-| `DruzhokWeb.ModelProfileLive` | Dashboard page for model profiles CRUD |
-| `DruzhokWeb.SettingsLive` | Dashboard page for budget ratio settings |
+| Module | App | Purpose |
+|--------|-----|---------|
+| `PiCore.TokenEstimator` | pi_core | byte_size/4 estimation for strings, messages, tools |
+| `PiCore.TokenBudget` | pi_core | Compute and hold per-session budget allocations |
+| `PiCore.PromptBudget` | pi_core | Budget-aware system prompt construction |
+| `PiCore.Truncate` | pi_core | Head+tail truncation helper |
+| `PiCore.ModelInfo` | pi_core | Behaviour for model metadata lookup |
+| `Druzhok.ModelInfo` | druzhok | DB-backed implementation with ETS cache |
+| `DruzhokWeb.ModelProfileLive` | druzhok_web | Dashboard page for model profiles CRUD |
+| `DruzhokWeb.SettingsLive` | druzhok_web | Dashboard page for budget ratio settings |
 
 ## Modified Modules
 
