@@ -13,21 +13,11 @@ defmodule Druzhok.Sandbox.Protocol do
   @doc "Split buffer on newlines, returning {complete_lines, remaining_buffer}."
   def split_lines(buffer) do
     parts = String.split(buffer, "\n")
-
-    case List.last(parts) do
-      "" -> {parts |> Enum.slice(0..-2//1) |> Enum.reject(&(&1 == "")), ""}
-      rest -> {parts |> Enum.slice(0..-2//1) |> Enum.reject(&(&1 == "")), rest}
-    end
+    {init, [rest]} = Enum.split(parts, -1)
+    {Enum.reject(init, &(&1 == "")), rest}
   end
 
   # --- Request building ---
-
-  @doc "Build a JSON-encoded request string (with trailing newline) and return {id, new_state}."
-  def build_request(state, type, params) do
-    {id, state} = next_id(state)
-    request = Map.merge(%{id: id, type: type}, params)
-    {id, Jason.encode!(request) <> "\n", state}
-  end
 
   @doc "Generate next request id and update counter in state."
   def next_id(state) do
@@ -39,10 +29,7 @@ defmodule Druzhok.Sandbox.Protocol do
 
   @doc "Send a JSON request map over a TCP socket."
   def send_request(socket, request) do
-    case :gen_tcp.send(socket, Jason.encode!(request) <> "\n") do
-      :ok -> :ok
-      {:error, reason} -> {:error, reason}
-    end
+    :gen_tcp.send(socket, Jason.encode!(request) <> "\n")
   end
 
   # --- Pending management ---

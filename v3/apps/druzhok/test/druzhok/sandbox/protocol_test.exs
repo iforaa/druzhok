@@ -41,27 +41,6 @@ defmodule Druzhok.Sandbox.ProtocolTest do
     end
   end
 
-  describe "build_request/3" do
-    test "builds JSON request with auto-incremented id" do
-      state = %{counter: 0}
-      {id, json, new_state} = Protocol.build_request(state, "exec", %{command: "ls"})
-
-      assert id == "req-1"
-      assert new_state.counter == 1
-      decoded = Jason.decode!(String.trim(json))
-      assert decoded["id"] == "req-1"
-      assert decoded["type"] == "exec"
-      assert decoded["command"] == "ls"
-    end
-
-    test "increments counter across calls" do
-      state = %{counter: 5}
-      {id, _json, new_state} = Protocol.build_request(state, "read", %{path: "/file"})
-      assert id == "req-6"
-      assert new_state.counter == 6
-    end
-  end
-
   describe "process_line/2" do
     test "ignores invalid JSON" do
       state = %{pending: %{}}

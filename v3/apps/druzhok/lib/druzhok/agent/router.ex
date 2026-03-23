@@ -95,14 +95,10 @@ defmodule Druzhok.Agent.Router do
   def extract_message(_), do: nil
 
   @doc """
-  Check if the bot was triggered in a group message.
+  Check if the bot was triggered in a group message by text content.
 
-  A message triggers the bot if:
-    - The text contains `@username` (case-insensitive)
-    - The text matches the bot's name regex
-    - `is_reply_to_bot` is true (handled externally, passed in)
-
-  This function checks only text-based triggers (username mention and name regex).
+  Returns true if the text contains `@username` or matches the bot's name regex.
+  Reply-to-bot detection is handled separately via `reply_to_bot?/2`.
   """
   def triggered?(text, bot_username, bot_name_regex) do
     mentioned_by_username?(text, bot_username) ||

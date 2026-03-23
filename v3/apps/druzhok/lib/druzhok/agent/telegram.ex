@@ -94,7 +94,6 @@ defmodule Druzhok.Agent.Telegram do
   end
 
   def handle_cast({:set_workspace, workspace}, state) do
-    # Also load owner_telegram_id from DB
     owner_id = case Druzhok.Repo.get_by(Druzhok.Instance, name: state.instance_name) do
       %{owner_telegram_id: id} -> id
       _ -> nil
@@ -197,10 +196,10 @@ defmodule Druzhok.Agent.Telegram do
   defp handle_streaming_delta(state) do
     now = System.monotonic_time(:millisecond)
     streamer = state.streamer
-    display_text = strip_artifacts(Streamer.text(streamer))
 
     cond do
       Streamer.should_send?(streamer) ->
+        display_text = strip_artifacts(Streamer.text(streamer))
         case API.send_message(state.token, state.chat_id, display_text) do
           {:ok, %{"message_id" => msg_id}} ->
             %{state | streamer: Streamer.mark_sent(streamer, now, msg_id)}
@@ -209,10 +208,10 @@ defmodule Druzhok.Agent.Telegram do
         end
 
       is_nil(streamer.message_id) ->
-        # Not enough chars yet, just keep accumulating
         state
 
       Streamer.should_edit?(streamer, now) ->
+        display_text = strip_artifacts(Streamer.text(streamer))
         case API.edit_message_text(state.token, state.chat_id, streamer.message_id, display_text) do
           {:error, reason} ->
             Logger.warning("Telegram edit failed: #{inspect(reason)}")
@@ -265,20 +264,24 @@ defmodule Druzhok.Agent.Telegram do
   defp handle_update(%{"update_id" => update_id} = update, state) do
     state = %{state | offset: update_id + 1}
 
-    case Router.extract_message(update) do
-      nil -> state
-      {chat_id, chat_type, text, sender_id, sender_name, file, chat_title} ->
+    case Router.classify(update) do
+      {:dm, msg} ->
+        text = Router.extract_text(msg)
+        sender_id = msg["from"]["id"]
+        name = [msg["from"]["first_name"], msg["from"]["last_name"]] |> Enum.reject(&is_nil/1) |> Enum.join(" ")
+        file = Router.extract_file(msg)
+        handle_dm(msg["chat"]["id"], text, sender_id, name, file, state)
+
+      {:group, msg, chat_title} ->
+        text = Router.extract_text(msg)
+        sender_id = msg["from"]["id"]
+        name = [msg["from"]["first_name"], msg["from"]["last_name"]] |> Enum.reject(&is_nil/1) |> Enum.join(" ")
+        file = Router.extract_file(msg)
         is_reply = Router.reply_to_bot?(update, state.bot_id)
+        handle_group(msg["chat"]["id"], text, sender_id, name, file, is_reply, chat_title, state)
 
-        case chat_type do
-          "private" ->
-            handle_dm(chat_id, text, sender_id, sender_name, file, state)
-
-          type when type in ["group", "supergroup"] ->
-            handle_group(chat_id, text, sender_id, sender_name, file, is_reply, chat_title, state)
-
-          _ -> state
-        end
+      :ignore ->
+        state
     end
   end
 
@@ -298,7 +301,7 @@ defmodule Druzhok.Agent.Telegram do
 
     cond do
       state.owner_telegram_id == sender_id ->
-        process_owner_message(chat_id, text, sender_name, file, false, state)
+        process_owner_message(chat_id, text, sender_id, sender_name, file, false, state)
 
       state.owner_telegram_id != nil ->
         API.send_message(state.token, chat_id, "This bot is private.")
@@ -340,25 +343,7 @@ defmodule Druzhok.Agent.Telegram do
       chat && chat.status == "approved" ->
         if is_reply_to_bot || Router.triggered?(text, state.bot_username, state.bot_name_regex) do
           state = %{state | chat_id: chat_id, streamer: Streamer.reset(state.streamer)}
-
-          case Router.parse_command(text) do
-            {:command, "reset"} ->
-              if state.owner_telegram_id == sender_id do
-                dispatch_session(chat_id, state, &PiCore.Session.reset/1)
-                API.send_message(state.token, chat_id, "Session reset!")
-              end
-              state
-
-            {:command, "abort"} ->
-              if state.owner_telegram_id == sender_id do
-                dispatch_session(chat_id, state, &PiCore.Session.abort/1)
-                API.send_message(state.token, chat_id, "Aborted.")
-              end
-              state
-
-            _ ->
-              process_owner_message(chat_id, text, sender_name, file, true, state)
-          end
+          process_owner_message(chat_id, text, sender_id, sender_name, file, true, state)
         else
           state
         end
@@ -381,15 +366,19 @@ defmodule Druzhok.Agent.Telegram do
 
   # --- Shared message processing (used by both DM owner and approved group) ---
 
-  defp process_owner_message(chat_id, text, sender_name, file, is_group, state) do
+  defp process_owner_message(chat_id, text, sender_id, sender_name, file, is_group, state) do
     saved_file = if file, do: save_incoming_file(file, chat_id, state), else: nil
     prompt_text = build_prompt(text, sender_name, saved_file)
     emit(state, :user_message, %{text: prompt_text, sender: sender_name, chat_id: chat_id})
     API.send_chat_action(state.token, chat_id)
+    is_owner = state.owner_telegram_id == sender_id
 
     case Router.parse_command(text) do
       {:command, "start"} ->
         dispatch_prompt("User #{sender_name} just started the bot. Introduce yourself.", chat_id, is_group, state)
+        state
+
+      {:command, cmd} when cmd in ["reset", "abort"] and is_group and not is_owner ->
         state
 
       {:command, "reset"} ->
