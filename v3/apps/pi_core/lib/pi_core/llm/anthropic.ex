@@ -3,6 +3,7 @@ defmodule PiCore.LLM.Anthropic do
   Anthropic Messages API client. Streams via SSE, returns Client.Result.
   """
   alias PiCore.LLM.Client.Result
+  alias PiCore.LLM.ToolCallAssembler
 
 
   def completion(opts) do
@@ -41,21 +42,21 @@ defmodule PiCore.LLM.Anthropic do
     req = Finch.build(:post, url, headers, Jason.encode!(body))
 
     try do
-      Finch.stream(req, PiCore.Finch, {%Result{}, "", false, []}, fn
+      Finch.stream(req, PiCore.Finch, {%Result{}, "", false, ToolCallAssembler.new()}, fn
         {:status, status}, acc when status in 200..299 -> acc
-        {:status, status}, {_, buf, tok, tc} -> throw({:http_error, status})
+        {:status, status}, _acc -> throw({:http_error, status})
         {:headers, _}, acc -> acc
 
-        {:data, data}, {result, buffer, token_sent, partial_tc} ->
+        {:data, data}, {result, buffer, token_sent, tc_asm} ->
           full = buffer <> data
           {lines, rest} = split_sse(full)
 
-          {result, token_sent, partial_tc} =
-            Enum.reduce(lines, {result, token_sent, partial_tc}, fn line, {r, ts, tc} ->
-              process_sse_line(line, r, ts, tc, on_delta, on_event)
+          {result, token_sent, tc_asm} =
+            Enum.reduce(lines, {result, token_sent, tc_asm}, fn line, {r, ts, asm} ->
+              process_sse_line(line, r, ts, asm, on_delta, on_event)
             end)
 
-          {result, rest, token_sent, partial_tc}
+          {result, rest, token_sent, tc_asm}
       end)
       |> case do
         {:ok, acc} -> {:ok, finalize_stream_result(acc)}
@@ -78,17 +79,17 @@ defmodule PiCore.LLM.Anthropic do
     {lines, rest}
   end
 
-  defp process_sse_line("data: " <> json_str, result, token_sent, partial_tc, on_delta, on_event) do
+  defp process_sse_line("data: " <> json_str, result, token_sent, tc_asm, on_delta, on_event) do
     case Jason.decode(json_str) do
-      {:ok, event} -> handle_event(event, result, token_sent, partial_tc, on_delta, on_event)
-      _ -> {result, token_sent, partial_tc}
+      {:ok, event} -> handle_event(event, result, token_sent, tc_asm, on_delta, on_event)
+      _ -> {result, token_sent, tc_asm}
     end
   end
-  defp process_sse_line(_, result, token_sent, partial_tc, _on_delta, _on_event) do
-    {result, token_sent, partial_tc}
+  defp process_sse_line(_, result, token_sent, tc_asm, _on_delta, _on_event) do
+    {result, token_sent, tc_asm}
   end
 
-  defp handle_event(%{"type" => "content_block_delta", "delta" => delta}, result, token_sent, partial_tc, on_delta, on_event) do
+  defp handle_event(%{"type" => "content_block_delta", "delta" => delta}, result, token_sent, tc_asm, on_delta, on_event) do
     case delta do
       %{"type" => "text_delta", "text" => text} ->
         if on_delta && text != "", do: on_delta.(text)
@@ -98,53 +99,39 @@ defmodule PiCore.LLM.Anthropic do
         else
           token_sent
         end
-        {%{result | content: result.content <> text}, token_sent, partial_tc}
+        {%{result | content: result.content <> text}, token_sent, tc_asm}
 
       %{"type" => "thinking_delta", "thinking" => text} ->
-        {%{result | reasoning: result.reasoning <> text}, token_sent, partial_tc}
+        {%{result | reasoning: result.reasoning <> text}, token_sent, tc_asm}
 
       %{"type" => "input_json_delta", "partial_json" => json_chunk} ->
-        partial_tc = update_partial_tc(partial_tc, json_chunk)
-        {result, token_sent, partial_tc}
+        # Append to the last started tool call (Anthropic streams one at a time)
+        last_index = length(tc_asm.calls) - 1
+        tc_asm = if last_index >= 0, do: ToolCallAssembler.append_args(tc_asm, last_index, json_chunk), else: tc_asm
+        {result, token_sent, tc_asm}
 
       _ ->
-        {result, token_sent, partial_tc}
+        {result, token_sent, tc_asm}
     end
   end
 
-  defp handle_event(%{"type" => "content_block_start", "content_block" => block}, result, token_sent, partial_tc, _on_delta, _on_event) do
+  defp handle_event(%{"type" => "content_block_start", "content_block" => block}, result, token_sent, tc_asm, _on_delta, _on_event) do
     case block do
       %{"type" => "tool_use", "id" => id, "name" => name} ->
-        partial_tc = partial_tc ++ [%{id: id, name: name, args_json: ""}]
-        {result, token_sent, partial_tc}
+        index = length(tc_asm.calls)
+        tc_asm = ToolCallAssembler.start_call(tc_asm, index, id, name)
+        {result, token_sent, tc_asm}
       _ ->
-        {result, token_sent, partial_tc}
+        {result, token_sent, tc_asm}
     end
   end
 
-  defp handle_event(_event, result, token_sent, partial_tc, _on_delta, _on_event) do
-    {result, token_sent, partial_tc}
+  defp handle_event(_event, result, token_sent, tc_asm, _on_delta, _on_event) do
+    {result, token_sent, tc_asm}
   end
 
-  defp update_partial_tc([], _chunk), do: []
-  defp update_partial_tc(partial_tc, chunk) do
-    List.update_at(partial_tc, -1, fn tc ->
-      %{tc | args_json: tc.args_json <> chunk}
-    end)
-  end
-
-  # Assemble partial tool calls from streaming into Result.tool_calls
-  defp finalize_stream_result({result, _, _, partial_tc}) do
-    tool_calls = Enum.map(partial_tc, fn tc ->
-      %{
-        "id" => tc.id,
-        "type" => "function",
-        "function" => %{
-          "name" => tc.name,
-          "arguments" => tc.args_json
-        }
-      }
-    end)
+  defp finalize_stream_result({result, _, _, tc_asm}) do
+    tool_calls = ToolCallAssembler.finalize(tc_asm)
 
     if tool_calls != [] do
       %{result | tool_calls: tool_calls}

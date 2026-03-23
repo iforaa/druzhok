@@ -1,6 +1,7 @@
 defmodule PiCore.LLM.OpenAI do
   alias PiCore.LLM.SSEParser
   alias PiCore.LLM.Client.Result
+  alias PiCore.LLM.ToolCallAssembler
 
   defmodule Request do
     defstruct [:url, :headers, :body]
@@ -35,33 +36,36 @@ defmodule PiCore.LLM.OpenAI do
   defp stream_completion(request, on_delta, on_event) do
     req = Finch.build(:post, request.url, request.headers, request.body)
     try do
-      Finch.stream(req, PiCore.Finch, {%Result{}, "", false}, fn
-        {:status, status}, {result, buffer, tok} when status in 200..299 ->
-          {result, buffer, tok}
+      Finch.stream(req, PiCore.Finch, {%Result{}, "", false, ToolCallAssembler.new()}, fn
+        {:status, status}, acc when status in 200..299 ->
+          acc
 
-        {:status, status}, {_result, _buffer, _tok} ->
+        {:status, status}, _acc ->
           throw({:http_error, status})
 
         {:headers, _}, acc -> acc
 
-        {:data, data}, {result, buffer, token_sent} ->
+        {:data, data}, {result, buffer, token_sent, tc_asm} ->
           {events, new_buffer} = SSEParser.parse(data, buffer)
-          {new_result, token_sent} = Enum.reduce(events, {result, token_sent}, fn
+          {new_result, token_sent, tc_asm} = Enum.reduce(events, {result, token_sent, tc_asm}, fn
             :done, acc -> acc
-            event, {acc, sent} ->
-              new_acc = process_stream_event(event, acc, on_delta)
+            event, {acc, sent, asm} ->
+              {new_acc, asm} = process_stream_event(event, acc, asm, on_delta)
               sent = if !sent && new_acc.content != "" do
                 if on_event, do: on_event.(%{type: :llm_first_token})
                 true
               else
                 sent
               end
-              {new_acc, sent}
+              {new_acc, sent, asm}
           end)
-          {new_result, new_buffer, token_sent}
+          {new_result, new_buffer, token_sent, tc_asm}
       end)
       |> case do
-        {:ok, {result, _, _}} -> {:ok, result}
+        {:ok, {result, _, _, tc_asm}} ->
+          tool_calls = ToolCallAssembler.finalize(tc_asm)
+          result = if tool_calls != [], do: %{result | tool_calls: tool_calls}, else: result
+          {:ok, result}
         {:error, reason} -> {:error, reason}
       end
     catch
@@ -71,10 +75,10 @@ defmodule PiCore.LLM.OpenAI do
     end
   end
 
-  defp process_stream_event(event, result, on_delta) do
+  defp process_stream_event(event, result, tc_asm, on_delta) do
     choices = event["choices"] || []
 
-    Enum.reduce(choices, result, fn choice, acc ->
+    Enum.reduce(choices, {result, tc_asm}, fn choice, {acc, asm} ->
       delta = choice["delta"] || %{}
       message = choice["message"]
 
@@ -94,7 +98,20 @@ defmodule PiCore.LLM.OpenAI do
       end
 
       # Tool calls from delta (streaming assembly)
-      acc = if delta["tool_calls"], do: merge_tool_calls(acc, delta["tool_calls"]), else: acc
+      asm = if delta["tool_calls"] do
+        Enum.reduce(delta["tool_calls"], asm, fn call, a ->
+          index = call["index"] || 0
+          a = if call["id"] do
+            ToolCallAssembler.start_call(a, index, call["id"], get_in(call, ["function", "name"]) || "")
+          else
+            a
+          end
+          args_fragment = get_in(call, ["function", "arguments"]) || ""
+          if args_fragment != "", do: ToolCallAssembler.append_args(a, index, args_fragment), else: a
+        end)
+      else
+        asm
+      end
 
       # Non-streaming message (some events include full message)
       acc = if message do
@@ -105,31 +122,7 @@ defmodule PiCore.LLM.OpenAI do
         acc
       end
 
-      acc
-    end)
-  end
-
-  defp merge_tool_calls(result, incoming_calls) do
-    Enum.reduce(incoming_calls, result, fn call, acc ->
-      index = call["index"] || 0
-      existing = Enum.at(acc.tool_calls, index)
-
-      if existing do
-        updated = update_in(existing, ["function", "arguments"], fn args ->
-          (args || "") <> (get_in(call, ["function", "arguments"]) || "")
-        end)
-        %{acc | tool_calls: List.replace_at(acc.tool_calls, index, updated)}
-      else
-        new_call = %{
-          "id" => call["id"],
-          "type" => "function",
-          "function" => %{
-            "name" => get_in(call, ["function", "name"]) || "",
-            "arguments" => get_in(call, ["function", "arguments"]) || ""
-          }
-        }
-        %{acc | tool_calls: acc.tool_calls ++ [new_call]}
-      end
+      {acc, asm}
     end)
   end
 
