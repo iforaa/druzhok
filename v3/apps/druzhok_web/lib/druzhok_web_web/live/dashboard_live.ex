@@ -1,6 +1,10 @@
 defmodule DruzhokWebWeb.DashboardLive do
   use DruzhokWebWeb, :live_view
 
+  import DruzhokWebWeb.Live.Components.EventLog
+  import DruzhokWebWeb.Live.Components.FileBrowser
+  import DruzhokWebWeb.Live.Components.SecurityTab
+
   @max_events 200
   @valid_tabs %{"logs" => :logs, "files" => :files, "security" => :security}
 
@@ -330,178 +334,19 @@ defmodule DruzhokWebWeb.DashboardLive do
           <%!-- Tab content --%>
           <div class="flex-1 overflow-y-auto">
             <%!-- Logs tab --%>
-            <div :if={@tab == :logs} class="h-full flex flex-col">
-              <div :if={@events == []} class="flex-1 flex items-center justify-center text-gray-400 text-sm">
-                Waiting for events...
-              </div>
-
-              <div :if={@events != []} class="flex-1 min-h-0 overflow-y-auto">
-                <div class="px-2 py-2 space-y-px">
-                  <div :for={event <- @events} class={"group px-4 py-2 rounded-lg #{event_bg(event.type)}"}>
-                    <div class="flex items-center gap-2 mb-0.5">
-                      <span class={"text-[10px] font-bold uppercase tracking-wider #{event_color(event.type)}"}><%= event_label(event.type) %></span>
-                      <span class="text-[10px] text-gray-400 font-mono"><%= format_time(event.timestamp) %></span>
-                    </div>
-                    <div class="text-sm text-gray-700 leading-relaxed whitespace-pre-wrap break-words"><%= event_text(event) %></div>
-                  </div>
-                </div>
-              </div>
-
-              <div :if={@events != []} class="px-4 py-2 border-t border-gray-100 flex justify-end">
-                <button phx-click="clear_events" class="text-xs text-gray-400 hover:text-gray-900 transition">Clear</button>
-              </div>
-            </div>
+            <.event_log :if={@tab == :logs} events={@events} />
 
             <%!-- Files tab --%>
-            <div :if={@tab == :files}>
-              <div :if={@file_content} class="p-4">
-                <div class="flex items-center gap-3 mb-3">
-                  <button phx-click="back_to_files" class="text-xs text-gray-400 hover:text-gray-900 transition">&larr; back</button>
-                  <span class="text-sm text-gray-500 font-mono"><%= @file_content.path %></span>
-                </div>
-                <pre class="bg-gray-50 border border-gray-200 p-4 rounded-lg text-sm overflow-auto max-h-[calc(100vh-200px)] whitespace-pre-wrap font-mono text-gray-700 leading-relaxed"><%= @file_content.content %></pre>
-              </div>
-
-              <div :if={!@file_content} class="py-1">
-                <div :for={file <- @workspace_files}
-                     class="flex items-center gap-3 py-2 px-6 hover:bg-gray-50 cursor-pointer transition"
-                     phx-click="view_file" phx-value-path={file.path}>
-                  <span :if={file.is_dir} class="text-xs text-amber-500 font-mono w-6">dir</span>
-                  <span :if={!file.is_dir} class="text-xs text-gray-300 font-mono w-6">&mdash;</span>
-                  <span class="flex-1 text-sm"><%= file.path %></span>
-                  <span :if={!file.is_dir} class="text-xs text-gray-400 font-mono"><%= format_size(file.size) %></span>
-                </div>
-              </div>
-            </div>
+            <.file_browser :if={@tab == :files} files={@workspace_files} file_content={@file_content} />
 
             <%!-- Security tab --%>
-            <div :if={@tab == :security} class="p-6 space-y-6">
-              <%!-- Owner section --%>
-              <div class="bg-white rounded-xl border border-gray-200 p-4">
-                <h3 class="text-sm font-semibold mb-3">Owner</h3>
-                <div :if={@owner}>
-                  <span class="text-sm text-gray-600">Telegram ID: <%= @owner %></span>
-                </div>
-                <div :if={!@owner && @pairing}>
-                  <div class="flex items-center justify-between">
-                    <div>
-                      <div class="text-sm">Pending pairing from <b><%= @pairing.display_name %></b></div>
-                      <div class="text-xs text-gray-500 font-mono mt-1">Code: <%= @pairing.code %></div>
-                    </div>
-                    <button phx-click="approve_pairing" phx-value-name={@selected}
-                            class="bg-gray-900 hover:bg-gray-800 text-white rounded-lg px-3 py-1.5 text-sm font-medium transition">
-                      Approve
-                    </button>
-                  </div>
-                </div>
-                <div :if={!@owner && !@pairing} class="text-sm text-gray-400">
-                  No owner yet. Send a message to the bot to start pairing.
-                </div>
-              </div>
-
-              <%!-- Groups section --%>
-              <div class="bg-white rounded-xl border border-gray-200 p-4">
-                <h3 class="text-sm font-semibold mb-3">Groups</h3>
-                <div :if={@groups == []} class="text-sm text-gray-400">
-                  No groups yet. Add the bot to a Telegram group.
-                </div>
-                <div :for={group <- @groups} class="flex items-center justify-between py-2 border-b border-gray-100 last:border-0">
-                  <div>
-                    <div class="text-sm font-medium"><%= group.title || "Chat #{group.chat_id}" %></div>
-                    <div class="text-xs text-gray-400"><%= group.chat_type %> &middot; <%= group.status %></div>
-                  </div>
-                  <div :if={group.status == "pending"} class="flex gap-2">
-                    <button phx-click="approve_group" phx-value-name={@selected} phx-value-chat_id={group.chat_id}
-                            class="bg-gray-900 hover:bg-gray-800 text-white rounded-lg px-3 py-1 text-xs font-medium transition">
-                      Approve
-                    </button>
-                    <button phx-click="reject_group" phx-value-name={@selected} phx-value-chat_id={group.chat_id}
-                            class="border border-gray-300 hover:bg-gray-100 rounded-lg px-3 py-1 text-xs font-medium transition">
-                      Reject
-                    </button>
-                  </div>
-                  <span :if={group.status == "approved"} class="text-xs text-green-600 font-medium">Approved</span>
-                  <span :if={group.status == "rejected"} class="text-xs text-red-500 font-medium">Rejected</span>
-                  <span :if={group.status == "removed"} class="text-xs text-gray-400 font-medium">Removed</span>
-                </div>
-              </div>
-            </div>
+            <.security_tab :if={@tab == :security} pairing={@pairing} owner={@owner} groups={@groups} instance_name={@selected} />
           </div>
         </div>
       </div>
     </div>
     """
   end
-
-  # --- Event formatting ---
-
-  defp event_label(:user_message), do: "in"
-  defp event_label(:agent_reply), do: "out"
-  defp event_label(:loop_start), do: "loop"
-  defp event_label(:llm_start), do: "llm"
-  defp event_label(:llm_first_token), do: "token"
-  defp event_label(:llm_done), do: "llm"
-  defp event_label(:llm_error), do: "llm"
-  defp event_label(:tool_call), do: "tool"
-  defp event_label(:tool_exec), do: "exec"
-  defp event_label(:tool_result), do: "result"
-  defp event_label(:heartbeat), do: "hb"
-  defp event_label(:reminder), do: "remind"
-  defp event_label(:error), do: "err"
-  defp event_label(other), do: to_string(other)
-
-  defp event_color(:user_message), do: "text-blue-600"
-  defp event_color(:agent_reply), do: "text-green-600"
-  defp event_color(:loop_start), do: "text-violet-500"
-  defp event_color(:llm_start), do: "text-purple-500"
-  defp event_color(:llm_first_token), do: "text-purple-400"
-  defp event_color(:llm_done), do: "text-purple-500"
-  defp event_color(:llm_error), do: "text-red-500"
-  defp event_color(:tool_call), do: "text-amber-600"
-  defp event_color(:tool_exec), do: "text-amber-500"
-  defp event_color(:tool_result), do: "text-amber-500"
-  defp event_color(:heartbeat), do: "text-pink-500"
-  defp event_color(:reminder), do: "text-pink-500"
-  defp event_color(:error), do: "text-red-500"
-  defp event_color(_), do: "text-gray-400"
-
-  defp event_bg(:user_message), do: "bg-blue-50"
-  defp event_bg(:agent_reply), do: "bg-green-50"
-  defp event_bg(:loop_start), do: "bg-violet-50/50"
-  defp event_bg(:llm_start), do: "bg-purple-50/50"
-  defp event_bg(:llm_first_token), do: "bg-purple-50/30"
-  defp event_bg(:llm_done), do: "bg-purple-50/50"
-  defp event_bg(:llm_error), do: "bg-red-50"
-  defp event_bg(:tool_call), do: "bg-amber-50/50"
-  defp event_bg(:tool_exec), do: "bg-amber-50/30"
-  defp event_bg(:tool_result), do: "bg-amber-50/30"
-  defp event_bg(:heartbeat), do: "bg-pink-50/50"
-  defp event_bg(:reminder), do: "bg-pink-50/50"
-  defp event_bg(:error), do: "bg-red-50"
-  defp event_bg(_), do: "bg-gray-50/50"
-
-  defp event_text(%{type: :user_message, text: text, sender: sender}), do: "#{sender}: #{text}"
-  defp event_text(%{type: :loop_start, tool_count: tc, message_count: mc, model: m}) when is_binary(m), do: "Starting loop (#{mc} msgs, #{tc} tools) model: #{m}"
-  defp event_text(%{type: :loop_start, tool_count: tc, message_count: mc}), do: "Starting loop (#{mc} msgs, #{tc} tools)"
-  defp event_text(%{type: :llm_start, iteration: i, message_count: mc}), do: "Requesting LLM [iteration #{i}] (#{mc} messages)"
-  defp event_text(%{type: :llm_first_token}), do: "First token received"
-  defp event_text(%{type: :llm_done, iteration: i, elapsed_ms: ms, has_tool_calls: true, content_length: cl, reasoning_length: rl}) do
-    "LLM responded [iteration #{i}] in #{ms}ms \u2014 #{cl} chars, #{rl} reasoning, has tool calls"
-  end
-  defp event_text(%{type: :llm_done, iteration: i, elapsed_ms: ms, content_length: cl, reasoning_length: rl}) do
-    "LLM responded [iteration #{i}] in #{ms}ms \u2014 #{cl} chars, #{rl} reasoning"
-  end
-  defp event_text(%{type: :llm_error, elapsed_ms: ms, error: err}), do: "LLM error after #{ms}ms: #{err}"
-  defp event_text(%{type: :tool_call, name: name, arguments: args}), do: "#{name}(#{String.slice(args, 0, 300)})"
-  defp event_text(%{type: :tool_exec, name: name, elapsed_ms: ms, is_error: true}), do: "#{name} failed (#{ms}ms)"
-  defp event_text(%{type: :tool_exec, name: name, elapsed_ms: ms}), do: "#{name} completed (#{ms}ms)"
-  defp event_text(%{type: :tool_result, name: name, content: content, is_error: true}), do: "#{name} ERROR: #{content}"
-  defp event_text(%{type: :tool_result, name: name, content: content}), do: "#{name} \u2192 #{content}"
-  defp event_text(%{text: text}) when is_binary(text), do: text
-  defp event_text(_), do: ""
-
-  defp format_time(%DateTime{} = dt), do: Calendar.strftime(dt, "%H:%M:%S")
-  defp format_time(_), do: ""
 
   defp model_short(model) do
     model |> String.split("/") |> List.last()
@@ -591,7 +436,4 @@ defmodule DruzhokWebWeb.DashboardLive do
     end
   end
 
-  defp format_size(bytes) when bytes < 1024, do: "#{bytes} B"
-  defp format_size(bytes) when bytes < 1024 * 1024, do: "#{Float.round(bytes / 1024, 1)} KB"
-  defp format_size(bytes), do: "#{Float.round(bytes / (1024 * 1024), 1)} MB"
 end
