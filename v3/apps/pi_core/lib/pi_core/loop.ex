@@ -20,8 +20,14 @@ defmodule PiCore.Loop do
     else
     all_messages = opts.messages ++ new_messages
 
+    transformed = if opts[:budget] do
+      PiCore.Transform.transform_messages(all_messages, opts.budget, length(opts.messages))
+    else
+      all_messages
+    end
+
     llm_messages =
-      Enum.map(all_messages, fn
+      Enum.map(transformed, fn
         %Message{role: "toolResult"} = m ->
           %{role: "tool", tool_call_id: m.tool_call_id, content: m.content || ""}
 
@@ -118,8 +124,8 @@ defmodule PiCore.Loop do
           case Jason.decode(raw_args) do
             {:ok, args} ->
               case tool.execute.(args, context) do
-                {:ok, output} -> {truncate_output(to_string(output)), false}
-                {:error, reason} -> {truncate_output(to_string(reason)), true}
+                {:ok, output} -> {truncate_output(to_string(output), opts), false}
+                {:error, reason} -> {truncate_output(to_string(reason), opts), true}
               end
 
             {:error, _} ->
@@ -147,14 +153,17 @@ defmodule PiCore.Loop do
     if on_event = opts[:on_event], do: on_event.(event)
   end
 
-  defp truncate_output(text) do
-    max = PiCore.Config.max_tool_output()
+  defp truncate_output(text, opts) do
+    max = if opts[:budget] do
+      PiCore.TokenBudget.per_tool_result_cap(opts.budget) * 4
+    else
+      PiCore.Config.max_tool_output()
+    end
 
     if byte_size(text) <= max do
       text
     else
-      truncated = String.slice(text, 0, max)
-      truncated <> "\n\n[Output truncated — #{byte_size(text)} bytes total, showing first #{max}]"
+      PiCore.Truncate.head_tail(text, max)
     end
   end
 end

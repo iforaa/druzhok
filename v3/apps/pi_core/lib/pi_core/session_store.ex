@@ -25,6 +25,18 @@ defmodule PiCore.SessionStore do
     Path.join(dir, @filename) |> File.rm()
   end
 
+  def sanitize_for_persistence(messages, budget) when is_struct(budget, PiCore.TokenBudget) do
+    max_chars = PiCore.TokenBudget.per_tool_result_cap(budget) * 4 * 2
+    Enum.map(messages, fn msg ->
+      if msg.role == "toolResult" and is_binary(msg.content) and byte_size(msg.content) > max_chars do
+        %{msg | content: PiCore.Truncate.head_tail(msg.content, max_chars)}
+      else
+        msg
+      end
+    end)
+  end
+  def sanitize_for_persistence(messages, _), do: messages
+
   defp encode_message(msg) when is_map(msg) do
     Jason.encode!(msg)
   end

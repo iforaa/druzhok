@@ -10,7 +10,7 @@ defmodule PiCore.Session do
     :workspace, :model, :provider, :api_url, :api_key,
     :system_prompt, :tools, :on_delta, :on_event, :caller, :llm_fn,
     :workspace_loader, :instance_name, :extra_tool_context,
-    :chat_id, :idle_timer,
+    :chat_id, :idle_timer, :budget, :model_info_fn,
     group: false,
     messages: [],
     active_task: nil,
@@ -45,11 +45,18 @@ defmodule PiCore.Session do
   def init(opts) do
     loader = opts[:workspace_loader] || PiCore.WorkspaceLoader.Default
     group = opts[:group] || false
-    sandbox = get_in(opts, [:extra_tool_context, :sandbox])
-    read_fn = if sandbox, do: sandbox.read_file, else: nil
-    base_prompt = loader.load(opts.workspace, %{group: group, read_fn: read_fn})
-    system_prompt = append_model_info(base_prompt, opts.model)
+    model_info_fn = opts[:model_info_fn]
     tools = opts[:tools] || default_tools()
+
+    context_window = if model_info_fn do
+      model_info_fn.(:context_window, opts.model)
+    else
+      32_000
+    end
+
+    budget = PiCore.TokenBudget.compute(context_window)
+
+    system_prompt = build_system_prompt(loader, opts.workspace, group, budget, opts.model)
 
     state = %__MODULE__{
       workspace: opts.workspace,
@@ -67,7 +74,9 @@ defmodule PiCore.Session do
       instance_name: opts[:instance_name],
       extra_tool_context: opts[:extra_tool_context] || %{},
       chat_id: opts[:chat_id],
-      group: group
+      group: group,
+      budget: budget,
+      model_info_fn: model_info_fn
     }
 
     state = schedule_idle_timeout(state)
@@ -101,16 +110,28 @@ defmodule PiCore.Session do
   end
 
   def handle_cast({:set_model, model, opts}, state) do
-    loader = state.workspace_loader
-    sandbox = get_in(state.extra_tool_context, [:sandbox])
-    read_fn = if sandbox, do: sandbox.read_file, else: nil
-    base_prompt = loader.load(state.workspace, %{group: state.group, read_fn: read_fn})
-    system_prompt = append_model_info(base_prompt, model)
-    state = %{state | model: model, system_prompt: system_prompt}
+    context_window = if state.model_info_fn do
+      state.model_info_fn.(:context_window, model)
+    else
+      32_000
+    end
+
+    budget = PiCore.TokenBudget.compute(context_window)
+    system_prompt = build_system_prompt(state.workspace_loader, state.workspace, state.group, budget, model)
+
+    state = %{state | model: model, system_prompt: system_prompt, budget: budget}
     state = if opts[:provider], do: %{state | provider: opts[:provider]}, else: state
     state = if opts[:api_url], do: %{state | api_url: opts[:api_url]}, else: state
     state = if opts[:api_key], do: %{state | api_key: opts[:api_key]}, else: state
-    {:noreply, state}
+
+    # Run immediate compaction check with new budget
+    if state.messages != [] do
+      llm_fn = state.llm_fn || &default_llm_fn(state, &1)
+      {compacted, _} = Compaction.maybe_compact(state.messages, %{budget: budget, llm_fn: llm_fn})
+      {:noreply, %{state | messages: compacted}}
+    else
+      {:noreply, state}
+    end
   end
 
   def handle_cast(:abort, state) do
@@ -209,11 +230,13 @@ defmodule PiCore.Session do
     llm_fn = state.llm_fn || &default_llm_fn(state, &1)
 
     # Compact if conversation is too long
-    {compacted_messages, _did_compact} = Compaction.maybe_compact(messages, %{
-      llm_fn: llm_fn,
-      max_messages: PiCore.Config.compaction_max_messages(),
-      keep_recent: PiCore.Config.compaction_keep_recent()
-    })
+    compaction_opts = if state.budget do
+      %{budget: state.budget, llm_fn: llm_fn}
+    else
+      %{llm_fn: llm_fn, max_messages: PiCore.Config.compaction_max_messages(), keep_recent: PiCore.Config.compaction_keep_recent()}
+    end
+
+    {compacted_messages, _did_compact} = Compaction.maybe_compact(messages, compaction_opts)
 
     wrapped_on_delta = if state.on_delta && state.chat_id do
       fn chunk -> state.on_delta.(chunk, state.chat_id) end
@@ -229,7 +252,8 @@ defmodule PiCore.Session do
       llm_fn: llm_fn,
       model: state.model,
       on_delta: wrapped_on_delta,
-      on_event: state.on_event
+      on_event: state.on_event,
+      budget: state.budget
     })
   end
 
@@ -263,6 +287,23 @@ defmodule PiCore.Session do
       PiCore.Tools.SetReminder.new(),
       PiCore.Tools.SendFile.new(),
     ]
+  end
+
+  defp build_system_prompt(loader, workspace, group, budget, model) do
+    {prompt, _tokens} = PiCore.PromptBudget.build(workspace, %{
+      budget_tokens: budget.system_prompt,
+      group: group,
+      read_fn: fn path -> File.read(Path.join(workspace, path)) end
+    })
+
+    # If PromptBudget returned empty (no workspace files), fall back to loader
+    prompt = if prompt == "" do
+      loader.load(workspace, %{group: group})
+    else
+      prompt
+    end
+
+    append_model_info(prompt, model)
   end
 
   defp append_model_info(prompt, model) do

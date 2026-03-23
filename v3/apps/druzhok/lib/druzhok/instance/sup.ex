@@ -69,12 +69,20 @@ defmodule Druzhok.Instance.Sup do
       on_delta: on_delta,
       on_event: on_event,
       extra_tool_context: %{send_file_fn: send_file_fn, sandbox: sandbox_fns},
+      model_info_fn: fn action, model_name ->
+        case action do
+          :context_window -> Druzhok.ModelInfo.context_window(model_name)
+          :supports_reasoning -> Druzhok.ModelInfo.supports_reasoning?(model_name)
+          :supports_tools -> Druzhok.ModelInfo.supports_tools?(model_name)
+        end
+      end,
     })
 
     sandbox_children = case config[:sandbox] do
       "docker" ->
         [{Druzhok.Sandbox.DockerClient, %{
           instance_name: name,
+          workspace: config.workspace,
           registry_name: {:via, Registry, {Druzhok.Registry, {name, :sandbox}}},
         }}]
       "firecracker" ->
