@@ -133,11 +133,13 @@ defmodule Druzhok.Agent.Router do
   @doc """
   Parse a command from message text.
 
-  Returns `{:command, name}` or `:text`.
+  Returns `{:command, name}`, `{:command, name, arg}`, or `:text`.
   """
   def parse_command("/start" <> _), do: {:command, "start"}
   def parse_command("/reset" <> _), do: {:command, "reset"}
   def parse_command("/abort" <> _), do: {:command, "abort"}
+  def parse_command("/mode " <> arg), do: {:command, "mode", String.trim(arg)}
+  def parse_command("/mode"), do: {:command, "mode", ""}
   def parse_command("/" <> _), do: :text
   def parse_command(_), do: :text
 end
