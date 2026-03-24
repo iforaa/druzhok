@@ -241,7 +241,7 @@ defmodule DruzhokWebWeb.DashboardLive do
       workspace = instance_workspace(name)
       dir = Path.join([workspace, "skills", skill_name])
       File.mkdir_p!(dir)
-      skill_content = "---\nname: #{skill_name}\ndescription: #{description}\n---\n\n#{content}"
+      skill_content = "---\nname: #{skill_name}\ndescription: #{description}\nenabled: true\n---\n\n#{content}"
       File.write!(Path.join(dir, "SKILL.md"), skill_content)
 
       if original_dir && original_dir != "" && original_dir != skill_name do
@@ -290,8 +290,11 @@ defmodule DruzhokWebWeb.DashboardLive do
         updated = if String.contains?(content, "enabled:") do
           String.replace(content, ~r/^enabled:\s*(true|false)$/m, "enabled: #{new_enabled}")
         else
-          # Add enabled field to frontmatter
-          String.replace(content, ~r/^---$/m, "enabled: #{new_enabled}\n---", global: false)
+          # Insert enabled field before closing --- of frontmatter
+          case Regex.run(~r/\A(---\n.*?)\n(---)/s, content) do
+            [_, header, _] -> String.replace(content, header <> "\n---", header <> "\nenabled: #{new_enabled}\n---", global: false)
+            _ -> content
+          end
         end
         File.write!(path, updated)
       _ -> :ok
