@@ -2,6 +2,7 @@ defmodule PiCore.Loop do
   alias PiCore.Tools.Schema
 
   defmodule Message do
+    @derive Jason.Encoder
     defstruct [:role, :content, :tool_calls, :tool_call_id, :tool_name, :is_error, :timestamp, metadata: %{}]
   end
 

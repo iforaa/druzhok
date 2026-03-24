@@ -1,39 +1,78 @@
 defmodule PiCore.SessionStoreTest do
   use ExUnit.Case
+
   alias PiCore.SessionStore
+  alias PiCore.Loop.Message
+
+  @workspace System.tmp_dir!() |> Path.join("session_store_test_#{:rand.uniform(99999)}")
 
   setup do
-    dir = Path.join(System.tmp_dir!(), "pi_core_store_#{:rand.uniform(100000)}")
-    File.mkdir_p!(dir)
-    on_exit(fn -> File.rm_rf!(dir) end)
-    %{dir: dir}
+    File.rm_rf!(@workspace)
+    File.mkdir_p!(@workspace)
+    on_exit(fn -> File.rm_rf!(@workspace) end)
+    :ok
   end
 
-  test "save and load messages", %{dir: dir} do
+  test "save and load round-trip" do
     messages = [
-      %{role: "user", content: "hello", timestamp: 1},
-      %{role: "assistant", content: "hi", timestamp: 2},
+      %Message{role: "user", content: "hello", timestamp: 1},
+      %Message{role: "assistant", content: "hi", timestamp: 2}
     ]
-    SessionStore.save(dir, messages)
-    loaded = SessionStore.load(dir)
+    SessionStore.save(@workspace, 12345, messages)
+    loaded = SessionStore.load(@workspace, 12345)
     assert length(loaded) == 2
-    assert hd(loaded)["content"] == "hello"
+    assert Enum.at(loaded, 0)["role"] == "user"
+    assert Enum.at(loaded, 0)["content"] == "hello"
   end
 
-  test "load returns empty for missing file", %{dir: dir} do
-    assert SessionStore.load(dir) == []
+  test "load returns empty list when no file" do
+    assert SessionStore.load(@workspace, 99999) == []
   end
 
-  test "append adds to existing", %{dir: dir} do
-    SessionStore.save(dir, [%{role: "user", content: "first", timestamp: 1}])
-    SessionStore.append(dir, %{role: "assistant", content: "second", timestamp: 2})
-    loaded = SessionStore.load(dir)
-    assert length(loaded) == 2
+  test "append_many adds messages" do
+    msg1 = %Message{role: "user", content: "first", timestamp: 1}
+    SessionStore.save(@workspace, 100, [msg1])
+    new_msgs = [
+      %Message{role: "assistant", content: "reply", timestamp: 2},
+      %Message{role: "user", content: "second", timestamp: 3}
+    ]
+    SessionStore.append_many(@workspace, 100, new_msgs)
+    loaded = SessionStore.load(@workspace, 100)
+    assert length(loaded) == 3
   end
 
-  test "clear removes session file", %{dir: dir} do
-    SessionStore.save(dir, [%{role: "user", content: "test"}])
-    SessionStore.clear(dir)
-    assert SessionStore.load(dir) == []
+  test "append_many creates file if not exists" do
+    msgs = [%Message{role: "user", content: "hi", timestamp: 1}]
+    SessionStore.append_many(@workspace, 200, msgs)
+    assert length(SessionStore.load(@workspace, 200)) == 1
+  end
+
+  test "save enforces 500 message cap" do
+    messages = for i <- 1..600 do
+      %Message{role: "user", content: "msg #{i}", timestamp: i}
+    end
+    SessionStore.save(@workspace, 300, messages)
+    loaded = SessionStore.load(@workspace, 300)
+    assert length(loaded) == 500
+    assert Enum.at(loaded, 0)["content"] == "msg 101"
+  end
+
+  test "clear deletes per-chat file" do
+    SessionStore.save(@workspace, 400, [%Message{role: "user", content: "bye", timestamp: 1}])
+    SessionStore.clear(@workspace, 400)
+    assert SessionStore.load(@workspace, 400) == []
+  end
+
+  test "different chat_ids are isolated" do
+    SessionStore.save(@workspace, 1, [%Message{role: "user", content: "chat1", timestamp: 1}])
+    SessionStore.save(@workspace, 2, [%Message{role: "user", content: "chat2", timestamp: 1}])
+    assert Enum.at(SessionStore.load(@workspace, 1), 0)["content"] == "chat1"
+    assert Enum.at(SessionStore.load(@workspace, 2), 0)["content"] == "chat2"
+  end
+
+  test "creates sessions/ directory on first write" do
+    refute File.dir?(Path.join(@workspace, "sessions"))
+    SessionStore.save(@workspace, 500, [%Message{role: "user", content: "hi", timestamp: 1}])
+    assert File.dir?(Path.join(@workspace, "sessions"))
   end
 end
