@@ -16,55 +16,46 @@ defmodule PiCore.Tools.WebFetch do
   end
 
   def execute(%{"url" => url}, _context) do
-    with :ok <- validate_url(url),
-         {:ok, host} <- extract_host(url),
-         {:ok, ip} <- resolve_host(host),
-         :ok <- check_ip(ip),
-         {:ok, status, headers, body} <- http_get(url, @max_redirects),
-         :ok <- check_status(status, url) do
+    with {:ok, uri} <- parse_and_validate(url),
+         {:ok, ip} <- resolve_and_check(uri.host),
+         {:ok, _status, headers, body} <- http_get(url, ip, @max_redirects) do
       media_type = parse_media_type(get_header(headers, "content-type"))
       process_body(body, media_type)
     end
   end
 
-  def validate_url(url) when is_binary(url) do
+  # Parse URL once and validate scheme + host
+  defp parse_and_validate(url) when is_binary(url) do
     uri = URI.parse(url)
     cond do
       uri.scheme not in ["http", "https"] -> {:error, "Invalid URL: must be http or https"}
       is_nil(uri.host) or uri.host == "" -> {:error, "Invalid URL: missing host"}
-      true -> :ok
+      true -> {:ok, uri}
     end
   end
-  def validate_url(_), do: {:error, "Invalid URL"}
+  defp parse_and_validate(_), do: {:error, "Invalid URL"}
 
-  # IPv4 SSRF protection
-  def check_ip({127, _, _, _}), do: {:error, "Blocked: private/internal address"}
-  def check_ip({10, _, _, _}), do: {:error, "Blocked: private/internal address"}
-  def check_ip({192, 168, _, _}), do: {:error, "Blocked: private/internal address"}
-  def check_ip({172, b, _, _}) when b >= 16 and b <= 31, do: {:error, "Blocked: private/internal address"}
-  def check_ip({169, 254, _, _}), do: {:error, "Blocked: private/internal address"}
-  def check_ip({0, 0, 0, 0}), do: {:error, "Blocked: private/internal address"}
-  # Note: resolve_host uses :inet (IPv4 only). IPv6-only hosts fail DNS resolution.
-  # If IPv6 support is added later, add clauses for ::1, fe80::/10, fc00::/7.
-  def check_ip(_), do: :ok
-
-  def parse_media_type(nil), do: "application/octet-stream"
-  def parse_media_type(ct) do
-    ct |> String.split(";") |> hd() |> String.trim() |> String.downcase()
-  end
-
-  defp extract_host(url) do
-    case URI.parse(url) do
-      %{host: host} when is_binary(host) and host != "" -> {:ok, host}
-      _ -> {:error, "Invalid URL: cannot extract host"}
-    end
-  end
-
-  defp resolve_host(host) do
+  # Resolve hostname and check against SSRF blocklist
+  defp resolve_and_check(host) do
     case :inet.getaddr(String.to_charlist(host), :inet) do
-      {:ok, ip} -> {:ok, ip}
+      {:ok, ip} -> check_ip(ip)
       {:error, _} -> {:error, "DNS resolution failed for #{host}"}
     end
+  end
+
+  # IPv4 SSRF protection
+  # resolve_and_check uses :inet (IPv4 only). IPv6-only hosts fail DNS resolution.
+  defp check_ip({127, _, _, _}), do: {:error, "Blocked: private/internal address"}
+  defp check_ip({10, _, _, _}), do: {:error, "Blocked: private/internal address"}
+  defp check_ip({192, 168, _, _}), do: {:error, "Blocked: private/internal address"}
+  defp check_ip({172, b, _, _}) when b >= 16 and b <= 31, do: {:error, "Blocked: private/internal address"}
+  defp check_ip({169, 254, _, _}), do: {:error, "Blocked: private/internal address"}
+  defp check_ip({0, 0, 0, 0}), do: {:error, "Blocked: private/internal address"}
+  defp check_ip(ip), do: {:ok, ip}
+
+  defp parse_media_type(nil), do: "application/octet-stream"
+  defp parse_media_type(ct) do
+    ct |> String.split(";") |> hd() |> String.trim() |> String.downcase()
   end
 
   defp check_status(status, _url) when status >= 200 and status < 300, do: :ok
@@ -82,13 +73,11 @@ defmodule PiCore.Tools.WebFetch do
                       "application/atom+xml", "application/json", "text/plain"]
 
   defp process_body(body, media_type) when media_type in @html_types do
-    # Ensure UTF-8 — most sites are, but legacy Russian sites may use windows-1251
     body = ensure_utf8(body)
     case PiCore.Native.Readability.extract(body) do
       {:ok, %{"title" => title, "text" => text}} when text != "" ->
         {:ok, "# #{title}\n\n#{text}"}
       _ ->
-        # Fallback: strip tags
         {:ok, PiCore.Native.Readability.strip_tags(body)}
     end
   end
@@ -99,27 +88,21 @@ defmodule PiCore.Tools.WebFetch do
     {:error, "Unsupported content type: #{media_type}"}
   end
 
-  # Encoding normalization — attempt UTF-8, pass through if already valid
   defp ensure_utf8(body) do
-    case :unicode.characters_to_binary(body, :utf8) do
-      {:error, _, _} ->
-        # Try latin1 (covers windows-1251 partially)
-        case :unicode.characters_to_binary(body, :latin1) do
-          {:error, _, _} -> body  # Give up, pass as-is
-          result when is_binary(result) -> result
-          _ -> body
-        end
-      {:incomplete, _, _} -> body
-      result when is_binary(result) -> result
-      _ -> body
+    if String.valid?(body) do
+      body
+    else
+      case :unicode.characters_to_binary(body, :latin1) do
+        result when is_binary(result) -> result
+        _ -> body
+      end
     end
   end
 
-  # HTTP GET with manual redirect following and body size limit
-  defp http_get(url, redirects_left) when redirects_left <= 0 do
+  defp http_get(url, _resolved_ip, redirects_left) when redirects_left <= 0 do
     {:error, "Too many redirects for #{url}"}
   end
-  defp http_get(url, redirects_left) do
+  defp http_get(url, _resolved_ip, redirects_left) do
     headers = [
       {"user-agent", @user_agent},
       {"accept-language", "ru,en;q=0.9"},
@@ -129,21 +112,21 @@ defmodule PiCore.Tools.WebFetch do
     req = Finch.build(:get, url, headers)
 
     case stream_body(req) do
-      {:ok, status, resp_headers, body} when status in [301, 302, 303, 307, 308] ->
+      {:ok, status, resp_headers, _body} when status in [301, 302, 303, 307, 308] ->
         case get_header(resp_headers, "location") do
           nil -> {:error, "Redirect with no Location header"}
           location ->
             redirect_url = URI.merge(URI.parse(url), location) |> to_string()
-            with :ok <- validate_url(redirect_url),
-                 {:ok, host} <- extract_host(redirect_url),
-                 {:ok, ip} <- resolve_host(host),
-                 :ok <- check_ip(ip) do
-              http_get(redirect_url, redirects_left - 1)
+            with {:ok, uri} <- parse_and_validate(redirect_url),
+                 {:ok, ip} <- resolve_and_check(uri.host) do
+              http_get(redirect_url, ip, redirects_left - 1)
             end
         end
 
       {:ok, status, resp_headers, body} ->
-        {:ok, status, resp_headers, body}
+        with :ok <- check_status(status, url) do
+          {:ok, status, resp_headers, body}
+        end
 
       {:error, reason} ->
         {:error, "Fetch failed: #{inspect(reason)}"}
