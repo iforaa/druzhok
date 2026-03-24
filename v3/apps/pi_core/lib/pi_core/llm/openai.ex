@@ -13,13 +13,21 @@ defmodule PiCore.LLM.OpenAI do
     body = %{model: opts.model, messages: messages, max_tokens: opts.max_tokens, stream: opts.stream}
     body = if opts.tools != [], do: Map.put(body, :tools, opts.tools), else: body
 
+    headers = [
+      {"content-type", "application/json"},
+      {"authorization", "Bearer #{opts.api_key}"},
+      {"accept-encoding", "identity"}
+    ]
+
+    headers = if opts[:provider] in [:openrouter, "openrouter"] do
+      headers ++ [{"HTTP-Referer", "https://druzhok.app"}, {"X-Title", "Druzhok"}]
+    else
+      headers
+    end
+
     %Request{
       url: "#{String.trim_trailing(opts.api_url, "/")}/chat/completions",
-      headers: [
-        {"content-type", "application/json"},
-        {"authorization", "Bearer #{opts.api_key}"},
-        {"accept-encoding", "identity"}
-      ],
+      headers: headers,
       body: Jason.encode!(body)
     }
   end
