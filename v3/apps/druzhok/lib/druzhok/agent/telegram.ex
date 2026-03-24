@@ -392,6 +392,9 @@ defmodule Druzhok.Agent.Telegram do
       {:command, "mode", arg} when is_owner ->
         handle_mode_command(arg, chat_id, state)
 
+      {:command, "prompt", arg} when is_owner ->
+        handle_prompt_command(arg, chat_id, state)
+
       {:command, "start"} ->
         prompt = "[#{sender_name} started the bot in group chat]"
         dispatch_prompt(prompt, chat_id, true, state)
@@ -400,18 +403,19 @@ defmodule Druzhok.Agent.Telegram do
       _ ->
         case activation do
           "always" ->
-            process_group_message_always(chat_id, text, sender_name, file, is_triggered, state)
+            process_group_message_always(chat_id, text, sender_name, file, is_triggered, chat, state)
 
           _ ->
-            process_group_message_buffer(chat_id, text, sender_name, file, is_triggered, buffer_size, state)
+            process_group_message_buffer(chat_id, text, sender_name, file, is_triggered, buffer_size, chat, state)
         end
     end
   end
 
-  defp process_group_message_always(chat_id, text, sender_name, file, is_triggered, state) do
+  defp process_group_message_always(chat_id, text, sender_name, file, is_triggered, chat, state) do
     saved_file = if file, do: save_incoming_file(file, chat_id, state), else: nil
-    prompt = build_group_prompt(text, sender_name, saved_file, is_triggered)
-    emit(state, :user_message, %{text: prompt, sender: sender_name, chat_id: chat_id})
+    base_prompt = build_group_prompt(text, sender_name, saved_file, is_triggered)
+    prompt = group_intro("always", chat) <> base_prompt
+    emit(state, :user_message, %{text: base_prompt, sender: sender_name, chat_id: chat_id})
 
     if is_triggered do
       API.send_chat_action(state.token, chat_id)
@@ -421,20 +425,18 @@ defmodule Druzhok.Agent.Telegram do
     state
   end
 
-  defp process_group_message_buffer(chat_id, text, sender_name, file, is_triggered, buffer_size, state) do
+  defp process_group_message_buffer(chat_id, text, sender_name, file, is_triggered, buffer_size, chat, state) do
     if is_triggered do
-      # Flush buffer and send as context
       saved_file = if file, do: save_incoming_file(file, chat_id, state), else: nil
       buffered = Druzhok.GroupBuffer.flush(state.instance_name, chat_id)
       current_prompt = build_group_prompt(text, sender_name, saved_file, true)
-      prompt = Druzhok.GroupBuffer.format_context(buffered, current_prompt)
+      prompt = group_intro("buffer", chat) <> Druzhok.GroupBuffer.format_context(buffered, current_prompt)
 
       emit(state, :user_message, %{text: current_prompt, sender: sender_name, chat_id: chat_id})
       API.send_chat_action(state.token, chat_id)
       dispatch_prompt(prompt, chat_id, true, state)
       state
     else
-      # Buffer the message, no LLM call
       file_ref = if file, do: "[#{file.name || "file"}]", else: nil
       Druzhok.GroupBuffer.push(state.instance_name, chat_id, %{
         sender: sender_name,
@@ -462,6 +464,51 @@ defmodule Druzhok.Agent.Telegram do
         current = (chat && chat.activation) || "buffer"
         API.send_message(state.token, chat_id, "Current mode: #{current}\nUsage: /mode buffer | /mode always")
         state
+    end
+  end
+
+  defp handle_prompt_command("", chat_id, state) do
+    chat = Druzhok.AllowedChat.get(state.instance_name, chat_id)
+    current = (chat && chat.system_prompt) || "(not set)"
+    API.send_message(state.token, chat_id, "Current prompt: #{current}\nUsage: /prompt <text> to set, /prompt clear to remove")
+    state
+  end
+
+  defp handle_prompt_command("clear", chat_id, state) do
+    case Druzhok.AllowedChat.get(state.instance_name, chat_id) do
+      nil -> :ok
+      chat -> Druzhok.AllowedChat.changeset(chat, %{system_prompt: nil}) |> Druzhok.Repo.update()
+    end
+    API.send_message(state.token, chat_id, "Group prompt cleared.")
+    state
+  end
+
+  defp handle_prompt_command(text, chat_id, state) do
+    case Druzhok.AllowedChat.get(state.instance_name, chat_id) do
+      nil -> :ok
+      chat -> Druzhok.AllowedChat.changeset(chat, %{system_prompt: text}) |> Druzhok.Repo.update()
+    end
+    API.send_message(state.token, chat_id, "Group prompt set: #{text}")
+    state
+  end
+
+  defp group_intro("buffer", chat) do
+    base = "[Системная инструкция: Ты в групповом чате. Тебя вызвали по имени или ответом на твоё сообщение. Контекст недавних сообщений прикреплён ниже. Всегда отвечай — раз ты это видишь, значит к тебе обратились. Будь краток.]\n"
+    add_per_group_prompt(base, chat)
+  end
+
+  defp group_intro("always", chat) do
+    base = "[Системная инструкция: Ты в групповом чате и видишь все сообщения. Если к тебе не обращаются и ты не можешь добавить ценности — ответь [NO_REPLY]. Не доминируй в разговоре.]\n"
+    add_per_group_prompt(base, chat)
+  end
+
+  defp group_intro(_, chat), do: add_per_group_prompt("", chat)
+
+  defp add_per_group_prompt(base, chat) do
+    case chat && chat.system_prompt do
+      nil -> base
+      "" -> base
+      prompt -> base <> "[Инструкция для этого чата: #{prompt}]\n"
     end
   end
 

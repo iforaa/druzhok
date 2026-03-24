@@ -13,12 +13,13 @@ defmodule Druzhok.AllowedChat do
     field :info_sent, :boolean, default: false
     field :activation, :string, default: "buffer"
     field :buffer_size, :integer, default: 50
+    field :system_prompt, :string
     timestamps()
   end
 
   def changeset(chat, attrs) do
     chat
-    |> cast(attrs, [:instance_name, :chat_id, :chat_type, :title, :telegram_user_id, :status, :info_sent, :activation, :buffer_size])
+    |> cast(attrs, [:instance_name, :chat_id, :chat_type, :title, :telegram_user_id, :status, :info_sent, :activation, :buffer_size, :system_prompt])
     |> validate_required([:instance_name, :chat_id, :chat_type])
     |> unique_constraint([:instance_name, :chat_id])
   end

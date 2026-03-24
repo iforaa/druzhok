@@ -53,15 +53,20 @@ defmodule DruzhokWebWeb.Live.Components.SecurityTab do
               Reject
             </button>
           </div>
-          <div :if={group.status == "approved"} class="flex items-center gap-2">
-            <select phx-change="update_group_activation" phx-value-name={@instance_name} phx-value-chat_id={group.chat_id}
-                    name="activation" class="text-xs border border-gray-300 rounded px-2 py-1">
-              <option value="buffer" selected={group.activation == "buffer"}>Buffer</option>
-              <option value="always" selected={group.activation == "always"}>Always</option>
-            </select>
-            <input type="number" phx-blur="update_group_buffer_size" phx-value-name={@instance_name} phx-value-chat_id={group.chat_id}
-                   name="buffer_size" value={group.buffer_size || 50} min="1" max="500"
-                   class="w-16 text-xs border border-gray-300 rounded px-2 py-1 font-mono" />
+          <div :if={group.status == "approved"} class="space-y-2">
+            <div class="flex items-center gap-2">
+              <select phx-change="update_group_activation" phx-value-name={@instance_name} phx-value-chat_id={group.chat_id}
+                      name="activation" class="text-xs border border-gray-300 rounded px-2 py-1">
+                <option value="buffer" selected={group.activation == "buffer"}>Buffer</option>
+                <option value="always" selected={group.activation == "always"}>Always</option>
+              </select>
+              <input type="number" phx-blur="update_group_buffer_size" phx-value-name={@instance_name} phx-value-chat_id={group.chat_id}
+                     name="buffer_size" value={group.buffer_size || 50} min="1" max="500"
+                     class="w-16 text-xs border border-gray-300 rounded px-2 py-1 font-mono" />
+            </div>
+            <textarea phx-blur="update_group_prompt" phx-value-name={@instance_name} phx-value-chat_id={group.chat_id}
+                      name="system_prompt" placeholder="Per-group prompt (optional)"
+                      rows="2" class="w-full text-xs border border-gray-300 rounded px-2 py-1 resize-y"><%= group.system_prompt %></textarea>
           </div>
           <span :if={group.status == "rejected"} class="text-xs text-red-500 font-medium">Rejected</span>
           <span :if={group.status == "removed"} class="text-xs text-gray-400 font-medium">Removed</span>

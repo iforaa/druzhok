@@ -225,6 +225,20 @@ defmodule DruzhokWebWeb.DashboardLive do
     {:noreply, assign(socket, groups: groups)}
   end
 
+  def handle_event("update_group_prompt", %{"name" => name, "chat_id" => chat_id, "value" => prompt}, socket) do
+    chat_id = String.to_integer(chat_id)
+    prompt = case String.trim(prompt) do
+      "" -> nil
+      p -> p
+    end
+    case Druzhok.AllowedChat.get(name, chat_id) do
+      nil -> :ok
+      chat -> Druzhok.AllowedChat.changeset(chat, %{system_prompt: prompt}) |> Druzhok.Repo.update()
+    end
+    groups = Druzhok.AllowedChat.groups_for_instance(name)
+    {:noreply, assign(socket, groups: groups)}
+  end
+
   @impl true
   def render(assigns) do
     ~H"""

@@ -140,6 +140,8 @@ defmodule Druzhok.Agent.Router do
   def parse_command("/abort" <> _), do: {:command, "abort"}
   def parse_command("/mode " <> arg), do: {:command, "mode", String.trim(arg)}
   def parse_command("/mode"), do: {:command, "mode", ""}
+  def parse_command("/prompt " <> arg), do: {:command, "prompt", String.trim(arg)}
+  def parse_command("/prompt"), do: {:command, "prompt", ""}
   def parse_command("/" <> _), do: :text
   def parse_command(_), do: :text
 end
