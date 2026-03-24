@@ -7,3 +7,4 @@ data/
 *.db-wal
 *.db-shm
 credentials.yaml
+vendor/upstream/
