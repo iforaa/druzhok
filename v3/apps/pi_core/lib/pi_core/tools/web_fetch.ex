@@ -142,15 +142,21 @@ defmodule PiCore.Tools.WebFetch do
 
   # Direct fetch bypassing VPN — uses su nobody to avoid iptables redirect
   defp execute_direct(url) do
-    with {:ok, _uri} <- parse_and_validate(url) do
+    with {:ok, uri} <- parse_and_validate(url),
+         {:ok, _ip} <- resolve_and_check(uri.host) do
+      # Use single-quoted URL in shell to prevent injection
       escaped_url = url |> String.replace("'", "'\\''")
-      cmd = "su -s /bin/sh nobody -c 'curl -sL --max-time 10 -A \"#{@user_agent}\" -H \"Accept-Language: ru,en;q=0.9\" \"#{escaped_url}\"'"
+      cmd = ~s(su -s /bin/sh nobody -c 'curl -sL --max-time 10 -A "Mozilla/5.0" -H "Accept-Language: ru,en;q=0.9" '\\''#{escaped_url}'\\''')
 
       case System.cmd("sh", ["-c", cmd], stderr_to_stdout: true) do
-        {body, 0} when byte_size(body) > 0 ->
+        {body, 0} ->
           body = if byte_size(body) > @max_body_bytes, do: binary_part(body, 0, @max_body_bytes), else: body
-          media_type = guess_media_type(url, body)
-          process_body(body, media_type)
+          if byte_size(body) == 0 do
+            {:ok, "(empty response)"}
+          else
+            media_type = guess_media_type(url, body)
+            process_body(body, media_type)
+          end
 
         {error, _} ->
           {:error, "Direct fetch failed: #{String.slice(error, 0, 200)}"}
