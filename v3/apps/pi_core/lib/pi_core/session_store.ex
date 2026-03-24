@@ -11,16 +11,21 @@ defmodule PiCore.SessionStore do
     write_atomic(path, content <> "\n")
   end
 
+  def truncate_after_compaction(workspace, chat_id, compacted_messages) do
+    save(workspace, chat_id, compacted_messages)
+  end
+
   def append_many(workspace, chat_id, messages) do
     path = session_path(workspace, chat_id)
     ensure_dir(path)
 
-    # If file doesn't exist, write header first
-    unless File.exists?(path) do
-      File.write!(path, encode_header(chat_id) <> "\n")
+    content = if File.exists?(path) do
+      messages |> Enum.map(&encode_message/1) |> Enum.join("\n")
+    else
+      header = encode_header(chat_id)
+      [header | Enum.map(messages, &encode_message/1)] |> Enum.join("\n")
     end
 
-    content = messages |> Enum.map(&encode_message/1) |> Enum.join("\n")
     File.write!(path, content <> "\n", [:append])
   end
 
@@ -41,19 +46,6 @@ defmodule PiCore.SessionStore do
     session_path(workspace, chat_id) |> File.rm()
   end
 
-  @doc """
-  Controlled truncation after compaction. Keeps the session header,
-  replaces message content with compacted messages, writes atomically.
-  """
-  def truncate_after_compaction(workspace, chat_id, compacted_messages) do
-    path = session_path(workspace, chat_id)
-    ensure_dir(path)
-    header = encode_header(chat_id)
-    capped = cap_messages(compacted_messages)
-    content = [header | Enum.map(capped, &encode_message/1)] |> Enum.join("\n")
-    write_atomic(path, content <> "\n")
-  end
-
   def sanitize_for_persistence(messages, budget) when is_struct(budget, PiCore.TokenBudget) do
     max_chars = PiCore.TokenBudget.per_tool_result_cap(budget) * 4 * 2
     Enum.map(messages, fn msg ->
@@ -65,8 +57,6 @@ defmodule PiCore.SessionStore do
     end)
   end
   def sanitize_for_persistence(messages, _), do: messages
-
-  # --- Private ---
 
   defp session_path(workspace, chat_id) do
     Path.join([workspace, "sessions", "#{chat_id}.jsonl"])
@@ -102,7 +92,7 @@ defmodule PiCore.SessionStore do
 
   defp decode_line(line) do
     case Jason.decode(line) do
-      {:ok, %{"type" => "session"} = _header} -> {:header, nil}
+      {:ok, %{"type" => "session"}} -> {:header, nil}
       {:ok, data} -> {:message, data}
       _ -> {:skip, nil}
     end
