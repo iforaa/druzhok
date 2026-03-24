@@ -102,8 +102,21 @@ defmodule PiCore.SessionStore do
   defp decode_line(line) do
     case Jason.decode(line) do
       {:ok, %{"type" => "session"}} -> {:header, nil}
-      {:ok, data} -> {:message, data}
+      {:ok, data} -> {:message, to_message(data)}
       _ -> {:skip, nil}
     end
+  end
+
+  defp to_message(data) when is_map(data) do
+    %PiCore.Loop.Message{
+      role: data["role"],
+      content: data["content"],
+      tool_calls: data["tool_calls"],
+      tool_call_id: data["tool_call_id"],
+      tool_name: data["tool_name"],
+      is_error: data["is_error"],
+      timestamp: data["timestamp"],
+      metadata: data["metadata"] || %{}
+    }
   end
 end
