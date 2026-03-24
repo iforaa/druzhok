@@ -259,7 +259,7 @@ defmodule PiCore.Session do
     {compacted_messages, did_compact} = Compaction.maybe_compact(messages, compaction_opts)
 
     if did_compact and state.chat_id do
-      SessionStore.save(state.workspace, state.chat_id, compacted_messages)
+      SessionStore.truncate_after_compaction(state.workspace, state.chat_id, compacted_messages)
     end
 
     wrapped_on_delta = if state.on_delta && state.chat_id do
