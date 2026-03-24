@@ -2,8 +2,12 @@ FROM elixir:1.18-slim
 
 RUN apt-get update -qq && apt-get install -y -qq \
     build-essential git npm nodejs python3 \
-    sqlite3 libsqlite3-dev bash curl \
+    sqlite3 libsqlite3-dev bash curl ca-certificates \
     && rm -rf /var/lib/apt/lists/*
+
+# Install Rust (needed for Readability NIF)
+RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+ENV PATH="/root/.cargo/bin:${PATH}"
 
 # Install Docker CLI only (daemon is on the host via socket mount)
 RUN curl -fsSL https://download.docker.com/linux/static/stable/x86_64/docker-27.5.1.tgz | tar xz -C /tmp \
@@ -23,11 +27,11 @@ COPY v3/apps/druzhok_web/mix.exs apps/druzhok_web/
 
 RUN mix deps.get && mix deps.compile
 
-# App code
+# App code (including Rust NIF source)
 COPY v3/apps/ apps/
 COPY v3/config/ config/
 
-RUN mix compile
+RUN mix compile --force
 
 # Workspace template
 COPY workspace-template /app/workspace-template
