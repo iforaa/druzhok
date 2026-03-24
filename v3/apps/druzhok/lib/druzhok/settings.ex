@@ -39,6 +39,7 @@ defmodule Druzhok.Settings do
   def api_url(provider) do
     case provider do
       "anthropic" -> get("anthropic_api_url") || Application.get_env(:pi_core, :anthropic_api_url) || "https://api.anthropic.com"
+      "openrouter" -> get("openrouter_api_url") || Application.get_env(:pi_core, :openrouter_api_url) || "https://openrouter.ai/api/v1"
       _ -> get("nebius_api_url") || Application.get_env(:pi_core, :api_url)
     end
   end
