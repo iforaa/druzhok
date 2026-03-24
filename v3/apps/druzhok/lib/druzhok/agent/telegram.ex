@@ -412,8 +412,8 @@ defmodule Druzhok.Agent.Telegram do
   end
 
   defp process_group_message_always(chat_id, text, sender_name, file, is_triggered, chat, state) do
-    saved_file = if file, do: save_incoming_file(file, chat_id, state), else: nil
-    base_prompt = build_group_prompt(text, sender_name, saved_file, is_triggered)
+    {resolved_text, saved_file} = resolve_voice_or_file(text, file, chat_id, state)
+    base_prompt = build_group_prompt(resolved_text, sender_name, saved_file, is_triggered)
     prompt = group_intro("always", chat) <> base_prompt
     emit(state, :user_message, %{text: base_prompt, sender: sender_name, chat_id: chat_id})
 
@@ -427,9 +427,9 @@ defmodule Druzhok.Agent.Telegram do
 
   defp process_group_message_buffer(chat_id, text, sender_name, file, is_triggered, buffer_size, chat, state) do
     if is_triggered do
-      saved_file = if file, do: save_incoming_file(file, chat_id, state), else: nil
+      {resolved_text, saved_file} = resolve_voice_or_file(text, file, chat_id, state)
       buffered = Druzhok.GroupBuffer.flush(state.instance_name, chat_id)
-      current_prompt = build_group_prompt(text, sender_name, saved_file, true)
+      current_prompt = build_group_prompt(resolved_text, sender_name, saved_file, true)
       prompt = group_intro("buffer", chat) <> Druzhok.GroupBuffer.format_context(buffered, current_prompt)
 
       emit(state, :user_message, %{text: current_prompt, sender: sender_name, chat_id: chat_id})
@@ -515,10 +515,6 @@ defmodule Druzhok.Agent.Telegram do
   # --- Shared message processing (used by both DM owner and approved group) ---
 
   defp process_owner_message(chat_id, text, sender_id, sender_name, file, is_group, state) do
-    saved_file = if file, do: save_incoming_file(file, chat_id, state), else: nil
-    prompt_text = build_prompt(text, sender_name, saved_file)
-    emit(state, :user_message, %{text: prompt_text, sender: sender_name, chat_id: chat_id})
-    API.send_chat_action(state.token, chat_id)
     is_owner = state.owner_telegram_id == sender_id
 
     case Router.parse_command(text) do
@@ -540,6 +536,18 @@ defmodule Druzhok.Agent.Telegram do
         state
 
       :text ->
+        prompt_text = case maybe_transcribe_voice(file, state) do
+          {:transcribed, transcribed} ->
+            caption = if text != "", do: " #{text}", else: ""
+            "[голосовое сообщение]:#{caption} #{transcribed}"
+
+          _ ->
+            saved_file = if file, do: save_incoming_file(file, chat_id, state), else: nil
+            build_prompt(text, sender_name, saved_file)
+        end
+
+        emit(state, :user_message, %{text: prompt_text, sender: sender_name, chat_id: chat_id})
+        API.send_chat_action(state.token, chat_id)
         dispatch_prompt(prompt_text, chat_id, is_group, state)
         state
     end
@@ -608,6 +616,54 @@ defmodule Druzhok.Agent.Telegram do
   defp emit(%{instance_name: nil}, _type, _data), do: :ok
   defp emit(%{instance_name: name}, type, data) do
     Events.broadcast(name, Map.put(data, :type, type))
+  end
+
+  defp maybe_transcribe_voice(file, state) do
+    if file && file.name in ["voice.ogg"] do
+      transcription_enabled = Druzhok.Settings.get("transcription_enabled") != "false"
+
+      if transcription_enabled do
+        case API.fetch_file_by_id(state.token, file.file_id) do
+          {:ok, bytes} when byte_size(bytes) <= 10_000_000 ->
+            api_key = Druzhok.Settings.api_key("openrouter")
+            api_url = Druzhok.Settings.api_url("openrouter")
+            model = Druzhok.Settings.get("transcription_model") || "google/gemini-2.0-flash-lite-001"
+
+            if api_key do
+              case PiCore.Transcription.transcribe(bytes,
+                format: "ogg",
+                model: model,
+                api_url: api_url,
+                api_key: api_key
+              ) do
+                {:ok, text} -> {:transcribed, text}
+                {:error, _reason} -> :skip
+              end
+            else
+              :skip
+            end
+
+          {:ok, _too_large} -> :skip
+          {:error, _} -> :skip
+        end
+      else
+        :disabled
+      end
+    else
+      :not_voice
+    end
+  end
+
+  defp resolve_voice_or_file(text, file, chat_id, state) do
+    case maybe_transcribe_voice(file, state) do
+      {:transcribed, transcribed} ->
+        caption = if text != "", do: " #{text}", else: ""
+        {"[голосовое сообщение]:#{caption} #{transcribed}", nil}
+
+      _ ->
+        saved = if file, do: save_incoming_file(file, chat_id, state), else: nil
+        {text, saved}
+    end
   end
 
   defp strip_artifacts(text), do: PiCore.Sanitize.strip_artifacts(text)
