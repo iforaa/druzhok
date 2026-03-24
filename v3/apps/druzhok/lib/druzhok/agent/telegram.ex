@@ -536,17 +536,25 @@ defmodule Druzhok.Agent.Telegram do
         state
 
       :text ->
-        prompt_text = case maybe_transcribe_voice(file, state) do
-          {:transcribed, transcribed} ->
+        voice_result = maybe_transcribe_voice(file, state)
+        image_result = if voice_result == :not_voice, do: maybe_build_image_content(file, text, state), else: :not_image
+
+        prompt_text = case {voice_result, image_result} do
+          {{:transcribed, transcribed}, _} ->
             caption = if text != "", do: " #{text}", else: ""
             "[голосовое сообщение]:#{caption} #{transcribed}"
+
+          {_, {:image, content}} ->
+            # Multimodal content (list) — LLM will "see" the image
+            content
 
           _ ->
             saved_file = if file, do: save_incoming_file(file, chat_id, state), else: nil
             build_prompt(text, sender_name, saved_file)
         end
 
-        emit(state, :user_message, %{text: prompt_text, sender: sender_name, chat_id: chat_id})
+        display = if is_list(prompt_text), do: PiCore.Multimodal.to_text(prompt_text), else: prompt_text
+        emit(state, :user_message, %{text: display, sender: sender_name, chat_id: chat_id})
         API.send_chat_action(state.token, chat_id)
         dispatch_prompt(prompt_text, chat_id, is_group, state)
         state
@@ -654,11 +662,38 @@ defmodule Druzhok.Agent.Telegram do
     end
   end
 
+  defp maybe_build_image_content(file, text, state) do
+    if file && file.name == "photo.jpg" do
+      case API.fetch_file_by_id(state.token, file.file_id) do
+        {:ok, bytes} when byte_size(bytes) <= 5_000_000 ->
+          base64 = Base.encode64(bytes)
+          caption = if text != "", do: text, else: "Пользователь отправил изображение"
+          content = [
+            %{"type" => "image_url", "image_url" => %{"url" => "data:image/jpeg;base64,#{base64}"}},
+            %{"type" => "text", "text" => caption}
+          ]
+          {:image, content}
+
+        {:ok, _too_large} -> :skip
+        {:error, _} -> :skip
+      end
+    else
+      :not_image
+    end
+  end
+
   defp resolve_voice_or_file(text, file, chat_id, state) do
-    case maybe_transcribe_voice(file, state) do
-      {:transcribed, transcribed} ->
+    voice_result = maybe_transcribe_voice(file, state)
+    image_result = if voice_result == :not_voice, do: maybe_build_image_content(file, text, state), else: :not_image
+
+    case {voice_result, image_result} do
+      {{:transcribed, transcribed}, _} ->
         caption = if text != "", do: " #{text}", else: ""
         {"[голосовое сообщение]:#{caption} #{transcribed}", nil}
+
+      {_, {:image, content}} ->
+        # For group messages, convert to text placeholder
+        {PiCore.Multimodal.to_text(content), nil}
 
       _ ->
         saved = if file, do: save_incoming_file(file, chat_id, state), else: nil
