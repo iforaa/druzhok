@@ -5,6 +5,7 @@ defmodule PiCore.Session do
   alias PiCore.LLM.Client
   alias PiCore.LLM.Retry
   alias PiCore.Compaction
+  alias PiCore.SessionStore
 
   defstruct [
     :workspace, :model, :provider, :api_url, :api_key,
@@ -80,6 +81,15 @@ defmodule PiCore.Session do
       timezone: opts[:timezone] || "UTC"
     }
 
+    # Load persisted session messages
+    loaded_messages = if opts[:chat_id] do
+      SessionStore.load(opts.workspace, opts[:chat_id])
+    else
+      []
+    end
+
+    state = %{state | messages: loaded_messages}
+
     state = schedule_idle_timeout(state)
     {:ok, state}
   end
@@ -141,7 +151,7 @@ defmodule PiCore.Session do
   end
 
   def handle_cast(:reset, state) do
-    PiCore.SessionStore.clear(state.workspace)
+    if state.chat_id, do: SessionStore.clear(state.workspace, state.chat_id)
     {:noreply, %{state | messages: [], active_task: nil, parallel_tasks: %{}}}
   end
 
@@ -156,6 +166,7 @@ defmodule PiCore.Session do
     if state.active_task && state.active_task.ref == ref do
       # Main task completed
       state = %{state | messages: state.messages ++ new_messages, active_task: nil}
+      if state.chat_id, do: SessionStore.append_many(state.workspace, state.chat_id, new_messages)
       deliver_last_assistant(new_messages, ref, state)
       {:noreply, state}
     else
@@ -163,6 +174,7 @@ defmodule PiCore.Session do
         {%{user_msg: user_msg}, remaining} ->
           # Parallel task completed — merge Q&A back
           state = %{state | messages: state.messages ++ [user_msg | new_messages], parallel_tasks: remaining}
+          if state.chat_id, do: SessionStore.append_many(state.workspace, state.chat_id, [user_msg | new_messages])
           deliver_last_assistant(new_messages, ref, state)
           {:noreply, state}
 
@@ -244,7 +256,11 @@ defmodule PiCore.Session do
       %{llm_fn: compaction_llm_fn, max_messages: PiCore.Config.compaction_max_messages(), keep_recent: PiCore.Config.compaction_keep_recent()}
     end
 
-    {compacted_messages, _did_compact} = Compaction.maybe_compact(messages, compaction_opts)
+    {compacted_messages, did_compact} = Compaction.maybe_compact(messages, compaction_opts)
+
+    if did_compact and state.chat_id do
+      SessionStore.save(state.workspace, state.chat_id, compacted_messages)
+    end
 
     wrapped_on_delta = if state.on_delta && state.chat_id do
       fn chunk -> state.on_delta.(chunk, state.chat_id) end
