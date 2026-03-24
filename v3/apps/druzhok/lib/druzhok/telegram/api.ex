@@ -43,6 +43,29 @@ defmodule Druzhok.Telegram.API do
     end
   end
 
+  def send_photo(token, chat_id, photo_bytes, opts \\ %{}) do
+    boundary = "----ElixirBoundary#{:rand.uniform(1_000_000)}"
+    caption = opts[:caption]
+
+    body = IO.iodata_to_binary([
+      "--#{boundary}\r\nContent-Disposition: form-data; name=\"chat_id\"\r\n\r\n#{chat_id}\r\n",
+      "--#{boundary}\r\nContent-Disposition: form-data; name=\"photo\"; filename=\"image.png\"\r\nContent-Type: image/png\r\n\r\n",
+      photo_bytes,
+      "\r\n",
+      if(caption, do: "--#{boundary}\r\nContent-Disposition: form-data; name=\"caption\"\r\n\r\n#{caption}\r\n", else: ""),
+      "--#{boundary}--\r\n"
+    ])
+
+    headers = [{"content-type", "multipart/form-data; boundary=#{boundary}"}]
+    url = "#{@base_url}#{token}/sendPhoto"
+
+    case Finch.build(:post, url, headers, body) |> Finch.request(PiCore.Finch) do
+      {:ok, %{status: 200, body: resp}} -> {:ok, Jason.decode!(resp)}
+      {:ok, %{body: resp}} -> {:error, resp}
+      {:error, reason} -> {:error, reason}
+    end
+  end
+
   def get_file(token, file_id) do
     call(token, "getFile", %{file_id: file_id})
   end
