@@ -183,11 +183,25 @@ defmodule Druzhok.Sandbox.DockerClient do
                stderr_to_stdout: true
              ) do
           {_, 0} ->
-            {:ok, {"127.0.0.1", port}}
+            {:ok, {sandbox_host(), port}}
 
           {output, _} ->
             {:error, "Failed to start container: #{output}"}
         end
+    end
+  end
+
+  # When running inside a Docker container with bridge networking,
+  # 127.0.0.1 is the container's own loopback — not the host's.
+  # The sandbox container uses --network host, so we reach it via the bridge gateway.
+  defp sandbox_host do
+    case System.cmd("ip", ["route", "show", "default"], stderr_to_stdout: true) do
+      {output, 0} ->
+        case Regex.run(~r/via (\d+\.\d+\.\d+\.\d+)/, output) do
+          [_, gateway] -> gateway
+          _ -> "127.0.0.1"
+        end
+      _ -> "127.0.0.1"
     end
   end
 
