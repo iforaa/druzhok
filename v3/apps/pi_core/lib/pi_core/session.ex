@@ -324,6 +324,7 @@ defmodule PiCore.Session do
       PiCore.Tools.MemoryWrite.new(),
       PiCore.Tools.SetReminder.new(),
       PiCore.Tools.SendFile.new(),
+      PiCore.Tools.WebFetch.new(),
     ]
   end
 

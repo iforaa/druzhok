@@ -65,4 +65,32 @@ defmodule PiCore.Tools.WebFetchTest do
       assert "application/octet-stream" = WebFetch.parse_media_type(nil)
     end
   end
+
+  @tag :integration
+  describe "execute/2 (integration)" do
+    test "fetches and extracts text from HTML page" do
+      tool = PiCore.Tools.WebFetch.new()
+      {:ok, text} = tool.execute.(%{"url" => "https://example.com"}, %{})
+      assert text =~ "Example Domain"
+      refute text =~ "<html"
+    end
+
+    test "passes through RSS feed as-is" do
+      tool = PiCore.Tools.WebFetch.new()
+      {:ok, body} = tool.execute.(%{"url" => "https://feeds.bbci.co.uk/news/rss.xml"}, %{})
+      assert body =~ "<" and (body =~ "rss" or body =~ "feed" or body =~ "xml")
+    end
+
+    test "rejects private IP" do
+      tool = PiCore.Tools.WebFetch.new()
+      {:error, msg} = tool.execute.(%{"url" => "http://192.168.1.1"}, %{})
+      assert msg =~ "Blocked"
+    end
+
+    test "rejects non-http URL" do
+      tool = PiCore.Tools.WebFetch.new()
+      {:error, msg} = tool.execute.(%{"url" => "ftp://example.com"}, %{})
+      assert msg =~ "Invalid URL"
+    end
+  end
 end
