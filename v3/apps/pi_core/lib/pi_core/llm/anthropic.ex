@@ -206,7 +206,7 @@ defmodule PiCore.LLM.Anthropic do
     tool_calls = m[:tool_calls] || m["tool_calls"]
 
     if tool_calls && tool_calls != [] do
-      blocks = if content != "", do: [%{type: "text", text: content}], else: []
+      blocks = if is_binary(content) && content != "", do: [%{type: "text", text: content}], else: []
       blocks = blocks ++ Enum.map(tool_calls, fn tc ->
         args = get_in(tc, ["function", "arguments"]) || "{}"
         %{
@@ -221,7 +221,11 @@ defmodule PiCore.LLM.Anthropic do
       end)
       %{role: role, content: blocks}
     else
-      %{role: role, content: content}
+      if PiCore.Multimodal.is_multimodal?(content) do
+        %{role: role, content: PiCore.Multimodal.to_anthropic_content(content)}
+      else
+        %{role: role, content: content}
+      end
     end
   end
 
