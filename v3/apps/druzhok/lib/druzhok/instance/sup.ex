@@ -46,6 +46,19 @@ defmodule Druzhok.Instance.Sup do
       end
     end
 
+    send_photo_fn = fn photo_bytes, caption ->
+      case Registry.lookup(Druzhok.Registry, {name, :telegram}) do
+        [{pid, _}] ->
+          chat_id = GenServer.call(pid, :get_chat_id, 5_000)
+          if chat_id do
+            Druzhok.Telegram.API.send_photo(config.token, chat_id, photo_bytes, %{caption: caption})
+          else
+            {:error, "No active chat"}
+          end
+        [] -> {:error, "Telegram not available"}
+      end
+    end
+
     sandbox_fns = case config[:sandbox] do
       type when type in ["docker", "firecracker"] ->
         mod = Druzhok.Sandbox.impl(type)
@@ -71,6 +84,7 @@ defmodule Druzhok.Instance.Sup do
       timezone: config[:timezone] || "UTC",
       extra_tool_context: %{
         send_file_fn: send_file_fn,
+        send_photo_fn: send_photo_fn,
         sandbox: sandbox_fns,
         embedding_cache: Druzhok.EmbeddingCache,
         embedding_api_url: Druzhok.Settings.get("embedding_api_url"),
