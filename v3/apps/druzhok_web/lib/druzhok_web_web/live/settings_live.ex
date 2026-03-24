@@ -34,6 +34,8 @@ defmodule DruzhokWebWeb.SettingsLive do
         compaction_model: Druzhok.Settings.get("compaction_model") || "",
         transcription_enabled: Druzhok.Settings.get("transcription_enabled") || "true",
         transcription_model: Druzhok.Settings.get("transcription_model") || "google/gemini-2.0-flash-lite-001",
+        image_generation_enabled: Druzhok.Settings.get("image_generation_enabled") || "false",
+        image_generation_model: Druzhok.Settings.get("image_generation_model") || "google/gemini-2.5-flash-image",
         saved: false
       )}
     end
@@ -81,6 +83,12 @@ defmodule DruzhokWebWeb.SettingsLive do
     if val = non_empty(params["transcription_model"]) do
       Druzhok.Settings.set("transcription_model", val)
     end
+    if val = non_empty(params["image_generation_enabled"]) do
+      Druzhok.Settings.set("image_generation_enabled", val)
+    end
+    if val = non_empty(params["image_generation_model"]) do
+      Druzhok.Settings.set("image_generation_model", val)
+    end
 
     {:noreply, assign(socket,
       nebius_api_key: mask(Druzhok.Settings.get("nebius_api_key")),
@@ -104,6 +112,8 @@ defmodule DruzhokWebWeb.SettingsLive do
       compaction_model: Druzhok.Settings.get("compaction_model") || "",
       transcription_enabled: Druzhok.Settings.get("transcription_enabled") || "true",
       transcription_model: Druzhok.Settings.get("transcription_model") || "google/gemini-2.0-flash-lite-001",
+      image_generation_enabled: Druzhok.Settings.get("image_generation_enabled") || "false",
+      image_generation_model: Druzhok.Settings.get("image_generation_model") || "google/gemini-2.5-flash-image",
       saved: true
     )}
   end
@@ -182,6 +192,26 @@ defmodule DruzhokWebWeb.SettingsLive do
               <div>
                 <label class="block text-xs text-gray-500 mb-1">Model</label>
                 <input name="transcription_model" value={@transcription_model}
+                       class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm font-mono focus:outline-none focus:ring-1 focus:ring-gray-900" />
+              </div>
+            </div>
+          </div>
+
+          <div class="bg-white rounded-xl border border-gray-200 p-6">
+            <h2 class="text-sm font-semibold mb-4">Image Generation</h2>
+            <p class="text-xs text-gray-500 mb-4">Allows the bot to generate images. Requires OpenRouter API key. Off by default.</p>
+            <div class="space-y-3">
+              <div>
+                <label class="block text-xs text-gray-500 mb-1">Enabled</label>
+                <select name="image_generation_enabled"
+                        class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-gray-900">
+                  <option value="false" selected={@image_generation_enabled != "true"}>No</option>
+                  <option value="true" selected={@image_generation_enabled == "true"}>Yes</option>
+                </select>
+              </div>
+              <div>
+                <label class="block text-xs text-gray-500 mb-1">Model</label>
+                <input name="image_generation_model" value={@image_generation_model}
                        class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm font-mono focus:outline-none focus:ring-1 focus:ring-gray-900" />
               </div>
             </div>

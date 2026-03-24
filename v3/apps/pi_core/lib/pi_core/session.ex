@@ -47,7 +47,7 @@ defmodule PiCore.Session do
     loader = opts[:workspace_loader] || PiCore.WorkspaceLoader.Default
     group = opts[:group] || false
     model_info_fn = opts[:model_info_fn]
-    tools = opts[:tools] || default_tools()
+    tools = opts[:tools] || build_tools(opts)
 
     context_window = if model_info_fn do
       model_info_fn.(:context_window, opts.model)
@@ -325,6 +325,20 @@ defmodule PiCore.Session do
       end
     else
       nil
+    end
+  end
+
+  defp build_tools(opts) do
+    tools = default_tools()
+    ctx = opts[:extra_tool_context] || %{}
+
+    image_gen_enabled = ctx[:image_generation_enabled] ||
+      (fn -> Druzhok.Settings.get("image_generation_enabled") == "true" end).()
+
+    if image_gen_enabled do
+      tools ++ [PiCore.Tools.GenerateImage.new()]
+    else
+      tools
     end
   end
 
