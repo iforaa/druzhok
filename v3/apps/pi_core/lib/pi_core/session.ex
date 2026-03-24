@@ -229,18 +229,19 @@ defmodule PiCore.Session do
 
   defp run_prompt(messages, state) do
     llm_fn = state.llm_fn || &default_llm_fn(state, &1)
+    compaction_llm_fn = build_compaction_llm_fn(state) || llm_fn
 
     # Compact if conversation is too long
     compaction_opts = if state.budget do
       %{
         budget: state.budget,
-        llm_fn: llm_fn,
+        llm_fn: compaction_llm_fn,
         workspace: state.workspace,
         timezone: state.timezone || "UTC",
         memory_flush: true
       }
     else
-      %{llm_fn: llm_fn, max_messages: PiCore.Config.compaction_max_messages(), keep_recent: PiCore.Config.compaction_keep_recent()}
+      %{llm_fn: compaction_llm_fn, max_messages: PiCore.Config.compaction_max_messages(), keep_recent: PiCore.Config.compaction_keep_recent()}
     end
 
     {compacted_messages, _did_compact} = Compaction.maybe_compact(messages, compaction_opts)
@@ -280,6 +281,35 @@ defmodule PiCore.Session do
         on_event: opts[:on_event]
       })
     end)
+  end
+
+  defp build_compaction_llm_fn(state) do
+    ctx = state.extra_tool_context || %{}
+    model = ctx[:compaction_model]
+    api_url = ctx[:compaction_api_url]
+    api_key = ctx[:compaction_api_key]
+
+    if model && api_url && api_key do
+      fn opts ->
+        Retry.with_retry(fn ->
+          Client.completion(%{
+            model: model,
+            provider: "openai",
+            api_url: api_url,
+            api_key: api_key,
+            system_prompt: opts.system_prompt,
+            messages: opts.messages,
+            tools: opts[:tools] || [],
+            max_tokens: 4096,
+            stream: false,
+            on_delta: nil,
+            on_event: nil
+          })
+        end)
+      end
+    else
+      nil
+    end
   end
 
   defp default_tools do

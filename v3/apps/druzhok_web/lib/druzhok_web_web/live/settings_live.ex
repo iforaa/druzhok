@@ -27,6 +27,9 @@ defmodule DruzhokWebWeb.SettingsLive do
         embedding_api_url: Druzhok.Settings.get("embedding_api_url") || "",
         embedding_api_key: mask(Druzhok.Settings.get("embedding_api_key")),
         embedding_model: Druzhok.Settings.get("embedding_model") || "",
+        compaction_api_url: Druzhok.Settings.get("compaction_api_url") || "",
+        compaction_api_key: mask(Druzhok.Settings.get("compaction_api_key")),
+        compaction_model: Druzhok.Settings.get("compaction_model") || "",
         saved: false
       )}
     end
@@ -50,13 +53,17 @@ defmodule DruzhokWebWeb.SettingsLive do
     for key <- ["system_prompt_budget_ratio", "tool_definitions_budget_ratio",
                 "history_budget_ratio", "tool_result_budget_ratio",
                 "response_reserve_ratio", "default_context_window",
-                "token_estimation_divisor", "embedding_api_url", "embedding_model"] do
+                "token_estimation_divisor", "embedding_api_url", "embedding_model",
+                "compaction_api_url", "compaction_model"] do
       if val = non_empty(params[key]) do
         Druzhok.Settings.set(key, val)
       end
     end
     if val = non_masked(params["embedding_api_key"]) do
       Druzhok.Settings.set("embedding_api_key", val)
+    end
+    if val = non_masked(params["compaction_api_key"]) do
+      Druzhok.Settings.set("compaction_api_key", val)
     end
 
     {:noreply, assign(socket,
@@ -74,6 +81,9 @@ defmodule DruzhokWebWeb.SettingsLive do
       embedding_api_url: Druzhok.Settings.get("embedding_api_url") || "",
       embedding_api_key: mask(Druzhok.Settings.get("embedding_api_key")),
       embedding_model: Druzhok.Settings.get("embedding_model") || "",
+      compaction_api_url: Druzhok.Settings.get("compaction_api_url") || "",
+      compaction_api_key: mask(Druzhok.Settings.get("compaction_api_key")),
+      compaction_model: Druzhok.Settings.get("compaction_model") || "",
       saved: true
     )}
   end
@@ -180,6 +190,28 @@ defmodule DruzhokWebWeb.SettingsLive do
               <div>
                 <label class="block text-xs text-gray-500 mb-1">Model</label>
                 <input name="embedding_model" value={@embedding_model} placeholder="BAAI/bge-multilingual-gemma2"
+                       class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm font-mono focus:outline-none focus:ring-1 focus:ring-gray-900" />
+              </div>
+            </div>
+          </div>
+
+          <div class="bg-white rounded-xl border border-gray-200 p-6">
+            <h2 class="text-sm font-semibold mb-4">Compaction Model (for summarization)</h2>
+            <p class="text-xs text-gray-500 mb-4">Use a cheaper model for compaction and memory flush. Leave empty to use the main chat model.</p>
+            <div class="space-y-3">
+              <div>
+                <label class="block text-xs text-gray-500 mb-1">API URL</label>
+                <input name="compaction_api_url" value={@compaction_api_url} placeholder="https://api.openai.com/v1"
+                       class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm font-mono focus:outline-none focus:ring-1 focus:ring-gray-900" />
+              </div>
+              <div>
+                <label class="block text-xs text-gray-500 mb-1">API Key</label>
+                <input name="compaction_api_key" value={@compaction_api_key} placeholder="Paste key to update"
+                       class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm font-mono focus:outline-none focus:ring-1 focus:ring-gray-900" />
+              </div>
+              <div>
+                <label class="block text-xs text-gray-500 mb-1">Model</label>
+                <input name="compaction_model" value={@compaction_model} placeholder="gpt-4o-mini"
                        class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm font-mono focus:outline-none focus:ring-1 focus:ring-gray-900" />
               </div>
             </div>

@@ -12,7 +12,11 @@ defmodule PiCore.Compaction do
     case opts[:budget] do
       %TokenBudget{} = budget ->
         total_tokens = TokenEstimator.estimate_messages(messages)
-        if total_tokens <= budget.history do
+        # Trigger compaction when context exceeds contextWindow - reserveTokens (~90%)
+        # This matches OpenClaw's approach: compact late, not early
+        reserve = budget.system_prompt + budget.tool_definitions + budget.response_reserve
+        threshold = budget.context_window - reserve
+        if total_tokens <= threshold do
           {messages, false}
         else
           compact(messages, budget, opts)

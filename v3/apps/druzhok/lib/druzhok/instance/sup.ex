@@ -75,7 +75,10 @@ defmodule Druzhok.Instance.Sup do
         embedding_cache: Druzhok.EmbeddingCache,
         embedding_api_url: Druzhok.Settings.get("embedding_api_url"),
         embedding_api_key: Druzhok.Settings.get("embedding_api_key"),
-        embedding_model: Druzhok.Settings.get("embedding_model")
+        embedding_model: Druzhok.Settings.get("embedding_model"),
+        compaction_model: Druzhok.Settings.get("compaction_model"),
+        compaction_api_url: Druzhok.Settings.get("compaction_api_url"),
+        compaction_api_key: Druzhok.Settings.get("compaction_api_key")
       },
       model_info_fn: fn action, model_name ->
         case action do
