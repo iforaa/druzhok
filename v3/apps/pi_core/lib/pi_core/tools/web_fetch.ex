@@ -9,10 +9,17 @@ defmodule PiCore.Tools.WebFetch do
   def new do
     %Tool{
       name: "web_fetch",
-      description: "Fetch a URL and extract readable text content. Returns clean text from web pages (HTML→text via Readability), or raw content for RSS/JSON/plain text. Use this instead of curl for reading web content.",
-      parameters: %{url: %{type: :string, description: "URL to fetch (http or https)"}},
+      description: "Fetch a URL and extract readable text content. Returns clean text from web pages (HTML→text via Readability), or raw content for RSS/JSON/plain text. Use this instead of curl for reading web content. Set direct=true to bypass VPN for Russian services (Yandex, 2GIS, etc.) that block foreign IPs.",
+      parameters: %{
+        url: %{type: :string, description: "URL to fetch (http or https)"},
+        direct: %{type: :boolean, description: "Bypass VPN for Russian services (default: false)", required: false}
+      },
       execute: &execute/2
     }
+  end
+
+  def execute(%{"url" => url, "direct" => true}, _context) do
+    execute_direct(url)
   end
 
   def execute(%{"url" => url}, _context) do
@@ -130,6 +137,35 @@ defmodule PiCore.Tools.WebFetch do
 
       {:error, reason} ->
         {:error, "Fetch failed: #{inspect(reason)}"}
+    end
+  end
+
+  # Direct fetch bypassing VPN — uses su nobody to avoid iptables redirect
+  defp execute_direct(url) do
+    with {:ok, _uri} <- parse_and_validate(url) do
+      escaped_url = url |> String.replace("'", "'\\''")
+      cmd = "su -s /bin/sh nobody -c 'curl -sL --max-time 10 -A \"#{@user_agent}\" -H \"Accept-Language: ru,en;q=0.9\" \"#{escaped_url}\"'"
+
+      case System.cmd("sh", ["-c", cmd], stderr_to_stdout: true) do
+        {body, 0} when byte_size(body) > 0 ->
+          body = if byte_size(body) > @max_body_bytes, do: binary_part(body, 0, @max_body_bytes), else: body
+          media_type = guess_media_type(url, body)
+          process_body(body, media_type)
+
+        {error, _} ->
+          {:error, "Direct fetch failed: #{String.slice(error, 0, 200)}"}
+      end
+    end
+  end
+
+  defp guess_media_type(url, body) do
+    cond do
+      String.ends_with?(url, ".json") -> "application/json"
+      String.ends_with?(url, ".xml") or String.ends_with?(url, ".rss") -> "application/xml"
+      String.starts_with?(body, "<?xml") or String.starts_with?(body, "<rss") -> "application/xml"
+      String.starts_with?(body, "{") or String.starts_with?(body, "[") -> "application/json"
+      String.contains?(body, "<html") or String.contains?(body, "<!DOCTYPE") -> "text/html"
+      true -> "text/plain"
     end
   end
 

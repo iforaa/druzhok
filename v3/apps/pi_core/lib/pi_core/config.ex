@@ -13,7 +13,7 @@ defmodule PiCore.Config do
     default_max_tokens: 16_384,
     compaction_max_messages: 40,
     compaction_keep_recent: 10,
-    bash_timeout_ms: 300_000,
+    bash_timeout_ms: 10_000,
     anthropic_api_version: "2023-06-01"
   ]
 

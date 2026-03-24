@@ -8,7 +8,7 @@ defmodule PiCore.ConfigTest do
     assert PiCore.Config.default_max_tokens() == 16_384
     assert PiCore.Config.compaction_max_messages() == 40
     assert PiCore.Config.compaction_keep_recent() == 10
-    assert PiCore.Config.bash_timeout_ms() == 300_000
+    assert PiCore.Config.bash_timeout_ms() == 10_000
     assert PiCore.Config.anthropic_api_version() == "2023-06-01"
   end
 
