@@ -48,4 +48,11 @@ defmodule Druzhok.Reminder do
       r -> Druzhok.Repo.update(changeset(r, %{fired: true}))
     end
   end
+
+  def cancel(id) do
+    case Druzhok.Repo.get(__MODULE__, id) do
+      nil -> {:error, :not_found}
+      r -> Druzhok.Repo.delete(r)
+    end
+  end
 end

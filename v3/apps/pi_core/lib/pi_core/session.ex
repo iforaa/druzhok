@@ -323,6 +323,7 @@ defmodule PiCore.Session do
       PiCore.Tools.MemorySearch.new(),
       PiCore.Tools.MemoryWrite.new(),
       PiCore.Tools.SetReminder.new(),
+      PiCore.Tools.CancelReminder.new(),
       PiCore.Tools.SendFile.new(),
       PiCore.Tools.WebFetch.new(),
     ]
