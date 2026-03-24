@@ -33,31 +33,23 @@ defmodule Druzhok.Instance.Sup do
       Druzhok.Events.broadcast(name, event)
     end
 
-    send_file_fn = fn file_path, caption ->
-      case Registry.lookup(Druzhok.Registry, {name, :telegram}) do
-        [{pid, _}] ->
-          chat_id = GenServer.call(pid, :get_chat_id, 5_000)
-          if chat_id do
-            Druzhok.Telegram.API.send_document(config.token, chat_id, file_path, %{caption: caption})
-          else
-            {:error, "No active chat"}
-          end
-        [] -> {:error, "Telegram not available"}
+    make_send_fn = fn api_fn ->
+      fn payload, caption ->
+        case Registry.lookup(Druzhok.Registry, {name, :telegram}) do
+          [{pid, _}] ->
+            chat_id = GenServer.call(pid, :get_chat_id, 5_000)
+            if chat_id do
+              api_fn.(config.token, chat_id, payload, %{caption: caption})
+            else
+              {:error, "No active chat"}
+            end
+          [] -> {:error, "Telegram not available"}
+        end
       end
     end
 
-    send_photo_fn = fn photo_bytes, caption ->
-      case Registry.lookup(Druzhok.Registry, {name, :telegram}) do
-        [{pid, _}] ->
-          chat_id = GenServer.call(pid, :get_chat_id, 5_000)
-          if chat_id do
-            Druzhok.Telegram.API.send_photo(config.token, chat_id, photo_bytes, %{caption: caption})
-          else
-            {:error, "No active chat"}
-          end
-        [] -> {:error, "Telegram not available"}
-      end
-    end
+    send_file_fn = make_send_fn.(&Druzhok.Telegram.API.send_document/4)
+    send_photo_fn = make_send_fn.(&Druzhok.Telegram.API.send_photo/4)
 
     sandbox_fns = case config[:sandbox] do
       type when type in ["docker", "firecracker"] ->
@@ -92,7 +84,8 @@ defmodule Druzhok.Instance.Sup do
         embedding_model: Druzhok.Settings.get("embedding_model"),
         compaction_model: Druzhok.Settings.get("compaction_model"),
         compaction_api_url: Druzhok.Settings.get("compaction_api_url"),
-        compaction_api_key: Druzhok.Settings.get("compaction_api_key")
+        compaction_api_key: Druzhok.Settings.get("compaction_api_key"),
+        image_generation_enabled: Druzhok.Settings.get("image_generation_enabled") == "true"
       },
       model_info_fn: fn action, model_name ->
         case action do

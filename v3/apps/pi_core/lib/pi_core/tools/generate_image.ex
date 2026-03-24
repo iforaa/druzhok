@@ -53,12 +53,16 @@ defmodule PiCore.Tools.GenerateImage do
 
     case images do
       [%{"image_url" => %{"url" => data_url}} | _] ->
-        case decode_data_url(data_url) do
-          {:ok, bytes} ->
-            case send_photo_fn.(bytes, nil) do
-              :ok -> {:ok, "Image generated and sent"}
-              {:ok, _} -> {:ok, "Image generated and sent"}
-              {:error, reason} -> {:error, "Failed to send image: #{inspect(reason)}"}
+        case PiCore.Multimodal.parse_data_url(data_url) do
+          {:ok, _media_type, base64_data} ->
+            case Base.decode64(base64_data) do
+              {:ok, bytes} ->
+                case send_photo_fn.(bytes, nil) do
+                  :ok -> {:ok, "Image generated and sent"}
+                  {:ok, _} -> {:ok, "Image generated and sent"}
+                  {:error, reason} -> {:error, "Failed to send image: #{inspect(reason)}"}
+                end
+              :error -> {:error, "Invalid base64 in image data"}
             end
 
           {:error, reason} ->
@@ -69,18 +73,6 @@ defmodule PiCore.Tools.GenerateImage do
         {:error, "No image in response"}
     end
   end
-
-  defp decode_data_url("data:" <> rest) do
-    case String.split(rest, ",", parts: 2) do
-      [_header, base64_data] ->
-        case Base.decode64(base64_data) do
-          {:ok, bytes} -> {:ok, bytes}
-          :error -> {:error, "Invalid base64"}
-        end
-      _ -> {:error, "Invalid data URL format"}
-    end
-  end
-  defp decode_data_url(_), do: {:error, "Not a data URL"}
 
   defp build_default_llm_fn(_opts) do
     fn request ->

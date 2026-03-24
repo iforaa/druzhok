@@ -29,19 +29,24 @@ defmodule PiCore.Multimodal do
         %{type: "text", text: text}
 
       %{"type" => "image_url", "image_url" => %{"url" => url}} ->
-        {media_type, data} = parse_data_url(url)
-        %{type: "image", source: %{type: "base64", media_type: media_type, data: data}}
+        case parse_data_url(url) do
+          {:ok, media_type, data} ->
+            %{type: "image", source: %{type: "base64", media_type: media_type, data: data}}
+          {:error, _} ->
+            %{type: "text", text: "[image: invalid data URL]"}
+        end
 
       other ->
         %{type: "text", text: inspect(other)}
     end)
   end
 
-  defp parse_data_url("data:" <> rest) do
+  @doc "Parse a data URL into {media_type, base64_data}."
+  def parse_data_url("data:" <> rest) do
     case String.split(rest, ";base64,", parts: 2) do
-      [media_type, data] -> {media_type, data}
-      _ -> {"application/octet-stream", rest}
+      [media_type, data] -> {:ok, media_type, data}
+      _ -> {:error, "Invalid data URL format"}
     end
   end
-  defp parse_data_url(url), do: {"image/jpeg", url}
+  def parse_data_url(_), do: {:error, "Not a data URL"}
 end

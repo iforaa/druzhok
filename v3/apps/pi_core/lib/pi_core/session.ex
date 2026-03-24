@@ -332,10 +332,7 @@ defmodule PiCore.Session do
     tools = default_tools()
     ctx = opts[:extra_tool_context] || %{}
 
-    image_gen_enabled = ctx[:image_generation_enabled] ||
-      (fn -> Druzhok.Settings.get("image_generation_enabled") == "true" end).()
-
-    if image_gen_enabled do
+    if ctx[:image_generation_enabled] do
       tools ++ [PiCore.Tools.GenerateImage.new()]
     else
       tools
