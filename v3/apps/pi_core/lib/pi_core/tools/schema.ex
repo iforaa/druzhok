@@ -9,7 +9,9 @@ defmodule PiCore.Tools.Schema do
       prop = if desc, do: Map.put(prop, "description", desc), else: prop
       {to_string(name), prop}
     end)
-    required = Map.keys(tool.parameters) |> Enum.map(&to_string/1)
+    required = tool.parameters
+      |> Enum.reject(fn {_name, spec} -> spec[:required] == false end)
+      |> Enum.map(fn {name, _spec} -> to_string(name) end)
     %{
       "type" => "function",
       "function" => %{

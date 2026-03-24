@@ -13,6 +13,22 @@ defmodule PiCore.Tools.SchemaTest do
     assert "command" in openai["function"]["parameters"]["required"]
   end
 
+  test "excludes optional parameters from required list" do
+    tool = %Tool{
+      name: "test",
+      description: "Test",
+      parameters: %{
+        url: %{type: :string, description: "URL"},
+        caption: %{type: :string, description: "Caption", required: false}
+      },
+      execute: fn _, _ -> {:ok, ""} end
+    }
+    openai = Schema.to_openai(tool)
+    required = openai["function"]["parameters"]["required"]
+    assert "url" in required
+    refute "caption" in required
+  end
+
   test "converts list of tools" do
     tools = [
       %Tool{name: "bash", description: "Run", parameters: %{command: %{type: :string}}, execute: fn _, _ -> {:ok, ""} end},
