@@ -226,6 +226,7 @@ defmodule Druzhok.InstanceManager do
 
   defp provider_atom("anthropic"), do: :anthropic
   defp provider_atom("openai"), do: :openai
+  defp provider_atom("openrouter"), do: :openrouter
   defp provider_atom(a) when is_atom(a), do: a
   defp provider_atom(_), do: :openai
 

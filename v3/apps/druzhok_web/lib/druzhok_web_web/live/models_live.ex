@@ -226,6 +226,7 @@ defmodule DruzhokWebWeb.ModelsLive do
                         class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-gray-900">
                   <option value="openai" selected={@form_provider == "openai"}>openai</option>
                   <option value="anthropic" selected={@form_provider == "anthropic"}>anthropic</option>
+                  <option value="openrouter" selected={@form_provider == "openrouter"}>openrouter</option>
                 </select>
               </div>
               <div>

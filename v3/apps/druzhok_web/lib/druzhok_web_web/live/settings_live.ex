@@ -17,6 +17,8 @@ defmodule DruzhokWebWeb.SettingsLive do
         nebius_api_url: Druzhok.Settings.api_url("nebius") || "",
         anthropic_api_key: mask(Druzhok.Settings.get("anthropic_api_key")),
         anthropic_api_url: Druzhok.Settings.api_url("anthropic") || "",
+        openrouter_api_key: mask(Druzhok.Settings.get("openrouter_api_key")),
+        openrouter_api_url: Druzhok.Settings.api_url("openrouter") || "",
         system_prompt_ratio: Druzhok.Settings.get("system_prompt_budget_ratio") || "0.15",
         tool_definitions_ratio: Druzhok.Settings.get("tool_definitions_budget_ratio") || "0.05",
         history_ratio: Druzhok.Settings.get("history_budget_ratio") || "0.50",
@@ -49,6 +51,12 @@ defmodule DruzhokWebWeb.SettingsLive do
     if val = non_empty(params["anthropic_api_url"]) do
       Druzhok.Settings.set("anthropic_api_url", val)
     end
+    if val = non_masked(params["openrouter_api_key"]) do
+      Druzhok.Settings.set("openrouter_api_key", val)
+    end
+    if val = non_empty(params["openrouter_api_url"]) do
+      Druzhok.Settings.set("openrouter_api_url", val)
+    end
 
     for key <- ["system_prompt_budget_ratio", "tool_definitions_budget_ratio",
                 "history_budget_ratio", "tool_result_budget_ratio",
@@ -71,6 +79,8 @@ defmodule DruzhokWebWeb.SettingsLive do
       nebius_api_url: Druzhok.Settings.api_url("nebius") || "",
       anthropic_api_key: mask(Druzhok.Settings.get("anthropic_api_key")),
       anthropic_api_url: Druzhok.Settings.api_url("anthropic") || "",
+      openrouter_api_key: mask(Druzhok.Settings.get("openrouter_api_key")),
+      openrouter_api_url: Druzhok.Settings.api_url("openrouter") || "",
       system_prompt_ratio: Druzhok.Settings.get("system_prompt_budget_ratio") || "0.15",
       tool_definitions_ratio: Druzhok.Settings.get("tool_definitions_budget_ratio") || "0.05",
       history_ratio: Druzhok.Settings.get("history_budget_ratio") || "0.50",
@@ -126,6 +136,22 @@ defmodule DruzhokWebWeb.SettingsLive do
               <div>
                 <label class="block text-xs text-gray-500 mb-1">API URL</label>
                 <input name="anthropic_api_url" value={@anthropic_api_url}
+                       class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm font-mono focus:outline-none focus:ring-1 focus:ring-gray-900" />
+              </div>
+            </div>
+          </div>
+
+          <div class="bg-white rounded-xl border border-gray-200 p-6">
+            <h2 class="text-sm font-semibold mb-4">OpenRouter</h2>
+            <div class="space-y-3">
+              <div>
+                <label class="block text-xs text-gray-500 mb-1">API Key</label>
+                <input name="openrouter_api_key" value={@openrouter_api_key} placeholder="Paste new key to update"
+                       class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm font-mono focus:outline-none focus:ring-1 focus:ring-gray-900" />
+              </div>
+              <div>
+                <label class="block text-xs text-gray-500 mb-1">API URL</label>
+                <input name="openrouter_api_url" value={@openrouter_api_url}
                        class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm font-mono focus:outline-none focus:ring-1 focus:ring-gray-900" />
               </div>
             </div>
