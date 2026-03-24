@@ -1,0 +1,10 @@
+/Users/igorkuznetsov/Documents/druzhok/v3/apps/pi_core/native/readability/target/release/deps/litemap-1709db06d2021b97.d: /Users/igorkuznetsov/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/litemap-0.8.1/src/lib.rs /Users/igorkuznetsov/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/litemap-0.8.1/src/map.rs /Users/igorkuznetsov/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/litemap-0.8.1/src/store/mod.rs /Users/igorkuznetsov/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/litemap-0.8.1/src/store/slice_impl.rs
+
+/Users/igorkuznetsov/Documents/druzhok/v3/apps/pi_core/native/readability/target/release/deps/liblitemap-1709db06d2021b97.rlib: /Users/igorkuznetsov/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/litemap-0.8.1/src/lib.rs /Users/igorkuznetsov/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/litemap-0.8.1/src/map.rs /Users/igorkuznetsov/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/litemap-0.8.1/src/store/mod.rs /Users/igorkuznetsov/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/litemap-0.8.1/src/store/slice_impl.rs
+
+/Users/igorkuznetsov/Documents/druzhok/v3/apps/pi_core/native/readability/target/release/deps/liblitemap-1709db06d2021b97.rmeta: /Users/igorkuznetsov/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/litemap-0.8.1/src/lib.rs /Users/igorkuznetsov/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/litemap-0.8.1/src/map.rs /Users/igorkuznetsov/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/litemap-0.8.1/src/store/mod.rs /Users/igorkuznetsov/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/litemap-0.8.1/src/store/slice_impl.rs
+
+/Users/igorkuznetsov/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/litemap-0.8.1/src/lib.rs:
+/Users/igorkuznetsov/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/litemap-0.8.1/src/map.rs:
+/Users/igorkuznetsov/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/litemap-0.8.1/src/store/mod.rs:
+/Users/igorkuznetsov/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/litemap-0.8.1/src/store/slice_impl.rs:
