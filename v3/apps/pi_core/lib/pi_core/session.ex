@@ -298,9 +298,12 @@ defmodule PiCore.Session do
   end
 
   defp build_system_prompt(loader, workspace, group, budget, model) do
+    skills = PiCore.Skills.Loader.load(workspace)
+
     {prompt, _tokens} = PiCore.PromptBudget.build(workspace, %{
       budget_tokens: budget.system_prompt,
       group: group,
+      skills: skills,
       read_fn: fn path -> File.read(Path.join(workspace, path)) end
     })
 

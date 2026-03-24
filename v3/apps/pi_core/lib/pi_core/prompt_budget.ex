@@ -78,7 +78,7 @@ defmodule PiCore.PromptBudget do
   end
 
   defp return_skills(body) do
-    "## Available Skills\n\n#{body}"
+    "## Available Skills\n\nBefore replying, scan the skills below. If one clearly applies, read its SKILL.md at the listed path using `read`, then follow it. If none apply, skip.\n\n#{body}"
   end
 
   defp format_skills_full(skills) do
