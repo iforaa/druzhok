@@ -61,16 +61,26 @@ Max file size: 256KB.
 
 **Module**: `PiCore.Skills.Loader`
 
-Scans `workspace/skills/` for subdirectories containing `SKILL.md`. Parses YAML frontmatter. Returns `[{name, description, path}]` tuples.
+**Function**: `load(workspace) :: [{name, description, relative_path}]`
+
+Scans `workspace/skills/` for subdirectories containing `SKILL.md`. Parses frontmatter using regex (no YAML library — frontmatter is flat key-value pairs only). Returns tuples.
+
+**Path format**: Always `skills/<name>/SKILL.md` (no leading `./`). This format works with both the local `read` tool (via `PathGuard.resolve`) and Docker sandbox mode.
+
+**Name validation**: Directory names must match `^[a-z0-9][a-z0-9_-]*$`. Directories that don't match are skipped.
 
 **Rules**:
+- Skip if directory name fails validation
 - Skip if no `name` in frontmatter
 - Skip if `enabled: false`
 - Skip if `pending_approval: true`
 - Skip if file > 256KB
+- If `workspace/skills/` does not exist, return `[]`
 - Sort by name for deterministic ordering
 
-**Called at session init** in `PiCore.Session.init/1`. Skills passed to `PromptBudget.build/2` which already handles 3-tier formatting.
+**Frontmatter parsing**: Regex-based, no YAML dependency. Simple `key: value` extraction for the 4 supported fields. Boolean values parsed from `true`/`false` strings.
+
+**Called from `build_system_prompt`** (not just init) — this ensures skills are refreshed on model change and any system prompt rebuild. `build_system_prompt` already exists in Session and is called from both `init/1` and `handle_cast({:set_model, ...})`.
 
 ### System prompt integration
 
@@ -99,7 +109,9 @@ A new LiveView component in the dashboard for managing skills.
 - **Approve**: Set `pending_approval: false` in frontmatter (for bot-created skills)
 - **Delete**: Remove the skill directory
 
-Dashboard reads/writes files via the instance workspace path. No DB involvement.
+Dashboard reads/writes files via the instance workspace path. For Docker sandbox instances, file operations must go through the sandbox module (same pattern as the existing FileBrowser component). No DB involvement.
+
+**Validation**: Skill name must match `^[a-z0-9][a-z0-9_-]*$`. Content must be under 256KB. Dashboard enforces both on create/edit.
 
 ## 4. Bot Skill Creation
 
@@ -119,12 +131,15 @@ The skill is invisible to the LLM until the owner approves in the dashboard (whi
 
 ## 5. PromptBudget Integration
 
-`PromptBudget.build/2` already accepts `skills` as `[{name, desc, path}]` tuples and formats them with the 3-tier budget system. The only change is adding a preamble instruction before the skills list:
+`PromptBudget.build/2` already accepts `skills` as `[{name, desc, path}]` tuples and formats them with the 3-tier budget system. Update `return_skills/1` to include a preamble instruction between the header and the skill list:
 
 ```
 ## Available Skills
 
 Before replying, scan the skills below. If one clearly applies, read its SKILL.md at the listed path using `read`, then follow it. If none apply, skip.
+
+- **weather**: Check weather for any city (`skills/weather/SKILL.md`)
+- **code-review**: Review code for quality issues (`skills/code-review/SKILL.md`)
 ```
 
 ## New Modules
@@ -138,7 +153,7 @@ Before replying, scan the skills below. If one clearly applies, read its SKILL.m
 
 | Module | Changes |
 |--------|---------|
-| `PiCore.Session` | Call `Skills.Loader.load/1` at init, pass to PromptBudget |
+| `PiCore.Session` | Call `Skills.Loader.load/1` inside `build_system_prompt`, pass to PromptBudget |
 | `PiCore.PromptBudget` | Add preamble instruction to skills section |
 | `DruzhokWebWeb.DashboardLive` | Add SkillsTab to dashboard tabs, handle skill events |
 | Workspace template `AGENTS.md` | Add skills creation instructions |
