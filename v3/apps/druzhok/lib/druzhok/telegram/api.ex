@@ -56,6 +56,13 @@ defmodule Druzhok.Telegram.API do
     end
   end
 
+  def fetch_file_by_id(token, file_id) do
+    with {:ok, %{"file_path" => path}} <- get_file(token, file_id),
+         {:ok, bytes} <- download_file(token, path) do
+      {:ok, bytes}
+    end
+  end
+
   def send_chat_action(token, chat_id, action \\ "typing") do
     call(token, "sendChatAction", %{chat_id: chat_id, action: action})
   end
