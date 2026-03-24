@@ -32,6 +32,8 @@ defmodule DruzhokWebWeb.SettingsLive do
         compaction_api_url: Druzhok.Settings.get("compaction_api_url") || "",
         compaction_api_key: mask(Druzhok.Settings.get("compaction_api_key")),
         compaction_model: Druzhok.Settings.get("compaction_model") || "",
+        transcription_enabled: Druzhok.Settings.get("transcription_enabled") || "true",
+        transcription_model: Druzhok.Settings.get("transcription_model") || "google/gemini-2.0-flash-lite-001",
         saved: false
       )}
     end
@@ -73,6 +75,12 @@ defmodule DruzhokWebWeb.SettingsLive do
     if val = non_masked(params["compaction_api_key"]) do
       Druzhok.Settings.set("compaction_api_key", val)
     end
+    if val = non_empty(params["transcription_enabled"]) do
+      Druzhok.Settings.set("transcription_enabled", val)
+    end
+    if val = non_empty(params["transcription_model"]) do
+      Druzhok.Settings.set("transcription_model", val)
+    end
 
     {:noreply, assign(socket,
       nebius_api_key: mask(Druzhok.Settings.get("nebius_api_key")),
@@ -94,6 +102,8 @@ defmodule DruzhokWebWeb.SettingsLive do
       compaction_api_url: Druzhok.Settings.get("compaction_api_url") || "",
       compaction_api_key: mask(Druzhok.Settings.get("compaction_api_key")),
       compaction_model: Druzhok.Settings.get("compaction_model") || "",
+      transcription_enabled: Druzhok.Settings.get("transcription_enabled") || "true",
+      transcription_model: Druzhok.Settings.get("transcription_model") || "google/gemini-2.0-flash-lite-001",
       saved: true
     )}
   end
@@ -152,6 +162,26 @@ defmodule DruzhokWebWeb.SettingsLive do
               <div>
                 <label class="block text-xs text-gray-500 mb-1">API URL</label>
                 <input name="openrouter_api_url" value={@openrouter_api_url}
+                       class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm font-mono focus:outline-none focus:ring-1 focus:ring-gray-900" />
+              </div>
+            </div>
+          </div>
+
+          <div class="bg-white rounded-xl border border-gray-200 p-6">
+            <h2 class="text-sm font-semibold mb-4">Voice Transcription</h2>
+            <p class="text-xs text-gray-500 mb-4">Uses OpenRouter to transcribe voice messages to text. Requires OpenRouter API key.</p>
+            <div class="space-y-3">
+              <div>
+                <label class="block text-xs text-gray-500 mb-1">Enabled</label>
+                <select name="transcription_enabled"
+                        class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-gray-900">
+                  <option value="true" selected={@transcription_enabled == "true"}>Yes</option>
+                  <option value="false" selected={@transcription_enabled == "false"}>No</option>
+                </select>
+              </div>
+              <div>
+                <label class="block text-xs text-gray-500 mb-1">Model</label>
+                <input name="transcription_model" value={@transcription_model}
                        class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm font-mono focus:outline-none focus:ring-1 focus:ring-gray-900" />
               </div>
             </div>
