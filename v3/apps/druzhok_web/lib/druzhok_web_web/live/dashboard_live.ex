@@ -4,9 +4,10 @@ defmodule DruzhokWebWeb.DashboardLive do
   import DruzhokWebWeb.Live.Components.EventLog
   import DruzhokWebWeb.Live.Components.FileBrowser
   import DruzhokWebWeb.Live.Components.SecurityTab
+  import DruzhokWebWeb.Live.Components.SkillsTab
 
   @max_events 200
-  @valid_tabs %{"logs" => :logs, "files" => :files, "security" => :security}
+  @valid_tabs %{"logs" => :logs, "files" => :files, "security" => :security, "skills" => :skills}
 
   @impl true
   def mount(_params, session, socket) do
@@ -39,7 +40,9 @@ defmodule DruzhokWebWeb.DashboardLive do
       show_create: false,
       pairing: nil,
       owner: nil,
-      groups: []
+      groups: [],
+      skills: [],
+      editing_skill: nil
     )}
   end
 
@@ -62,13 +65,15 @@ defmodule DruzhokWebWeb.DashboardLive do
           events: [],
           pairing: Druzhok.InstanceManager.get_pairing(name),
           owner: Druzhok.InstanceManager.get_owner(name),
-          groups: Druzhok.InstanceManager.get_groups(name)
+          groups: Druzhok.InstanceManager.get_groups(name),
+          skills: load_skills(name),
+          editing_skill: nil
         )}
     end
   end
 
   def handle_params(_params, _uri, socket) do
-    {:noreply, assign(socket, selected: nil, workspace_files: [], file_content: nil, events: [], pairing: nil, owner: nil, groups: [])}
+    {:noreply, assign(socket, selected: nil, workspace_files: [], file_content: nil, events: [], pairing: nil, owner: nil, groups: [], skills: [], editing_skill: nil)}
   end
 
   def handle_info({:druzhok_event, instance_name, event}, socket) do
@@ -225,6 +230,75 @@ defmodule DruzhokWebWeb.DashboardLive do
     {:noreply, assign(socket, groups: groups)}
   end
 
+  def handle_event("save_skill", params, socket) do
+    name = socket.assigns.selected
+    skill_name = params["skill_name"]
+    description = params["description"]
+    content = params["content"]
+    original_dir = params["original_dir"]
+
+    if name && Regex.match?(~r/^[a-z0-9][a-z0-9_-]*$/, skill_name) do
+      workspace = instance_workspace(name)
+      dir = Path.join([workspace, "skills", skill_name])
+      File.mkdir_p!(dir)
+      skill_content = "---\nname: #{skill_name}\ndescription: #{description}\n---\n\n#{content}"
+      File.write!(Path.join(dir, "SKILL.md"), skill_content)
+
+      if original_dir && original_dir != "" && original_dir != skill_name do
+        File.rm_rf!(Path.join([workspace, "skills", original_dir]))
+      end
+
+      {:noreply, assign(socket, skills: load_skills(name), editing_skill: nil)}
+    else
+      {:noreply, socket}
+    end
+  end
+
+  def handle_event("edit_skill", %{"skill" => dir}, socket) do
+    skill = Enum.find(socket.assigns.skills, &(&1.dir == dir))
+    {:noreply, assign(socket, editing_skill: skill)}
+  end
+
+  def handle_event("cancel_edit_skill", _, socket) do
+    {:noreply, assign(socket, editing_skill: nil)}
+  end
+
+  def handle_event("delete_skill", %{"name" => name, "skill" => dir}, socket) do
+    workspace = instance_workspace(name)
+    File.rm_rf!(Path.join([workspace, "skills", dir]))
+    {:noreply, assign(socket, skills: load_skills(name), editing_skill: nil)}
+  end
+
+  def handle_event("approve_skill", %{"name" => name, "skill" => dir}, socket) do
+    workspace = instance_workspace(name)
+    path = Path.join([workspace, "skills", dir, "SKILL.md"])
+    case File.read(path) do
+      {:ok, content} ->
+        updated = String.replace(content, ~r/^pending_approval:\s*true$/m, "pending_approval: false")
+        File.write!(path, updated)
+      _ -> :ok
+    end
+    {:noreply, assign(socket, skills: load_skills(name))}
+  end
+
+  def handle_event("toggle_skill", %{"name" => name, "skill" => dir, "enabled" => enabled_str}, socket) do
+    workspace = instance_workspace(name)
+    path = Path.join([workspace, "skills", dir, "SKILL.md"])
+    new_enabled = enabled_str == "true"
+    case File.read(path) do
+      {:ok, content} ->
+        updated = if String.contains?(content, "enabled:") do
+          String.replace(content, ~r/^enabled:\s*(true|false)$/m, "enabled: #{new_enabled}")
+        else
+          # Add enabled field to frontmatter
+          String.replace(content, ~r/^---$/m, "enabled: #{new_enabled}\n---", global: false)
+        end
+        File.write!(path, updated)
+      _ -> :ok
+    end
+    {:noreply, assign(socket, skills: load_skills(name))}
+  end
+
   def handle_event("update_group_prompt", %{"name" => name, "chat_id" => chat_id, "value" => prompt}, socket) do
     chat_id = String.to_integer(chat_id)
     prompt = case String.trim(prompt) do
@@ -362,6 +436,10 @@ defmodule DruzhokWebWeb.DashboardLive do
                     class={"px-4 py-2.5 text-sm font-medium border-b-2 transition #{if @tab == :security, do: "border-gray-900 text-gray-900", else: "border-transparent text-gray-400 hover:text-gray-600"}"}>
               Security
             </button>
+            <button phx-click="tab" phx-value-tab="skills"
+                    class={"px-4 py-2.5 text-sm font-medium border-b-2 transition #{if @tab == :skills, do: "border-gray-900 text-gray-900", else: "border-transparent text-gray-400 hover:text-gray-600"}"}>
+              Skills
+            </button>
           </div>
 
           <%!-- Tab content --%>
@@ -374,6 +452,9 @@ defmodule DruzhokWebWeb.DashboardLive do
 
             <%!-- Security tab --%>
             <.security_tab :if={@tab == :security} pairing={@pairing} owner={@owner} groups={@groups} instance_name={@selected} />
+
+            <%!-- Skills tab --%>
+            <.skills_tab :if={@tab == :skills} skills={@skills} instance_name={@selected} editing_skill={@editing_skill} />
           </div>
         </div>
       </div>
@@ -430,6 +511,41 @@ defmodule DruzhokWebWeb.DashboardLive do
 
   defp instance_workspace(name) do
     Path.join([File.cwd!(), "..", "data", "instances", name, "workspace"])
+  end
+
+  defp load_skills(instance_name) do
+    workspace = instance_workspace(instance_name)
+    skills_dir = Path.join(workspace, "skills")
+
+    if File.dir?(skills_dir) do
+      case File.ls(skills_dir) do
+        {:ok, dirs} ->
+          dirs
+          |> Enum.filter(&File.dir?(Path.join(skills_dir, &1)))
+          |> Enum.map(fn dir ->
+            path = Path.join([skills_dir, dir, "SKILL.md"])
+            case File.read(path) do
+              {:ok, content} ->
+                body = case Regex.run(~r/\A---\n.*?\n---\n\n?(.*)/s, content) do
+                  [_, b] -> b
+                  nil -> content
+                end
+                case PiCore.Skills.Loader.parse_frontmatter(content) do
+                  {:ok, name, desc, enabled, pending} ->
+                    %{dir: dir, name: name, description: desc, enabled: enabled, pending: pending, body: body}
+                  :error ->
+                    %{dir: dir, name: dir, description: "(invalid)", enabled: false, pending: false, body: content}
+                end
+              {:error, _} -> nil
+            end
+          end)
+          |> Enum.reject(&is_nil/1)
+          |> Enum.sort_by(& &1.name)
+        _ -> []
+      end
+    else
+      []
+    end
   end
 
   defp list_workspace_files(instance) do
