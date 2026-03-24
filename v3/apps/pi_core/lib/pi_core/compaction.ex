@@ -170,7 +170,8 @@ defmodule PiCore.Compaction do
       role = msg.role
       content = msg.content
       tool_info = if msg.tool_name, do: " [#{msg.tool_name}]", else: ""
-      if content, do: "[#{role}#{tool_info}]: #{String.slice(content, 0, 2000)}", else: nil
+      content = PiCore.Multimodal.to_text(content)
+      if content != "" and content != nil, do: "[#{role}#{tool_info}]: #{String.slice(content, 0, 2000)}", else: nil
     end)
     |> Enum.reject(&is_nil/1)
     |> Enum.join("\n")
@@ -179,8 +180,8 @@ defmodule PiCore.Compaction do
   defp fallback_summary(messages) do
     messages
     |> Enum.filter(&(&1.role == "assistant"))
-    |> Enum.map(& &1.content)
-    |> Enum.reject(&is_nil/1)
+    |> Enum.map(& PiCore.Multimodal.to_text(&1.content))
+    |> Enum.reject(&(&1 == "" or is_nil(&1)))
     |> Enum.join("\n")
     |> then(&"[Previous conversation was compacted: #{&1}]")
   end

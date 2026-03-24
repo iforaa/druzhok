@@ -81,8 +81,17 @@ defmodule PiCore.SessionStore do
   end
 
   defp encode_message(msg) when is_map(msg) do
+    msg = normalize_content(msg)
     Jason.encode!(msg)
   end
+
+  defp normalize_content(%{content: content} = msg) when is_list(content) do
+    %{msg | content: PiCore.Multimodal.to_text(content)}
+  end
+  defp normalize_content(%{"content" => content} = msg) when is_list(content) do
+    Map.put(msg, "content", PiCore.Multimodal.to_text(content))
+  end
+  defp normalize_content(msg), do: msg
 
   defp write_atomic(path, content) do
     tmp = path <> ".tmp"

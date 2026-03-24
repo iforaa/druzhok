@@ -10,6 +10,9 @@ defmodule PiCore.TokenEstimator do
 
   def estimate(nil), do: 0
   def estimate(""), do: 0
+  def estimate(content) when is_list(content) do
+    estimate(PiCore.Multimodal.to_text(content))
+  end
   def estimate(text) when is_binary(text) do
     div(byte_size(text) + @default_divisor - 1, divisor())
   end
