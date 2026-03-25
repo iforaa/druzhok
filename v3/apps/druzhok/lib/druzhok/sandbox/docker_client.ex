@@ -191,21 +191,25 @@ defmodule Druzhok.Sandbox.DockerClient do
     end
   end
 
-  # When running inside a Docker container with bridge networking,
-  # 127.0.0.1 is the container's own loopback — not the host's.
-  # The sandbox container uses --network host, so we reach it via the bridge gateway.
+  # Sandbox containers use --network host, so when running on the host
+  # they listen on 127.0.0.1. When running inside Docker (bridge network),
+  # we reach them via the bridge gateway parsed from /proc/net/route.
   defp sandbox_host do
-    # Read the default gateway from /proc/net/route (always available, no ip command needed)
-    case File.read("/proc/net/route") do
-      {:ok, content} ->
-        case Regex.run(~r/\w+\t00000000\t([0-9A-F]+)\t/, content) do
-          [_, hex_ip] ->
-            # Gateway IP is in little-endian hex
-            <<d, c, b, a>> = Base.decode16!(hex_ip)
-            "#{a}.#{b}.#{c}.#{d}"
-          _ -> "172.17.0.1"
-        end
-      _ -> "172.17.0.1"
+    if File.exists?("/.dockerenv") do
+      # Inside Docker container — reach sandbox via bridge gateway
+      case File.read("/proc/net/route") do
+        {:ok, content} ->
+          case Regex.run(~r/\w+\t00000000\t([0-9A-F]+)\t/, content) do
+            [_, hex_ip] ->
+              <<d, c, b, a>> = Base.decode16!(hex_ip)
+              "#{a}.#{b}.#{c}.#{d}"
+            _ -> "172.17.0.1"
+          end
+        _ -> "172.17.0.1"
+      end
+    else
+      # Running on host — sandbox uses --network host, so localhost
+      "127.0.0.1"
     end
   end
 

@@ -1,6 +1,6 @@
 # Druzhok
 
-Personal AI assistant as a Telegram bot. TypeScript monorepo with pi-agent-core runtime, pluggable channels, OpenClaw-style memory, and a central LLM proxy. Go orchestrator for multi-tenant Docker deployment.
+Personal AI assistant as a Telegram bot. Elixir/Phoenix umbrella app with pi_core agent runtime, Telegram channel, OpenClaw-style memory, per-bot Docker sandboxes, and a web dashboard.
 
 ## Commits
 
@@ -11,86 +11,80 @@ Always use `/my-commit` skill for committing changes. Never use raw git commit c
 ### Never wipe workspace
 Never run `rm -rf workspace` when restarting the bot. The workspace contains the bot's memory, identity, and conversation history. Only wipe if the user explicitly asks for a fresh start.
 
-### Docker image rebuilds
-After changing TypeScript code, you MUST rebuild the Docker image (`docker build --no-cache`) for containers to pick up changes. For development, mount `dist/` and `packages/` as volumes to skip rebuilds.
-
-### Proxy URL must end with /v1
-Pi-agent-core uses the OpenAI SDK which appends `/chat/completions` to the base URL. If proxy URL is `http://proxy:8080`, the model's `baseUrl` must be `http://proxy:8080/v1`. The code in `agent-run.ts` auto-appends `/v1` if missing.
-
-### Reasoning models need high max_tokens
-Models like GLM-5, Kimi K2.5, DeepSeek-R1 put reasoning in `reasoning_content` and the actual reply in `content`. With low `max_tokens`, ALL tokens go to reasoning and `content` is empty. Set `maxTokens: 16384` minimum. Also set `reasoning: true` on the model object so pi-ai extracts `reasoning_content`.
-
 ### Nebius endpoint
 Use `https://api.tokenfactory.us-central1.nebius.com/v1/` (us-central1), NOT `api.tokenfactory.nebius.com`. The non-regional endpoint doesn't support tool calling in streaming mode.
 
-### Proxy must strip encoding headers
-When forwarding upstream responses, strip `content-encoding`, `content-length`, `transfer-encoding` headers. Otherwise clients get gzip-encoded bodies they can't decompress.
-
-### Unknown model providers fall through to Nebius
-The proxy parses model IDs like `nebius/model-name`. If the prefix isn't a known provider (anthropic, openai, nebius), fall through to the default provider (Nebius) and use the FULL model ID as-is.
-
-### Instance containers get NO API keys
-Containers only get `DRUZHOK_PROXY_URL` and `DRUZHOK_PROXY_KEY`. The proxy holds real API keys and injects them when forwarding. Never pass `NEBIUS_API_KEY` to containers.
-
-### Session caching
-`AgentSession` is cached per `sessionKey` in memory. If a session was created while the proxy was down, it caches a broken session. `/reset` clears it. If debugging "0 payloads", check if the session was created before the proxy started.
+### Reasoning models need high max_tokens
+Models like GLM-5, Kimi K2.5, DeepSeek-R1 put reasoning in `reasoning_content` and the actual reply in `content`. With low `max_tokens`, ALL tokens go to reasoning and `content` is empty. Set `maxTokens: 16384` minimum.
 
 ## Development Commands
 
 ```bash
-pnpm build          # compile all packages
-pnpm test           # run all tests (vitest)
-pnpm dev            # watch mode build
-pnpm proxy          # start proxy server
+cd v3
+mix deps.get        # install dependencies
+mix compile          # compile all apps
+mix test             # run all tests
+mix phx.server       # start Phoenix server
 ```
 
-## Running Locally (without Docker)
-
-```bash
-source .env
-export DRUZHOK_TELEGRAM_TOKEN NEBIUS_API_KEY NEBIUS_BASE_URL
-node dist/instance.js
-```
-
-## Running with Docker
-
-```bash
-# 1. Start proxy (holds API keys)
-source .env && export NEBIUS_API_KEY NEBIUS_BASE_URL
-DRUZHOK_PROXY_PORT=8080 DRUZHOK_PROXY_REGISTRY_PATH=./services/orchestrator/data/proxy/instances.json node packages/proxy/dist/index.js
-
-# 2. Start orchestrator
-cd services/orchestrator
-DOCKER_HOST=unix://$HOME/.docker/run/docker.sock ./orchestrator
-
-# 3. Create instance via API
-curl -X POST http://localhost:9090/instances -H "Content-Type: application/json" \
-  -d '{"name":"mybot","telegramToken":"BOT_TOKEN","model":"nebius/zai-org/GLM-5"}'
-
-# 4. Dashboard at http://localhost:9090
-```
-
-## Project Structure
+## Project Structure (v3 — Elixir umbrella)
 
 ```
-packages/
-├── shared/              # Types + token helpers
-├── core/                # Agent runtime, memory, reply pipeline, heartbeat, skills
-├── telegram/            # Telegram channel (Grammy bot, delivery, streaming)
-└── proxy/               # Central LLM proxy (auth, rate limit, provider routing)
-services/orchestrator/   # Go orchestrator for multi-tenant Docker management
-docker/                  # Dockerfiles
-workspace-template/      # Default workspace (Russian, OpenClaw file conventions)
-src/instance.ts          # Entry point that wires everything
+v3/
+├── apps/
+│   ├── pi_core/           # Agent runtime, LLM clients, tools, memory, sessions
+│   ├── druzhok/           # Instance management, Telegram, sandbox, settings, DB
+│   └── druzhok_web/       # Phoenix web dashboard, LiveView
+├── config/                # Elixir config (runtime.exs has API keys/URLs)
+└── services/
+    └── sandbox-agent/     # Go binary for per-bot sandboxes (Dockerfile)
+workspace-template/        # Default workspace (Russian, OpenClaw file conventions)
+Dockerfile                 # Legacy (not used — app runs directly on host)
 ```
 
 ## Architecture
 
+### Network & VPN traffic flow
+
+The Elixir app runs directly on the host (no parent Docker container). xray (vless client) provides VPN tunneling. All outbound HTTP traffic is routed through xray via Finch HTTP proxy configuration.
+
 ```
-User → Telegram → Docker container (no API keys)
-  → Proxy (validates dk_ key, adds Nebius token)
-  → Nebius API
+HOST (Yandex Cloud, 158.160.25.25)
+├── xray (vless client, 127.0.0.1:10809)
+│   └── outbound → VPN server → internet
+│
+├── Elixir app (systemd service, port 4000)
+│   │  HTTP_PROXY_URL=http://127.0.0.1:10809
+│   │  DATABASE_PATH=~/druzhok-data/druzhok.db
+│   │
+│   │  PiCore.Finch (single pool, all HTTP via xray proxy)
+│   │    ├── LLM calls (Nebius, Anthropic, OpenRouter) → xray → VPN
+│   │    ├── Telegram API → xray → VPN
+│   │    ├── web_fetch tool → xray → VPN
+│   │    └── embeddings (Voyage AI) → xray → VPN
+│   │
+│   └── spawns sandbox containers via Docker CLI
+│
+└── druzhok-{id}-{name} (sandbox, host network)
+    ├── No outbound internet access
+    ├── Runs bash commands and file I/O only
+    ├── Workspace bind-mounted from ~/druzhok-data/instances/*/workspace
+    └── Talks to parent via TCP on localhost (shared secret auth)
+```
+
+**Key points:**
+- `HTTP_PROXY_URL` env var configures Finch to route all HTTP through xray. If unset, Finch connects directly (for local dev).
+- The app runs on the host, not in Docker. xray listens on `127.0.0.1:10809`.
+- Sandbox containers are Docker-based (host network) and make no outbound requests.
+- There is NO separate proxy process. The Elixir app calls LLM providers directly (through xray).
+
+### Request flow
+
+```
+User → Telegram → Elixir app (host)
+  → PiCore.Finch → xray (127.0.0.1:10809) → VPN → LLM provider
   → Response back through the chain
+  → Tool execution → sandbox container (bash/files only)
 ```
 
 ## Workspace Files (OpenClaw Convention)
@@ -107,8 +101,31 @@ User → Telegram → Docker container (no API keys)
 
 ## Configuration
 
-**Instance env vars:** `DRUZHOK_TELEGRAM_TOKEN`, `DRUZHOK_PROXY_URL`, `DRUZHOK_PROXY_KEY`, `DRUZHOK_CONFIG_PATH`, `DRUZHOK_WORKSPACE_DIR`
+**Env vars (runtime.exs):**
+- `NEBIUS_API_KEY`, `NEBIUS_BASE_URL` — Nebius LLM provider
+- `ANTHROPIC_API_KEY`, `ANTHROPIC_API_URL` — Anthropic provider
+- `OPENROUTER_API_KEY`, `OPENROUTER_API_URL` — OpenRouter provider
+- `HTTP_PROXY_URL` — HTTP proxy for all outbound traffic (xray/VPN)
+- `DATABASE_PATH` — SQLite DB path (default: `/data/druzhok.db`)
+- `SECRET_KEY_BASE`, `PORT`, `PHX_HOST` — Phoenix config
 
-**Proxy env vars:** `NEBIUS_API_KEY`, `NEBIUS_BASE_URL`, `DRUZHOK_PROXY_PORT`, `DRUZHOK_PROXY_REGISTRY_PATH`
+## Deploying to Cloud
 
-**Config file:** `druzhok.json` — model, heartbeat, per-chat prompts. Inside Docker: `/data/druzhok.json`
+```bash
+# On the server (ssh -l igor 158.160.25.25):
+
+# 1. Sync code
+cd ~/druzhok && git pull
+
+# 2. Compile
+cd v3 && mix deps.get && mix compile
+
+# 3. Run migrations (if needed)
+DATABASE_PATH=/home/igor/druzhok-data/druzhok.db mix ecto.migrate
+
+# 4. Restart
+sudo systemctl restart druzhok
+
+# 5. Check logs
+journalctl -u druzhok -f
+```
