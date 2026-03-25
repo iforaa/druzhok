@@ -21,8 +21,8 @@ defmodule PiCore.SessionStoreTest do
     SessionStore.save(@workspace, 12345, messages)
     loaded = SessionStore.load(@workspace, 12345)
     assert length(loaded) == 2
-    assert Enum.at(loaded, 0)["role"] == "user"
-    assert Enum.at(loaded, 0)["content"] == "hello"
+    assert Enum.at(loaded, 0).role == "user"
+    assert Enum.at(loaded, 0).content == "hello"
   end
 
   test "load returns empty list when no file" do
@@ -61,7 +61,7 @@ defmodule PiCore.SessionStoreTest do
     SessionStore.save(@workspace, 300, messages)
     loaded = SessionStore.load(@workspace, 300)
     assert length(loaded) == 500
-    assert Enum.at(loaded, 0)["content"] == "msg 101"
+    assert Enum.at(loaded, 0).content == "msg 101"
   end
 
   test "clear deletes per-chat file" do
@@ -73,8 +73,8 @@ defmodule PiCore.SessionStoreTest do
   test "different chat_ids are isolated" do
     SessionStore.save(@workspace, 1, [%Message{role: "user", content: "chat1", timestamp: 1}])
     SessionStore.save(@workspace, 2, [%Message{role: "user", content: "chat2", timestamp: 1}])
-    assert Enum.at(SessionStore.load(@workspace, 1), 0)["content"] == "chat1"
-    assert Enum.at(SessionStore.load(@workspace, 2), 0)["content"] == "chat2"
+    assert Enum.at(SessionStore.load(@workspace, 1), 0).content == "chat1"
+    assert Enum.at(SessionStore.load(@workspace, 2), 0).content == "chat2"
   end
 
   test "creates sessions/ directory on first write" do
@@ -95,7 +95,7 @@ defmodule PiCore.SessionStoreTest do
     # Load should return only messages, not header
     loaded = SessionStore.load(@workspace, 600)
     assert length(loaded) == 1
-    assert Enum.at(loaded, 0)["content"] == "test"
+    assert Enum.at(loaded, 0).content == "test"
   end
 
   test "truncate_after_compaction replaces file atomically" do
@@ -118,7 +118,7 @@ defmodule PiCore.SessionStoreTest do
 
     loaded = SessionStore.load(@workspace, 700)
     assert length(loaded) == 5
-    assert Enum.at(loaded, 0)["content"] == "[Summary]"
+    assert Enum.at(loaded, 0).content == "[Summary]"
 
     # Verify no .tmp file left behind
     refute File.exists?(Path.join([@workspace, "sessions", "700.jsonl.tmp"]))
@@ -137,6 +137,6 @@ defmodule PiCore.SessionStoreTest do
 
     loaded = SessionStore.load(@workspace, 900)
     assert length(loaded) == 1
-    assert Enum.at(loaded, 0)["content"] == "legacy"
+    assert Enum.at(loaded, 0).content == "legacy"
   end
 end
