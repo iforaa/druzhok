@@ -113,7 +113,13 @@ defmodule PiCore.Session do
   end
 
   def handle_cast({:set_caller, pid}, state) do
-    {:noreply, %{state | caller: pid}}
+    on_delta = if state.chat_id do
+      chat_id = state.chat_id
+      fn chunk, _cid -> send(pid, {:pi_delta, chunk, chat_id}) end
+    else
+      fn chunk -> send(pid, {:pi_delta, chunk}) end
+    end
+    {:noreply, %{state | caller: pid, on_delta: on_delta}}
   end
 
   def handle_cast({:set_model, model, opts}, state) do
