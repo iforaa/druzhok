@@ -413,9 +413,8 @@ defmodule Druzhok.Agent.Telegram do
 
   defp process_group_message_always(chat_id, text, sender_name, file, is_triggered, chat, state) do
     {resolved_text, saved_file} = resolve_voice_or_file(text, file, chat_id, state)
-    base_prompt = build_group_prompt(resolved_text, sender_name, saved_file, is_triggered)
-    prompt = group_intro("always", chat) <> base_prompt
-    emit(state, :user_message, %{text: base_prompt, sender: sender_name, chat_id: chat_id})
+    {prompt, display} = build_group_prompt_with_intro("always", chat, resolved_text, sender_name, saved_file, is_triggered)
+    emit(state, :user_message, %{text: display, sender: sender_name, chat_id: chat_id})
 
     if is_triggered do
       API.send_chat_action(state.token, chat_id)
@@ -429,10 +428,21 @@ defmodule Druzhok.Agent.Telegram do
     if is_triggered do
       {resolved_text, saved_file} = resolve_voice_or_file(text, file, chat_id, state)
       buffered = Druzhok.GroupBuffer.flush(state.instance_name, chat_id)
-      current_prompt = build_group_prompt(resolved_text, sender_name, saved_file, true)
-      prompt = group_intro("buffer", chat) <> Druzhok.GroupBuffer.format_context(buffered, current_prompt)
 
-      emit(state, :user_message, %{text: current_prompt, sender: sender_name, chat_id: chat_id})
+      {prompt, display} = if is_list(resolved_text) do
+        # Multimodal content (image) — prepend group context as text, keep image in content
+        text_part = PiCore.Multimodal.to_text(resolved_text)
+        current_display = build_group_prompt(text_part, sender_name, saved_file, true)
+        context = group_intro("buffer", chat) <> Druzhok.GroupBuffer.format_context(buffered, current_display)
+        multimodal = [%{"type" => "text", "text" => context} | resolved_text]
+        {multimodal, current_display}
+      else
+        current_prompt = build_group_prompt(resolved_text, sender_name, saved_file, true)
+        full = group_intro("buffer", chat) <> Druzhok.GroupBuffer.format_context(buffered, current_prompt)
+        {full, current_prompt}
+      end
+
+      emit(state, :user_message, %{text: display, sender: sender_name, chat_id: chat_id})
       API.send_chat_action(state.token, chat_id)
       dispatch_prompt(prompt, chat_id, true, state)
       state
@@ -595,6 +605,21 @@ defmodule Druzhok.Agent.Telegram do
   defp build_prompt("", _sender, file_path), do: "User sent a file: #{file_path}"
   defp build_prompt(text, _sender, file_path), do: "#{text}\n\n[User attached a file: #{file_path}]"
 
+  defp build_group_prompt_with_intro(mode, chat, resolved_text, sender_name, saved_file, is_triggered) do
+    if is_list(resolved_text) do
+      # Multimodal content — prepend group context as text, keep image in content
+      text_part = PiCore.Multimodal.to_text(resolved_text)
+      display = build_group_prompt(text_part, sender_name, saved_file, is_triggered)
+      context = group_intro(mode, chat) <> build_group_prompt("", sender_name, saved_file, is_triggered)
+      multimodal = [%{"type" => "text", "text" => context} | resolved_text]
+      {multimodal, display}
+    else
+      base_prompt = build_group_prompt(resolved_text, sender_name, saved_file, is_triggered)
+      prompt = group_intro(mode, chat) <> base_prompt
+      {prompt, base_prompt}
+    end
+  end
+
   defp build_group_prompt(text, sender_name, file, is_triggered) do
     base = "[#{sender_name}]: #{text}"
     base = if file, do: base <> "\n[attached: #{file}]", else: base
@@ -692,8 +717,8 @@ defmodule Druzhok.Agent.Telegram do
         {"[голосовое сообщение]:#{caption} #{transcribed}", nil}
 
       {_, {:image, content}} ->
-        # For group messages, convert to text placeholder
-        {PiCore.Multimodal.to_text(content), nil}
+        # Pass multimodal content through for group messages (vision support)
+        {content, nil}
 
       _ ->
         saved = if file, do: save_incoming_file(file, chat_id, state), else: nil
