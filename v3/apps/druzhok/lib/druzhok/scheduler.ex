@@ -73,7 +73,7 @@ defmodule Druzhok.Scheduler do
           prompt = "HEARTBEAT\n\n#{content}"
           case lookup_session(state) do
             nil -> :ok
-            pid -> PiCore.Session.prompt(pid, prompt)
+            pid -> PiCore.Session.prompt_heartbeat(pid, prompt)
           end
         end
 

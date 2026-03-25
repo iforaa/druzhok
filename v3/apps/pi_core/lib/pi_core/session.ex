@@ -15,7 +15,8 @@ defmodule PiCore.Session do
     group: false,
     messages: [],
     active_task: nil,
-    parallel_tasks: %{}
+    parallel_tasks: %{},
+    heartbeat_refs: MapSet.new()
   ]
 
   def start_link(opts) do
@@ -27,6 +28,11 @@ defmodule PiCore.Session do
 
   def prompt(pid, text) do
     GenServer.cast(pid, {:prompt, text})
+  end
+
+  @doc "Like prompt/2 but suppresses streaming and filters HEARTBEAT_OK responses."
+  def prompt_heartbeat(pid, text) do
+    GenServer.cast(pid, {:prompt_heartbeat, text})
   end
 
   def abort(pid) do
@@ -95,21 +101,11 @@ defmodule PiCore.Session do
   end
 
   def handle_cast({:prompt, text}, state) do
-    state = schedule_idle_timeout(state)
-    user_msg = %Loop.Message{role: "user", content: text, timestamp: System.os_time(:millisecond)}
+    do_prompt(text, state, heartbeat: false)
+  end
 
-    if state.active_task do
-      # Busy — spawn parallel with history snapshot
-      snapshot = state.messages ++ [user_msg]
-      task = Task.async(fn -> run_prompt(snapshot, state) end)
-      parallel_tasks = Map.put(state.parallel_tasks, task.ref, %{user_msg: user_msg})
-      {:noreply, %{state | parallel_tasks: parallel_tasks}}
-    else
-      # Idle — run inline
-      state = %{state | messages: state.messages ++ [user_msg]}
-      task = Task.async(fn -> run_prompt(state.messages, state) end)
-      {:noreply, %{state | active_task: task}}
-    end
+  def handle_cast({:prompt_heartbeat, text}, state) do
+    do_prompt(text, state, heartbeat: true)
   end
 
   def handle_cast({:set_caller, pid}, state) do
@@ -149,8 +145,9 @@ defmodule PiCore.Session do
 
   def handle_cast(:abort, state) do
     if state.active_task do
+      ref = state.active_task.ref
       Task.shutdown(state.active_task, :brutal_kill)
-      {:noreply, %{state | active_task: nil}}
+      {:noreply, %{state | active_task: nil, heartbeat_refs: MapSet.delete(state.heartbeat_refs, ref)}}
     else
       {:noreply, state}
     end
@@ -158,7 +155,7 @@ defmodule PiCore.Session do
 
   def handle_cast(:reset, state) do
     if state.chat_id, do: SessionStore.clear(state.workspace, state.chat_id)
-    {:noreply, %{state | messages: [], active_task: nil, parallel_tasks: %{}}}
+    {:noreply, %{state | messages: [], active_task: nil, parallel_tasks: %{}, heartbeat_refs: MapSet.new()}}
   end
 
   def handle_call(:get_workspace, _from, state) do
@@ -168,12 +165,14 @@ defmodule PiCore.Session do
   # Task completed successfully
   def handle_info({ref, {:ok, new_messages}}, state) do
     Process.demonitor(ref, [:flush])
+    is_heartbeat = MapSet.member?(state.heartbeat_refs, ref)
+    state = %{state | heartbeat_refs: MapSet.delete(state.heartbeat_refs, ref)}
 
     if state.active_task && state.active_task.ref == ref do
       # Main task completed
       state = %{state | messages: state.messages ++ new_messages, active_task: nil}
       if state.chat_id, do: SessionStore.append_many(state.workspace, state.chat_id, new_messages)
-      deliver_last_assistant(new_messages, ref, state)
+      deliver_last_assistant(new_messages, ref, state, heartbeat: is_heartbeat)
       {:noreply, state}
     else
       case Map.pop(state.parallel_tasks, ref) do
@@ -181,7 +180,7 @@ defmodule PiCore.Session do
           # Parallel task completed — merge Q&A back
           state = %{state | messages: state.messages ++ [user_msg | new_messages], parallel_tasks: remaining}
           if state.chat_id, do: SessionStore.append_many(state.workspace, state.chat_id, [user_msg | new_messages])
-          deliver_last_assistant(new_messages, ref, state)
+          deliver_last_assistant(new_messages, ref, state, heartbeat: is_heartbeat)
           {:noreply, state}
 
         {nil, _} ->
@@ -190,17 +189,28 @@ defmodule PiCore.Session do
     end
   end
 
-  # Task failed
-  def handle_info({:DOWN, ref, :process, _pid, reason}, state) do
+  # Task returned error (e.g. LLM 429, network error)
+  def handle_info({ref, {:error, reason}}, state) do
+    Process.demonitor(ref, [:flush])
+    state = %{state | heartbeat_refs: MapSet.delete(state.heartbeat_refs, ref)}
+
     if state.active_task && state.active_task.ref == ref do
-      pid = if state.instance_name do
-        case Registry.lookup(Druzhok.Registry, {state.instance_name, :telegram}) do
-          [{p, _}] -> p
-          [] -> nil
-        end
-      else
-        state.caller
-      end
+      pid = response_target(state)
+      payload = %{text: "Error: #{inspect(reason)}", error: true}
+      payload = if state.chat_id, do: Map.put(payload, :chat_id, state.chat_id), else: payload
+      if pid, do: send(pid, {:pi_response, payload})
+      {:noreply, %{state | active_task: nil}}
+    else
+      {:noreply, %{state | parallel_tasks: Map.delete(state.parallel_tasks, ref)}}
+    end
+  end
+
+  # Task crashed
+  def handle_info({:DOWN, ref, :process, _pid, reason}, state) do
+    state = %{state | heartbeat_refs: MapSet.delete(state.heartbeat_refs, ref)}
+
+    if state.active_task && state.active_task.ref == ref do
+      pid = response_target(state)
       payload = %{text: "Error: #{inspect(reason)}", prompt_id: ref, error: true}
       payload = if state.chat_id, do: Map.put(payload, :chat_id, state.chat_id), else: payload
       if pid, do: send(pid, {:pi_response, payload})
@@ -220,22 +230,76 @@ defmodule PiCore.Session do
 
   # --- Private ---
 
-  defp deliver_last_assistant(new_messages, ref, state) do
+  defp do_prompt(text, state, opts) do
+    state = schedule_idle_timeout(state)
+    user_msg = %Loop.Message{role: "user", content: text, timestamp: System.os_time(:millisecond)}
+    heartbeat = opts[:heartbeat] || false
+    # Heartbeat prompts run without streaming so HEARTBEAT_OK isn't sent to Telegram
+    run_state = if heartbeat, do: %{state | on_delta: nil}, else: state
+
+    if state.active_task do
+      snapshot = state.messages ++ [user_msg]
+      task = Task.async(fn -> run_prompt(snapshot, run_state) end)
+      parallel_tasks = Map.put(state.parallel_tasks, task.ref, %{user_msg: user_msg})
+      heartbeat_refs = if heartbeat, do: MapSet.put(state.heartbeat_refs, task.ref), else: state.heartbeat_refs
+      {:noreply, %{state | parallel_tasks: parallel_tasks, heartbeat_refs: heartbeat_refs}}
+    else
+      state = %{state | messages: state.messages ++ [user_msg]}
+      task = Task.async(fn -> run_prompt(state.messages, run_state) end)
+      heartbeat_refs = if heartbeat, do: MapSet.put(state.heartbeat_refs, task.ref), else: state.heartbeat_refs
+      {:noreply, %{state | active_task: task, heartbeat_refs: heartbeat_refs}}
+    end
+  end
+
+  defp deliver_last_assistant(new_messages, ref, state, opts \\ []) do
     case Enum.find(Enum.reverse(new_messages), &(&1.role == "assistant")) do
       nil -> :ok
       msg ->
-        pid = if state.instance_name do
-          case Registry.lookup(Druzhok.Registry, {state.instance_name, :telegram}) do
-            [{p, _}] -> p
-            [] -> nil
-          end
-        else
-          state.caller
-        end
+        text = if opts[:heartbeat], do: strip_heartbeat_ok(msg.content), else: msg.content
 
-        payload = %{text: msg.content, prompt_id: ref}
-        payload = if state.chat_id, do: Map.put(payload, :chat_id, state.chat_id), else: payload
-        if pid, do: send(pid, {:pi_response, payload})
+        if text && text != "" do
+          pid = response_target(state)
+          payload = %{text: text, prompt_id: ref}
+          payload = if state.chat_id, do: Map.put(payload, :chat_id, state.chat_id), else: payload
+          if pid, do: send(pid, {:pi_response, payload})
+        end
+    end
+  end
+
+  @heartbeat_ok_token "HEARTBEAT_OK"
+  @heartbeat_ack_max_chars 300
+
+  # Strip HEARTBEAT_OK token from response. Returns nil if message should be suppressed.
+  defp strip_heartbeat_ok(nil), do: nil
+  defp strip_heartbeat_ok(text) do
+    trimmed = String.trim(text)
+
+    if not String.contains?(trimmed, @heartbeat_ok_token) do
+      trimmed
+    else
+      stripped =
+        trimmed
+        |> String.replace(@heartbeat_ok_token, "")
+        |> String.replace(~r/\s+/, " ")
+        |> String.trim()
+
+      if stripped == "" or String.length(stripped) <= @heartbeat_ack_max_chars,
+        do: nil,
+        else: stripped
+    end
+  end
+
+  # Find who to send the response to. Prefer the caller set via set_caller
+  # (e.g. WebSocket channel), fall back to Telegram agent via Registry.
+  defp response_target(state) do
+    cond do
+      state.caller && state.caller != self() -> state.caller
+      state.instance_name ->
+        case Registry.lookup(Druzhok.Registry, {state.instance_name, :telegram}) do
+          [{p, _}] -> p
+          [] -> state.caller
+        end
+      true -> state.caller
     end
   end
 
