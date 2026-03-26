@@ -85,11 +85,11 @@ defmodule DruzhokWebWeb.Live.Components.UsageTab do
                   <div class="space-y-3">
                     <div :if={req.prompt_preview && req.prompt_preview != ""}>
                       <div class="text-xs font-medium text-gray-500 uppercase mb-1">Prompt</div>
-                      <pre class="text-xs bg-gray-50 rounded p-3 overflow-x-auto whitespace-pre-wrap max-h-48 overflow-y-auto border border-gray-200"><%= req.prompt_preview %></pre>
+                      <pre class="text-xs bg-gray-50 rounded p-3 overflow-x-auto whitespace-pre-wrap max-h-96 overflow-y-auto border border-gray-200 font-mono"><%= req.prompt_preview %></pre>
                     </div>
                     <div :if={req.response_preview && req.response_preview != ""}>
                       <div class="text-xs font-medium text-gray-500 uppercase mb-1">Response</div>
-                      <pre class="text-xs bg-gray-50 rounded p-3 overflow-x-auto whitespace-pre-wrap max-h-48 overflow-y-auto border border-gray-200"><%= req.response_preview %></pre>
+                      <pre class="text-xs bg-gray-50 rounded p-3 overflow-x-auto whitespace-pre-wrap max-h-96 overflow-y-auto border border-gray-200 font-mono"><%= req.response_preview %></pre>
                     </div>
                     <div :if={(!req.prompt_preview || req.prompt_preview == "") && (!req.response_preview || req.response_preview == "")}
                          class="text-xs text-gray-400 italic">No preview available (recorded before preview tracking was enabled)</div>

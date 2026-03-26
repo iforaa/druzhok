@@ -68,21 +68,7 @@ defmodule PiCore.Loop do
         content_len = String.length(result.content || "")
 
         tool_calls_count = if has_tools, do: length(result.tool_calls), else: 0
-        sys_prompt = opts.system_prompt || ""
-        msg_count = length(llm_messages)
-        last_user_content = Enum.reduce(all_messages, "", fn msg, acc ->
-          role = msg.role || msg[:role] || msg["role"]
-          content = msg.content || msg[:content] || msg["content"]
-          if role == "user" && is_binary(content), do: content, else: acc
-        end)
-        prompt_preview = """
-        [System: #{div(byte_size(sys_prompt), 4)} tokens, #{msg_count} messages]
-        ---
-        #{String.slice(sys_prompt, 0, 500)}
-        ---
-        [Last user message]
-        #{String.slice(last_user_content, 0, 1000)}
-        """ |> String.slice(0, 2000)
+        prompt_preview = format_full_prompt(opts.system_prompt, llm_messages)
         emit(opts, %{type: :llm_done, iteration: iterations, elapsed_ms: elapsed,
                      has_tool_calls: has_tools, tool_calls_count: tool_calls_count,
                      content_length: content_len,
@@ -90,7 +76,7 @@ defmodule PiCore.Loop do
                      input_tokens: result.input_tokens, output_tokens: result.output_tokens,
                      model: opts[:model],
                      prompt_preview: prompt_preview,
-                     response_preview: String.slice(result.content || "", 0, 2000)})
+                     response_preview: result.content || ""})
 
         assistant_msg = %Message{
           role: "assistant",
@@ -187,5 +173,30 @@ defmodule PiCore.Loop do
     else
       PiCore.Truncate.head_tail(text, max)
     end
+  end
+
+  defp format_full_prompt(system_prompt, messages) do
+    parts = ["[SYSTEM]\n#{system_prompt || ""}\n"]
+
+    msg_parts = Enum.map(messages, fn msg ->
+      role = String.upcase(msg[:role] || "")
+      content = msg[:content] || ""
+      tool_calls = msg[:tool_calls]
+
+      content_str = if is_binary(content), do: content, else: inspect(content)
+
+      if tool_calls && tool_calls != [] do
+        tools = Enum.map_join(tool_calls, "\n", fn tc ->
+          name = get_in(tc, ["function", "name"]) || "?"
+          args = get_in(tc, ["function", "arguments"]) || "{}"
+          "  → #{name}(#{String.slice(args, 0, 500)})"
+        end)
+        "[#{role}]\n#{content_str}\n#{tools}"
+      else
+        "[#{role}]\n#{content_str}"
+      end
+    end)
+
+    Enum.join(parts ++ msg_parts, "\n\n")
   end
 end
