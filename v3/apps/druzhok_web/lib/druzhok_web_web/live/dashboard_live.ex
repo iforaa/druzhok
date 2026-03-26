@@ -149,6 +149,15 @@ defmodule DruzhokWebWeb.DashboardLive do
     {:noreply, assign(socket, instances: list_instances())}
   end
 
+  def handle_event("change_token_limit", %{"name" => name, "limit" => limit}, socket) do
+    limit = case Integer.parse(limit) do
+      {n, _} -> max(n, 0)
+      :error -> 0
+    end
+    update_instance_field(name, %{daily_token_limit: limit})
+    {:noreply, assign(socket, instances: list_instances())}
+  end
+
   def handle_event("stop", %{"name" => name}, socket) do
     Druzhok.InstanceManager.stop(name)
     {:noreply, assign(socket, instances: list_instances(), selected: nil, events: [])}
@@ -548,6 +557,15 @@ defmodule DruzhokWebWeb.DashboardLive do
                   <option value={val} selected={val == selected_field(@instances, @selected, :heartbeat_interval) || 0}><%= label %></option>
                 <% end %>
               </select>
+            </form>
+
+            <form phx-change="change_token_limit" class="flex items-center gap-1">
+              <input type="hidden" name="name" value={@selected} />
+              <span class="text-[10px] text-gray-400">Tokens/day</span>
+              <input type="number" name="limit" min="0" step="100000"
+                     value={selected_field(@instances, @selected, :daily_token_limit) || 0}
+                     placeholder="0"
+                     class="w-24 border border-gray-300 rounded-lg px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-gray-900 font-mono" />
             </form>
 
             <form phx-change="translate_workspace" class="flex items-center gap-1">
