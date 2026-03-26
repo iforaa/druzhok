@@ -6,7 +6,8 @@ defmodule PiCore.LLM.Client do
 
   defmodule Result do
     defstruct content: "", tool_calls: [], reasoning: "",
-              input_tokens: 0, output_tokens: 0
+              input_tokens: 0, output_tokens: 0,
+              cache_read_tokens: 0, cache_write_tokens: 0
   end
 
   def completion(opts) do

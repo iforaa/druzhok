@@ -13,11 +13,18 @@ defmodule PiCore.LLM.Anthropic do
     messages = convert_messages(opts.messages)
     tools = convert_tools(opts.tools || [])
 
+    # System prompt as structured array with cache_control for prompt caching
+    system_blocks = [%{
+      type: "text",
+      text: opts.system_prompt || "",
+      cache_control: %{type: "ephemeral"}
+    }]
+
     body = %{
       model: opts.model,
       max_tokens: opts[:max_tokens] || PiCore.Config.default_max_tokens(),
-      system: opts.system_prompt || "",
-      messages: messages,
+      system: system_blocks,
+      messages: add_cache_breakpoint(messages),
       stream: opts[:stream] || false,
     }
     body = if tools != [], do: Map.put(body, :tools, tools), else: body
@@ -128,8 +135,13 @@ defmodule PiCore.LLM.Anthropic do
   end
 
   defp handle_event(%{"type" => "message_start", "message" => msg}, result, token_sent, tc_asm, _on_delta, _on_event) do
-    input_tokens = get_in(msg, ["usage", "input_tokens"]) || 0
-    {%{result | input_tokens: input_tokens}, token_sent, tc_asm}
+    usage = msg["usage"] || %{}
+    result = %{result |
+      input_tokens: usage["input_tokens"] || 0,
+      cache_read_tokens: usage["cache_read_input_tokens"] || 0,
+      cache_write_tokens: usage["cache_creation_input_tokens"] || 0
+    }
+    {result, token_sent, tc_asm}
   end
 
   defp handle_event(%{"type" => "message_delta", "usage" => usage}, result, token_sent, tc_asm, _on_delta, _on_event) do
@@ -192,7 +204,9 @@ defmodule PiCore.LLM.Anthropic do
       tool_calls: tool_calls,
       reasoning: reasoning,
       input_tokens: usage["input_tokens"] || 0,
-      output_tokens: usage["output_tokens"] || 0
+      output_tokens: usage["output_tokens"] || 0,
+      cache_read_tokens: usage["cache_read_input_tokens"] || 0,
+      cache_write_tokens: usage["cache_creation_input_tokens"] || 0
     }
   end
 
@@ -242,6 +256,34 @@ defmodule PiCore.LLM.Anthropic do
         %{role: role, content: content}
       end
     end
+  end
+
+  # Add cache_control breakpoint to the last user/tool message for incremental caching
+  defp add_cache_breakpoint([]), do: []
+  defp add_cache_breakpoint(messages) do
+    last_idx = length(messages) - 1
+    # Find the last user or tool message and add cache_control to it
+    idx = messages
+    |> Enum.with_index()
+    |> Enum.reverse()
+    |> Enum.find_value(last_idx, fn {msg, i} ->
+      if msg[:role] in ["user", "tool"], do: i
+    end)
+
+    List.update_at(messages, idx, fn msg ->
+      content = msg[:content]
+      cond do
+        is_binary(content) ->
+          # Convert string content to block format with cache_control
+          %{msg | content: [%{type: "text", text: content, cache_control: %{type: "ephemeral"}}]}
+        is_list(content) && content != [] ->
+          # Add cache_control to the last block
+          last_block = List.last(content) |> Map.put(:cache_control, %{type: "ephemeral"})
+          %{msg | content: List.replace_at(content, -1, last_block)}
+        true ->
+          msg
+      end
+    end)
   end
 
   # Convert OpenAI-format tool definitions to Anthropic format
