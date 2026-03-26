@@ -164,6 +164,7 @@ defmodule Druzhok.Instance.Sup do
         instance_name: name,
         workspace: config.workspace,
         heartbeat_interval: config.heartbeat_interval,
+        dream_hour: config[:dream_hour] || -1,
         registry_name: {:via, Registry, {Druzhok.Registry, {name, :scheduler}}},
       }},
     ] ++ sandbox_children

@@ -32,6 +32,7 @@ defmodule Druzhok.Application do
         model: inst.model,
         telegram_token: inst.telegram_token,
         heartbeat_interval: inst.heartbeat_interval || 0,
+        dream_hour: inst.dream_hour || -1,
         sandbox: inst.sandbox || "local",
       }) do
         {:ok, _} ->

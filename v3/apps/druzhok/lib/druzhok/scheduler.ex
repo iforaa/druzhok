@@ -15,7 +15,9 @@ defmodule Druzhok.Scheduler do
     :workspace,
     :heartbeat_interval,  # minutes, 0 = disabled
     :heartbeat_timer,
-    :reminder_timer
+    :reminder_timer,
+    :dream_timer,
+    :dream_hour
   ]
 
   def start_link(opts) do
@@ -34,10 +36,12 @@ defmodule Druzhok.Scheduler do
       instance_name: opts.instance_name,
       workspace: opts.workspace,
       heartbeat_interval: opts[:heartbeat_interval] || 0,
+      dream_hour: opts[:dream_hour] || -1,
     }
 
     state = schedule_heartbeat(state)
     state = schedule_reminder_check(state)
+    state = schedule_dream_check(state)
 
     {:ok, state}
   end
@@ -101,6 +105,19 @@ defmodule Druzhok.Scheduler do
     {:noreply, state}
   end
 
+  # --- Dreaming ---
+
+  def handle_info(:dream_check, state) do
+    if should_dream?(state) do
+      Logger.info("[#{state.instance_name}] Starting dream session")
+      Druzhok.Events.broadcast(state.instance_name, %{type: :dream, text: "Dream session started"})
+      run_dream(state)
+    end
+
+    state = schedule_dream_check(state)
+    {:noreply, state}
+  end
+
   def handle_info(_msg, state), do: {:noreply, state}
 
   # --- Private ---
@@ -156,5 +173,80 @@ defmodule Druzhok.Scheduler do
       trimmed = String.trim(line)
       trimmed == "" or String.starts_with?(trimmed, "<!--") or String.starts_with?(trimmed, "#")
     end)
+  end
+
+  defp should_dream?(%{dream_hour: -1}), do: false
+  defp should_dream?(state) do
+    current_hour = case DateTime.now(instance_timezone(state)) do
+      {:ok, dt} -> dt.hour
+      _ -> DateTime.utc_now().hour
+    end
+    current_hour == state.dream_hour
+  end
+
+  defp instance_timezone(state) do
+    case Druzhok.Repo.get_by(Druzhok.Instance, name: state.instance_name) do
+      %{timezone: tz} when tz != nil and tz != "" -> tz
+      _ -> "UTC"
+    end
+  end
+
+  defp run_dream(state) do
+    dream_md = Path.join(state.workspace, "DREAM.md")
+
+    case File.read(dream_md) do
+      {:ok, template} ->
+        template = String.trim(template)
+        if template != "" do
+          digest = Druzhok.DreamDigest.build(state.workspace)
+          prompt = String.replace(template, "{CONVERSATIONS}", digest)
+
+          config = :persistent_term.get({:druzhok_session_config, state.instance_name}, nil)
+          if config do
+            Task.start(fn ->
+              case PiCore.Session.start_link(%{
+                workspace: config.workspace,
+                model: config.model,
+                provider: config[:provider],
+                api_url: config.api_url,
+                api_key: config.api_key,
+                instance_name: state.instance_name,
+                on_delta: nil,
+                on_event: nil,
+                tools: dream_tools(),
+                extra_tool_context: %{workspace: config.workspace, instance_name: state.instance_name},
+                timezone: config[:timezone] || "UTC"
+              }) do
+                {:ok, pid} ->
+                  PiCore.Session.prompt(pid, prompt)
+                  Process.sleep(120_000)
+                  Process.exit(pid, :normal)
+                {:error, reason} ->
+                  Logger.warning("[#{state.instance_name}] Dream session failed: #{inspect(reason)}")
+              end
+            end)
+          end
+        end
+
+      {:error, _} -> :ok
+    end
+  end
+
+  defp dream_tools do
+    [
+      PiCore.Tools.Read.new(),
+      PiCore.Tools.Write.new(),
+      PiCore.Tools.Edit.new(),
+      PiCore.Tools.Find.new(),
+      PiCore.Tools.Grep.new(),
+      PiCore.Tools.MemorySearch.new(),
+      PiCore.Tools.MemoryWrite.new(),
+    ]
+  end
+
+  defp schedule_dream_check(%{dream_hour: -1} = state), do: state
+  defp schedule_dream_check(state) do
+    timer = Process.send_after(self(), :dream_check, 3_600_000)
+    %{state | dream_timer: timer}
   end
 end

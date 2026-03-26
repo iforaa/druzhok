@@ -20,6 +20,7 @@ defmodule Druzhok.InstanceManager do
       api_url: api_url,
       api_key: api_key,
       heartbeat_interval: opts[:heartbeat_interval] || 0,
+      dream_hour: opts[:dream_hour] || -1,
       sandbox: opts[:sandbox] || detect_sandbox(),
     }
 
