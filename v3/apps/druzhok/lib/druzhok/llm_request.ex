@@ -15,11 +15,20 @@ defmodule Druzhok.LlmRequest do
     timestamps(updated_at: false)
   end
 
+  require Logger
+
   def log(attrs) do
     Task.start(fn ->
-      %__MODULE__{}
-      |> Ecto.Changeset.cast(attrs, [:instance_name, :chat_id, :model, :input_tokens, :output_tokens, :tool_calls_count, :elapsed_ms, :iteration])
-      |> Druzhok.Repo.insert()
+      case %__MODULE__{}
+           |> Ecto.Changeset.cast(attrs, [:instance_name, :chat_id, :model, :input_tokens, :output_tokens, :tool_calls_count, :elapsed_ms, :iteration])
+           |> Druzhok.Repo.insert() do
+        {:ok, _} ->
+          counter = :persistent_term.get(:llm_request_counter, 0) + 1
+          :persistent_term.put(:llm_request_counter, counter)
+          if rem(counter, 500) == 0, do: cleanup_old()
+        {:error, changeset} ->
+          Logger.warning("LlmRequest.log failed: #{inspect(changeset.errors)}")
+      end
     end)
   end
 

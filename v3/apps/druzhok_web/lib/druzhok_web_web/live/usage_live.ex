@@ -1,5 +1,6 @@
 defmodule DruzhokWebWeb.UsageLive do
   use DruzhokWebWeb, :live_view
+  import Ecto.Query, only: [from: 2]
 
   @impl true
   def mount(_params, session, socket) do
@@ -10,7 +11,7 @@ defmodule DruzhokWebWeb.UsageLive do
       id -> Druzhok.Repo.get(Druzhok.User, id)
     end
 
-    instances = Druzhok.Repo.all(Druzhok.Instance) |> Enum.map(& &1.name)
+    instances = Druzhok.Repo.all(from(i in Druzhok.Instance, select: i.name))
 
     {:ok, assign(socket,
       current_user: current_user,
