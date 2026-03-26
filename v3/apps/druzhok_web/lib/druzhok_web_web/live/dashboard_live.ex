@@ -485,6 +485,7 @@ defmodule DruzhokWebWeb.DashboardLive do
               <div class="text-xs text-gray-400"><%= @current_user.role %></div>
             </div>
             <div class="flex gap-2">
+              <a href="/usage" class="text-xs text-gray-400 hover:text-blue-600 transition">Usage</a>
               <a href="/errors" class="text-xs text-gray-400 hover:text-red-600 transition">Errors</a>
               <a :if={@current_user.role == "admin"} href="/settings" class="text-xs text-gray-400 hover:text-gray-900 transition">Settings</a>
               <a href="/auth/logout" class="text-xs text-gray-400 hover:text-gray-900 transition">Logout</a>
