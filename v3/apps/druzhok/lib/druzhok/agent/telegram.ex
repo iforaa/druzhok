@@ -585,7 +585,7 @@ defmodule Druzhok.Agent.Telegram do
         prompt_text = case {voice_result, image_result} do
           {{:transcribed, transcribed}, _} ->
             caption = if text != "", do: " #{text}", else: ""
-            "[голосовое сообщение]:#{caption} #{transcribed}"
+            "#{I18n.t(:voice_message, state.lang)}#{caption} #{transcribed}"
 
           {_, {:image, content}} ->
             # Multimodal content (list) — LLM will "see" the image
@@ -743,7 +743,7 @@ defmodule Druzhok.Agent.Telegram do
       case API.fetch_file_by_id(state.token, file.file_id) do
         {:ok, bytes} when byte_size(bytes) <= 5_000_000 ->
           base64 = Base.encode64(bytes)
-          caption = if text != "", do: text, else: "Пользователь отправил изображение"
+          caption = if text != "", do: text, else: I18n.t(:image_default_caption, state.lang)
           content = [
             %{"type" => "image_url", "image_url" => %{"url" => "data:image/jpeg;base64,#{base64}"}},
             %{"type" => "text", "text" => caption}
@@ -765,7 +765,7 @@ defmodule Druzhok.Agent.Telegram do
     case {voice_result, image_result} do
       {{:transcribed, transcribed}, _} ->
         caption = if text != "", do: " #{text}", else: ""
-        {"[голосовое сообщение]:#{caption} #{transcribed}", nil}
+        {"#{I18n.t(:voice_message, state.lang)}#{caption} #{transcribed}", nil}
 
       {_, {:image, content}} ->
         # Pass multimodal content through for group messages (vision support)
