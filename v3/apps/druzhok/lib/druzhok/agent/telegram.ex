@@ -634,7 +634,8 @@ defmodule Druzhok.Agent.Telegram do
     end
   end
 
-  defp build_prompt(text, _sender, nil, _lang \\ "ru"), do: text
+  defp build_prompt(text, sender, file_path, lang \\ "ru")
+  defp build_prompt(text, _sender, nil, _lang), do: text
   defp build_prompt("", _sender, file_path, lang), do: I18n.t(:user_sent_file, lang, %{path: file_path})
   defp build_prompt(text, _sender, file_path, lang), do: "#{text}\n\n" <> I18n.t(:file_attached, lang, %{path: file_path})
 
