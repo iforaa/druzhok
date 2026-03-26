@@ -52,7 +52,8 @@ defmodule DruzhokWebWeb.DashboardLive do
       editing_file: false,
       file_saved: false,
       usage_requests: [],
-      usage_summary: []
+      usage_summary: [],
+      tool_stats: []
     )}
   end
 
@@ -177,13 +178,14 @@ defmodule DruzhokWebWeb.DashboardLive do
         end
         {:noreply, assign(socket, tab: :errors, instance_errors: errors)}
       :usage ->
-        {requests, summary} = if socket.assigns.selected do
+        {requests, summary, tools} = if socket.assigns.selected do
           {Druzhok.LlmRequest.recent_filtered(%{instance_name: socket.assigns.selected, limit: 200}),
-           Druzhok.LlmRequest.summary_for_instance(socket.assigns.selected)}
+           Druzhok.LlmRequest.summary_for_instance(socket.assigns.selected),
+           Druzhok.ToolExecution.summary_for_instance(socket.assigns.selected)}
         else
-          {[], []}
+          {[], [], []}
         end
-        {:noreply, assign(socket, tab: :usage, usage_requests: requests, usage_summary: summary)}
+        {:noreply, assign(socket, tab: :usage, usage_requests: requests, usage_summary: summary, tool_stats: tools)}
       atom_tab ->
         {:noreply, assign(socket, tab: atom_tab)}
     end
@@ -605,7 +607,7 @@ defmodule DruzhokWebWeb.DashboardLive do
             <.skills_tab :if={@tab == :skills} skills={@skills} instance_name={@selected} editing_skill={@editing_skill} />
 
             <%!-- Usage tab --%>
-            <.usage_tab :if={@tab == :usage} requests={@usage_requests} summary={@usage_summary} instance_name={@selected} />
+            <.usage_tab :if={@tab == :usage} requests={@usage_requests} summary={@usage_summary} tool_stats={@tool_stats} instance_name={@selected} />
 
             <%!-- Errors tab --%>
             <.errors_tab :if={@tab == :errors} errors={@instance_errors} instance_name={@selected} expanded={@expanded_error} />

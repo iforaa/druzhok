@@ -3,6 +3,7 @@ defmodule DruzhokWebWeb.Live.Components.UsageTab do
 
   attr :requests, :list, required: true
   attr :summary, :list, required: true
+  attr :tool_stats, :list, required: true
   attr :instance_name, :string, required: true
 
   def usage_tab(assigns) do
@@ -23,6 +24,33 @@ defmodule DruzhokWebWeb.Live.Components.UsageTab do
           </div>
         <% end %>
         <div :if={@summary == []} class="col-span-3 text-center text-gray-400 text-sm py-4">No requests today</div>
+      </div>
+
+      <%!-- Tool execution stats --%>
+      <div :if={@tool_stats != []} class="overflow-x-auto">
+        <h3 class="text-sm font-medium text-gray-700 mb-2">Tool Usage Today</h3>
+        <table class="w-full text-sm">
+          <thead>
+            <tr class="border-b border-gray-200 text-left text-xs text-gray-500 uppercase">
+              <th class="px-3 py-2">Tool</th>
+              <th class="px-3 py-2 text-right">Calls</th>
+              <th class="px-3 py-2 text-right">Errors</th>
+              <th class="px-3 py-2 text-right">Avg Time</th>
+              <th class="px-3 py-2 text-right">Output</th>
+            </tr>
+          </thead>
+          <tbody>
+            <%= for t <- @tool_stats do %>
+              <tr class="border-b border-gray-100 hover:bg-gray-50">
+                <td class="px-3 py-2 font-mono text-xs"><%= t.tool_name %></td>
+                <td class="px-3 py-2 text-right font-mono"><%= t.call_count %></td>
+                <td class={"px-3 py-2 text-right font-mono #{if (t.error_count || 0) > 0, do: "text-red-600", else: "text-gray-400"}"}><%= t.error_count || 0 %></td>
+                <td class="px-3 py-2 text-right text-gray-500 font-mono text-xs"><%= format_elapsed(round_avg(t.avg_elapsed)) %></td>
+                <td class="px-3 py-2 text-right text-gray-500 font-mono text-xs"><%= format_bytes(t.total_output) %></td>
+              </tr>
+            <% end %>
+          </tbody>
+        </table>
       </div>
 
       <%!-- Request log table --%>
@@ -72,4 +100,12 @@ defmodule DruzhokWebWeb.Live.Components.UsageTab do
 
   defp short_model(nil), do: "-"
   defp short_model(model), do: model |> String.split("/") |> List.last()
+
+  defp round_avg(nil), do: nil
+  defp round_avg(avg), do: round(avg)
+
+  defp format_bytes(nil), do: "0"
+  defp format_bytes(n) when n >= 1_048_576, do: "#{Float.round(n / 1_048_576, 1)}MB"
+  defp format_bytes(n) when n >= 1024, do: "#{Float.round(n / 1024, 1)}KB"
+  defp format_bytes(n), do: "#{n}B"
 end

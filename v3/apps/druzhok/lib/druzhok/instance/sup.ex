@@ -50,6 +50,15 @@ defmodule Druzhok.Instance.Sup do
             iteration: event[:iteration]
           })
 
+        :tool_exec ->
+          Druzhok.ToolExecution.log(%{
+            instance_name: name,
+            tool_name: event[:name],
+            elapsed_ms: event[:elapsed_ms],
+            is_error: event[:is_error] || false,
+            output_size: event[:output_size] || 0
+          })
+
         _ -> :ok
       end
     end

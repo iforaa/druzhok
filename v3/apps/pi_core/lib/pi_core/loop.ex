@@ -141,7 +141,7 @@ defmodule PiCore.Loop do
         end
 
       elapsed = System.monotonic_time(:millisecond) - t0
-      emit(opts, %{type: :tool_exec, name: tool_name, elapsed_ms: elapsed, is_error: is_error})
+      emit(opts, %{type: :tool_exec, name: tool_name, elapsed_ms: elapsed, is_error: is_error, output_size: byte_size(content || "")})
 
       %Message{
         role: "toolResult",
