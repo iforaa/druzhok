@@ -183,7 +183,11 @@ defmodule PiCore.Loop do
       content = msg[:content] || ""
       tool_calls = msg[:tool_calls]
 
-      content_str = if is_binary(content), do: content, else: inspect(content)
+      content_str = cond do
+        is_binary(content) -> content
+        is_list(content) -> PiCore.Multimodal.to_text(content) <> " [+image]"
+        true -> inspect(content)
+      end
 
       if tool_calls && tool_calls != [] do
         tools = Enum.map_join(tool_calls, "\n", fn tc ->
