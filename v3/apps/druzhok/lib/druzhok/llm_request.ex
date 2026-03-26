@@ -94,6 +94,22 @@ defmodule Druzhok.LlmRequest do
     |> Druzhok.Repo.all()
   end
 
+  def tokens_today(instance_name) do
+    today = Date.utc_today()
+    start_of_day = DateTime.new!(today, ~T[00:00:00], "Etc/UTC")
+
+    result = from(r in __MODULE__,
+      where: r.inserted_at >= ^start_of_day and r.instance_name == ^instance_name,
+      select: %{
+        input: sum(r.input_tokens),
+        output: sum(r.output_tokens)
+      }
+    )
+    |> Druzhok.Repo.one()
+
+    {result.input || 0, result.output || 0}
+  end
+
   def summary_by_model do
     today = Date.utc_today()
     start_of_day = DateTime.new!(today, ~T[00:00:00], "Etc/UTC")
