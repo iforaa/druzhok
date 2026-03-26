@@ -120,7 +120,8 @@ defmodule Druzhok.Instance.Sup do
         image_generation_enabled: Druzhok.Settings.get("image_generation_enabled") == "true",
         runtime_info_fn: fn ->
           Druzhok.TokenBudget.runtime_section(name, config.model, config[:sandbox] || "local")
-        end
+        end,
+        budget_check_fn: fn -> Druzhok.TokenBudget.budget_exceeded?(name) end
       },
       model_info_fn: fn action, model_name ->
         case action do

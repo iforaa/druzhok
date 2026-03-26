@@ -1,14 +1,20 @@
 defmodule Druzhok.TokenBudget do
-  @moduledoc "Generates runtime context section for system prompt with token budget info."
+  @moduledoc "Token budget checking and runtime section for system prompt."
+
+  def budget_exceeded?(instance_name) do
+    limit = get_limit(instance_name)
+    if limit == 0 do
+      false
+    else
+      {input, output} = Druzhok.LlmRequest.tokens_today(instance_name)
+      (input + output) > limit
+    end
+  end
 
   def runtime_section(instance_name, model, sandbox_type) do
     {input, output} = Druzhok.LlmRequest.tokens_today(instance_name)
     total_used = input + output
-
-    limit = case Druzhok.Repo.get_by(Druzhok.Instance, name: instance_name) do
-      %{daily_token_limit: l} when is_integer(l) and l > 0 -> l
-      _ -> 0
-    end
+    limit = get_limit(instance_name)
 
     now = DateTime.utc_now() |> Calendar.strftime("%Y-%m-%d %H:%M UTC")
     sandbox_label = sandbox_label(sandbox_type)
@@ -27,6 +33,13 @@ defmodule Druzhok.TokenBudget do
     if warning != "", do: section <> "\n" <> warning, else: section
   end
 
+  defp get_limit(instance_name) do
+    case Druzhok.Repo.get_by(Druzhok.Instance, name: instance_name) do
+      %{daily_token_limit: l} when is_integer(l) and l > 0 -> l
+      _ -> 0
+    end
+  end
+
   defp tokens_line(used, 0) do
     "Токены сегодня: #{format_tokens(used)} (без лимита)"
   end
@@ -39,7 +52,7 @@ defmodule Druzhok.TokenBudget do
   defp budget_warning(used, limit) do
     pct = used / limit * 100
     cond do
-      pct > 100 -> "🛑 Лимит токенов исчерпан. Отвечай только на важные вопросы. Будь максимально кратким. Избегай tool calls."
+      pct > 100 -> ""
       pct > 80 -> "⚠️ Экономь токены — отвечай кратко, минимум инструментов."
       true -> ""
     end
