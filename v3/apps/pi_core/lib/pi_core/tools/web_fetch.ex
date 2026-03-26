@@ -3,6 +3,7 @@ defmodule PiCore.Tools.WebFetch do
 
   @user_agent "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
   @max_body_bytes 2_000_000
+  @preview_max_bytes 2_000
   @timeout_ms 10_000
   @max_redirects 3
 
@@ -27,7 +28,10 @@ defmodule PiCore.Tools.WebFetch do
          {:ok, ip} <- resolve_and_check(uri.host),
          {:ok, _status, headers, body} <- http_get(url, ip, @max_redirects) do
       media_type = parse_media_type(get_header(headers, "content-type"))
-      process_body(body, media_type)
+      case process_body(body, media_type) do
+        {:ok, content} -> {:ok, maybe_preview(content, media_type)}
+        error -> error
+      end
     end
   end
 
@@ -95,6 +99,15 @@ defmodule PiCore.Tools.WebFetch do
     {:error, "Unsupported content type: #{media_type}"}
   end
 
+  defp maybe_preview(content, media_type) do
+    if byte_size(content) > @preview_max_bytes do
+      preview = String.slice(content, 0, @preview_max_bytes)
+      preview <> "\n---\n[Content truncated: #{byte_size(content)} bytes total, type: #{media_type}]"
+    else
+      content
+    end
+  end
+
   defp ensure_utf8(body) do
     if String.valid?(body) do
       body
@@ -156,7 +169,10 @@ defmodule PiCore.Tools.WebFetch do
             {:ok, "(empty response)"}
           else
             media_type = guess_media_type(url, body)
-            process_body(body, media_type)
+            case process_body(body, media_type) do
+              {:ok, content} -> {:ok, maybe_preview(content, media_type)}
+              error -> error
+            end
           end
 
         {error, _} ->
