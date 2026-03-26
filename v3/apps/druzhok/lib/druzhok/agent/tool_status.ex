@@ -4,6 +4,7 @@ defmodule Druzhok.Agent.ToolStatus do
   alias Druzhok.I18n
 
   @tool_keys %{
+    "web_search" => :tool_web_search,
     "web_fetch" => :tool_web_fetch,
     "bash" => :tool_bash,
     "read" => :tool_read,

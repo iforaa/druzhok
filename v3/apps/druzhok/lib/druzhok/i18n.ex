@@ -44,7 +44,8 @@ defmodule Druzhok.I18n do
     file_attached: %{"ru" => "[Прикреплён файл: %{path}]", "en" => "[User attached a file: %{path}]"},
 
     # Tool status
-    tool_web_fetch: %{"ru" => "Ищу в интернете...", "en" => "Searching the web..."},
+    tool_web_search: %{"ru" => "Ищу в интернете...", "en" => "Searching the web..."},
+    tool_web_fetch: %{"ru" => "Загружаю страницу...", "en" => "Fetching page..."},
     tool_bash: %{"ru" => "Выполняю команду...", "en" => "Running command..."},
     tool_read: %{"ru" => "Читаю файл...", "en" => "Reading file..."},
     tool_write: %{"ru" => "Пишу файл...", "en" => "Writing file..."},

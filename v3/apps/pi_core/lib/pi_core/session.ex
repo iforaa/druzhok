@@ -486,6 +486,7 @@ defmodule PiCore.Session do
       PiCore.Tools.CancelReminder.new(),
       PiCore.Tools.SendFile.new(),
       PiCore.Tools.WebFetch.new(),
+      PiCore.Tools.WebSearch.new(),
     ]
   end
 

@@ -122,7 +122,9 @@ defmodule Druzhok.Instance.Sup do
           Druzhok.TokenBudget.runtime_section(name, config.model, config[:sandbox] || "local")
         end,
         prompt_guard_fn: fn -> Druzhok.PromptGuard.check(name) end,
-        image_describe_fn: &Druzhok.ImageDescriber.describe/1
+        image_describe_fn: &Druzhok.ImageDescriber.describe/1,
+        openrouter_api_key: Druzhok.Settings.api_key("openrouter"),
+        openrouter_api_url: Druzhok.Settings.api_url("openrouter")
       },
       model_info_fn: fn action, model_name ->
         case action do
