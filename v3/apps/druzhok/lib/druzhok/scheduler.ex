@@ -218,9 +218,15 @@ defmodule Druzhok.Scheduler do
                 timezone: config[:timezone] || "UTC"
               }) do
                 {:ok, pid} ->
+                  ref = Process.monitor(pid)
                   PiCore.Session.prompt(pid, prompt)
-                  Process.sleep(120_000)
-                  Process.exit(pid, :normal)
+                  receive do
+                    {:DOWN, ^ref, :process, ^pid, _reason} -> :ok
+                  after
+                    120_000 ->
+                      Logger.warning("[#{state.instance_name}] Dream session timed out, killing")
+                      Process.exit(pid, :kill)
+                  end
                 {:error, reason} ->
                   Logger.warning("[#{state.instance_name}] Dream session failed: #{inspect(reason)}")
               end

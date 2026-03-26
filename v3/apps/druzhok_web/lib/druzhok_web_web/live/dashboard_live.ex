@@ -243,17 +243,21 @@ defmodule DruzhokWebWeb.DashboardLive do
       if instance do
         current_path = socket.assigns[:current_path] || ""
         full_rel = if current_path == "", do: path, else: Path.join(current_path, path)
-        content = if instance[:sandbox] == "docker" do
-          case Druzhok.Sandbox.Docker.read_file(instance.name, "/workspace/#{full_rel}") do
-            {:ok, c} -> c
-            {:error, _} -> "Cannot read file"
-          end
-        else
-          full_path = Path.join(instance_workspace(socket.assigns.selected), full_rel)
-          case File.read(full_path) do
-            {:ok, c} -> c
-            {:error, _} -> "Cannot read file"
-          end
+        full_path = Path.join(instance_workspace(socket.assigns.selected), full_rel)
+        content = case File.stat(full_path) do
+          {:ok, %{size: size}} when size > 500_000 ->
+            case File.open(full_path, [:read]) do
+              {:ok, f} ->
+                data = IO.read(f, 50_000)
+                File.close(f)
+                "#{data}\n\n... [truncated, file is #{div(size, 1024)}KB]"
+              _ -> "Cannot read file"
+            end
+          _ ->
+            case File.read(full_path) do
+              {:ok, c} -> c
+              {:error, _} -> "Cannot read file"
+            end
         end
         {:noreply, assign(socket, file_content: %{path: full_rel, content: content}, editing_file: false, file_saved: false)}
       else
