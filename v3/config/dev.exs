@@ -11,7 +11,7 @@ config :druzhok_web, DruzhokWebWeb.Endpoint,
   # Change to `ip: {0, 0, 0, 0}` to allow access from other machines.
   http: [ip: {0, 0, 0, 0}, port: 4000],
   check_origin: false,
-  code_reloader: true,
+  code_reloader: System.get_env("PHX_SERVER") != "true",
   debug_errors: true,
   secret_key_base: "budLET0+FELfTF3xYFxKm57uXu1heiL/UZGTgjc5oieYoKOOb2l2PTRn+g9jwihk",
   watchers: [
@@ -42,14 +42,16 @@ config :druzhok_web, DruzhokWebWeb.Endpoint,
 # configured to run both http and https servers on
 # different ports.
 
-# Watch static and templates for browser reloading.
-config :druzhok_web, DruzhokWebWeb.Endpoint,
-  live_reload: [
-    patterns: [
-      ~r"priv/static/(?!uploads/).*(js|css|png|jpeg|jpg|gif|svg)$",
-      ~r"lib/druzhok_web_web/(controllers|live|components)/.*(ex|heex)$"
+# Watch static and templates for browser reloading (disabled when PHX_SERVER=true)
+if System.get_env("PHX_SERVER") != "true" do
+  config :druzhok_web, DruzhokWebWeb.Endpoint,
+    live_reload: [
+      patterns: [
+        ~r"priv/static/(?!uploads/).*(js|css|png|jpeg|jpg|gif|svg)$",
+        ~r"lib/druzhok_web_web/(controllers|live|components)/.*(ex|heex)$"
+      ]
     ]
-  ]
+end
 
 # Enable dev routes for dashboard and mailbox
 config :druzhok_web, dev_routes: true

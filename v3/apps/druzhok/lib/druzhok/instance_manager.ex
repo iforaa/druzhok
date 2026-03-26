@@ -57,7 +57,7 @@ defmodule Druzhok.InstanceManager do
     Repo.all(from i in Instance, where: i.active == true)
     |> Enum.map(fn inst ->
       alive = Registry.lookup(Druzhok.Registry, {inst.name, :telegram}) != []
-      %{name: inst.name, model: inst.model, heartbeat_interval: inst.heartbeat_interval, sandbox: inst.sandbox || "local", alive: alive}
+      %{name: inst.name, model: inst.model, heartbeat_interval: inst.heartbeat_interval, sandbox: inst.sandbox || "local", alive: alive, telegram_token: inst.telegram_token, api_key: inst.api_key}
     end)
   end
 
@@ -232,6 +232,7 @@ defmodule Druzhok.InstanceManager do
 
   defp ensure_workspace(workspace) do
     unless File.exists?(workspace) do
+      File.mkdir_p!(Path.dirname(workspace))
       template = find_workspace_template()
       if template do
         File.cp_r!(template, workspace)

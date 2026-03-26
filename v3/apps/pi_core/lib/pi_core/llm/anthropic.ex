@@ -127,6 +127,16 @@ defmodule PiCore.LLM.Anthropic do
     end
   end
 
+  defp handle_event(%{"type" => "message_start", "message" => msg}, result, token_sent, tc_asm, _on_delta, _on_event) do
+    input_tokens = get_in(msg, ["usage", "input_tokens"]) || 0
+    {%{result | input_tokens: input_tokens}, token_sent, tc_asm}
+  end
+
+  defp handle_event(%{"type" => "message_delta", "usage" => usage}, result, token_sent, tc_asm, _on_delta, _on_event) do
+    output_tokens = usage["output_tokens"] || 0
+    {%{result | output_tokens: output_tokens}, token_sent, tc_asm}
+  end
+
   defp handle_event(_event, result, token_sent, tc_asm, _on_delta, _on_event) do
     {result, token_sent, tc_asm}
   end
@@ -159,6 +169,8 @@ defmodule PiCore.LLM.Anthropic do
   end
 
   defp parse_response(%{"content" => content} = data) do
+    usage = data["usage"] || %{}
+
     {text, tool_calls, reasoning} =
       Enum.reduce(content, {"", [], ""}, fn block, {txt, tcs, reason} ->
         case block do
@@ -178,7 +190,9 @@ defmodule PiCore.LLM.Anthropic do
     %Result{
       content: text,
       tool_calls: tool_calls,
-      reasoning: reasoning
+      reasoning: reasoning,
+      input_tokens: usage["input_tokens"] || 0,
+      output_tokens: usage["output_tokens"] || 0
     }
   end
 

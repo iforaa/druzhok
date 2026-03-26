@@ -67,9 +67,13 @@ defmodule PiCore.Loop do
         has_tools = result.tool_calls != nil and result.tool_calls != []
         content_len = String.length(result.content || "")
 
+        tool_calls_count = if has_tools, do: length(result.tool_calls), else: 0
         emit(opts, %{type: :llm_done, iteration: iterations, elapsed_ms: elapsed,
-                     has_tool_calls: has_tools, content_length: content_len,
-                     reasoning_length: String.length(result.reasoning || "")})
+                     has_tool_calls: has_tools, tool_calls_count: tool_calls_count,
+                     content_length: content_len,
+                     reasoning_length: String.length(result.reasoning || ""),
+                     input_tokens: result.input_tokens, output_tokens: result.output_tokens,
+                     model: opts[:model]})
 
         assistant_msg = %Message{
           role: "assistant",

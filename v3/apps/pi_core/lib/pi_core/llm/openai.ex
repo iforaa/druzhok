@@ -11,6 +11,7 @@ defmodule PiCore.LLM.OpenAI do
     messages = [%{role: "system", content: opts.system_prompt} | opts.messages]
 
     body = %{model: opts.model, messages: messages, max_tokens: opts.max_tokens, stream: opts.stream}
+    body = if opts.stream, do: Map.put(body, :stream_options, %{include_usage: true}), else: body
     body = if opts.tools != [], do: Map.put(body, :tools, opts.tools), else: body
 
     headers = [
@@ -85,6 +86,13 @@ defmodule PiCore.LLM.OpenAI do
   end
 
   defp process_stream_event(event, result, tc_asm, on_delta) do
+    # Parse usage from final chunk
+    result = case event["usage"] do
+      %{"prompt_tokens" => input, "completion_tokens" => output} ->
+        %{result | input_tokens: input, output_tokens: output}
+      _ -> result
+    end
+
     choices = event["choices"] || []
 
     Enum.reduce(choices, {result, tc_asm}, fn choice, {acc, asm} ->
@@ -142,10 +150,13 @@ defmodule PiCore.LLM.OpenAI do
         data = Jason.decode!(body)
         choice = hd(data["choices"])
         message = choice["message"]
+        usage = data["usage"] || %{}
         {:ok, %Result{
           content: message["content"] || "",
           tool_calls: message["tool_calls"] || [],
-          reasoning: message["reasoning_content"] || ""
+          reasoning: message["reasoning_content"] || "",
+          input_tokens: usage["prompt_tokens"] || 0,
+          output_tokens: usage["completion_tokens"] || 0
         }}
 
       {:ok, %{status: status, body: body}} ->

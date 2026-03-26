@@ -20,7 +20,7 @@ defmodule Druzhok.Instance do
   def changeset(instance, attrs) do
     instance
     |> cast(attrs, [:name, :telegram_token, :model, :workspace, :active, :heartbeat_interval, :owner_telegram_id, :sandbox, :timezone, :api_key])
-    |> validate_required([:name, :telegram_token, :model, :workspace])
+    |> validate_required([:name, :model, :workspace])
     |> unique_constraint(:name)
   end
 

@@ -31,12 +31,26 @@ defmodule Druzhok.Instance.Sup do
 
     on_event = fn event ->
       Druzhok.Events.broadcast(name, event)
-      if event[:type] == :tool_call do
-        tool_name = event[:name]
-        case Registry.lookup(Druzhok.Registry, {name, :telegram}) do
-          [{pid, _}] -> send(pid, {:pi_tool_status, tool_name})
-          [] -> :ok
-        end
+      case event[:type] do
+        :tool_call ->
+          tool_name = event[:name]
+          case Registry.lookup(Druzhok.Registry, {name, :telegram}) do
+            [{pid, _}] -> send(pid, {:pi_tool_status, tool_name})
+            [] -> :ok
+          end
+
+        :llm_done ->
+          Druzhok.LlmRequest.log(%{
+            instance_name: name,
+            model: event[:model],
+            input_tokens: event[:input_tokens] || 0,
+            output_tokens: event[:output_tokens] || 0,
+            tool_calls_count: event[:tool_calls_count] || 0,
+            elapsed_ms: event[:elapsed_ms],
+            iteration: event[:iteration]
+          })
+
+        _ -> :ok
       end
     end
 
