@@ -186,11 +186,14 @@ defmodule Druzhok.Agent.Telegram do
   end
 
   def handle_info({:pi_response, %{error: true, text: text}}, state) do
+    state = cancel_typing_timer(state)
     emit(state, :error, %{text: text})
-    {:noreply, state}
+    {:noreply, %{state | streamer: Streamer.reset(state.streamer)}}
   end
 
-  def handle_info({:pi_response, _}, state), do: {:noreply, state}
+  def handle_info({:pi_response, _}, state) do
+    {:noreply, cancel_typing_timer(state)}
+  end
 
   # --- Tool status from PiCore (show status message + start typing refresh) ---
 

@@ -116,7 +116,8 @@ defmodule PiCore.Tools.WebFetch do
       {"accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"}
     ]
 
-    req = Finch.build(:get, url, headers)
+    encoded_url = encode_url(url)
+    req = Finch.build(:get, encoded_url, headers)
 
     case stream_body(req) do
       {:ok, status, resp_headers, _body} when status in [301, 302, 303, 307, 308] ->
@@ -197,9 +198,37 @@ defmodule PiCore.Tools.WebFetch do
       |> case do
         {:ok, {status, headers, body}} -> {:ok, status, headers, body}
         {:error, reason} -> {:error, reason}
+        {:error, reason, _acc} -> {:error, reason}
       end
     catch
       {^ref, :body_too_large} -> {:error, "Response body exceeds 2 MB limit"}
     end
+  end
+
+  # Encode non-ASCII characters in URL (Cyrillic, etc.) without double-encoding
+  defp encode_url(url) do
+    uri = URI.parse(url)
+    path = if uri.path, do: encode_component_keep_slashes(uri.path), else: nil
+    query = if uri.query, do: encode_component_keep_special(uri.query), else: nil
+    %{uri | path: path, query: query} |> URI.to_string()
+  end
+
+  defp encode_component_keep_slashes(path) do
+    path
+    |> String.split("/")
+    |> Enum.map(&URI.encode/1)
+    |> Enum.join("/")
+  end
+
+  defp encode_component_keep_special(query) do
+    query
+    |> String.split("&")
+    |> Enum.map(fn part ->
+      case String.split(part, "=", parts: 2) do
+        [k, v] -> URI.encode(k) <> "=" <> URI.encode(v)
+        [k] -> URI.encode(k)
+      end
+    end)
+    |> Enum.join("&")
   end
 end
