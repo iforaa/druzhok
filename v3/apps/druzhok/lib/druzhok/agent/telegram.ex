@@ -18,6 +18,7 @@ defmodule Druzhok.Agent.Telegram do
   alias Druzhok.Events
   alias Druzhok.Agent.Router
   alias Druzhok.Agent.Streamer
+  alias Druzhok.I18n
 
   defstruct [
     :token,
@@ -32,6 +33,7 @@ defmodule Druzhok.Agent.Telegram do
     :owner_telegram_id,
     :streamer,
     :typing_timer,
+    lang: "ru",
     offset: 0
   ]
 
@@ -95,11 +97,11 @@ defmodule Druzhok.Agent.Telegram do
   end
 
   def handle_cast({:set_workspace, workspace}, state) do
-    owner_id = case Druzhok.Repo.get_by(Druzhok.Instance, name: state.instance_name) do
-      %{owner_telegram_id: id} -> id
-      _ -> nil
+    {owner_id, lang} = case Druzhok.Repo.get_by(Druzhok.Instance, name: state.instance_name) do
+      %{owner_telegram_id: id, language: l} -> {id, l || "ru"}
+      _ -> {nil, "ru"}
     end
-    {:noreply, %{state | workspace: workspace, owner_telegram_id: owner_id}}
+    {:noreply, %{state | workspace: workspace, owner_telegram_id: owner_id, lang: lang}}
   end
 
   # --- Polling (async — never blocks the GenServer) ---
@@ -202,7 +204,7 @@ defmodule Druzhok.Agent.Telegram do
 
   defp handle_tool_status(tool_name, state) do
     state = cancel_typing_timer(state)
-    status_text = Druzhok.Agent.ToolStatus.status_text(tool_name)
+    status_text = Druzhok.Agent.ToolStatus.status_text(tool_name, state.lang)
 
     # Edit existing streaming message or send a new one
     state = if state.chat_id do
@@ -361,7 +363,7 @@ defmodule Druzhok.Agent.Telegram do
         process_owner_message(chat_id, text, sender_id, sender_name, file, false, state)
 
       state.owner_telegram_id != nil ->
-        API.send_message(state.token, chat_id, "This bot is private.")
+        API.send_message(state.token, chat_id, I18n.t(:bot_private, state.lang))
         state
 
       true ->
@@ -372,20 +374,20 @@ defmodule Druzhok.Agent.Telegram do
   defp handle_pairing(chat_id, sender_id, sender_name, state) do
     case Druzhok.Pairing.get_pending(state.instance_name) do
       %{telegram_user_id: ^sender_id, code: code} ->
-        API.send_message(state.token, chat_id, "Your activation code: #{code}\nEnter it in the dashboard.")
+        API.send_message(state.token, chat_id, I18n.t(:activation_code, state.lang, %{code: code}))
         state
 
       %{} ->
-        API.send_message(state.token, chat_id, "This bot is not available.")
+        API.send_message(state.token, chat_id, I18n.t(:bot_unavailable, state.lang))
         state
 
       nil ->
         case Druzhok.Pairing.create_code(state.instance_name, sender_id, nil, sender_name) do
           {:ok, pairing} ->
             emit(state, :pairing_requested, %{text: "Pairing: #{pairing.code}", code: pairing.code, user: sender_name})
-            API.send_message(state.token, chat_id, "Your activation code: #{pairing.code}\nEnter it in the dashboard.")
+            API.send_message(state.token, chat_id, I18n.t(:activation_code, state.lang, %{code: pairing.code}))
           _ ->
-            API.send_message(state.token, chat_id, "Error generating activation code.")
+            API.send_message(state.token, chat_id, I18n.t(:activation_error, state.lang))
         end
         state
     end
@@ -409,7 +411,7 @@ defmodule Druzhok.Agent.Telegram do
         Druzhok.AllowedChat.upsert_pending(state.instance_name, chat_id, "group", chat_title)
 
         if Router.mentioned_by_username?(text, state.bot_username) && (is_nil(chat) || !chat.info_sent) do
-          API.send_message(state.token, chat_id, "This bot requires approval. Ask the admin to approve this group in the dashboard.")
+          API.send_message(state.token, chat_id, I18n.t(:group_approval_required, state.lang))
           Druzhok.AllowedChat.mark_info_sent(state.instance_name, chat_id)
         end
 
@@ -427,12 +429,12 @@ defmodule Druzhok.Agent.Telegram do
     case Router.parse_command(text) do
       {:command, "reset"} when is_owner ->
         dispatch_session(chat_id, state, &PiCore.Session.reset/1)
-        API.send_message(state.token, chat_id, "Session reset!")
+        API.send_message(state.token, chat_id, I18n.t(:session_reset, state.lang))
         state
 
       {:command, "abort"} when is_owner ->
         dispatch_session(chat_id, state, &PiCore.Session.abort/1)
-        API.send_message(state.token, chat_id, "Aborted.")
+        API.send_message(state.token, chat_id, I18n.t(:aborted, state.lang))
         state
 
       {:command, "mode", arg} when is_owner ->
@@ -459,7 +461,7 @@ defmodule Druzhok.Agent.Telegram do
 
   defp process_group_message_always(chat_id, text, sender_name, file, is_triggered, chat, state) do
     {resolved_text, saved_file} = resolve_voice_or_file(text, file, chat_id, state)
-    {prompt, display} = build_group_prompt_with_intro("always", chat, resolved_text, sender_name, saved_file, is_triggered)
+    {prompt, display} = build_group_prompt_with_intro("always", chat, resolved_text, sender_name, saved_file, is_triggered, state.lang)
     emit(state, :user_message, %{text: display, sender: sender_name, chat_id: chat_id})
 
     if is_triggered do
@@ -473,7 +475,7 @@ defmodule Druzhok.Agent.Telegram do
   defp process_group_message_buffer(chat_id, text, sender_name, file, is_triggered, chat, state) do
     if is_triggered do
       {resolved_text, saved_file} = resolve_voice_or_file(text, file, chat_id, state)
-      {prompt, display} = build_group_prompt_with_intro("buffer", chat, resolved_text, sender_name, saved_file, true)
+      {prompt, display} = build_group_prompt_with_intro("buffer", chat, resolved_text, sender_name, saved_file, true, state.lang)
 
       emit(state, :user_message, %{text: display, sender: sender_name, chat_id: chat_id})
       API.send_chat_action(state.token, chat_id)
@@ -495,22 +497,23 @@ defmodule Druzhok.Agent.Telegram do
     case arg do
       mode when mode in ["buffer", "always"] ->
         Druzhok.AllowedChat.set_activation(state.instance_name, chat_id, mode)
-        label = if mode == "buffer", do: "buffer (respond only when addressed)", else: "always (see all messages)"
-        API.send_message(state.token, chat_id, "Mode: #{label}")
+        label_key = if mode == "buffer", do: :mode_buffer_label, else: :mode_always_label
+        label = I18n.t(label_key, state.lang)
+        API.send_message(state.token, chat_id, I18n.t(:mode_set, state.lang, %{label: label}))
         state
 
       _ ->
         chat = Druzhok.AllowedChat.get(state.instance_name, chat_id)
         current = (chat && chat.activation) || "buffer"
-        API.send_message(state.token, chat_id, "Current mode: #{current}\nUsage: /mode buffer | /mode always")
+        API.send_message(state.token, chat_id, I18n.t(:mode_help, state.lang, %{current: current}))
         state
     end
   end
 
   defp handle_prompt_command("", chat_id, state) do
     chat = Druzhok.AllowedChat.get(state.instance_name, chat_id)
-    current = (chat && chat.system_prompt) || "(not set)"
-    API.send_message(state.token, chat_id, "Current prompt: #{current}\nUsage: /prompt <text> to set, /prompt clear to remove")
+    current = (chat && chat.system_prompt) || I18n.t(:prompt_not_set, state.lang)
+    API.send_message(state.token, chat_id, I18n.t(:prompt_help, state.lang, %{current: current}))
     state
   end
 
@@ -519,7 +522,7 @@ defmodule Druzhok.Agent.Telegram do
       nil -> :ok
       chat -> Druzhok.AllowedChat.changeset(chat, %{system_prompt: nil}) |> Druzhok.Repo.update()
     end
-    API.send_message(state.token, chat_id, "Group prompt cleared.")
+    API.send_message(state.token, chat_id, I18n.t(:prompt_cleared, state.lang))
     state
   end
 
@@ -528,27 +531,27 @@ defmodule Druzhok.Agent.Telegram do
       nil -> :ok
       chat -> Druzhok.AllowedChat.changeset(chat, %{system_prompt: text}) |> Druzhok.Repo.update()
     end
-    API.send_message(state.token, chat_id, "Group prompt set: #{text}")
+    API.send_message(state.token, chat_id, I18n.t(:prompt_set, state.lang, %{text: text}))
     state
   end
 
-  defp group_intro("buffer", chat) do
-    base = "[Системная инструкция: Ты в групповом чате. Тебя вызвали по имени или ответом на твоё сообщение. Контекст недавних сообщений прикреплён ниже. Всегда отвечай — раз ты это видишь, значит к тебе обратились. Будь краток.]\n"
-    add_per_group_prompt(base, chat)
+  defp group_intro("buffer", chat, lang) do
+    base = I18n.t(:group_intro_buffer, lang)
+    add_per_group_prompt(base, chat, lang)
   end
 
-  defp group_intro("always", chat) do
-    base = "[Системная инструкция: Ты в групповом чате и видишь все сообщения. Если к тебе не обращаются и ты не можешь добавить ценности — ответь [NO_REPLY]. Не доминируй в разговоре.]\n"
-    add_per_group_prompt(base, chat)
+  defp group_intro("always", chat, lang) do
+    base = I18n.t(:group_intro_always, lang)
+    add_per_group_prompt(base, chat, lang)
   end
 
-  defp group_intro(_, chat), do: add_per_group_prompt("", chat)
+  defp group_intro(_, chat, lang), do: add_per_group_prompt("", chat, lang)
 
-  defp add_per_group_prompt(base, chat) do
+  defp add_per_group_prompt(base, chat, lang) do
     case chat && chat.system_prompt do
       nil -> base
       "" -> base
-      prompt -> base <> "[Инструкция для этого чата: #{prompt}]\n"
+      prompt -> base <> I18n.t(:group_custom_prompt, lang, %{prompt: prompt})
     end
   end
 
@@ -567,12 +570,12 @@ defmodule Druzhok.Agent.Telegram do
 
       {:command, "reset"} ->
         dispatch_session(chat_id, state, &PiCore.Session.reset/1)
-        API.send_message(state.token, chat_id, "Session reset!")
+        API.send_message(state.token, chat_id, I18n.t(:session_reset, state.lang))
         state
 
       {:command, "abort"} ->
         dispatch_session(chat_id, state, &PiCore.Session.abort/1)
-        API.send_message(state.token, chat_id, "Aborted.")
+        API.send_message(state.token, chat_id, I18n.t(:aborted, state.lang))
         state
 
       :text ->
@@ -631,29 +634,28 @@ defmodule Druzhok.Agent.Telegram do
     end
   end
 
-  defp build_prompt(text, _sender, nil), do: text
-  defp build_prompt("", _sender, file_path), do: "User sent a file: #{file_path}"
-  defp build_prompt(text, _sender, file_path), do: "#{text}\n\n[User attached a file: #{file_path}]"
+  defp build_prompt(text, _sender, nil, _lang \\ "ru"), do: text
+  defp build_prompt("", _sender, file_path, lang), do: I18n.t(:user_sent_file, lang, %{path: file_path})
+  defp build_prompt(text, _sender, file_path, lang), do: "#{text}\n\n" <> I18n.t(:file_attached, lang, %{path: file_path})
 
-  defp build_group_prompt_with_intro(mode, chat, resolved_text, sender_name, saved_file, is_triggered) do
+  defp build_group_prompt_with_intro(mode, chat, resolved_text, sender_name, saved_file, is_triggered, lang) do
     if is_list(resolved_text) do
-      # Multimodal content — prepend group context as text, keep image in content
       text_part = PiCore.Multimodal.to_text(resolved_text)
-      display = build_group_prompt(text_part, sender_name, saved_file, is_triggered)
-      context = group_intro(mode, chat) <> build_group_prompt("", sender_name, saved_file, is_triggered)
+      display = build_group_prompt(text_part, sender_name, saved_file, is_triggered, lang)
+      context = group_intro(mode, chat, lang) <> build_group_prompt("", sender_name, saved_file, is_triggered, lang)
       multimodal = [%{"type" => "text", "text" => context} | resolved_text]
       {multimodal, display}
     else
-      base_prompt = build_group_prompt(resolved_text, sender_name, saved_file, is_triggered)
-      prompt = group_intro(mode, chat) <> base_prompt
+      base_prompt = build_group_prompt(resolved_text, sender_name, saved_file, is_triggered, lang)
+      prompt = group_intro(mode, chat, lang) <> base_prompt
       {prompt, base_prompt}
     end
   end
 
-  defp build_group_prompt(text, sender_name, file, is_triggered) do
+  defp build_group_prompt(text, sender_name, file, is_triggered, lang \\ "ru") do
     base = "[#{sender_name}]: #{text}"
     base = if file, do: base <> "\n[attached: #{file}]", else: base
-    if is_triggered, do: base <> "\n[обращение к тебе — ответ обязателен]", else: base
+    if is_triggered, do: base <> "\n" <> I18n.t(:address_required, lang), else: base
   end
 
   defp dispatch_prompt(text, chat_id, group, state) do

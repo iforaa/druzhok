@@ -156,10 +156,13 @@ defmodule DruzhokWebWeb.DashboardLive do
       :error -> 0
     end
 
+    language = params["language"] || "ru"
+
     changes = %{
       daily_token_limit: token_limit,
       dream_hour: dream_hour,
-      heartbeat_interval: heartbeat
+      heartbeat_interval: heartbeat,
+      language: language
     }
 
     # Model change needs special handling (updates running session)
@@ -593,6 +596,14 @@ defmodule DruzhokWebWeb.DashboardLive do
                   <%= for h <- 0..23 do %>
                     <option value={h} selected={selected_field(@instances, @selected, :dream_hour) == h}><%= String.pad_leading("#{h}", 2, "0") %>:00</option>
                   <% end %>
+                </select>
+              </div>
+
+              <div class="flex items-center gap-1">
+                <span class="text-[10px] text-gray-400">Lang</span>
+                <select name="language" class="border border-gray-300 rounded-lg px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-gray-900">
+                  <option value="ru" selected={selected_field(@instances, @selected, :language) == "ru" or is_nil(selected_field(@instances, @selected, :language))}>RU</option>
+                  <option value="en" selected={selected_field(@instances, @selected, :language) == "en"}>EN</option>
                 </select>
               </div>
 

@@ -65,7 +65,8 @@ defmodule DruzhokWebWeb.ChatChannel do
   def handle_info({:pi_response, _}, socket), do: {:noreply, socket}
 
   def handle_info({:pi_tool_status, tool_name, chat_id}, socket) do
-    status = Druzhok.Agent.ToolStatus.status_text(tool_name)
+    lang = Druzhok.I18n.lang(socket.assigns[:instance_name])
+    status = Druzhok.Agent.ToolStatus.status_text(tool_name, lang)
     push(socket, "tool_status", %{tool: tool_name, status: status, chat_id: chat_id})
     {:noreply, socket}
   end
