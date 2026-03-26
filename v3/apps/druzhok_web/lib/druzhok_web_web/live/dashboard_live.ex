@@ -600,25 +600,14 @@ defmodule DruzhokWebWeb.DashboardLive do
               </div>
 
               <div class="flex items-center gap-1">
-                <span class="text-[10px] text-gray-400">Lang</span>
-                <select name="language" class="border border-gray-300 rounded-lg px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-gray-900">
-                  <option value="ru" selected={selected_field(@instances, @selected, :language) == "ru" or is_nil(selected_field(@instances, @selected, :language))}>RU</option>
-                  <option value="en" selected={selected_field(@instances, @selected, :language) == "en"}>EN</option>
+                <select name="language" class="border border-gray-300 rounded-lg px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-gray-900" title="System messages language">
+                  <option value="ru" selected={selected_field(@instances, @selected, :language) == "ru" or is_nil(selected_field(@instances, @selected, :language))}>🇷🇺</option>
+                  <option value="en" selected={selected_field(@instances, @selected, :language) == "en"}>🇬🇧</option>
                 </select>
               </div>
 
             </form>
 
-            <form phx-change="translate_workspace" class="flex items-center gap-1">
-              <input type="hidden" name="name" value={@selected} />
-              <span class="text-[10px] text-gray-400">Lang</span>
-              <select name="lang" class={"border border-gray-300 rounded-lg px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-gray-900 #{if @translating, do: "opacity-50"}"} disabled={@translating}>
-                <option value="">—</option>
-                <option value="ru">RU</option>
-                <option value="en">EN</option>
-              </select>
-            </form>
-            <span :if={@translating} class="text-xs text-amber-500 animate-pulse">Translating...</span>
 
             <button phx-click="stop" phx-value-name={@selected}
                     class="text-xs text-red-500 hover:text-red-700 transition font-medium">
