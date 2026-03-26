@@ -12,13 +12,14 @@ defmodule Druzhok.Model do
     field :context_window, :integer, default: 32_000
     field :supports_reasoning, :boolean, default: false
     field :supports_tools, :boolean, default: true
+    field :supports_vision, :boolean, default: false
 
     timestamps()
   end
 
   def changeset(model, attrs) do
     model
-    |> cast(attrs, [:model_id, :label, :provider, :position, :context_window, :supports_reasoning, :supports_tools])
+    |> cast(attrs, [:model_id, :label, :provider, :position, :context_window, :supports_reasoning, :supports_tools, :supports_vision])
     |> validate_required([:model_id, :label])
     |> unique_constraint(:model_id)
   end

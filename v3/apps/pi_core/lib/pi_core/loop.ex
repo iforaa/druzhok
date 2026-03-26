@@ -48,6 +48,13 @@ defmodule PiCore.Loop do
             else: base
       end)
 
+    # Strip images if model doesn't support vision
+    llm_messages = if supports_vision?(opts) do
+      llm_messages
+    else
+      strip_images(llm_messages)
+    end
+
     emit(opts, %{type: :llm_start, iteration: iterations, message_count: length(llm_messages)})
     t0 = System.monotonic_time(:millisecond)
 
@@ -202,5 +209,30 @@ defmodule PiCore.Loop do
     end)
 
     Enum.join(parts ++ msg_parts, "\n\n")
+  end
+
+  defp supports_vision?(opts) do
+    case opts[:model_info_fn] do
+      nil -> true
+      fn_ref -> fn_ref.(:supports_vision, opts[:model])
+    end
+  rescue
+    _ -> true
+  end
+
+  defp strip_images(messages) do
+    Enum.map(messages, fn msg ->
+      content = msg[:content]
+      if is_list(content) do
+        stripped = Enum.map(content, fn
+          %{"type" => "image_url"} -> %{"type" => "text", "text" => "[image — this model cannot view images]"}
+          %{type: "image_url"} -> %{type: "text", text: "[image — this model cannot view images]"}
+          block -> block
+        end)
+        %{msg | content: stripped}
+      else
+        msg
+      end
+    end)
   end
 end

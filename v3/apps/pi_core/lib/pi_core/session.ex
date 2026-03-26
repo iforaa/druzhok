@@ -406,6 +406,7 @@ defmodule PiCore.Session do
       tool_context: Map.merge(state.extra_tool_context, %{workspace: state.workspace, instance_name: state.instance_name, chat_id: state.chat_id}),
       llm_fn: llm_fn,
       model: state.model,
+      model_info_fn: state.model_info_fn,
       on_delta: wrapped_on_delta,
       on_event: state.on_event,
       budget: state.budget

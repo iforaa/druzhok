@@ -128,6 +128,7 @@ defmodule Druzhok.Instance.Sup do
           :context_window -> Druzhok.ModelInfo.context_window(model_name)
           :supports_reasoning -> Druzhok.ModelInfo.supports_reasoning?(model_name)
           :supports_tools -> Druzhok.ModelInfo.supports_tools?(model_name)
+          :supports_vision -> Druzhok.ModelInfo.supports_vision?(model_name)
         end
       end,
     })

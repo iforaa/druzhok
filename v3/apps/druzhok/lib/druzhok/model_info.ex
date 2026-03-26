@@ -27,6 +27,13 @@ defmodule Druzhok.ModelInfo do
     end
   end
 
+  def supports_vision?(model_name) do
+    case lookup(model_name) do
+      nil -> false
+      model -> model.supports_vision || false
+    end
+  end
+
   defp lookup(model_name) do
     stripped = PiCore.ModelInfo.strip_provider(model_name)
     case Druzhok.Repo.get_by(Druzhok.Model, model_id: model_name) do
