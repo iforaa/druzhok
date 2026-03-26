@@ -12,6 +12,9 @@ defmodule DruzhokWebWeb.ChatChannel do
 
   @impl true
   def handle_in("message", %{"text" => text, "chat_id" => chat_id}, socket) do
+    Druzhok.Events.broadcast(socket.assigns.instance_name, %{
+      type: :user_message, text: text, sender: "app:#{chat_id}", chat_id: chat_id
+    })
     dispatch_prompt(socket.assigns.instance_name, chat_id, text)
     {:noreply, socket}
   end
@@ -45,18 +48,28 @@ defmodule DruzhokWebWeb.ChatChannel do
     {:noreply, socket}
   end
 
-  def handle_info({:pi_response, %{text: text} = payload}, socket)
-      when is_binary(text) and text != "" do
-    push(socket, "response", payload)
+  def handle_info({:pi_response, %{error: true, text: text} = payload}, socket) do
+    push(socket, "error", %{text: text, chat_id: payload[:chat_id]})
     {:noreply, socket}
   end
 
-  def handle_info({:pi_response, %{error: true, text: text}}, socket) do
-    push(socket, "error", %{text: text})
+  def handle_info({:pi_response, %{text: text} = payload}, socket)
+      when is_binary(text) and text != "" do
+    Druzhok.Events.broadcast(socket.assigns.instance_name, %{
+      type: :agent_reply, text: text, chat_id: payload[:chat_id]
+    })
+    push(socket, "response", %{text: text, chat_id: payload[:chat_id]})
     {:noreply, socket}
   end
 
   def handle_info({:pi_response, _}, socket), do: {:noreply, socket}
+
+  def handle_info({:pi_tool_status, tool_name, chat_id}, socket) do
+    status = Druzhok.Agent.ToolStatus.status_text(tool_name)
+    push(socket, "tool_status", %{tool: tool_name, status: status, chat_id: chat_id})
+    {:noreply, socket}
+  end
+
   def handle_info(_msg, socket), do: {:noreply, socket}
 
   defp dispatch_prompt(instance_name, chat_id, text) do

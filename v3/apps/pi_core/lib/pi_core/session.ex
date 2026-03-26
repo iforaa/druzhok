@@ -234,6 +234,14 @@ defmodule PiCore.Session do
   end
 
 
+  def handle_info({:pi_tool_status, tool_name}, state) do
+    pid = response_target(state)
+    if pid && pid != self() do
+      send(pid, {:pi_tool_status, tool_name, state.chat_id})
+    end
+    {:noreply, state}
+  end
+
   def handle_info(:idle_timeout, state) do
     {:stop, :normal, state}
   end

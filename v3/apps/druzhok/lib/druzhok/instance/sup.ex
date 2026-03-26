@@ -31,6 +31,13 @@ defmodule Druzhok.Instance.Sup do
 
     on_event = fn event ->
       Druzhok.Events.broadcast(name, event)
+      if event[:type] == :tool_call do
+        tool_name = event[:name]
+        case Registry.lookup(Druzhok.Registry, {name, :telegram}) do
+          [{pid, _}] -> send(pid, {:pi_tool_status, tool_name})
+          [] -> :ok
+        end
+      end
     end
 
     make_send_fn = fn api_fn ->
@@ -111,12 +118,17 @@ defmodule Druzhok.Instance.Sup do
       _ -> []
     end
 
-    children = [
-      {Druzhok.Agent.Telegram, %{
+    telegram_children = if config.token do
+      [{Druzhok.Agent.Telegram, %{
         token: config.token,
         instance_name: name,
         registry_name: {:via, Registry, {Druzhok.Registry, {name, :telegram}}},
-      }},
+      }}]
+    else
+      []
+    end
+
+    children = telegram_children ++ [
       {Druzhok.Instance.SessionSup, %{
         registry_name: {:via, Registry, {Druzhok.Registry, {name, :session_sup}}},
       }},
