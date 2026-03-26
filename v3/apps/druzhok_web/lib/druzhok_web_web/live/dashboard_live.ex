@@ -139,11 +139,7 @@ defmodule DruzhokWebWeb.DashboardLive do
     end
   end
 
-  def handle_event("settings_changed", _params, socket) do
-    {:noreply, assign(socket, settings_dirty: true)}
-  end
-
-  def handle_event("save_settings", params, socket) do
+  def handle_event("settings_changed", params, socket) do
     name = params["name"]
 
     # Model
@@ -169,7 +165,7 @@ defmodule DruzhokWebWeb.DashboardLive do
     end
     update_instance_field(name, %{dream_hour: dream_hour})
 
-    {:noreply, assign(socket, instances: list_instances(), settings_dirty: false)}
+    {:noreply, assign(socket, instances: list_instances())}
   end
 
   def handle_event("stop", %{"name" => name}, socket) do
@@ -558,7 +554,7 @@ defmodule DruzhokWebWeb.DashboardLive do
             <% sb = selected_field(@instances, @selected, :sandbox) || "local" %>
             <span class={"px-2 py-0.5 rounded text-[10px] font-medium #{if sb == "docker", do: "bg-blue-100 text-blue-700", else: "bg-gray-100 text-gray-500"}"}><%= sb %></span>
 
-            <form phx-change="settings_changed" phx-submit="save_settings" class="flex items-center gap-4">
+            <form phx-change="settings_changed" class="flex items-center gap-4">
               <input type="hidden" name="name" value={@selected} />
 
               <select name="model" class="border border-gray-300 rounded-lg px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-gray-900">
@@ -594,10 +590,6 @@ defmodule DruzhokWebWeb.DashboardLive do
                 </select>
               </div>
 
-              <button :if={@settings_dirty} type="submit"
-                      class="px-3 py-1 bg-gray-900 text-white text-xs rounded-lg hover:bg-gray-800 transition font-medium">
-                Save
-              </button>
             </form>
 
             <form phx-change="translate_workspace" class="flex items-center gap-1">
