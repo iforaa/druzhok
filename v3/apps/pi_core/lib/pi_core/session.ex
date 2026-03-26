@@ -407,6 +407,7 @@ defmodule PiCore.Session do
       llm_fn: llm_fn,
       model: state.model,
       model_info_fn: state.model_info_fn,
+      image_describe_fn: (state.extra_tool_context || %{})[:image_describe_fn],
       on_delta: wrapped_on_delta,
       on_event: state.on_event,
       budget: state.budget

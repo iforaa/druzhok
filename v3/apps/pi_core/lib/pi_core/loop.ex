@@ -48,11 +48,11 @@ defmodule PiCore.Loop do
             else: base
       end)
 
-    # Strip images if model doesn't support vision
+    # Strip images if model doesn't support vision (describe via vision model if available)
     llm_messages = if supports_vision?(opts) do
       llm_messages
     else
-      strip_images(llm_messages)
+      strip_images(llm_messages, opts[:image_describe_fn])
     end
 
     emit(opts, %{type: :llm_start, iteration: iterations, message_count: length(llm_messages)})
@@ -220,13 +220,15 @@ defmodule PiCore.Loop do
     _ -> true
   end
 
-  defp strip_images(messages) do
+  defp strip_images(messages, describe_fn) do
     Enum.map(messages, fn msg ->
       content = msg[:content]
       if is_list(content) do
         stripped = Enum.map(content, fn
-          %{"type" => "image_url"} -> %{"type" => "text", "text" => "[image — this model cannot view images]"}
-          %{type: "image_url"} -> %{type: "text", text: "[image — this model cannot view images]"}
+          %{"type" => "image_url", "image_url" => %{"url" => url}} = block ->
+            describe_image_block(url, describe_fn, block)
+          %{type: "image_url", image_url: %{url: url}} = block ->
+            describe_image_block(url, describe_fn, block)
           block -> block
         end)
         %{msg | content: stripped}
@@ -234,5 +236,15 @@ defmodule PiCore.Loop do
         msg
       end
     end)
+  end
+
+  defp describe_image_block(url, describe_fn, _original) when is_function(describe_fn) do
+    case describe_fn.(url) do
+      {:ok, description} -> %{"type" => "text", "text" => "[Image description: #{description}]"}
+      _ -> %{"type" => "text", "text" => "[image — could not describe]"}
+    end
+  end
+  defp describe_image_block(_url, _nil_fn, _original) do
+    %{"type" => "text", "text" => "[image — this model cannot view images]"}
   end
 end
