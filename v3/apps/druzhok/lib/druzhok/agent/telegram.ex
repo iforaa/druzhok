@@ -482,7 +482,8 @@ defmodule Druzhok.Agent.Telegram do
     else
       # Persist to session without triggering LLM
       file_ref = if file, do: "[#{file.name || "file"}]", else: nil
-      msg_text = build_group_prompt(text, sender_name, file_ref, false)
+      plain_text = if is_list(text), do: PiCore.Multimodal.to_text(text), else: text
+      msg_text = build_group_prompt(plain_text, sender_name, file_ref, false)
       persist_group_message(state.instance_name, chat_id, msg_text, state)
 
       emit(state, :user_message, %{text: "[#{sender_name}]: #{text}", sender: sender_name, chat_id: chat_id})

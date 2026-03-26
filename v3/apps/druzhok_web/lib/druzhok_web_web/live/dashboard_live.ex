@@ -54,8 +54,7 @@ defmodule DruzhokWebWeb.DashboardLive do
       usage_requests: [],
       usage_summary: [],
       tool_stats: [],
-      expanded_request: nil,
-      settings_dirty: false
+      expanded_request: nil
     )}
   end
 
@@ -142,28 +141,35 @@ defmodule DruzhokWebWeb.DashboardLive do
   def handle_event("settings_changed", params, socket) do
     name = params["name"]
 
-    # Model
-    if params["model"], do: Druzhok.InstanceManager.update_model(name, params["model"])
-
-    # Heartbeat
-    if params["heartbeat"] do
-      minutes = String.to_integer(params["heartbeat"])
-      Druzhok.InstanceManager.update_heartbeat(name, minutes)
-    end
-
-    # Token limit
     token_limit = case Integer.parse(params["token_limit"] || "0") do
       {n, _} -> max(n, 0)
       :error -> 0
     end
-    update_instance_field(name, %{daily_token_limit: token_limit})
 
-    # Dream hour
     dream_hour = case Integer.parse(params["dream_hour"] || "-1") do
       {n, _} -> n
       :error -> -1
     end
-    update_instance_field(name, %{dream_hour: dream_hour})
+
+    heartbeat = case Integer.parse(params["heartbeat"] || "0") do
+      {n, _} -> n
+      :error -> 0
+    end
+
+    changes = %{
+      daily_token_limit: token_limit,
+      dream_hour: dream_hour,
+      heartbeat_interval: heartbeat
+    }
+
+    # Model change needs special handling (updates running session)
+    if params["model"], do: Druzhok.InstanceManager.update_model(name, params["model"])
+
+    # Heartbeat change needs special handling (updates scheduler timer)
+    if params["heartbeat"], do: Druzhok.InstanceManager.update_heartbeat(name, heartbeat)
+
+    # All other fields in one DB write
+    update_instance_field(name, changes)
 
     {:noreply, assign(socket, instances: list_instances())}
   end
