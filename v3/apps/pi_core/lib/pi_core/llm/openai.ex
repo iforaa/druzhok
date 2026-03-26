@@ -86,10 +86,11 @@ defmodule PiCore.LLM.OpenAI do
   end
 
   defp process_stream_event(event, result, tc_asm, on_delta) do
-    # Parse usage from final chunk
+    # Parse usage from final chunk (includes cache info for OpenAI/OpenRouter)
     result = case event["usage"] do
-      %{"prompt_tokens" => input, "completion_tokens" => output} ->
-        %{result | input_tokens: input, output_tokens: output}
+      %{"prompt_tokens" => input, "completion_tokens" => output} = usage ->
+        cached = get_in(usage, ["prompt_tokens_details", "cached_tokens"]) || 0
+        %{result | input_tokens: input, output_tokens: output, cache_read_tokens: cached}
       _ -> result
     end
 
@@ -151,12 +152,14 @@ defmodule PiCore.LLM.OpenAI do
         choice = hd(data["choices"])
         message = choice["message"]
         usage = data["usage"] || %{}
+        cached = get_in(usage, ["prompt_tokens_details", "cached_tokens"]) || 0
         {:ok, %Result{
           content: message["content"] || "",
           tool_calls: message["tool_calls"] || [],
           reasoning: message["reasoning_content"] || "",
           input_tokens: usage["prompt_tokens"] || 0,
-          output_tokens: usage["completion_tokens"] || 0
+          output_tokens: usage["completion_tokens"] || 0,
+          cache_read_tokens: cached
         }}
 
       {:ok, %{status: status, body: body}} ->
