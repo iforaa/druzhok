@@ -35,6 +35,11 @@ defmodule PiCore.Session do
     GenServer.cast(pid, {:prompt_heartbeat, text})
   end
 
+  @doc "Append a user message to history without triggering LLM. For non-triggered group messages."
+  def push_message(pid, text) do
+    GenServer.cast(pid, {:push_message, text})
+  end
+
   def abort(pid) do
     GenServer.cast(pid, :abort)
   end
@@ -106,6 +111,14 @@ defmodule PiCore.Session do
 
   def handle_cast({:prompt_heartbeat, text}, state) do
     do_prompt(text, state, heartbeat: true)
+  end
+
+  def handle_cast({:push_message, text}, state) do
+    state = schedule_idle_timeout(state)
+    user_msg = %Loop.Message{role: "user", content: text, timestamp: System.os_time(:millisecond)}
+    state = %{state | messages: state.messages ++ [user_msg]}
+    if state.chat_id, do: SessionStore.append_many(state.workspace, state.chat_id, [user_msg])
+    {:noreply, state}
   end
 
   def handle_cast({:set_caller, pid}, state) do
