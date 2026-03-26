@@ -61,6 +61,7 @@ defmodule PiCore.LLM.Anthropic do
       |> case do
         {:ok, acc} -> {:ok, finalize_stream_result(acc)}
         {:error, reason} -> {:error, reason}
+        {:error, reason, _acc} -> {:error, reason}
       end
     catch
       {:http_error, status} -> {:error, "HTTP error: #{status}"}

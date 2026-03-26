@@ -75,6 +75,7 @@ defmodule PiCore.LLM.OpenAI do
           result = if tool_calls != [], do: %{result | tool_calls: tool_calls}, else: result
           {:ok, result}
         {:error, reason} -> {:error, reason}
+        {:error, reason, _acc} -> {:error, reason}
       end
     catch
       {:http_error, status} -> {:error, "HTTP error: #{status}"}
