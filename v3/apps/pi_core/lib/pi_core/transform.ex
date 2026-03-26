@@ -58,12 +58,36 @@ defmodule PiCore.Transform do
     result
   end
 
+  @tool_result_keep_recent 4
+  @tool_result_max_old_chars 200
+
+  def truncate_old_tool_results(messages) do
+    len = length(messages)
+    cutoff = max(len - @tool_result_keep_recent, 0)
+
+    Enum.with_index(messages, fn msg, idx ->
+      if msg.role == "toolResult" && idx < cutoff do
+        content = safe_content(msg.content) || ""
+        if byte_size(content) > @tool_result_max_old_chars do
+          truncated = String.slice(content, 0, @tool_result_max_old_chars) <>
+            "\n... [truncated, was #{byte_size(content)} bytes]"
+          %{msg | content: truncated}
+        else
+          msg
+        end
+      else
+        msg
+      end
+    end)
+  end
+
   defp safe_content(content) when is_list(content), do: PiCore.Multimodal.to_text(content)
   defp safe_content(content), do: content
 
-  @doc "Apply all transforms: reasoning strip then tool result compaction."
+  @doc "Apply all transforms: truncate old tool results, strip reasoning, then compact."
   def transform_messages(messages, %TokenBudget{} = budget, current_iteration_start) do
     messages
+    |> truncate_old_tool_results()
     |> strip_reasoning()
     |> compact_tool_results(budget, current_iteration_start)
   end
