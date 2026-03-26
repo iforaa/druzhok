@@ -18,7 +18,10 @@ defmodule Druzhok.ToolExecution do
       case %__MODULE__{}
            |> Ecto.Changeset.cast(attrs, [:instance_name, :tool_name, :elapsed_ms, :is_error, :output_size])
            |> Druzhok.Repo.insert() do
-        {:ok, _} -> :ok
+        {:ok, _} ->
+          counter = :persistent_term.get(:tool_exec_counter, 0) + 1
+          :persistent_term.put(:tool_exec_counter, counter)
+          if rem(counter, 1000) == 0, do: cleanup_old()
         {:error, changeset} ->
           Logger.warning("ToolExecution.log failed: #{inspect(changeset.errors)}")
       end
@@ -51,5 +54,11 @@ defmodule Druzhok.ToolExecution do
       limit: ^limit
     )
     |> Druzhok.Repo.all()
+  end
+
+  def cleanup_old do
+    cutoff = DateTime.utc_now() |> DateTime.add(-30, :day)
+    from(t in __MODULE__, where: t.inserted_at < ^cutoff)
+    |> Druzhok.Repo.delete_all()
   end
 end
