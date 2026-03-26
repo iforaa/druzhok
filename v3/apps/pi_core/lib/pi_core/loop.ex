@@ -68,12 +68,21 @@ defmodule PiCore.Loop do
         content_len = String.length(result.content || "")
 
         tool_calls_count = if has_tools, do: length(result.tool_calls), else: 0
-        last_user = all_messages |> Enum.reverse() |> Enum.find(&(&1.role == "user" || &1[:role] == "user"))
-        prompt_preview = case last_user do
-          %{content: c} when is_binary(c) -> String.slice(c, 0, 2000)
-          %{"content" => c} when is_binary(c) -> String.slice(c, 0, 2000)
-          _ -> ""
-        end
+        sys_prompt = opts.system_prompt || ""
+        msg_count = length(llm_messages)
+        last_user_content = Enum.reduce(all_messages, "", fn msg, acc ->
+          role = msg.role || msg[:role] || msg["role"]
+          content = msg.content || msg[:content] || msg["content"]
+          if role == "user" && is_binary(content), do: content, else: acc
+        end)
+        prompt_preview = """
+        [System: #{div(byte_size(sys_prompt), 4)} tokens, #{msg_count} messages]
+        ---
+        #{String.slice(sys_prompt, 0, 500)}
+        ---
+        [Last user message]
+        #{String.slice(last_user_content, 0, 1000)}
+        """ |> String.slice(0, 2000)
         emit(opts, %{type: :llm_done, iteration: iterations, elapsed_ms: elapsed,
                      has_tool_calls: has_tools, tool_calls_count: tool_calls_count,
                      content_length: content_len,
