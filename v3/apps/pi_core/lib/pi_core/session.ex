@@ -69,7 +69,8 @@ defmodule PiCore.Session do
 
     budget = PiCore.TokenBudget.compute(context_window)
 
-    system_prompt = build_system_prompt(loader, opts.workspace, group, budget, opts.model)
+    extra_ctx = opts[:extra_tool_context] || %{}
+    system_prompt = build_system_prompt(loader, opts.workspace, group, budget, opts.model, extra_ctx)
 
     state = %__MODULE__{
       workspace: opts.workspace,
@@ -140,7 +141,7 @@ defmodule PiCore.Session do
     end
 
     budget = PiCore.TokenBudget.compute(context_window)
-    system_prompt = build_system_prompt(state.workspace_loader, state.workspace, state.group, budget, model)
+    system_prompt = build_system_prompt(state.workspace_loader, state.workspace, state.group, budget, model, state.extra_tool_context)
 
     state = %{state | model: model, system_prompt: system_prompt, budget: budget}
     state = if opts[:provider], do: %{state | provider: opts[:provider]}, else: state
@@ -471,7 +472,7 @@ defmodule PiCore.Session do
     ]
   end
 
-  defp build_system_prompt(loader, workspace, group, budget, model) do
+  defp build_system_prompt(loader, workspace, group, budget, model, extra_tool_context \\ %{}) do
     skills = PiCore.Skills.Loader.load(workspace)
 
     {prompt, _tokens} = PiCore.PromptBudget.build(workspace, %{
@@ -488,7 +489,9 @@ defmodule PiCore.Session do
       prompt
     end
 
-    append_model_info(prompt, model)
+    prompt = append_model_info(prompt, model)
+    runtime_fn = extra_tool_context[:runtime_info_fn]
+    if runtime_fn, do: prompt <> "\n\n" <> runtime_fn.(), else: prompt
   end
 
   defp append_model_info(prompt, model) do

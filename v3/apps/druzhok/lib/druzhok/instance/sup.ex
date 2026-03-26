@@ -117,7 +117,10 @@ defmodule Druzhok.Instance.Sup do
         compaction_model: Druzhok.Settings.get("compaction_model"),
         compaction_api_url: Druzhok.Settings.get("compaction_api_url"),
         compaction_api_key: Druzhok.Settings.get("compaction_api_key"),
-        image_generation_enabled: Druzhok.Settings.get("image_generation_enabled") == "true"
+        image_generation_enabled: Druzhok.Settings.get("image_generation_enabled") == "true",
+        runtime_info_fn: fn ->
+          Druzhok.TokenBudget.runtime_section(name, config.model, config[:sandbox] || "local")
+        end
       },
       model_info_fn: fn action, model_name ->
         case action do
