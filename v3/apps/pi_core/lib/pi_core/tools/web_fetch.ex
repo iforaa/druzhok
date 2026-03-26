@@ -10,7 +10,7 @@ defmodule PiCore.Tools.WebFetch do
   def new do
     %Tool{
       name: "web_fetch",
-      description: "Fetch a URL and extract readable text content. Returns clean text from web pages (HTML→text via Readability), or raw content for RSS/JSON/plain text. Use this instead of curl for reading web content. Set direct=true to bypass VPN for Russian services (Yandex, 2GIS, etc.) that block foreign IPs.",
+      description: "Fetch a URL and extract readable text content. Returns clean text from web pages (HTML→text via Readability), or raw content for RSS/JSON/plain text. Large content (>2KB) is truncated to a preview — use bash with curl + grep/python for targeted extraction of large pages. Set direct=true to bypass VPN for Russian services.",
       parameters: %{
         url: %{type: :string, description: "URL to fetch (http or https)"},
         direct: %{type: :boolean, description: "Bypass VPN for Russian services (default: false)", required: false}
