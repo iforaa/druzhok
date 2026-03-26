@@ -68,12 +68,20 @@ defmodule PiCore.Loop do
         content_len = String.length(result.content || "")
 
         tool_calls_count = if has_tools, do: length(result.tool_calls), else: 0
+        last_user = all_messages |> Enum.reverse() |> Enum.find(&(&1.role == "user" || &1[:role] == "user"))
+        prompt_preview = case last_user do
+          %{content: c} when is_binary(c) -> String.slice(c, 0, 2000)
+          %{"content" => c} when is_binary(c) -> String.slice(c, 0, 2000)
+          _ -> ""
+        end
         emit(opts, %{type: :llm_done, iteration: iterations, elapsed_ms: elapsed,
                      has_tool_calls: has_tools, tool_calls_count: tool_calls_count,
                      content_length: content_len,
                      reasoning_length: String.length(result.reasoning || ""),
                      input_tokens: result.input_tokens, output_tokens: result.output_tokens,
-                     model: opts[:model]})
+                     model: opts[:model],
+                     prompt_preview: prompt_preview,
+                     response_preview: String.slice(result.content || "", 0, 2000)})
 
         assistant_msg = %Message{
           role: "assistant",
@@ -141,7 +149,7 @@ defmodule PiCore.Loop do
         end
 
       elapsed = System.monotonic_time(:millisecond) - t0
-      emit(opts, %{type: :tool_exec, name: tool_name, elapsed_ms: elapsed, is_error: is_error, output_size: byte_size(content || "")})
+      emit(opts, %{type: :tool_exec, name: tool_name, elapsed_ms: elapsed, is_error: is_error, output_size: byte_size(content)})
 
       %Message{
         role: "toolResult",

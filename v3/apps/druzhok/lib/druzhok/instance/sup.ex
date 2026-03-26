@@ -47,7 +47,9 @@ defmodule Druzhok.Instance.Sup do
             output_tokens: event[:output_tokens] || 0,
             tool_calls_count: event[:tool_calls_count] || 0,
             elapsed_ms: event[:elapsed_ms],
-            iteration: event[:iteration]
+            iteration: event[:iteration],
+            prompt_preview: event[:prompt_preview],
+            response_preview: event[:response_preview]
           })
 
         :tool_exec ->

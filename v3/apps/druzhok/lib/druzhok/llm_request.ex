@@ -11,6 +11,8 @@ defmodule Druzhok.LlmRequest do
     field :tool_calls_count, :integer, default: 0
     field :elapsed_ms, :integer
     field :iteration, :integer, default: 0
+    field :prompt_preview, :string
+    field :response_preview, :string
 
     timestamps(updated_at: false)
   end
@@ -20,7 +22,7 @@ defmodule Druzhok.LlmRequest do
   def log(attrs) do
     Task.start(fn ->
       case %__MODULE__{}
-           |> Ecto.Changeset.cast(attrs, [:instance_name, :chat_id, :model, :input_tokens, :output_tokens, :tool_calls_count, :elapsed_ms, :iteration])
+           |> Ecto.Changeset.cast(attrs, [:instance_name, :chat_id, :model, :input_tokens, :output_tokens, :tool_calls_count, :elapsed_ms, :iteration, :prompt_preview, :response_preview])
            |> Druzhok.Repo.insert() do
         {:ok, _} ->
           counter = :persistent_term.get(:llm_request_counter, 0) + 1

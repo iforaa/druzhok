@@ -5,6 +5,7 @@ defmodule DruzhokWebWeb.Live.Components.UsageTab do
   attr :summary, :list, required: true
   attr :tool_stats, :list, required: true
   attr :instance_name, :string, required: true
+  attr :expanded_request, :any, default: nil
 
   def usage_tab(assigns) do
     ~H"""
@@ -69,7 +70,8 @@ defmodule DruzhokWebWeb.Live.Components.UsageTab do
           </thead>
           <tbody>
             <%= for req <- @requests do %>
-              <tr class="border-b border-gray-100 hover:bg-gray-50">
+              <tr phx-click="toggle_request" phx-value-id={req.id}
+                  class={"border-b border-gray-100 cursor-pointer transition #{if @expanded_request == req.id, do: "bg-blue-50", else: "hover:bg-gray-50"}"}>
                 <td class="px-3 py-2 text-xs text-gray-500 font-mono"><%= format_time(req.inserted_at) %></td>
                 <td class="px-3 py-2 font-mono text-xs truncate max-w-[200px]"><%= short_model(req.model) %></td>
                 <td class="px-3 py-2 text-right text-blue-600 font-mono"><%= format_number(req.input_tokens) %></td>
@@ -77,6 +79,22 @@ defmodule DruzhokWebWeb.Live.Components.UsageTab do
                 <td class="px-3 py-2 text-right font-mono font-medium"><%= format_number((req.input_tokens || 0) + (req.output_tokens || 0)) %></td>
                 <td class="px-3 py-2 text-right"><%= if req.tool_calls_count > 0, do: req.tool_calls_count, else: "-" %></td>
                 <td class="px-3 py-2 text-right text-gray-500 font-mono text-xs"><%= format_elapsed(req.elapsed_ms) %></td>
+              </tr>
+              <tr :if={@expanded_request == req.id} class="border-b border-gray-200">
+                <td colspan="7" class="px-3 py-3">
+                  <div class="space-y-3">
+                    <div :if={req.prompt_preview && req.prompt_preview != ""}>
+                      <div class="text-xs font-medium text-gray-500 uppercase mb-1">Prompt</div>
+                      <pre class="text-xs bg-gray-50 rounded p-3 overflow-x-auto whitespace-pre-wrap max-h-48 overflow-y-auto border border-gray-200"><%= req.prompt_preview %></pre>
+                    </div>
+                    <div :if={req.response_preview && req.response_preview != ""}>
+                      <div class="text-xs font-medium text-gray-500 uppercase mb-1">Response</div>
+                      <pre class="text-xs bg-gray-50 rounded p-3 overflow-x-auto whitespace-pre-wrap max-h-48 overflow-y-auto border border-gray-200"><%= req.response_preview %></pre>
+                    </div>
+                    <div :if={(!req.prompt_preview || req.prompt_preview == "") && (!req.response_preview || req.response_preview == "")}
+                         class="text-xs text-gray-400 italic">No preview available (recorded before preview tracking was enabled)</div>
+                  </div>
+                </td>
               </tr>
             <% end %>
           </tbody>

@@ -53,7 +53,8 @@ defmodule DruzhokWebWeb.DashboardLive do
       file_saved: false,
       usage_requests: [],
       usage_summary: [],
-      tool_stats: []
+      tool_stats: [],
+      expanded_request: nil
     )}
   end
 
@@ -193,6 +194,12 @@ defmodule DruzhokWebWeb.DashboardLive do
 
   def handle_event("clear_events", _, socket) do
     {:noreply, assign(socket, events: [])}
+  end
+
+  def handle_event("toggle_request", %{"id" => id}, socket) do
+    id = String.to_integer(id)
+    expanded = if socket.assigns.expanded_request == id, do: nil, else: id
+    {:noreply, assign(socket, expanded_request: expanded)}
   end
 
   def handle_event("view_file", %{"path" => path, "is_dir" => "true"}, socket) do
@@ -607,7 +614,7 @@ defmodule DruzhokWebWeb.DashboardLive do
             <.skills_tab :if={@tab == :skills} skills={@skills} instance_name={@selected} editing_skill={@editing_skill} />
 
             <%!-- Usage tab --%>
-            <.usage_tab :if={@tab == :usage} requests={@usage_requests} summary={@usage_summary} tool_stats={@tool_stats} instance_name={@selected} />
+            <.usage_tab :if={@tab == :usage} requests={@usage_requests} summary={@usage_summary} tool_stats={@tool_stats} instance_name={@selected} expanded_request={@expanded_request} />
 
             <%!-- Errors tab --%>
             <.errors_tab :if={@tab == :errors} errors={@instance_errors} instance_name={@selected} expanded={@expanded_error} />
