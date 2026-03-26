@@ -158,6 +158,15 @@ defmodule DruzhokWebWeb.DashboardLive do
     {:noreply, assign(socket, instances: list_instances())}
   end
 
+  def handle_event("change_dream_hour", %{"name" => name, "hour" => hour}, socket) do
+    hour = case Integer.parse(hour) do
+      {n, _} -> n
+      :error -> -1
+    end
+    update_instance_field(name, %{dream_hour: hour})
+    {:noreply, assign(socket, instances: list_instances())}
+  end
+
   def handle_event("stop", %{"name" => name}, socket) do
     Druzhok.InstanceManager.stop(name)
     {:noreply, assign(socket, instances: list_instances(), selected: nil, events: [])}
@@ -566,6 +575,17 @@ defmodule DruzhokWebWeb.DashboardLive do
                      value={selected_field(@instances, @selected, :daily_token_limit) || 0}
                      placeholder="0"
                      class="w-24 border border-gray-300 rounded-lg px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-gray-900 font-mono" />
+            </form>
+
+            <form phx-change="change_dream_hour" class="flex items-center gap-1">
+              <input type="hidden" name="name" value={@selected} />
+              <span class="text-[10px] text-gray-400">Dream</span>
+              <select name="hour" class="border border-gray-300 rounded-lg px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-gray-900">
+                <option value="-1" selected={selected_field(@instances, @selected, :dream_hour) == -1 or is_nil(selected_field(@instances, @selected, :dream_hour))}>Off</option>
+                <%= for h <- 0..23 do %>
+                  <option value={h} selected={selected_field(@instances, @selected, :dream_hour) == h}><%= String.pad_leading("#{h}", 2, "0") %>:00</option>
+                <% end %>
+              </select>
             </form>
 
             <form phx-change="translate_workspace" class="flex items-center gap-1">
