@@ -13,13 +13,14 @@ defmodule Druzhok.Instance do
     field :sandbox, :string, default: "local"
     field :timezone, :string, default: "UTC"
     field :api_key, :string
+    field :daily_token_limit, :integer, default: 0
 
     timestamps()
   end
 
   def changeset(instance, attrs) do
     instance
-    |> cast(attrs, [:name, :telegram_token, :model, :workspace, :active, :heartbeat_interval, :owner_telegram_id, :sandbox, :timezone, :api_key])
+    |> cast(attrs, [:name, :telegram_token, :model, :workspace, :active, :heartbeat_interval, :owner_telegram_id, :sandbox, :timezone, :api_key, :daily_token_limit])
     |> validate_required([:name, :model, :workspace])
     |> unique_constraint(:name)
   end
