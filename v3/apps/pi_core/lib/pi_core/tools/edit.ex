@@ -25,6 +25,7 @@ defmodule PiCore.Tools.Edit do
         if String.contains?(content, old) do
           case write_fn.(sandbox_path, String.replace(content, old, new, global: false)) do
             :ok -> {:ok, "Edited: #{path}"}
+            {:ok, _} -> {:ok, "Edited: #{path}"}
             {:error, reason} -> {:error, "Cannot write #{path}: #{reason}"}
           end
         else

@@ -18,6 +18,7 @@ defmodule PiCore.Tools.Write do
 
     case write_fn.(sandbox_path, content) do
       :ok -> {:ok, "Written: #{path}"}
+      {:ok, _} -> {:ok, "Written: #{path}"}
       {:error, reason} -> {:error, "Cannot write #{path}: #{reason}"}
     end
   end
