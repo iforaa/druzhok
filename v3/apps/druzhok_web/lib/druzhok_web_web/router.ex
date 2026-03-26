@@ -33,5 +33,6 @@ defmodule DruzhokWebWeb.Router do
     live "/models", ModelsLive
     live "/errors", ErrorsLive
     live "/usage", UsageLive
+    live "/processes", ProcessesLive
   end
 end
