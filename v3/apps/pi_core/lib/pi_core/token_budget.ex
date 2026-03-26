@@ -27,7 +27,7 @@ defmodule PiCore.TokenBudget do
     }
   end
 
-  def per_tool_result_cap(%__MODULE__{tool_results: tr}), do: trunc(tr * 0.3)
+  def per_tool_result_cap(%__MODULE__{tool_results: tr}), do: min(trunc(tr * 0.3), 2_000)
 
   def summary_cap(%__MODULE__{history: h}), do: trunc(h * 0.15)
 
