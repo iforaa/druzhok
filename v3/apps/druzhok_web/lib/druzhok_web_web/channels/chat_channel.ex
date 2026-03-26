@@ -179,42 +179,29 @@ defmodule DruzhokWebWeb.ChatChannel do
     end
 
     if workspace do
-      path = Path.join([workspace, "sessions", "#{chat_id}.jsonl"])
-      case File.read(path) do
-        {:ok, content} ->
-          content
-          |> String.split("\n", trim: true)
-          |> Enum.map(&decode_message/1)
-          |> Enum.reject(&is_nil/1)
-          |> Enum.take(-100)  # last 100 messages
-
-        {:error, _} -> []
-      end
+      PiCore.SessionStore.load(workspace, chat_id)
+      |> Enum.filter(&displayable_message?/1)
+      |> Enum.map(fn msg ->
+        content = if is_list(msg.content), do: PiCore.Multimodal.to_text(msg.content), else: msg.content
+        %{role: msg.role, content: content || "", timestamp: msg.timestamp}
+      end)
+      |> Enum.slice(-100..-1//1)
     else
       []
     end
   end
 
-  defp decode_message(line) do
-    case Jason.decode(line) do
-      {:ok, %{"role" => "user", "content" => content}} when is_binary(content) and content != "" ->
-        # Skip system/heartbeat messages
-        if String.starts_with?(content, "HEARTBEAT") or String.starts_with?(content, "[System:") do
-          nil
-        else
-          %{role: "user", content: content, timestamp: nil}
-        end
-
-      {:ok, %{"role" => "assistant", "content" => content, "tool_calls" => tc}}
-          when (is_nil(tc) or tc == []) and is_binary(content) and content != "" ->
-        # Only assistant messages with actual content (no tool-only messages)
-        if silent_reply?(content) do
-          nil
-        else
-          %{role: "assistant", content: content, timestamp: nil}
-        end
-
-      _ -> nil
+  defp displayable_message?(msg) do
+    content = if is_list(msg.content), do: PiCore.Multimodal.to_text(msg.content), else: msg.content
+    cond do
+      msg.role == "toolResult" -> false
+      msg.role not in ["user", "assistant"] -> false
+      is_nil(content) or content == "" -> false
+      msg.tool_calls != nil and msg.tool_calls != [] and (content == "" or is_nil(content)) -> false
+      msg.role == "user" and String.starts_with?(content, "HEARTBEAT") -> false
+      msg.role == "user" and String.starts_with?(content, "[System:") -> false
+      silent_reply?(content) -> false
+      true -> true
     end
   end
 
