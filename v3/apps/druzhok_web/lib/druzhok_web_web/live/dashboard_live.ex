@@ -54,7 +54,8 @@ defmodule DruzhokWebWeb.DashboardLive do
       usage_requests: [],
       usage_summary: [],
       tool_stats: [],
-      expanded_request: nil
+      expanded_request: nil,
+      settings_dirty: false
     )}
   end
 
@@ -138,33 +139,37 @@ defmodule DruzhokWebWeb.DashboardLive do
     end
   end
 
-  def handle_event("change_model", %{"name" => name, "model" => model}, socket) do
-    Druzhok.InstanceManager.update_model(name, model)
-    {:noreply, assign(socket, instances: list_instances())}
+  def handle_event("settings_changed", _params, socket) do
+    {:noreply, assign(socket, settings_dirty: true)}
   end
 
-  def handle_event("change_heartbeat", %{"name" => name, "interval" => interval}, socket) do
-    minutes = String.to_integer(interval)
-    Druzhok.InstanceManager.update_heartbeat(name, minutes)
-    {:noreply, assign(socket, instances: list_instances())}
-  end
+  def handle_event("save_settings", params, socket) do
+    name = params["name"]
 
-  def handle_event("change_token_limit", %{"name" => name, "value" => value}, socket) do
-    limit = case Integer.parse(value) do
+    # Model
+    if params["model"], do: Druzhok.InstanceManager.update_model(name, params["model"])
+
+    # Heartbeat
+    if params["heartbeat"] do
+      minutes = String.to_integer(params["heartbeat"])
+      Druzhok.InstanceManager.update_heartbeat(name, minutes)
+    end
+
+    # Token limit
+    token_limit = case Integer.parse(params["token_limit"] || "0") do
       {n, _} -> max(n, 0)
       :error -> 0
     end
-    update_instance_field(name, %{daily_token_limit: limit})
-    {:noreply, assign(socket, instances: list_instances())}
-  end
+    update_instance_field(name, %{daily_token_limit: token_limit})
 
-  def handle_event("change_dream_hour", %{"name" => name, "hour" => hour}, socket) do
-    hour = case Integer.parse(hour) do
+    # Dream hour
+    dream_hour = case Integer.parse(params["dream_hour"] || "-1") do
       {n, _} -> n
       :error -> -1
     end
-    update_instance_field(name, %{dream_hour: hour})
-    {:noreply, assign(socket, instances: list_instances())}
+    update_instance_field(name, %{dream_hour: dream_hour})
+
+    {:noreply, assign(socket, instances: list_instances(), settings_dirty: false)}
   end
 
   def handle_event("stop", %{"name" => name}, socket) do
@@ -553,43 +558,46 @@ defmodule DruzhokWebWeb.DashboardLive do
             <% sb = selected_field(@instances, @selected, :sandbox) || "local" %>
             <span class={"px-2 py-0.5 rounded text-[10px] font-medium #{if sb == "docker", do: "bg-blue-100 text-blue-700", else: "bg-gray-100 text-gray-500"}"}><%= sb %></span>
 
-            <form phx-change="change_model" class="flex items-center">
+            <form phx-change="settings_changed" phx-submit="save_settings" class="flex items-center gap-4">
               <input type="hidden" name="name" value={@selected} />
+
               <select name="model" class="border border-gray-300 rounded-lg px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-gray-900">
                 <%= for {id, label, _provider} <- @models do %>
                   <option value={id} selected={id == selected_field(@instances, @selected, :model)}><%= label %></option>
                 <% end %>
               </select>
-            </form>
 
-            <form phx-change="change_heartbeat" class="flex items-center gap-1">
-              <input type="hidden" name="name" value={@selected} />
-              <span class="text-[10px] text-gray-400">HB</span>
-              <select name="interval" class="border border-gray-300 rounded-lg px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-gray-900">
-                <%= for {val, label} <- heartbeat_options() do %>
-                  <option value={val} selected={val == selected_field(@instances, @selected, :heartbeat_interval) || 0}><%= label %></option>
-                <% end %>
-              </select>
-            </form>
+              <div class="flex items-center gap-1">
+                <span class="text-[10px] text-gray-400">HB</span>
+                <select name="heartbeat" class="border border-gray-300 rounded-lg px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-gray-900">
+                  <%= for {val, label} <- heartbeat_options() do %>
+                    <option value={val} selected={val == (selected_field(@instances, @selected, :heartbeat_interval) || 0)}><%= label %></option>
+                  <% end %>
+                </select>
+              </div>
 
-            <div class="flex items-center gap-1">
-              <span class="text-[10px] text-gray-400">Tokens/day</span>
-              <input type="number" name="limit" min="0" step="100000"
-                     phx-blur="change_token_limit" phx-value-name={@selected}
-                     value={selected_field(@instances, @selected, :daily_token_limit) || 0}
-                     placeholder="0"
-                     class="w-24 border border-gray-300 rounded-lg px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-gray-900 font-mono" />
-            </div>
+              <div class="flex items-center gap-1">
+                <span class="text-[10px] text-gray-400">Tokens/day</span>
+                <input type="number" name="token_limit" min="0" step="100000"
+                       value={selected_field(@instances, @selected, :daily_token_limit) || 0}
+                       placeholder="0"
+                       class="w-24 border border-gray-300 rounded-lg px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-gray-900 font-mono" />
+              </div>
 
-            <form phx-change="change_dream_hour" class="flex items-center gap-1">
-              <input type="hidden" name="name" value={@selected} />
-              <span class="text-[10px] text-gray-400">Dream</span>
-              <select name="hour" class="border border-gray-300 rounded-lg px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-gray-900">
-                <option value="-1" selected={selected_field(@instances, @selected, :dream_hour) == -1 or is_nil(selected_field(@instances, @selected, :dream_hour))}>Off</option>
-                <%= for h <- 0..23 do %>
-                  <option value={h} selected={selected_field(@instances, @selected, :dream_hour) == h}><%= String.pad_leading("#{h}", 2, "0") %>:00</option>
-                <% end %>
-              </select>
+              <div class="flex items-center gap-1">
+                <span class="text-[10px] text-gray-400">Dream</span>
+                <select name="dream_hour" class="border border-gray-300 rounded-lg px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-gray-900">
+                  <option value="-1" selected={selected_field(@instances, @selected, :dream_hour) == -1 or is_nil(selected_field(@instances, @selected, :dream_hour))}>Off</option>
+                  <%= for h <- 0..23 do %>
+                    <option value={h} selected={selected_field(@instances, @selected, :dream_hour) == h}><%= String.pad_leading("#{h}", 2, "0") %>:00</option>
+                  <% end %>
+                </select>
+              </div>
+
+              <button :if={@settings_dirty} type="submit"
+                      class="px-3 py-1 bg-gray-900 text-white text-xs rounded-lg hover:bg-gray-800 transition font-medium">
+                Save
+              </button>
             </form>
 
             <form phx-change="translate_workspace" class="flex items-center gap-1">
