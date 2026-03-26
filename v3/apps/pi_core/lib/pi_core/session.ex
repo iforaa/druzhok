@@ -269,15 +269,17 @@ defmodule PiCore.Session do
   defp do_prompt(text, state, opts) do
     state = schedule_idle_timeout(state)
 
-    # Check token budget before calling LLM
-    budget_check = (state.extra_tool_context || %{})[:budget_check_fn]
-    if budget_check && budget_check.() do
-      pid = response_target(state)
-      payload = %{text: "⚠️ Дневной лимит токенов исчерпан. Попробуй завтра."}
-      payload = if state.chat_id, do: Map.put(payload, :chat_id, state.chat_id), else: payload
-      if pid, do: send(pid, {:pi_response, payload})
-      {:noreply, state}
-    else
+    # Run prompt guard (budget limits, rate limits, etc.)
+    guard_fn = (state.extra_tool_context || %{})[:prompt_guard_fn]
+    guard_result = if guard_fn, do: guard_fn.(), else: :ok
+    case guard_result do
+      {:reject, reason} ->
+        pid = response_target(state)
+        payload = %{text: reason}
+        payload = if state.chat_id, do: Map.put(payload, :chat_id, state.chat_id), else: payload
+        if pid, do: send(pid, {:pi_response, payload})
+        {:noreply, state}
+      :ok ->
 
     user_msg = %Loop.Message{role: "user", content: text, timestamp: System.os_time(:millisecond)}
     heartbeat = opts[:heartbeat] || false
@@ -300,7 +302,7 @@ defmodule PiCore.Session do
       {:noreply, %{state | active_task: task, heartbeat_refs: heartbeat_refs, heartbeat_msg_counts: heartbeat_msg_counts}}
     end
 
-    end # budget check
+    end # guard check
   end
 
   defp deliver_last_assistant(new_messages, ref, state, opts \\ []) do
