@@ -16,7 +16,8 @@ defmodule PiCore.Session do
     messages: [],
     active_task: nil,
     parallel_tasks: %{},
-    heartbeat_refs: MapSet.new()
+    heartbeat_refs: MapSet.new(),
+    heartbeat_msg_counts: %{}
   ]
 
   def start_link(opts) do
@@ -160,7 +161,7 @@ defmodule PiCore.Session do
     if state.active_task do
       ref = state.active_task.ref
       Task.shutdown(state.active_task, :brutal_kill)
-      {:noreply, %{state | active_task: nil, heartbeat_refs: MapSet.delete(state.heartbeat_refs, ref)}}
+      {:noreply, %{state | active_task: nil, heartbeat_refs: MapSet.delete(state.heartbeat_refs, ref), heartbeat_msg_counts: Map.delete(state.heartbeat_msg_counts, ref)}}
     else
       {:noreply, state}
     end
@@ -168,7 +169,7 @@ defmodule PiCore.Session do
 
   def handle_cast(:reset, state) do
     if state.chat_id, do: SessionStore.clear(state.workspace, state.chat_id)
-    {:noreply, %{state | messages: [], active_task: nil, parallel_tasks: %{}, heartbeat_refs: MapSet.new()}}
+    {:noreply, %{state | messages: [], active_task: nil, parallel_tasks: %{}, heartbeat_refs: MapSet.new(), heartbeat_msg_counts: %{}}}
   end
 
   def handle_call(:get_workspace, _from, state) do
@@ -182,11 +183,22 @@ defmodule PiCore.Session do
     state = %{state | heartbeat_refs: MapSet.delete(state.heartbeat_refs, ref)}
 
     if state.active_task && state.active_task.ref == ref do
-      # Main task completed
-      state = %{state | messages: state.messages ++ new_messages, active_task: nil}
-      if state.chat_id, do: SessionStore.append_many(state.workspace, state.chat_id, new_messages)
-      deliver_last_assistant(new_messages, ref, state, heartbeat: is_heartbeat)
-      {:noreply, state}
+      if is_heartbeat && heartbeat_should_prune?(new_messages) do
+        # HEARTBEAT_OK — discard entire exchange
+        pre_count = Map.get(state.heartbeat_msg_counts, ref)
+        rolled_back = if pre_count, do: Enum.take(state.messages, pre_count), else: state.messages
+        state = %{state | messages: rolled_back, active_task: nil, heartbeat_msg_counts: Map.delete(state.heartbeat_msg_counts, ref)}
+        if pre_count && state.chat_id do
+          SessionStore.save(state.workspace, state.chat_id, rolled_back)
+        end
+        {:noreply, state}
+      else
+        # Normal completion
+        state = %{state | messages: state.messages ++ new_messages, active_task: nil, heartbeat_msg_counts: Map.delete(state.heartbeat_msg_counts, ref)}
+        if state.chat_id, do: SessionStore.append_many(state.workspace, state.chat_id, new_messages)
+        deliver_last_assistant(new_messages, ref, state, heartbeat: is_heartbeat)
+        {:noreply, state}
+      end
     else
       case Map.pop(state.parallel_tasks, ref) do
         {%{user_msg: user_msg}, remaining} ->
@@ -205,7 +217,8 @@ defmodule PiCore.Session do
   # Task returned error (e.g. LLM 429, network error)
   def handle_info({ref, {:error, reason}}, state) do
     Process.demonitor(ref, [:flush])
-    state = %{state | heartbeat_refs: MapSet.delete(state.heartbeat_refs, ref)}
+    state = %{state | heartbeat_refs: MapSet.delete(state.heartbeat_refs, ref),
+                      heartbeat_msg_counts: Map.delete(state.heartbeat_msg_counts, ref)}
 
     if state.active_task && state.active_task.ref == ref do
       pid = response_target(state)
@@ -220,7 +233,8 @@ defmodule PiCore.Session do
 
   # Task crashed
   def handle_info({:DOWN, ref, :process, _pid, reason}, state) do
-    state = %{state | heartbeat_refs: MapSet.delete(state.heartbeat_refs, ref)}
+    state = %{state | heartbeat_refs: MapSet.delete(state.heartbeat_refs, ref),
+                      heartbeat_msg_counts: Map.delete(state.heartbeat_msg_counts, ref)}
 
     if state.active_task && state.active_task.ref == ref do
       pid = response_target(state)
@@ -268,7 +282,10 @@ defmodule PiCore.Session do
       state = %{state | messages: state.messages ++ [user_msg]}
       task = Task.async(fn -> run_prompt(state.messages, run_state) end)
       heartbeat_refs = if heartbeat, do: MapSet.put(state.heartbeat_refs, task.ref), else: state.heartbeat_refs
-      {:noreply, %{state | active_task: task, heartbeat_refs: heartbeat_refs}}
+      heartbeat_msg_counts = if heartbeat,
+        do: Map.put(state.heartbeat_msg_counts, task.ref, length(state.messages) - 1),
+        else: state.heartbeat_msg_counts
+      {:noreply, %{state | active_task: task, heartbeat_refs: heartbeat_refs, heartbeat_msg_counts: heartbeat_msg_counts}}
     end
   end
 
@@ -307,6 +324,13 @@ defmodule PiCore.Session do
       if stripped == "" or String.length(stripped) <= @heartbeat_ack_max_chars,
         do: nil,
         else: stripped
+    end
+  end
+
+  defp heartbeat_should_prune?(new_messages) do
+    case Enum.find(Enum.reverse(new_messages), &(&1.role == "assistant")) do
+      nil -> true
+      msg -> strip_heartbeat_ok(msg.content) == nil
     end
   end
 
