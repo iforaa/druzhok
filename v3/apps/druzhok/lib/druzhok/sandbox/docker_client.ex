@@ -173,6 +173,8 @@ defmodule Druzhok.Sandbox.DockerClient do
                  "SETUID",
                  "--cap-add",
                  "SETGID",
+                 "--cap-add",
+                 "DAC_OVERRIDE",
                  "--security-opt",
                  "no-new-privileges",
                  "-e",
