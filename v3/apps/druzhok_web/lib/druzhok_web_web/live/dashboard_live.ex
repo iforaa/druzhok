@@ -149,8 +149,8 @@ defmodule DruzhokWebWeb.DashboardLive do
     {:noreply, assign(socket, instances: list_instances())}
   end
 
-  def handle_event("change_token_limit", %{"name" => name, "limit" => limit}, socket) do
-    limit = case Integer.parse(limit) do
+  def handle_event("change_token_limit", %{"name" => name, "value" => value}, socket) do
+    limit = case Integer.parse(value) do
       {n, _} -> max(n, 0)
       :error -> 0
     end
@@ -572,14 +572,14 @@ defmodule DruzhokWebWeb.DashboardLive do
               </select>
             </form>
 
-            <form phx-change="change_token_limit" class="flex items-center gap-1">
-              <input type="hidden" name="name" value={@selected} />
+            <div class="flex items-center gap-1">
               <span class="text-[10px] text-gray-400">Tokens/day</span>
               <input type="number" name="limit" min="0" step="100000"
+                     phx-blur="change_token_limit" phx-value-name={@selected}
                      value={selected_field(@instances, @selected, :daily_token_limit) || 0}
                      placeholder="0"
                      class="w-24 border border-gray-300 rounded-lg px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-gray-900 font-mono" />
-            </form>
+            </div>
 
             <form phx-change="change_dream_hour" class="flex items-center gap-1">
               <input type="hidden" name="name" value={@selected} />
