@@ -139,6 +139,8 @@ defmodule DruzhokWebWeb.DashboardLive do
   end
 
   def handle_event("settings_changed", params, socket) do
+    require Logger
+    Logger.info("settings_changed params: #{inspect(params)}")
     name = params["name"]
 
     token_limit = case Integer.parse(params["token_limit"] || "0") do
