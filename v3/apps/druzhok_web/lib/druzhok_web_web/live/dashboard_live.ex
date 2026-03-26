@@ -5,9 +5,10 @@ defmodule DruzhokWebWeb.DashboardLive do
   import DruzhokWebWeb.Live.Components.FileBrowser
   import DruzhokWebWeb.Live.Components.SecurityTab
   import DruzhokWebWeb.Live.Components.SkillsTab
+  import DruzhokWebWeb.Live.Components.ErrorsTab
 
   @max_events 200
-  @valid_tabs %{"logs" => :logs, "files" => :files, "security" => :security, "skills" => :skills}
+  @valid_tabs %{"logs" => :logs, "files" => :files, "security" => :security, "skills" => :skills, "errors" => :errors}
 
   @impl true
   def mount(_params, session, socket) do
@@ -38,11 +39,17 @@ defmodule DruzhokWebWeb.DashboardLive do
       file_content: nil,
       events: [],
       show_create: false,
+      current_path: "",
       pairing: nil,
       owner: nil,
       groups: [],
       skills: [],
-      editing_skill: nil
+      editing_skill: nil,
+      instance_errors: [],
+      expanded_error: nil,
+      translating: false,
+      editing_file: false,
+      file_saved: false
     )}
   end
 
@@ -62,12 +69,15 @@ defmodule DruzhokWebWeb.DashboardLive do
           selected: name,
           workspace_files: files,
           file_content: nil,
+          current_path: "",
           events: [],
           pairing: Druzhok.InstanceManager.get_pairing(name),
           owner: Druzhok.InstanceManager.get_owner(name),
           groups: Druzhok.InstanceManager.get_groups(name),
           skills: load_skills(name),
-          editing_skill: nil
+          editing_skill: nil,
+          instance_errors: [],
+          expanded_error: nil
         )}
     end
   end
@@ -85,6 +95,10 @@ defmodule DruzhokWebWeb.DashboardLive do
     end
   end
 
+  def handle_info(:translation_done, socket) do
+    {:noreply, assign(socket, translating: false)}
+  end
+
   def handle_info(_msg, socket), do: {:noreply, socket}
 
   @impl true
@@ -92,10 +106,12 @@ defmodule DruzhokWebWeb.DashboardLive do
     {:noreply, assign(socket, show_create: !socket.assigns.show_create)}
   end
 
-  def handle_event("create", %{"name" => name, "token" => token, "model" => model} = params, socket) do
-    if name != "" and token != "" do
+  def handle_event("create", %{"name" => name, "model" => model} = params, socket) do
+    if name != "" do
       workspace = instance_workspace(name)
       sandbox = params["sandbox"] || "local"
+      token = params["token"]
+      token = if token == "", do: nil, else: token
 
       case Druzhok.InstanceManager.create(name, %{
         workspace: workspace,
@@ -113,7 +129,7 @@ defmodule DruzhokWebWeb.DashboardLive do
           {:noreply, put_flash(socket, :error, "Error: #{inspect(reason)}")}
       end
     else
-      {:noreply, put_flash(socket, :error, "Name and token required")}
+      {:noreply, put_flash(socket, :error, "Name is required")}
     end
   end
 
@@ -148,8 +164,17 @@ defmodule DruzhokWebWeb.DashboardLive do
 
   def handle_event("tab", %{"tab" => tab}, socket) do
     case Map.get(@valid_tabs, tab) do
-      nil -> {:noreply, socket}
-      atom_tab -> {:noreply, assign(socket, tab: atom_tab)}
+      nil ->
+        {:noreply, socket}
+      :errors ->
+        errors = if socket.assigns.selected do
+          Druzhok.CrashLog.recent_for_instance(socket.assigns.selected, 100)
+        else
+          []
+        end
+        {:noreply, assign(socket, tab: :errors, instance_errors: errors)}
+      atom_tab ->
+        {:noreply, assign(socket, tab: atom_tab)}
     end
   end
 
@@ -157,23 +182,74 @@ defmodule DruzhokWebWeb.DashboardLive do
     {:noreply, assign(socket, events: [])}
   end
 
+  def handle_event("view_file", %{"path" => path, "is_dir" => "true"}, socket) do
+    # Navigate into directory
+    if socket.assigns.selected do
+      instance = get_instance(socket.assigns.selected, socket)
+      if instance do
+        current_path = socket.assigns[:current_path] || ""
+        new_path = if current_path == "", do: path, else: Path.join(current_path, path)
+        files = list_workspace_files(instance, new_path)
+        {:noreply, assign(socket, workspace_files: files, file_content: nil, current_path: new_path)}
+      else
+        {:noreply, socket}
+      end
+    else
+      {:noreply, socket}
+    end
+  end
+
   def handle_event("view_file", %{"path" => path}, socket) do
     if socket.assigns.selected do
       instance = get_instance(socket.assigns.selected, socket)
       if instance do
+        current_path = socket.assigns[:current_path] || ""
+        full_rel = if current_path == "", do: path, else: Path.join(current_path, path)
         content = if instance[:sandbox] == "docker" do
-          case Druzhok.Sandbox.Docker.read_file(instance.name, "/workspace/#{path}") do
+          case Druzhok.Sandbox.Docker.read_file(instance.name, "/workspace/#{full_rel}") do
             {:ok, c} -> c
             {:error, _} -> "Cannot read file"
           end
         else
-          full_path = Path.join(instance_workspace(socket.assigns.selected), path)
+          full_path = Path.join(instance_workspace(socket.assigns.selected), full_rel)
           case File.read(full_path) do
             {:ok, c} -> c
             {:error, _} -> "Cannot read file"
           end
         end
-        {:noreply, assign(socket, file_content: %{path: path, content: content})}
+        {:noreply, assign(socket, file_content: %{path: full_rel, content: content}, editing_file: false, file_saved: false)}
+      else
+        {:noreply, socket}
+      end
+    else
+      {:noreply, socket}
+    end
+  end
+
+  def handle_event("edit_file", _, socket) do
+    {:noreply, assign(socket, editing_file: true, file_saved: false)}
+  end
+
+  def handle_event("cancel_edit", _, socket) do
+    {:noreply, assign(socket, editing_file: false)}
+  end
+
+  def handle_event("save_file", _, socket) do
+    {:noreply, push_event(socket, "request_file_content", %{})}
+  end
+
+  def handle_event("do_save_file", %{"content" => content}, socket) do
+    if socket.assigns.selected && socket.assigns.file_content do
+      path = socket.assigns.file_content.path
+      instance = get_instance(socket.assigns.selected, socket)
+      if instance do
+        if instance[:sandbox] == "docker" do
+          Druzhok.Sandbox.Docker.write_file(instance.name, "/workspace/#{path}", content)
+        else
+          full_path = Path.join(instance_workspace(socket.assigns.selected), path)
+          File.write!(full_path, content)
+        end
+        {:noreply, assign(socket, file_content: %{path: path, content: content}, editing_file: false, file_saved: true)}
       else
         {:noreply, socket}
       end
@@ -183,7 +259,17 @@ defmodule DruzhokWebWeb.DashboardLive do
   end
 
   def handle_event("back_to_files", _, socket) do
-    {:noreply, assign(socket, file_content: nil)}
+    current_path = socket.assigns[:current_path] || ""
+    if current_path == "" do
+      {:noreply, assign(socket, file_content: nil)}
+    else
+      # Go up one directory
+      parent = Path.dirname(current_path)
+      parent = if parent == ".", do: "", else: parent
+      instance = get_instance(socket.assigns.selected, socket)
+      files = if instance, do: list_workspace_files(instance, parent), else: []
+      {:noreply, assign(socket, file_content: nil, workspace_files: files, current_path: parent)}
+    end
   end
 
   def handle_event("back", _, socket) do
@@ -214,20 +300,45 @@ defmodule DruzhokWebWeb.DashboardLive do
   def handle_event("update_group_activation", %{"name" => name, "chat_id" => chat_id, "activation" => activation}, socket) do
     chat_id = String.to_integer(chat_id)
     Druzhok.AllowedChat.set_activation(name, chat_id, activation)
-    if activation == "buffer", do: Druzhok.GroupBuffer.clear(name, chat_id)
     groups = Druzhok.AllowedChat.groups_for_instance(name)
     {:noreply, assign(socket, groups: groups)}
   end
 
-  def handle_event("update_group_buffer_size", %{"name" => name, "chat_id" => chat_id, "value" => size}, socket) do
-    chat_id = String.to_integer(chat_id)
-    size = size |> String.to_integer() |> max(1) |> min(500)
-    case Druzhok.AllowedChat.get(name, chat_id) do
-      nil -> :ok
-      chat -> Druzhok.AllowedChat.changeset(chat, %{buffer_size: size}) |> Druzhok.Repo.update()
-    end
-    groups = Druzhok.AllowedChat.groups_for_instance(name)
-    {:noreply, assign(socket, groups: groups)}
+
+  def handle_event("toggle_error", %{"id" => id}, socket) do
+    expanded = if to_string(socket.assigns.expanded_error) == id, do: nil, else: id
+    {:noreply, assign(socket, expanded_error: expanded)}
+  end
+
+  def handle_event("clear_errors", _, socket) do
+    Druzhok.CrashLog.clear_all()
+    {:noreply, assign(socket, instance_errors: [])}
+  end
+
+  def handle_event("save_telegram_token", %{"token" => token}, socket) do
+    token = case String.trim(token) do "" -> nil; t -> t end
+    update_instance_field(socket.assigns.selected, %{telegram_token: token}, _restart = true)
+    {:noreply, assign(socket, instances: list_instances())}
+  end
+
+  def handle_event("remove_telegram_token", _, socket) do
+    update_instance_field(socket.assigns.selected, %{telegram_token: nil}, _restart = true)
+    {:noreply, assign(socket, instances: list_instances())}
+  end
+
+  def handle_event("generate_api_key", _, socket) do
+    update_instance_field(socket.assigns.selected, %{api_key: Druzhok.Instance.generate_api_key()})
+    {:noreply, assign(socket, instances: list_instances())}
+  end
+
+  def handle_event("translate_workspace", %{"lang" => ""}, socket), do: {:noreply, socket}
+  def handle_event("translate_workspace", %{"name" => name, "lang" => lang}, socket) do
+    me = self()
+    Task.start(fn ->
+      translate_workspace_files(name, lang)
+      send(me, :translation_done)
+    end)
+    {:noreply, assign(socket, translating: true)}
   end
 
   def handle_event("save_skill", params, socket) do
@@ -336,7 +447,7 @@ defmodule DruzhokWebWeb.DashboardLive do
           <form phx-submit="create" class="space-y-3">
             <input name="name" value={@create_form["name"]} placeholder="Instance name"
                    class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-gray-900 focus:border-gray-900" />
-            <input name="token" value={@create_form["token"]} placeholder="Telegram bot token"
+            <input name="token" value={@create_form["token"]} placeholder="Telegram bot token (optional)"
                    class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-gray-900 focus:border-gray-900" />
             <select name="model" class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-gray-900">
               <option :for={{id, label, _provider} <- @models} value={id}><%= label %></option>
@@ -374,6 +485,7 @@ defmodule DruzhokWebWeb.DashboardLive do
               <div class="text-xs text-gray-400"><%= @current_user.role %></div>
             </div>
             <div class="flex gap-2">
+              <a href="/errors" class="text-xs text-gray-400 hover:text-red-600 transition">Errors</a>
               <a :if={@current_user.role == "admin"} href="/settings" class="text-xs text-gray-400 hover:text-gray-900 transition">Settings</a>
               <a href="/auth/logout" class="text-xs text-gray-400 hover:text-gray-900 transition">Logout</a>
             </div>
@@ -396,14 +508,14 @@ defmodule DruzhokWebWeb.DashboardLive do
           <div class="px-6 py-3 border-b border-gray-200 flex items-center gap-4">
             <button phx-click="back" class="text-gray-400 hover:text-gray-900 transition text-sm">&larr;</button>
             <h2 class="text-sm font-semibold flex-1"><%= @selected %></h2>
-            <% sb = selected_sandbox(@instances, @selected) %>
+            <% sb = selected_field(@instances, @selected, :sandbox) || "local" %>
             <span class={"px-2 py-0.5 rounded text-[10px] font-medium #{if sb == "docker", do: "bg-blue-100 text-blue-700", else: "bg-gray-100 text-gray-500"}"}><%= sb %></span>
 
             <form phx-change="change_model" class="flex items-center">
               <input type="hidden" name="name" value={@selected} />
               <select name="model" class="border border-gray-300 rounded-lg px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-gray-900">
                 <%= for {id, label, _provider} <- @models do %>
-                  <option value={id} selected={id == selected_model(@instances, @selected)}><%= label %></option>
+                  <option value={id} selected={id == selected_field(@instances, @selected, :model)}><%= label %></option>
                 <% end %>
               </select>
             </form>
@@ -413,10 +525,21 @@ defmodule DruzhokWebWeb.DashboardLive do
               <span class="text-[10px] text-gray-400">HB</span>
               <select name="interval" class="border border-gray-300 rounded-lg px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-gray-900">
                 <%= for {val, label} <- heartbeat_options() do %>
-                  <option value={val} selected={val == selected_heartbeat(@instances, @selected)}><%= label %></option>
+                  <option value={val} selected={val == selected_field(@instances, @selected, :heartbeat_interval) || 0}><%= label %></option>
                 <% end %>
               </select>
             </form>
+
+            <form phx-change="translate_workspace" class="flex items-center gap-1">
+              <input type="hidden" name="name" value={@selected} />
+              <span class="text-[10px] text-gray-400">Lang</span>
+              <select name="lang" class={"border border-gray-300 rounded-lg px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-gray-900 #{if @translating, do: "opacity-50"}"} disabled={@translating}>
+                <option value="">—</option>
+                <option value="ru">RU</option>
+                <option value="en">EN</option>
+              </select>
+            </form>
+            <span :if={@translating} class="text-xs text-amber-500 animate-pulse">Translating...</span>
 
             <button phx-click="stop" phx-value-name={@selected}
                     class="text-xs text-red-500 hover:text-red-700 transition font-medium">
@@ -443,6 +566,11 @@ defmodule DruzhokWebWeb.DashboardLive do
                     class={"px-4 py-2.5 text-sm font-medium border-b-2 transition #{if @tab == :skills, do: "border-gray-900 text-gray-900", else: "border-transparent text-gray-400 hover:text-gray-600"}"}>
               Skills
             </button>
+            <button phx-click="tab" phx-value-tab="errors"
+                    class={"px-4 py-2.5 text-sm font-medium border-b-2 transition #{if @tab == :errors, do: "border-red-500 text-red-600", else: "border-transparent text-gray-400 hover:text-gray-600"}"}>
+              Errors
+              <span :if={@instance_errors != []} class="ml-1.5 px-1.5 py-0.5 rounded-full text-xs bg-red-100 text-red-600"><%= length(@instance_errors) %></span>
+            </button>
           </div>
 
           <%!-- Tab content --%>
@@ -451,13 +579,18 @@ defmodule DruzhokWebWeb.DashboardLive do
             <.event_log :if={@tab == :logs} events={@events} />
 
             <%!-- Files tab --%>
-            <.file_browser :if={@tab == :files} files={@workspace_files} file_content={@file_content} />
+            <.file_browser :if={@tab == :files} files={@workspace_files} file_content={@file_content} current_path={@current_path} editing={@editing_file} file_saved={@file_saved} />
 
             <%!-- Security tab --%>
-            <.security_tab :if={@tab == :security} pairing={@pairing} owner={@owner} groups={@groups} instance_name={@selected} />
+            <.security_tab :if={@tab == :security} pairing={@pairing} owner={@owner} groups={@groups} instance_name={@selected}
+              telegram_token={selected_field(@instances, @selected, :telegram_token)}
+              api_key={selected_field(@instances, @selected, :api_key)} />
 
             <%!-- Skills tab --%>
             <.skills_tab :if={@tab == :skills} skills={@skills} instance_name={@selected} editing_skill={@editing_skill} />
+
+            <%!-- Errors tab --%>
+            <.errors_tab :if={@tab == :errors} errors={@instance_errors} instance_name={@selected} expanded={@expanded_error} />
           </div>
         </div>
       </div>
@@ -469,24 +602,23 @@ defmodule DruzhokWebWeb.DashboardLive do
     model |> String.split("/") |> List.last()
   end
 
-  defp selected_model(instances, name) do
+  defp selected_field(instances, name, field) do
     case Enum.find(instances, &(&1.name == name)) do
-      nil -> ""
-      inst -> inst.model
+      nil -> nil
+      inst -> Map.get(inst, field)
     end
   end
 
-  defp selected_heartbeat(instances, name) do
-    case Enum.find(instances, &(&1.name == name)) do
-      nil -> 0
-      inst -> inst[:heartbeat_interval] || 0
-    end
-  end
-
-  defp selected_sandbox(instances, name) do
-    case Enum.find(instances, &(&1.name == name)) do
-      nil -> "local"
-      inst -> inst[:sandbox] || "local"
+  defp update_instance_field(name, changes, restart \\ false) do
+    case Druzhok.Repo.get_by(Druzhok.Instance, name: name) do
+      nil -> :ok
+      inst ->
+        inst |> Druzhok.Instance.changeset(changes) |> Druzhok.Repo.update()
+        if restart do
+          Druzhok.InstanceManager.stop(name)
+          has_token = Map.get(changes, :telegram_token, inst.telegram_token)
+          if has_token, do: Druzhok.InstanceManager.start(name)
+        end
     end
   end
 
@@ -513,7 +645,10 @@ defmodule DruzhokWebWeb.DashboardLive do
   end
 
   defp instance_workspace(name) do
-    Path.join([File.cwd!(), "..", "data", "instances", name, "workspace"])
+    data_dir = Application.get_env(:druzhok, Druzhok.Repo)[:database]
+    |> Path.dirname()
+
+    Path.join([data_dir, "instances", name, "workspace"])
   end
 
   defp load_skills(instance_name) do
@@ -551,10 +686,11 @@ defmodule DruzhokWebWeb.DashboardLive do
     end
   end
 
-  defp list_workspace_files(instance) do
+  defp list_workspace_files(instance, subpath \\ "") do
+    dir_path = if subpath == "", do: "/workspace", else: "/workspace/#{subpath}"
     if instance[:sandbox] in ["docker", "firecracker"] do
       mod = Druzhok.Sandbox.impl(instance[:sandbox])
-      case mod.list_dir(instance.name, "/workspace") do
+      case mod.list_dir(instance.name, dir_path) do
         {:ok, data} when is_binary(data) ->
           case Jason.decode(data) do
             {:ok, entries} when is_list(entries) ->
@@ -574,10 +710,11 @@ defmodule DruzhokWebWeb.DashboardLive do
       end
     else
       workspace = instance_workspace(instance.name)
-      if File.exists?(workspace) do
-        File.ls!(workspace)
+      target = if subpath == "", do: workspace, else: Path.join(workspace, subpath)
+      if File.exists?(target) do
+        File.ls!(target)
         |> Enum.map(fn name ->
-          path = Path.join(workspace, name)
+          path = Path.join(target, name)
           stat = File.stat!(path)
           %{path: name, is_dir: stat.type == :directory, size: stat.size}
         end)
@@ -588,4 +725,40 @@ defmodule DruzhokWebWeb.DashboardLive do
     end
   end
 
+  @translatable_files ~w(AGENTS.md SOUL.md IDENTITY.md HEARTBEAT.md USER.md)
+
+  defp translate_workspace_files(instance_name, lang) do
+    workspace = instance_workspace(instance_name)
+    lang_name = if lang == "en", do: "English", else: "Russian"
+
+    config = :persistent_term.get({:druzhok_session_config, instance_name}, nil)
+    unless config do
+      require Logger
+      Logger.error("Cannot translate: no session config for #{instance_name}")
+      :error
+    end
+
+    for file <- @translatable_files do
+      path = Path.join(workspace, file)
+      case File.read(path) do
+        {:ok, content} when byte_size(content) > 0 ->
+          case PiCore.LLM.Client.completion(%{
+            model: config.model,
+            provider: config[:provider],
+            api_url: config.api_url,
+            api_key: config.api_key,
+            system_prompt: "You are a translator. Translate the given text to #{lang_name}. Preserve all markdown formatting, YAML frontmatter, and technical terms exactly as they are. Return ONLY the translated text, nothing else.",
+            messages: [%{role: "user", content: content}],
+            max_tokens: 4096,
+            tools: [],
+            stream: false
+          }) do
+            {:ok, %{content: translated}} when translated != "" ->
+              File.write!(path, translated)
+            _ -> :ok
+          end
+        _ -> :ok
+      end
+    end
+  end
 end

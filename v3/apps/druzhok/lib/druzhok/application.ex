@@ -1,10 +1,11 @@
 defmodule Druzhok.Application do
   @moduledoc false
   use Application
+  require Logger
 
   @impl true
   def start(_type, _args) do
-    :ets.new(:druzhok_group_buffer, [:set, :public, :named_table])
+    Logger.add_backend(Druzhok.ErrorLogger)
 
     children = [
       Druzhok.Repo,

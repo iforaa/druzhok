@@ -31,6 +31,7 @@ defmodule Druzhok.Agent.Telegram do
     :workspace,
     :owner_telegram_id,
     :streamer,
+    :typing_timer,
     offset: 0
   ]
 
@@ -140,6 +141,7 @@ defmodule Druzhok.Agent.Telegram do
   # --- Streaming deltas from PiCore (with chat_id) ---
 
   def handle_info({:pi_delta, chunk, chat_id}, state) when is_binary(chunk) do
+    state = cancel_typing_timer(state)
     state = %{state | chat_id: chat_id}
     streamer = Streamer.append(state.streamer, chunk)
     state = handle_streaming_delta(%{state | streamer: streamer})
@@ -149,6 +151,7 @@ defmodule Druzhok.Agent.Telegram do
   # --- Streaming deltas from PiCore (without chat_id, backward compat) ---
 
   def handle_info({:pi_delta, chunk}, state) when is_binary(chunk) do
+    state = cancel_typing_timer(state)
     streamer = Streamer.append(state.streamer, chunk)
     state = handle_streaming_delta(%{state | streamer: streamer})
     {:noreply, state}
@@ -157,6 +160,7 @@ defmodule Druzhok.Agent.Telegram do
   # --- Final response from PiCore (with chat_id) ---
 
   def handle_info({:pi_response, %{text: text, chat_id: chat_id}}, state) when is_binary(text) and text != "" do
+    state = cancel_typing_timer(state)
     state = %{state | chat_id: chat_id}
 
     if silent_reply?(text) do
@@ -171,6 +175,7 @@ defmodule Druzhok.Agent.Telegram do
   # --- Final response from PiCore (without chat_id, backward compat) ---
 
   def handle_info({:pi_response, %{text: text}}, state) when is_binary(text) and text != "" do
+    state = cancel_typing_timer(state)
     if silent_reply?(text) do
       {:noreply, %{state | streamer: Streamer.reset(state.streamer)}}
     else
@@ -186,6 +191,46 @@ defmodule Druzhok.Agent.Telegram do
   end
 
   def handle_info({:pi_response, _}, state), do: {:noreply, state}
+
+  # --- Tool status from PiCore (show status message + start typing refresh) ---
+
+  def handle_info({:pi_tool_status, tool_name, _chat_id}, state), do: handle_tool_status(tool_name, state)
+  def handle_info({:pi_tool_status, tool_name}, state), do: handle_tool_status(tool_name, state)
+
+  defp handle_tool_status(tool_name, state) do
+    state = cancel_typing_timer(state)
+    status_text = Druzhok.Agent.ToolStatus.status_text(tool_name)
+
+    # Edit existing streaming message or send a new one
+    state = if state.chat_id do
+      streamer = state.streamer
+      case streamer.message_id do
+        nil ->
+          case API.send_message(state.token, state.chat_id, status_text) do
+            {:ok, %{"message_id" => msg_id}} ->
+              %{state | streamer: Streamer.mark_sent(streamer, System.monotonic_time(:millisecond), msg_id)}
+            _ -> state
+          end
+        msg_id ->
+          API.edit_message_text(state.token, state.chat_id, msg_id, status_text)
+          state
+      end
+    else
+      state
+    end
+
+    # Start typing refresh timer
+    state = start_typing_timer(state)
+    {:noreply, state}
+  end
+
+  def handle_info(:refresh_typing, state) do
+    if state.chat_id do
+      API.send_chat_action(state.token, state.chat_id)
+    end
+    state = start_typing_timer(state)
+    {:noreply, state}
+  end
 
   def handle_info(_msg, state), do: {:noreply, state}
 
@@ -374,13 +419,11 @@ defmodule Druzhok.Agent.Telegram do
     is_owner = state.owner_telegram_id == sender_id
     chat = Druzhok.AllowedChat.get(state.instance_name, chat_id)
     activation = (chat && chat.activation) || "buffer"
-    buffer_size = (chat && chat.buffer_size) || 50
 
     # Commands always processed (regardless of mode)
     case Router.parse_command(text) do
       {:command, "reset"} when is_owner ->
         dispatch_session(chat_id, state, &PiCore.Session.reset/1)
-        Druzhok.GroupBuffer.clear(state.instance_name, chat_id)
         API.send_message(state.token, chat_id, "Session reset!")
         state
 
@@ -406,7 +449,7 @@ defmodule Druzhok.Agent.Telegram do
             process_group_message_always(chat_id, text, sender_name, file, is_triggered, chat, state)
 
           _ ->
-            process_group_message_buffer(chat_id, text, sender_name, file, is_triggered, buffer_size, chat, state)
+            process_group_message_buffer(chat_id, text, sender_name, file, is_triggered, chat, state)
         end
     end
   end
@@ -424,36 +467,20 @@ defmodule Druzhok.Agent.Telegram do
     state
   end
 
-  defp process_group_message_buffer(chat_id, text, sender_name, file, is_triggered, buffer_size, chat, state) do
+  defp process_group_message_buffer(chat_id, text, sender_name, file, is_triggered, chat, state) do
     if is_triggered do
       {resolved_text, saved_file} = resolve_voice_or_file(text, file, chat_id, state)
-      buffered = Druzhok.GroupBuffer.flush(state.instance_name, chat_id)
-
-      {prompt, display} = if is_list(resolved_text) do
-        # Multimodal content (image) — prepend group context as text, keep image in content
-        text_part = PiCore.Multimodal.to_text(resolved_text)
-        current_display = build_group_prompt(text_part, sender_name, saved_file, true)
-        context = group_intro("buffer", chat) <> Druzhok.GroupBuffer.format_context(buffered, current_display)
-        multimodal = [%{"type" => "text", "text" => context} | resolved_text]
-        {multimodal, current_display}
-      else
-        current_prompt = build_group_prompt(resolved_text, sender_name, saved_file, true)
-        full = group_intro("buffer", chat) <> Druzhok.GroupBuffer.format_context(buffered, current_prompt)
-        {full, current_prompt}
-      end
+      {prompt, display} = build_group_prompt_with_intro("buffer", chat, resolved_text, sender_name, saved_file, true)
 
       emit(state, :user_message, %{text: display, sender: sender_name, chat_id: chat_id})
       API.send_chat_action(state.token, chat_id)
       dispatch_prompt(prompt, chat_id, true, state)
       state
     else
+      # Persist to session without triggering LLM
       file_ref = if file, do: "[#{file.name || "file"}]", else: nil
-      Druzhok.GroupBuffer.push(state.instance_name, chat_id, %{
-        sender: sender_name,
-        text: text,
-        timestamp: System.os_time(:millisecond),
-        file: file_ref
-      }, buffer_size)
+      msg_text = build_group_prompt(text, sender_name, file_ref, false)
+      persist_group_message(state.instance_name, chat_id, msg_text, state)
 
       emit(state, :user_message, %{text: "[#{sender_name}]: #{text}", sender: sender_name, chat_id: chat_id})
       state
@@ -464,7 +491,6 @@ defmodule Druzhok.Agent.Telegram do
     case arg do
       mode when mode in ["buffer", "always"] ->
         Druzhok.AllowedChat.set_activation(state.instance_name, chat_id, mode)
-        if mode == "buffer", do: Druzhok.GroupBuffer.clear(state.instance_name, chat_id)
         label = if mode == "buffer", do: "buffer (respond only when addressed)", else: "always (see all messages)"
         API.send_message(state.token, chat_id, "Mode: #{label}")
         state
@@ -646,6 +672,24 @@ defmodule Druzhok.Agent.Telegram do
     end
   end
 
+  defp persist_group_message(instance_name, chat_id, text, state) do
+    # If session exists, push to it (persists to disk + in-memory)
+    case Registry.lookup(Druzhok.Registry, {instance_name, :session, chat_id}) do
+      [{pid, _}] ->
+        PiCore.Session.push_message(pid, text)
+      [] ->
+        # No session running — write directly to disk so it's loaded on next session start
+        workspace = case :persistent_term.get({:druzhok_session_config, instance_name}, nil) do
+          %{workspace: ws} -> ws
+          _ -> state.workspace
+        end
+        if workspace do
+          msg = %PiCore.Loop.Message{role: "user", content: text, timestamp: System.os_time(:millisecond)}
+          PiCore.SessionStore.append_many(workspace, chat_id, [msg])
+        end
+    end
+  end
+
   defp emit(%{instance_name: nil}, _type, _data), do: :ok
   defp emit(%{instance_name: name}, type, data) do
     Events.broadcast(name, Map.put(data, :type, type))
@@ -731,5 +775,16 @@ defmodule Druzhok.Agent.Telegram do
   defp silent_reply?(text) do
     trimmed = String.trim(text)
     trimmed == "[NO_REPLY]" or trimmed == ""
+  end
+
+  defp start_typing_timer(state) do
+    timer = Process.send_after(self(), :refresh_typing, 4_000)
+    %{state | typing_timer: timer}
+  end
+
+  defp cancel_typing_timer(%{typing_timer: nil} = state), do: state
+  defp cancel_typing_timer(%{typing_timer: timer} = state) do
+    Process.cancel_timer(timer)
+    %{state | typing_timer: nil}
   end
 end
