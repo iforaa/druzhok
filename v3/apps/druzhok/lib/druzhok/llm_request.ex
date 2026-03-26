@@ -74,6 +74,24 @@ defmodule Druzhok.LlmRequest do
     |> Druzhok.Repo.all()
   end
 
+  def summary_for_instance(instance_name) do
+    today = Date.utc_today()
+    start_of_day = DateTime.new!(today, ~T[00:00:00], "Etc/UTC")
+
+    from(r in __MODULE__,
+      where: r.inserted_at >= ^start_of_day and r.instance_name == ^instance_name,
+      group_by: r.model,
+      select: %{
+        model: r.model,
+        total_input: sum(r.input_tokens),
+        total_output: sum(r.output_tokens),
+        request_count: count(r.id)
+      },
+      order_by: [desc: sum(r.input_tokens)]
+    )
+    |> Druzhok.Repo.all()
+  end
+
   def summary_by_model do
     today = Date.utc_today()
     start_of_day = DateTime.new!(today, ~T[00:00:00], "Etc/UTC")

@@ -6,9 +6,10 @@ defmodule DruzhokWebWeb.DashboardLive do
   import DruzhokWebWeb.Live.Components.SecurityTab
   import DruzhokWebWeb.Live.Components.SkillsTab
   import DruzhokWebWeb.Live.Components.ErrorsTab
+  import DruzhokWebWeb.Live.Components.UsageTab
 
   @max_events 200
-  @valid_tabs %{"logs" => :logs, "files" => :files, "security" => :security, "skills" => :skills, "errors" => :errors}
+  @valid_tabs %{"logs" => :logs, "files" => :files, "security" => :security, "skills" => :skills, "errors" => :errors, "usage" => :usage}
 
   @impl true
   def mount(_params, session, socket) do
@@ -49,7 +50,9 @@ defmodule DruzhokWebWeb.DashboardLive do
       expanded_error: nil,
       translating: false,
       editing_file: false,
-      file_saved: false
+      file_saved: false,
+      usage_requests: [],
+      usage_summary: []
     )}
   end
 
@@ -173,6 +176,14 @@ defmodule DruzhokWebWeb.DashboardLive do
           []
         end
         {:noreply, assign(socket, tab: :errors, instance_errors: errors)}
+      :usage ->
+        {requests, summary} = if socket.assigns.selected do
+          {Druzhok.LlmRequest.recent_filtered(%{instance_name: socket.assigns.selected, limit: 200}),
+           Druzhok.LlmRequest.summary_for_instance(socket.assigns.selected)}
+        else
+          {[], []}
+        end
+        {:noreply, assign(socket, tab: :usage, usage_requests: requests, usage_summary: summary)}
       atom_tab ->
         {:noreply, assign(socket, tab: atom_tab)}
     end
@@ -485,7 +496,6 @@ defmodule DruzhokWebWeb.DashboardLive do
               <div class="text-xs text-gray-400"><%= @current_user.role %></div>
             </div>
             <div class="flex gap-2">
-              <a href="/usage" class="text-xs text-gray-400 hover:text-blue-600 transition">Usage</a>
               <a href="/errors" class="text-xs text-gray-400 hover:text-red-600 transition">Errors</a>
               <a :if={@current_user.role == "admin"} href="/settings" class="text-xs text-gray-400 hover:text-gray-900 transition">Settings</a>
               <a href="/auth/logout" class="text-xs text-gray-400 hover:text-gray-900 transition">Logout</a>
@@ -567,6 +577,10 @@ defmodule DruzhokWebWeb.DashboardLive do
                     class={"px-4 py-2.5 text-sm font-medium border-b-2 transition #{if @tab == :skills, do: "border-gray-900 text-gray-900", else: "border-transparent text-gray-400 hover:text-gray-600"}"}>
               Skills
             </button>
+            <button phx-click="tab" phx-value-tab="usage"
+                    class={"px-4 py-2.5 text-sm font-medium border-b-2 transition #{if @tab == :usage, do: "border-blue-500 text-blue-600", else: "border-transparent text-gray-400 hover:text-gray-600"}"}>
+              Usage
+            </button>
             <button phx-click="tab" phx-value-tab="errors"
                     class={"px-4 py-2.5 text-sm font-medium border-b-2 transition #{if @tab == :errors, do: "border-red-500 text-red-600", else: "border-transparent text-gray-400 hover:text-gray-600"}"}>
               Errors
@@ -589,6 +603,9 @@ defmodule DruzhokWebWeb.DashboardLive do
 
             <%!-- Skills tab --%>
             <.skills_tab :if={@tab == :skills} skills={@skills} instance_name={@selected} editing_skill={@editing_skill} />
+
+            <%!-- Usage tab --%>
+            <.usage_tab :if={@tab == :usage} requests={@usage_requests} summary={@usage_summary} instance_name={@selected} />
 
             <%!-- Errors tab --%>
             <.errors_tab :if={@tab == :errors} errors={@instance_errors} instance_name={@selected} expanded={@expanded_error} />
