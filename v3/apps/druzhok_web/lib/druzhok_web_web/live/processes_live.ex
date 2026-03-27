@@ -97,7 +97,7 @@ defmodule DruzhokWebWeb.ProcessesLive do
     case Process.info(pid, [
       :message_queue_len, :memory, :status, :current_function,
       :registered_name, :links, :monitors, :monitored_by,
-      :dictionary, :heap_size, :stack_size, :reductions
+      :heap_size, :stack_size, :reductions
     ]) do
       nil -> nil
       info ->
@@ -132,7 +132,8 @@ defmodule DruzhokWebWeb.ProcessesLive do
 
   defp parse_pid(pid_str) do
     try do
-      :erlang.list_to_pid(String.to_charlist(pid_str))
+      cleaned = pid_str |> String.replace("#PID", "") |> String.trim()
+      :erlang.list_to_pid(String.to_charlist(cleaned))
     rescue
       _ -> nil
     end
