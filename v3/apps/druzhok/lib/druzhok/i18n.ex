@@ -65,6 +65,13 @@ defmodule Druzhok.I18n do
     tokens_today_unlimited: %{"ru" => "Токены сегодня: %{used} (без лимита)", "en" => "Tokens today: %{used} (unlimited)"},
     tokens_today_limited: %{"ru" => "Токены сегодня: %{used} из %{limit} (%{pct}% осталось)", "en" => "Tokens today: %{used} of %{limit} (%{pct}% remaining)"},
 
+    # Errors
+    error_timeout: %{"ru" => "⏱ Сервер не ответил. Попробуй ещё раз.", "en" => "⏱ Server timed out. Try again."},
+    error_connection_lost: %{"ru" => "🔌 Соединение потеряно. Попробуй ещё раз.", "en" => "🔌 Connection lost. Try again."},
+    error_unavailable: %{"ru" => "🚫 Сервер недоступен. Попробуй позже.", "en" => "🚫 Server unavailable. Try later."},
+    error_rate_limited: %{"ru" => "⏳ Слишком много запросов. Подожди немного.", "en" => "⏳ Rate limited. Wait a moment."},
+    error_server: %{"ru" => "💥 Ошибка сервера. Попробуй ещё раз.", "en" => "💥 Server error. Try again."},
+
     # Runtime section
     runtime_model: %{"ru" => "Модель", "en" => "Model"},
     runtime_date: %{"ru" => "Дата", "en" => "Date"},

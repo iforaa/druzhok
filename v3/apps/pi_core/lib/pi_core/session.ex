@@ -223,7 +223,7 @@ defmodule PiCore.Session do
 
     if state.active_task && state.active_task.ref == ref do
       pid = response_target(state)
-      payload = %{text: friendly_error(reason), error: true}
+      payload = %{text: friendly_error(reason, state.instance_name), error: true}
       payload = if state.chat_id, do: Map.put(payload, :chat_id, state.chat_id), else: payload
       if pid, do: send(pid, {:pi_response, payload})
       {:noreply, %{state | active_task: nil}}
@@ -239,7 +239,7 @@ defmodule PiCore.Session do
 
     if state.active_task && state.active_task.ref == ref do
       pid = response_target(state)
-      payload = %{text: friendly_error(reason), prompt_id: ref, error: true}
+      payload = %{text: friendly_error(reason, state.instance_name), prompt_id: ref, error: true}
       payload = if state.chat_id, do: Map.put(payload, :chat_id, state.chat_id), else: payload
       if pid, do: send(pid, {:pi_response, payload})
       {:noreply, %{state | active_task: nil}}
@@ -343,14 +343,15 @@ defmodule PiCore.Session do
     end
   end
 
-  defp friendly_error(reason) do
+  defp friendly_error(reason, instance_name) do
     reason_str = inspect(reason)
+    lang = if instance_name, do: Druzhok.I18n.lang(instance_name), else: "ru"
     cond do
-      String.contains?(reason_str, "timeout") -> "⏱ Server timed out. Try again."
-      String.contains?(reason_str, "closed") -> "🔌 Connection lost. Try again."
-      String.contains?(reason_str, "refused") -> "🚫 Server unavailable. Try later."
-      String.contains?(reason_str, "HTTP error: 429") -> "⏳ Rate limited. Wait a moment."
-      String.contains?(reason_str, "HTTP error: 5") -> "💥 Server error. Try again."
+      String.contains?(reason_str, "timeout") -> Druzhok.I18n.t(:error_timeout, lang)
+      String.contains?(reason_str, "closed") -> Druzhok.I18n.t(:error_connection_lost, lang)
+      String.contains?(reason_str, "refused") -> Druzhok.I18n.t(:error_unavailable, lang)
+      String.contains?(reason_str, "HTTP error: 429") -> Druzhok.I18n.t(:error_rate_limited, lang)
+      String.contains?(reason_str, "HTTP error: 5") -> Druzhok.I18n.t(:error_server, lang)
       true -> "❌ #{reason_str}"
     end
   end
