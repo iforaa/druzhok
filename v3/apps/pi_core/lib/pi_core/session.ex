@@ -223,7 +223,7 @@ defmodule PiCore.Session do
 
     if state.active_task && state.active_task.ref == ref do
       pid = response_target(state)
-      payload = %{text: "Error: #{inspect(reason)}", error: true}
+      payload = %{text: friendly_error(reason), error: true}
       payload = if state.chat_id, do: Map.put(payload, :chat_id, state.chat_id), else: payload
       if pid, do: send(pid, {:pi_response, payload})
       {:noreply, %{state | active_task: nil}}
@@ -239,7 +239,7 @@ defmodule PiCore.Session do
 
     if state.active_task && state.active_task.ref == ref do
       pid = response_target(state)
-      payload = %{text: "Error: #{inspect(reason)}", prompt_id: ref, error: true}
+      payload = %{text: friendly_error(reason), prompt_id: ref, error: true}
       payload = if state.chat_id, do: Map.put(payload, :chat_id, state.chat_id), else: payload
       if pid, do: send(pid, {:pi_response, payload})
       {:noreply, %{state | active_task: nil}}
@@ -340,6 +340,18 @@ defmodule PiCore.Session do
       if stripped == "" or String.length(stripped) <= @heartbeat_ack_max_chars,
         do: nil,
         else: stripped
+    end
+  end
+
+  defp friendly_error(reason) do
+    reason_str = inspect(reason)
+    cond do
+      String.contains?(reason_str, "timeout") -> "⏱ Server timed out. Try again."
+      String.contains?(reason_str, "closed") -> "🔌 Connection lost. Try again."
+      String.contains?(reason_str, "refused") -> "🚫 Server unavailable. Try later."
+      String.contains?(reason_str, "HTTP error: 429") -> "⏳ Rate limited. Wait a moment."
+      String.contains?(reason_str, "HTTP error: 5") -> "💥 Server error. Try again."
+      true -> "❌ #{reason_str}"
     end
   end
 
