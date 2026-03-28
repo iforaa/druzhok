@@ -602,14 +602,18 @@ defmodule DruzhokWebWeb.DashboardLive do
               <hr class="border-gray-200" />
 
               <%!-- Model Selection --%>
+              <% is_running = selected_field(@instances, @selected, :container_status) == "running" %>
               <div>
                 <h3 class="text-sm font-medium text-gray-700 mb-3">Models</h3>
+                <div :if={is_running} class="text-xs text-amber-600 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 mb-3">
+                  Stop the bot to change model settings
+                </div>
                 <form phx-change="update_models">
                   <input type="hidden" name="name" value={@selected} />
                   <div class="grid grid-cols-2 gap-4">
                     <div>
                       <label class="block text-xs font-medium text-gray-500 mb-1">Default (all messages)</label>
-                      <select name="default_model" class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm">
+                      <select name="default_model" disabled={is_running} class={"w-full border border-gray-300 rounded-lg px-3 py-2 text-sm #{if is_running, do: "opacity-50 cursor-not-allowed"}"}>
                         <%= for m <- Druzhok.ModelCatalog.default_options() do %>
                           <option value={m.id} selected={m.id == selected_field(@instances, @selected, :model)}><%= m.name %> (<%= m.price %>)</option>
                         <% end %>
@@ -617,7 +621,7 @@ defmodule DruzhokWebWeb.DashboardLive do
                     </div>
                     <div>
                       <label class="block text-xs font-medium text-gray-500 mb-1">On-demand (user requests)</label>
-                      <select name="on_demand_model" class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm">
+                      <select name="on_demand_model" disabled={is_running} class={"w-full border border-gray-300 rounded-lg px-3 py-2 text-sm #{if is_running, do: "opacity-50 cursor-not-allowed"}"}>
                         <option value="">None</option>
                         <%= for m <- Druzhok.ModelCatalog.smart() do %>
                           <option value={m.id} selected={m.id == (selected_field(@instances, @selected, :on_demand_model) || "")}><%= m.name %> (<%= m.price %>)</option>
