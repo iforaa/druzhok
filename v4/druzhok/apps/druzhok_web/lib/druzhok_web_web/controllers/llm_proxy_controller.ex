@@ -17,6 +17,7 @@ defmodule DruzhokWebWeb.LlmProxyController do
       {:ok, _remaining} ->
         url = LlmFormat.request_url()
         headers = LlmFormat.request_headers()
+        body = LlmFormat.prepare_body(body)
         started_at = System.monotonic_time(:millisecond)
 
         if stream do
