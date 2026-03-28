@@ -3,13 +3,11 @@ defmodule DruzhokWebWeb.DashboardLive do
 
   import DruzhokWebWeb.Live.Components.EventLog
   import DruzhokWebWeb.Live.Components.FileBrowser
-  import DruzhokWebWeb.Live.Components.SecurityTab
-  import DruzhokWebWeb.Live.Components.SkillsTab
   import DruzhokWebWeb.Live.Components.ErrorsTab
   import DruzhokWebWeb.Live.Components.UsageTab
 
   @max_events 200
-  @valid_tabs %{"logs" => :logs, "files" => :files, "security" => :security, "skills" => :skills, "errors" => :errors, "usage" => :usage}
+  @valid_tabs %{"logs" => :logs, "files" => :files, "settings" => :settings, "usage" => :usage, "errors" => :errors}
 
   @impl true
   def mount(_params, session, socket) do
@@ -44,23 +42,14 @@ defmodule DruzhokWebWeb.DashboardLive do
       pairing: nil,
       owner: nil,
       groups: [],
-      skills: [],
-      editing_skill: nil,
       instance_errors: [],
       expanded_error: nil,
-      translating: false,
       editing_file: false,
       file_saved: false,
       usage_requests: [],
       usage_summary: [],
-      tool_stats: [],
       expanded_request: nil
     )}
-  end
-
-  @impl true
-  def handle_info(:refresh, socket) do
-    {:noreply, assign(socket, instances: list_instances())}
   end
 
   @impl true
@@ -69,7 +58,7 @@ defmodule DruzhokWebWeb.DashboardLive do
       nil ->
         {:noreply, socket |> assign(selected: nil) |> push_patch(to: "/")}
       instance ->
-        files = list_workspace_files(instance)
+        files = list_workspace_files(instance, "")
         {:noreply, assign(socket,
           selected: name,
           workspace_files: files,
@@ -79,8 +68,6 @@ defmodule DruzhokWebWeb.DashboardLive do
           pairing: Druzhok.InstanceManager.get_pairing(name),
           owner: Druzhok.InstanceManager.get_owner(name),
           groups: Druzhok.InstanceManager.get_groups(name),
-          skills: load_skills(name),
-          editing_skill: nil,
           instance_errors: [],
           expanded_error: nil
         )}
@@ -88,7 +75,12 @@ defmodule DruzhokWebWeb.DashboardLive do
   end
 
   def handle_params(_params, _uri, socket) do
-    {:noreply, assign(socket, selected: nil, workspace_files: [], file_content: nil, events: [], pairing: nil, owner: nil, groups: [], skills: [], editing_skill: nil)}
+    {:noreply, assign(socket, selected: nil, workspace_files: [], file_content: nil, events: [], pairing: nil, owner: nil, groups: [])}
+  end
+
+  @impl true
+  def handle_info(:refresh, socket) do
+    {:noreply, assign(socket, instances: list_instances())}
   end
 
   def handle_info({:druzhok_event, instance_name, event}, socket) do
@@ -98,10 +90,6 @@ defmodule DruzhokWebWeb.DashboardLive do
     else
       {:noreply, socket}
     end
-  end
-
-  def handle_info(:translation_done, socket) do
-    {:noreply, assign(socket, translating: false)}
   end
 
   def handle_info(_msg, socket), do: {:noreply, socket}
@@ -156,6 +144,8 @@ defmodule DruzhokWebWeb.DashboardLive do
 
     language = params["language"] || "ru"
 
+    bot_runtime = params["bot_runtime"]
+
     changes = %{
       daily_token_limit: token_limit,
       dream_hour: dream_hour,
@@ -163,21 +153,25 @@ defmodule DruzhokWebWeb.DashboardLive do
       language: language
     }
 
-    # Model change needs special handling (updates running session)
-    if params["model"], do: Druzhok.InstanceManager.update_model(name, params["model"])
+    # Add bot_runtime if changed
+    changes = if bot_runtime, do: Map.put(changes, :bot_runtime, bot_runtime), else: changes
+    # Add model if changed
+    changes = if params["model"], do: Map.put(changes, :model, params["model"]), else: changes
 
-    # Heartbeat change needs special handling (updates scheduler timer)
-    if params["heartbeat"], do: Druzhok.InstanceManager.update_heartbeat(name, heartbeat)
-
-    # All other fields in one DB write
     update_instance_field(name, changes)
 
     {:noreply, assign(socket, instances: list_instances())}
   end
 
   def handle_event("stop", %{"name" => name}, socket) do
-    Druzhok.InstanceManager.stop(name)
+    Druzhok.BotManager.stop(name)
     {:noreply, assign(socket, instances: list_instances(), selected: nil, events: [])}
+  end
+
+  def handle_event("start_bot", %{"name" => name}, socket) do
+    Druzhok.BotManager.start(name)
+    Process.sleep(1_000)
+    {:noreply, assign(socket, instances: list_instances())}
   end
 
   def handle_event("select", %{"name" => name}, socket) do
@@ -206,7 +200,7 @@ defmodule DruzhokWebWeb.DashboardLive do
         {:noreply, assign(socket, tab: :errors, instance_errors: errors)}
       :usage ->
         # LlmRequest and ToolExecution tracking removed in v4 orchestrator
-        {:noreply, assign(socket, tab: :usage, usage_requests: [], usage_summary: [], tool_stats: [])}
+        {:noreply, assign(socket, tab: :usage, usage_requests: [], usage_summary: [])}
       atom_tab ->
         {:noreply, assign(socket, tab: atom_tab)}
     end
@@ -348,7 +342,6 @@ defmodule DruzhokWebWeb.DashboardLive do
     {:noreply, assign(socket, groups: groups)}
   end
 
-
   def handle_event("toggle_error", %{"id" => id}, socket) do
     expanded = if to_string(socket.assigns.expanded_error) == id, do: nil, else: id
     {:noreply, assign(socket, expanded_error: expanded)}
@@ -373,88 +366,6 @@ defmodule DruzhokWebWeb.DashboardLive do
   def handle_event("generate_api_key", _, socket) do
     update_instance_field(socket.assigns.selected, %{api_key: Druzhok.Instance.generate_api_key()})
     {:noreply, assign(socket, instances: list_instances())}
-  end
-
-  def handle_event("translate_workspace", %{"lang" => ""}, socket), do: {:noreply, socket}
-  def handle_event("translate_workspace", %{"name" => name, "lang" => lang}, socket) do
-    me = self()
-    Task.start(fn ->
-      translate_workspace_files(name, lang)
-      send(me, :translation_done)
-    end)
-    {:noreply, assign(socket, translating: true)}
-  end
-
-  def handle_event("save_skill", params, socket) do
-    name = socket.assigns.selected
-    skill_name = params["skill_name"]
-    description = params["description"]
-    content = params["content"]
-    original_dir = params["original_dir"]
-
-    if name && Regex.match?(~r/^[a-z0-9][a-z0-9_-]*$/, skill_name) do
-      workspace = instance_workspace(name)
-      dir = Path.join([workspace, "skills", skill_name])
-      File.mkdir_p!(dir)
-      skill_content = "---\nname: #{skill_name}\ndescription: #{description}\nenabled: true\n---\n\n#{content}"
-      File.write!(Path.join(dir, "SKILL.md"), skill_content)
-
-      if original_dir && original_dir != "" && original_dir != skill_name do
-        File.rm_rf!(Path.join([workspace, "skills", original_dir]))
-      end
-
-      {:noreply, assign(socket, skills: load_skills(name), editing_skill: nil)}
-    else
-      {:noreply, socket}
-    end
-  end
-
-  def handle_event("edit_skill", %{"skill" => dir}, socket) do
-    skill = Enum.find(socket.assigns.skills, &(&1.dir == dir))
-    {:noreply, assign(socket, editing_skill: skill)}
-  end
-
-  def handle_event("cancel_edit_skill", _, socket) do
-    {:noreply, assign(socket, editing_skill: nil)}
-  end
-
-  def handle_event("delete_skill", %{"name" => name, "skill" => dir}, socket) do
-    workspace = instance_workspace(name)
-    File.rm_rf!(Path.join([workspace, "skills", dir]))
-    {:noreply, assign(socket, skills: load_skills(name), editing_skill: nil)}
-  end
-
-  def handle_event("approve_skill", %{"name" => name, "skill" => dir}, socket) do
-    workspace = instance_workspace(name)
-    path = Path.join([workspace, "skills", dir, "SKILL.md"])
-    case File.read(path) do
-      {:ok, content} ->
-        updated = String.replace(content, ~r/^pending_approval:\s*true$/m, "pending_approval: false")
-        File.write!(path, updated)
-      _ -> :ok
-    end
-    {:noreply, assign(socket, skills: load_skills(name))}
-  end
-
-  def handle_event("toggle_skill", %{"name" => name, "skill" => dir, "enabled" => enabled_str}, socket) do
-    workspace = instance_workspace(name)
-    path = Path.join([workspace, "skills", dir, "SKILL.md"])
-    new_enabled = enabled_str == "true"
-    case File.read(path) do
-      {:ok, content} ->
-        updated = if String.contains?(content, "enabled:") do
-          String.replace(content, ~r/^enabled:\s*(true|false)$/m, "enabled: #{new_enabled}")
-        else
-          # Insert enabled field before closing --- of frontmatter
-          case Regex.run(~r/\A(---\n.*?)\n(---)/s, content) do
-            [_, header, _] -> String.replace(content, header <> "\n---", header <> "\nenabled: #{new_enabled}\n---", global: false)
-            _ -> content
-          end
-        end
-        File.write!(path, updated)
-      _ -> :ok
-    end
-    {:noreply, assign(socket, skills: load_skills(name))}
   end
 
   def handle_event("update_group_prompt", %{"name" => name, "chat_id" => chat_id, "value" => prompt}, socket) do
@@ -516,7 +427,7 @@ defmodule DruzhokWebWeb.DashboardLive do
             <div class={"w-2 h-2 rounded-full flex-shrink-0 #{container_status_color(inst[:container_status])}"}></div>
             <div class="flex-1 min-w-0">
               <div class="text-sm font-medium truncate"><%= inst.name %></div>
-              <div class="text-xs text-gray-400 truncate"><%= model_short(inst.model) %></div>
+              <div class="text-xs text-gray-400 truncate"><%= inst[:bot_runtime] || "zeroclaw" %> &middot; <%= model_short(inst.model) %></div>
             </div>
           </div>
         </div>
@@ -553,55 +464,12 @@ defmodule DruzhokWebWeb.DashboardLive do
           <div class="px-6 py-3 border-b border-gray-200 flex items-center gap-4">
             <button phx-click="back" class="text-gray-400 hover:text-gray-900 transition text-sm">&larr;</button>
             <h2 class="text-sm font-semibold flex-1"><%= @selected %></h2>
-            <% sb = selected_field(@instances, @selected, :sandbox) || "local" %>
-            <span class={"px-2 py-0.5 rounded text-[10px] font-medium #{if sb == "docker", do: "bg-blue-100 text-blue-700", else: "bg-gray-100 text-gray-500"}"}><%= sb %></span>
-
-            <form phx-change="settings_changed" class="flex items-center gap-4">
-              <input type="hidden" name="name" value={@selected} />
-
-              <select name="model" class="border border-gray-300 rounded-lg px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-gray-900">
-                <%= for {id, label, _provider} <- @models do %>
-                  <option value={id} selected={id == selected_field(@instances, @selected, :model)}><%= label %></option>
-                <% end %>
-              </select>
-
-              <div class="flex items-center gap-1">
-                <span class="text-[10px] text-gray-400">HB</span>
-                <select name="heartbeat" class="border border-gray-300 rounded-lg px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-gray-900">
-                  <%= for {val, label} <- heartbeat_options() do %>
-                    <option value={val} selected={val == (selected_field(@instances, @selected, :heartbeat_interval) || 0)}><%= label %></option>
-                  <% end %>
-                </select>
-              </div>
-
-              <div class="flex items-center gap-1">
-                <span class="text-[10px] text-gray-400">Tokens/day</span>
-                <input type="number" name="token_limit" min="0" step="100000"
-                       value={selected_field(@instances, @selected, :daily_token_limit) || 0}
-                       placeholder="0"
-                       class="w-24 border border-gray-300 rounded-lg px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-gray-900 font-mono" />
-              </div>
-
-              <div class="flex items-center gap-1">
-                <span class="text-[10px] text-gray-400">Dream</span>
-                <select name="dream_hour" class="border border-gray-300 rounded-lg px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-gray-900">
-                  <option value="-1" selected={selected_field(@instances, @selected, :dream_hour) == -1 or is_nil(selected_field(@instances, @selected, :dream_hour))}>Off</option>
-                  <%= for h <- 0..23 do %>
-                    <option value={h} selected={selected_field(@instances, @selected, :dream_hour) == h}><%= String.pad_leading("#{h}", 2, "0") %>:00</option>
-                  <% end %>
-                </select>
-              </div>
-
-              <div class="flex items-center gap-1">
-                <select name="language" class="border border-gray-300 rounded-lg px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-gray-900" title="System messages language">
-                  <option value="ru" selected={selected_field(@instances, @selected, :language) == "ru" or is_nil(selected_field(@instances, @selected, :language))}>🇷🇺</option>
-                  <option value="en" selected={selected_field(@instances, @selected, :language) == "en"}>🇬🇧</option>
-                </select>
-              </div>
-
-            </form>
-
-
+            <span class={"px-2 py-0.5 rounded text-[10px] font-medium #{runtime_badge_color(selected_field(@instances, @selected, :bot_runtime))}"}><%= selected_field(@instances, @selected, :bot_runtime) || "zeroclaw" %></span>
+            <span class={"px-2 py-0.5 rounded text-[10px] font-medium #{container_status_badge(selected_field(@instances, @selected, :container_status))}"}><%= selected_field(@instances, @selected, :container_status) || "unknown" %></span>
+            <button phx-click="start_bot" phx-value-name={@selected}
+                    class="text-xs text-green-600 hover:text-green-800 transition font-medium">
+              Start
+            </button>
             <button phx-click="stop" phx-value-name={@selected}
                     class="text-xs text-red-500 hover:text-red-700 transition font-medium">
               Stop
@@ -619,13 +487,9 @@ defmodule DruzhokWebWeb.DashboardLive do
                     class={"px-4 py-2.5 text-sm font-medium border-b-2 transition #{if @tab == :files, do: "border-gray-900 text-gray-900", else: "border-transparent text-gray-400 hover:text-gray-600"}"}>
               Files
             </button>
-            <button phx-click="tab" phx-value-tab="security"
-                    class={"px-4 py-2.5 text-sm font-medium border-b-2 transition #{if @tab == :security, do: "border-gray-900 text-gray-900", else: "border-transparent text-gray-400 hover:text-gray-600"}"}>
-              Security
-            </button>
-            <button phx-click="tab" phx-value-tab="skills"
-                    class={"px-4 py-2.5 text-sm font-medium border-b-2 transition #{if @tab == :skills, do: "border-gray-900 text-gray-900", else: "border-transparent text-gray-400 hover:text-gray-600"}"}>
-              Skills
+            <button phx-click="tab" phx-value-tab="settings"
+                    class={"px-4 py-2.5 text-sm font-medium border-b-2 transition #{if @tab == :settings, do: "border-gray-900 text-gray-900", else: "border-transparent text-gray-400 hover:text-gray-600"}"}>
+              Settings
             </button>
             <button phx-click="tab" phx-value-tab="usage"
                     class={"px-4 py-2.5 text-sm font-medium border-b-2 transition #{if @tab == :usage, do: "border-blue-500 text-blue-600", else: "border-transparent text-gray-400 hover:text-gray-600"}"}>
@@ -646,16 +510,84 @@ defmodule DruzhokWebWeb.DashboardLive do
             <%!-- Files tab --%>
             <.file_browser :if={@tab == :files} files={@workspace_files} file_content={@file_content} current_path={@current_path} editing={@editing_file} file_saved={@file_saved} />
 
-            <%!-- Security tab --%>
-            <.security_tab :if={@tab == :security} pairing={@pairing} owner={@owner} groups={@groups} instance_name={@selected}
-              telegram_token={selected_field(@instances, @selected, :telegram_token)}
-              api_key={selected_field(@instances, @selected, :api_key)} />
+            <%!-- Settings tab --%>
+            <div :if={@tab == :settings} class="p-6 space-y-6">
+              <form phx-change="settings_changed" class="space-y-4">
+                <input type="hidden" name="name" value={@selected} />
 
-            <%!-- Skills tab --%>
-            <.skills_tab :if={@tab == :skills} skills={@skills} instance_name={@selected} editing_skill={@editing_skill} />
+                <div class="grid grid-cols-2 gap-4">
+                  <div>
+                    <label class="block text-xs font-medium text-gray-500 mb-1">Model</label>
+                    <select name="model" class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm">
+                      <%= for {id, label, _provider} <- @models do %>
+                        <option value={id} selected={id == selected_field(@instances, @selected, :model)}><%= label %></option>
+                      <% end %>
+                    </select>
+                  </div>
+
+                  <div>
+                    <label class="block text-xs font-medium text-gray-500 mb-1">Runtime</label>
+                    <select name="bot_runtime" class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm">
+                      <option value="zeroclaw" selected={selected_field(@instances, @selected, :bot_runtime) != "picoclaw"}>ZeroClaw (Rust)</option>
+                      <option value="picoclaw" selected={selected_field(@instances, @selected, :bot_runtime) == "picoclaw"}>PicoClaw (Go)</option>
+                    </select>
+                  </div>
+
+                  <div>
+                    <label class="block text-xs font-medium text-gray-500 mb-1">Heartbeat interval</label>
+                    <select name="heartbeat" class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm">
+                      <%= for {val, label} <- heartbeat_options() do %>
+                        <option value={val} selected={val == (selected_field(@instances, @selected, :heartbeat_interval) || 0)}><%= label %></option>
+                      <% end %>
+                    </select>
+                  </div>
+
+                  <div>
+                    <label class="block text-xs font-medium text-gray-500 mb-1">Daily token limit</label>
+                    <input type="number" name="token_limit" min="0" step="100000"
+                           value={selected_field(@instances, @selected, :daily_token_limit) || 0}
+                           class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm font-mono" />
+                  </div>
+
+                  <div>
+                    <label class="block text-xs font-medium text-gray-500 mb-1">Language</label>
+                    <select name="language" class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm">
+                      <option value="ru" selected={selected_field(@instances, @selected, :language) == "ru"}>Russian</option>
+                      <option value="en" selected={selected_field(@instances, @selected, :language) == "en"}>English</option>
+                    </select>
+                  </div>
+
+                  <div>
+                    <label class="block text-xs font-medium text-gray-500 mb-1">Dream hour</label>
+                    <select name="dream_hour" class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm">
+                      <option value="-1" selected={selected_field(@instances, @selected, :dream_hour) == -1}>Off</option>
+                      <%= for h <- 0..23 do %>
+                        <option value={h} selected={selected_field(@instances, @selected, :dream_hour) == h}><%= String.pad_leading("#{h}", 2, "0") %>:00</option>
+                      <% end %>
+                    </select>
+                  </div>
+                </div>
+              </form>
+
+              <hr class="border-gray-200" />
+
+              <%!-- Telegram token --%>
+              <div>
+                <h3 class="text-sm font-medium text-gray-700 mb-2">Telegram Token</h3>
+                <% token = selected_field(@instances, @selected, :telegram_token) %>
+                <div :if={token} class="flex items-center gap-2">
+                  <code class="text-xs bg-gray-100 px-2 py-1 rounded flex-1 truncate"><%= String.slice(token, 0, 10) %>...</code>
+                  <button phx-click="remove_telegram_token" class="text-xs text-red-500 hover:text-red-700">Remove</button>
+                </div>
+                <form :if={!token} phx-submit="save_telegram_token" class="flex gap-2">
+                  <input name="token" placeholder="Bot token" class="flex-1 border border-gray-300 rounded-lg px-3 py-2 text-sm" />
+                  <button type="submit" class="px-3 py-2 bg-gray-900 text-white rounded-lg text-sm">Save</button>
+                </form>
+              </div>
+            </div>
 
             <%!-- Usage tab --%>
-            <.usage_tab :if={@tab == :usage} requests={@usage_requests} summary={@usage_summary} tool_stats={@tool_stats} instance_name={@selected} expanded_request={@expanded_request} />
+            <.usage_tab :if={@tab == :usage} requests={@usage_requests} summary={@usage_summary} tool_stats={[]} instance_name={@selected} expanded_request={@expanded_request} />
 
             <%!-- Errors tab --%>
             <.errors_tab :if={@tab == :errors} errors={@instance_errors} instance_name={@selected} expanded={@expanded_error} />
@@ -674,6 +606,14 @@ defmodule DruzhokWebWeb.DashboardLive do
   defp container_status_color("exited"), do: "bg-red-400"
   defp container_status_color("not_found"), do: "bg-gray-300"
   defp container_status_color(_), do: "bg-yellow-400"
+
+  defp runtime_badge_color("picoclaw"), do: "bg-amber-100 text-amber-700"
+  defp runtime_badge_color(_), do: "bg-emerald-100 text-emerald-700"
+
+  defp container_status_badge("running"), do: "bg-green-100 text-green-700"
+  defp container_status_badge("exited"), do: "bg-red-100 text-red-700"
+  defp container_status_badge("not_found"), do: "bg-gray-100 text-gray-500"
+  defp container_status_badge(_), do: "bg-yellow-100 text-yellow-700"
 
   defp selected_field(instances, name, field) do
     case Enum.find(instances, &(&1.name == name)) do
@@ -725,41 +665,6 @@ defmodule DruzhokWebWeb.DashboardLive do
     Path.join([data_dir, "instances", name, "workspace"])
   end
 
-  defp load_skills(instance_name) do
-    workspace = instance_workspace(instance_name)
-    skills_dir = Path.join(workspace, "skills")
-
-    if File.dir?(skills_dir) do
-      case File.ls(skills_dir) do
-        {:ok, dirs} ->
-          dirs
-          |> Enum.filter(&File.dir?(Path.join(skills_dir, &1)))
-          |> Enum.map(fn dir ->
-            path = Path.join([skills_dir, dir, "SKILL.md"])
-            case File.read(path) do
-              {:ok, content} ->
-                body = case Regex.run(~r/\A---\n.*?\n---\n\n?(.*)/s, content) do
-                  [_, b] -> b
-                  nil -> content
-                end
-                case parse_skill_frontmatter(content) do
-                  {:ok, name, desc, enabled, pending} ->
-                    %{dir: dir, name: name, description: desc, enabled: enabled, pending: pending, body: body}
-                  :error ->
-                    %{dir: dir, name: dir, description: "(invalid)", enabled: false, pending: false, body: content}
-                end
-              {:error, _} -> nil
-            end
-          end)
-          |> Enum.reject(&is_nil/1)
-          |> Enum.sort_by(& &1.name)
-        _ -> []
-      end
-    else
-      []
-    end
-  end
-
   defp list_workspace_files(instance, subpath \\ "") do
     dir_path = if subpath == "", do: "/workspace", else: "/workspace/#{subpath}"
     if instance[:sandbox] in ["docker", "firecracker"] do
@@ -797,36 +702,5 @@ defmodule DruzhokWebWeb.DashboardLive do
         []
       end
     end
-  end
-
-  defp parse_skill_frontmatter(content) do
-    case Regex.run(~r/\A---\n(.*?)\n---/s, content) do
-      [_, frontmatter] ->
-        name = case Regex.run(~r/^name:\s*(.+)$/m, frontmatter) do
-          [_, v] -> String.trim(v)
-          _ -> nil
-        end
-        desc = case Regex.run(~r/^description:\s*(.+)$/m, frontmatter) do
-          [_, v] -> String.trim(v)
-          _ -> ""
-        end
-        enabled = case Regex.run(~r/^enabled:\s*(true|false)$/m, frontmatter) do
-          [_, "false"] -> false
-          _ -> true
-        end
-        pending = case Regex.run(~r/^pending_approval:\s*(true|false)$/m, frontmatter) do
-          [_, "true"] -> true
-          _ -> false
-        end
-        if name, do: {:ok, name, desc, enabled, pending}, else: :error
-      _ -> :error
-    end
-  end
-
-  defp translate_workspace_files(_instance_name, _lang) do
-    # Translation via LLM is not available in v4 orchestrator mode.
-    require Logger
-    Logger.info("Workspace translation is not available in v4 orchestrator mode")
-    :ok
   end
 end
