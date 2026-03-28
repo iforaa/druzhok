@@ -14,6 +14,9 @@ Never run `rm -rf workspace` when restarting the bot. The workspace contains the
 ### Nebius endpoint
 Use `https://api.tokenfactory.us-central1.nebius.com/v1/` (us-central1), NOT `api.tokenfactory.nebius.com`. The non-regional endpoint doesn't support tool calling in streaming mode.
 
+### Docker container permissions
+Bot containers (ZeroClaw, PicoClaw) run as root inside Docker. Files they create in bind-mounted volumes (`/data`) are owned by root on the host. The Elixir app (running as `igor`) needs to write config files to the same directory before starting a container. Fix with `sudo chown -R igor:igor /home/igor/druzhok-data/v4-instances/<name>/` when you hit permission denied errors.
+
 ### Reasoning models need high max_tokens
 Models like GLM-5, Kimi K2.5, DeepSeek-R1 put reasoning in `reasoning_content` and the actual reply in `content`. With low `max_tokens`, ALL tokens go to reasoning and `content` is empty. Set `maxTokens: 16384` minimum.
 
