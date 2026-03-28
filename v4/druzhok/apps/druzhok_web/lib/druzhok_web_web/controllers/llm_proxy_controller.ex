@@ -1,14 +1,13 @@
 defmodule DruzhokWebWeb.LlmProxyController do
   use DruzhokWebWeb, :controller
   alias DruzhokWebWeb.LlmFormat
-  alias Druzhok.{Budget, Usage, ModelAccess}
+  alias Druzhok.{Budget, Usage}
   require Logger
 
   def chat_completions(conn, _params) do
     instance = conn.assigns.instance
     body = conn.body_params
-
-    requested_model = body["model"] || "default"
+    model = body["model"] || "default"
     stream = body["stream"] == true
 
     case Budget.check(instance.id) do
@@ -16,32 +15,25 @@ defmodule DruzhokWebWeb.LlmProxyController do
         json_error(conn, 429, "Token budget exceeded", "insufficient_quota")
 
       {:ok, _remaining} ->
-        resolved_model = requested_model
-        provider = LlmFormat.route_provider(resolved_model)
-        api_key = LlmFormat.provider_key(provider)
-        base_url = LlmFormat.provider_url(provider)
-        path = LlmFormat.request_path(provider)
-        url = base_url <> path
-
-        provider_body = LlmFormat.build_request(provider, body)
-        headers = LlmFormat.request_headers(provider, api_key)
+        url = LlmFormat.request_url()
+        headers = LlmFormat.request_headers()
         started_at = System.monotonic_time(:millisecond)
 
         if stream do
-          stream_proxy(conn, instance, url, headers, provider_body, provider, requested_model, resolved_model, started_at)
+          stream_proxy(conn, instance, url, headers, body, model, started_at)
         else
-          sync_proxy(conn, instance, url, headers, provider_body, provider, requested_model, resolved_model, started_at)
+          sync_proxy(conn, instance, url, headers, body, model, started_at)
         end
     end
   end
 
-  defp sync_proxy(conn, instance, url, headers, body, provider, requested_model, resolved_model, started_at) do
+  defp sync_proxy(conn, instance, url, headers, body, model, started_at) do
     request = Finch.build(:post, url, headers, Jason.encode!(body))
 
     case Finch.request(request, Druzhok.Finch, receive_timeout: 120_000) do
       {:ok, %Finch.Response{status: status, body: resp_body}} ->
-        usage = resp_body |> Jason.decode!() |> then(&LlmFormat.extract_usage(provider, &1))
-        meter(instance, usage, requested_model, resolved_model, provider, started_at)
+        usage = resp_body |> Jason.decode!() |> LlmFormat.extract_usage()
+        meter(instance, usage, model, started_at)
 
         conn
         |> put_resp_content_type("application/json")
@@ -53,7 +45,7 @@ defmodule DruzhokWebWeb.LlmProxyController do
     end
   end
 
-  defp stream_proxy(conn, instance, url, headers, body, provider, requested_model, resolved_model, started_at) do
+  defp stream_proxy(conn, instance, url, headers, body, model, started_at) do
     request = Finch.build(:post, url, headers, Jason.encode!(body))
 
     conn = conn
@@ -73,7 +65,7 @@ defmodule DruzhokWebWeb.LlmProxyController do
           if json_str != "[DONE]" do
             case Jason.decode(json_str) do
               {:ok, %{"usage" => usage}} when is_map(usage) ->
-                Process.put(usage_ref, LlmFormat.extract_usage(provider, %{"usage" => usage}))
+                Process.put(usage_ref, LlmFormat.extract_usage(%{"usage" => usage}))
               _ -> :ok
             end
           end
@@ -86,7 +78,7 @@ defmodule DruzhokWebWeb.LlmProxyController do
     end, receive_timeout: 120_000)
 
     usage = Process.get(usage_ref, %{prompt_tokens: 0, completion_tokens: 0})
-    meter(instance, usage, requested_model, resolved_model, provider, started_at)
+    meter(instance, usage, model, started_at)
 
     case result do
       {:ok, conn} -> conn
@@ -94,20 +86,20 @@ defmodule DruzhokWebWeb.LlmProxyController do
     end
   end
 
-  defp meter(instance, usage, requested_model, resolved_model, provider, started_at) do
+  defp meter(instance, usage, model, started_at) do
     total = usage.prompt_tokens + usage.completion_tokens
     if total > 0 do
       latency = System.monotonic_time(:millisecond) - started_at
       Budget.deduct(instance.id, total)
       Usage.log(%{
         instance_id: instance.id,
-        model: resolved_model,
+        model: model,
         prompt_tokens: usage.prompt_tokens,
         completion_tokens: usage.completion_tokens,
         total_tokens: total,
-        requested_model: requested_model,
-        resolved_model: resolved_model,
-        provider: to_string(provider),
+        requested_model: model,
+        resolved_model: model,
+        provider: "openrouter",
         latency_ms: latency,
       })
     end
