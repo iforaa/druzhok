@@ -13,13 +13,15 @@ defmodule Druzhok.InstanceManager do
       heartbeat_interval: opts[:heartbeat_interval] || 0,
       sandbox: opts[:sandbox] || "docker",
       bot_runtime: opts[:bot_runtime] || "zeroclaw",
-      tenant_key: opts[:tenant_key] || generate_tenant_key(name),
+      tenant_key: opts[:tenant_key] || Instance.generate_tenant_key(name),
       telegram_token: opts[:telegram_token],
     }
 
     ensure_workspace(config.workspace)
-    save_to_db(name, config)
-    {:ok, %{name: name, model: config.model}}
+    case save_to_db(name, config) do
+      {:ok, instance} -> {:ok, instance}
+      error -> error
+    end
   end
 
   def stop(name) when is_binary(name) do
@@ -99,11 +101,6 @@ defmodule Druzhok.InstanceManager do
       nil -> nil
       inst -> inst.owner_telegram_id
     end
-  end
-
-  defp generate_tenant_key(name) do
-    random = :crypto.strong_rand_bytes(8) |> Base.url_encode64(padding: false)
-    "dk-#{name}-#{random}"
   end
 
   defp default_workspace(name) do

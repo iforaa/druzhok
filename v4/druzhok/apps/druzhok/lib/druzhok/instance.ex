@@ -37,4 +37,9 @@ defmodule Druzhok.Instance do
   def generate_api_key do
     "dk_" <> Base.encode16(:crypto.strong_rand_bytes(16), case: :lower)
   end
+
+  def generate_tenant_key(name) do
+    random = :crypto.strong_rand_bytes(8) |> Base.url_encode64(padding: false)
+    "dk-#{name}-#{random}"
+  end
 end

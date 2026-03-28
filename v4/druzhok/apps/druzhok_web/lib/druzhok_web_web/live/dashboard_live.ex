@@ -199,8 +199,19 @@ defmodule DruzhokWebWeb.DashboardLive do
         end
         {:noreply, assign(socket, tab: :errors, instance_errors: errors)}
       :usage ->
-        # LlmRequest and ToolExecution tracking removed in v4 orchestrator
-        {:noreply, assign(socket, tab: :usage, usage_requests: [], usage_summary: [])}
+        {requests, summary} = if socket.assigns.selected do
+          inst = get_instance(socket.assigns.selected, socket)
+          if inst do
+            requests = Druzhok.Usage.recent(inst[:id], 50)
+            summary = Druzhok.Usage.daily_usage(inst[:id])
+            {requests, summary}
+          else
+            {[], nil}
+          end
+        else
+          {[], nil}
+        end
+        {:noreply, assign(socket, tab: :usage, usage_requests: requests, usage_summary: summary)}
       atom_tab ->
         {:noreply, assign(socket, tab: atom_tab)}
     end
@@ -640,8 +651,6 @@ defmodule DruzhokWebWeb.DashboardLive do
     ]
   end
 
-  # --- Helpers ---
-
   defp list_instances do
     Druzhok.InstanceManager.list()
     |> Enum.map(fn inst ->
@@ -664,7 +673,6 @@ defmodule DruzhokWebWeb.DashboardLive do
   end
 
   defp list_workspace_files(instance, subpath \\ "") do
-    # In v4, workspace is on the host filesystem (bind-mounted into containers)
     workspace = instance[:workspace] || instance_workspace(instance.name)
     target = if subpath == "", do: workspace, else: Path.join(workspace, subpath)
     if File.exists?(target) do

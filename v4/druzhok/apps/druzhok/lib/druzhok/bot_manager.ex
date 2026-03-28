@@ -19,7 +19,7 @@ defmodule Druzhok.BotManager do
 
     case token_result do
       {:ok, token_record} ->
-        tenant_key = generate_tenant_key(name)
+        tenant_key = Instance.generate_tenant_key(name)
 
         config = Map.merge(Map.new(opts), %{
           workspace: workspace,
@@ -29,17 +29,10 @@ defmodule Druzhok.BotManager do
         })
 
         case InstanceManager.create(name, config) do
-          {:ok, instance_info} ->
-            if inst = Repo.get_by(Instance, name: name) do
-              Budget.get_or_create(inst.id)
-              # Reassign the temporary token allocation to the real instance
-              if token_record.id != nil do
-                TokenPool.release(0)
-                TokenPool.allocate(inst.id)
-              end
-            end
+          {:ok, instance} ->
+            Budget.get_or_create(instance.id)
             start(name)
-            {:ok, instance_info}
+            {:ok, %{name: name, model: instance.model}}
 
           error -> error
         end
@@ -134,8 +127,4 @@ defmodule Druzhok.BotManager do
 
   def container_name(name), do: "druzhok-bot-#{name}"
 
-  defp generate_tenant_key(name) do
-    random = :crypto.strong_rand_bytes(8) |> Base.url_encode64(padding: false)
-    "dk-#{name}-#{random}"
-  end
 end
