@@ -118,21 +118,17 @@ defmodule DruzhokWebWeb.DashboardLive do
       token = params["token"]
       token = if token == "", do: nil, else: token
 
-      case Druzhok.InstanceManager.create(name, %{
+      {:ok, _instance} = Druzhok.InstanceManager.create(name, %{
         workspace: workspace,
         model: model,
         telegram_token: token,
         sandbox: sandbox,
-      }) do
-        {:ok, _instance} ->
-          {:noreply, assign(socket,
-            instances: list_instances(),
-            create_form: %{"name" => "", "token" => "", "model" => model},
-            show_create: false
-          )}
-        {:error, reason} ->
-          {:noreply, put_flash(socket, :error, "Error: #{inspect(reason)}")}
-      end
+      })
+      {:noreply, assign(socket,
+        instances: list_instances(),
+        create_form: %{"name" => "", "token" => "", "model" => model},
+        show_create: false
+      )}
     else
       {:noreply, put_flash(socket, :error, "Name is required")}
     end
@@ -515,7 +511,7 @@ defmodule DruzhokWebWeb.DashboardLive do
           <div :for={inst <- @instances}
                phx-click="select" phx-value-name={inst.name}
                class={"flex items-center gap-3 px-4 py-3 cursor-pointer transition #{if @selected == inst.name, do: "bg-white border-l-2 border-gray-900 shadow-sm", else: "hover:bg-white/60 border-l-2 border-transparent"}"}>
-            <div class="w-2 h-2 rounded-full bg-green-500 flex-shrink-0"></div>
+            <div class={"w-2 h-2 rounded-full flex-shrink-0 #{container_status_color(inst[:container_status])}"}></div>
             <div class="flex-1 min-w-0">
               <div class="text-sm font-medium truncate"><%= inst.name %></div>
               <div class="text-xs text-gray-400 truncate"><%= model_short(inst.model) %></div>
@@ -672,6 +668,11 @@ defmodule DruzhokWebWeb.DashboardLive do
     model |> String.split("/") |> List.last()
   end
 
+  defp container_status_color("running"), do: "bg-green-500"
+  defp container_status_color("exited"), do: "bg-red-400"
+  defp container_status_color("not_found"), do: "bg-gray-300"
+  defp container_status_color(_), do: "bg-yellow-400"
+
   defp selected_field(instances, name, field) do
     case Enum.find(instances, &(&1.name == name)) do
       nil -> nil
@@ -706,6 +707,9 @@ defmodule DruzhokWebWeb.DashboardLive do
 
   defp list_instances do
     Druzhok.InstanceManager.list()
+    |> Enum.map(fn inst ->
+      Map.put(inst, :container_status, Druzhok.BotManager.status(inst.name))
+    end)
   end
 
   defp get_instance(name, socket) do
@@ -792,8 +796,6 @@ defmodule DruzhokWebWeb.DashboardLive do
       end
     end
   end
-
-  @translatable_files ~w(AGENTS.md SOUL.md IDENTITY.md HEARTBEAT.md USER.md)
 
   defp parse_skill_frontmatter(content) do
     case Regex.run(~r/\A---\n(.*?)\n---/s, content) do

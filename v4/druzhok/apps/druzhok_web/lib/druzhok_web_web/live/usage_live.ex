@@ -36,15 +36,6 @@ defmodule DruzhokWebWeb.UsageLive do
     {:noreply, socket}
   end
 
-  defp format_number(n) when is_integer(n) and n >= 1_000_000, do: "#{Float.round(n / 1_000_000, 1)}M"
-  defp format_number(n) when is_integer(n) and n >= 1_000, do: "#{Float.round(n / 1_000, 1)}K"
-  defp format_number(n) when is_integer(n), do: Integer.to_string(n)
-  defp format_number(nil), do: "0"
-
-  defp format_time(dt) do
-    Calendar.strftime(dt, "%H:%M:%S")
-  end
-
   @impl true
   def render(assigns) do
     ~H"""

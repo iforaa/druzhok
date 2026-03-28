@@ -36,7 +36,7 @@ defmodule Druzhok.Telegram.API do
     ]
 
     url = "#{@base_url}#{token}/sendDocument"
-    case Finch.build(:post, url, headers, body) |> Finch.request(PiCore.Finch) do
+    case Finch.build(:post, url, headers, body) |> Finch.request(Druzhok.Finch) do
       {:ok, %{status: 200, body: resp}} -> {:ok, Jason.decode!(resp)}
       {:ok, %{body: resp}} -> {:error, resp}
       {:error, reason} -> {:error, reason}
@@ -59,7 +59,7 @@ defmodule Druzhok.Telegram.API do
     headers = [{"content-type", "multipart/form-data; boundary=#{boundary}"}]
     url = "#{@base_url}#{token}/sendPhoto"
 
-    case Finch.build(:post, url, headers, body) |> Finch.request(PiCore.Finch) do
+    case Finch.build(:post, url, headers, body) |> Finch.request(Druzhok.Finch) do
       {:ok, %{status: 200, body: resp}} -> {:ok, Jason.decode!(resp)}
       {:ok, %{body: resp}} -> {:error, resp}
       {:error, reason} -> {:error, reason}
@@ -72,7 +72,7 @@ defmodule Druzhok.Telegram.API do
 
   def download_file(token, file_path) do
     url = "https://api.telegram.org/file/bot#{token}/#{file_path}"
-    case Finch.build(:get, url) |> Finch.request(PiCore.Finch, receive_timeout: 30_000) do
+    case Finch.build(:get, url) |> Finch.request(Druzhok.Finch, receive_timeout: 30_000) do
       {:ok, %{status: 200, body: body}} -> {:ok, body}
       {:ok, %{status: status}} -> {:error, "HTTP #{status}"}
       {:error, reason} -> {:error, reason}
@@ -95,7 +95,7 @@ defmodule Druzhok.Telegram.API do
     body = Jason.encode!(params)
     headers = [{"content-type", "application/json"}]
 
-    case Finch.build(:post, url, headers, body) |> Finch.request(PiCore.Finch, receive_timeout: 35_000) do
+    case Finch.build(:post, url, headers, body) |> Finch.request(Druzhok.Finch, receive_timeout: 35_000) do
       {:ok, %{status: 200, body: resp}} ->
         case Jason.decode!(resp) do
           %{"ok" => true, "result" => result} -> {:ok, result}
