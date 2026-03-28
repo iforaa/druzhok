@@ -71,6 +71,15 @@ defmodule Druzhok.Runtime.ZeroClaw do
   end
 
   @impl true
+  def clear_sessions(data_root) do
+    sessions_db = Path.join([data_root, "workspace", "sessions", "sessions.db"])
+    File.rm(sessions_db)
+    File.rm(sessions_db <> "-shm")
+    File.rm(sessions_db <> "-wal")
+    :ok
+  end
+
+  @impl true
   def read_allowed_users(data_root) do
     case File.read(config_path(data_root)) do
       {:ok, content} -> parse_allowed_users(content)

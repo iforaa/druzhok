@@ -390,6 +390,14 @@ defmodule DruzhokWebWeb.DashboardLive do
     end
   end
 
+  def handle_event("clear_history", %{"name" => name}, socket) do
+    with_runtime(name, fn runtime, data_root ->
+      runtime.clear_sessions(data_root)
+      restart_bot(name)
+      {:noreply, assign(socket, instances: list_instances())}
+    end) || {:noreply, socket}
+  end
+
   def handle_event("generate_api_key", _, socket) do
     update_instance_field(socket.assigns.selected, %{api_key: Druzhok.Instance.generate_api_key()})
     {:noreply, assign(socket, instances: list_instances())}
@@ -641,6 +649,19 @@ defmodule DruzhokWebWeb.DashboardLive do
                   <button type="submit" class="px-3 py-2 bg-gray-900 text-white rounded-lg text-sm">Approve</button>
                 </form>
                 <p class="text-xs text-gray-400 mt-1">Paste the number from the bot's approval message</p>
+              </div>
+
+              <hr class="border-gray-200" />
+
+              <%!-- Session Management --%>
+              <div>
+                <h3 class="text-sm font-medium text-gray-700 mb-3">Session</h3>
+                <button phx-click="clear_history" phx-value-name={@selected}
+                        class="px-3 py-2 bg-red-50 text-red-600 border border-red-200 rounded-lg text-sm hover:bg-red-100 transition"
+                        data-confirm="Clear all conversation history? The bot will restart with a fresh session.">
+                  Clear History & Restart
+                </button>
+                <p class="text-xs text-gray-400 mt-1">Clears all conversation history and restarts the bot</p>
               </div>
             </div>
 

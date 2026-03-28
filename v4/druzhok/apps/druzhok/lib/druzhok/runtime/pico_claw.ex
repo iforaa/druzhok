@@ -27,6 +27,14 @@ defmodule Druzhok.Runtime.PicoClaw do
   def workspace_files(_instance), do: []
 
   @impl true
+  def clear_sessions(data_root) do
+    sessions_dir = Path.join([data_root, "workspace", "sessions"])
+    if File.dir?(sessions_dir), do: File.rm_rf!(sessions_dir)
+    File.mkdir_p!(sessions_dir)
+    :ok
+  end
+
+  @impl true
   def read_allowed_users(data_root) do
     path = Path.join(data_root, ".allowed_users.json")
     case File.read(path) do

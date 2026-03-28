@@ -16,6 +16,7 @@ defmodule Druzhok.Runtime do
   @callback read_allowed_users(data_root :: String.t()) :: [String.t()]
   @callback add_allowed_user(data_root :: String.t(), user_id :: String.t()) :: :ok | {:error, term()}
   @callback remove_allowed_user(data_root :: String.t(), user_id :: String.t()) :: :ok | {:error, term()}
+  @callback clear_sessions(data_root :: String.t()) :: :ok
 
   @runtimes %{
     "zeroclaw" => Druzhok.Runtime.ZeroClaw,
