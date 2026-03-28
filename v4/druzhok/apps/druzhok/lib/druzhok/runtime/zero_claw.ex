@@ -5,8 +5,8 @@ defmodule Druzhok.Runtime.ZeroClaw do
   def env_vars(instance) do
     port = 19000 + (Map.get(instance, :id, 0) || 0)
     %{
-      "ZEROCLAW_AGENT_MODEL" => Map.get(instance, :model, "default") || "default",
-      "ZEROCLAW_PROVIDER_TYPE" => "compatible",
+      "ZEROCLAW_MODEL" => Map.get(instance, :model, "default") || "default",
+      "ZEROCLAW_PROVIDER" => "compatible",
       "ZEROCLAW_GATEWAY_PORT" => to_string(port),
       "ZEROCLAW_CONFIG_DIR" => "/data/.zeroclaw",
       "ZEROCLAW_WORKSPACE" => "/data/workspace",
@@ -114,6 +114,6 @@ defmodule Druzhok.Runtime.ZeroClaw do
 
   @impl true
   def supports_feature?(:pairing), do: true
-  def supports_feature?(:hot_reload_config), do: true
+  def supports_feature?(:hot_reload_config), do: false
   def supports_feature?(_), do: false
 end

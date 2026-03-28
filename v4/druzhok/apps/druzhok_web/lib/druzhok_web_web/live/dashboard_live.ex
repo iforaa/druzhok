@@ -379,7 +379,8 @@ defmodule DruzhokWebWeb.DashboardLive do
     if user_id != "" and socket.assigns.selected do
       with_runtime(socket.assigns.selected, fn runtime, data_root ->
         runtime.add_allowed_user(data_root, user_id)
-        {:noreply, assign(socket, allowed_users: load_allowed_users(socket.assigns.selected))}
+        restart_bot(socket.assigns.selected)
+        {:noreply, assign(socket, allowed_users: load_allowed_users(socket.assigns.selected), instances: list_instances())}
       end) || {:noreply, socket}
     else
       {:noreply, put_flash(socket, :error, "Invalid user ID")}
@@ -390,7 +391,8 @@ defmodule DruzhokWebWeb.DashboardLive do
     if socket.assigns.selected do
       with_runtime(socket.assigns.selected, fn runtime, data_root ->
         runtime.remove_allowed_user(data_root, user_id)
-        {:noreply, assign(socket, allowed_users: load_allowed_users(socket.assigns.selected))}
+        restart_bot(socket.assigns.selected)
+        {:noreply, assign(socket, allowed_users: load_allowed_users(socket.assigns.selected), instances: list_instances())}
       end) || {:noreply, socket}
     else
       {:noreply, socket}
@@ -701,6 +703,10 @@ defmodule DruzhokWebWeb.DashboardLive do
         fun.(runtime, Path.dirname(workspace))
       _ -> nil
     end
+  end
+
+  defp restart_bot(name) do
+    Task.start(fn -> Druzhok.BotManager.restart(name) end)
   end
 
   defp heartbeat_options do
