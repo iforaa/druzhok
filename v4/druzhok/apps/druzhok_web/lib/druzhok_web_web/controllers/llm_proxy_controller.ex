@@ -32,8 +32,10 @@ defmodule DruzhokWebWeb.LlmProxyController do
 
     case Finch.request(request, Druzhok.Finch, receive_timeout: 120_000) do
       {:ok, %Finch.Response{status: status, body: resp_body}} ->
-        usage = resp_body |> Jason.decode!() |> LlmFormat.extract_usage()
-        meter(instance, usage, model, started_at)
+        decoded = Jason.decode!(resp_body)
+        usage = LlmFormat.extract_usage(decoded)
+        response_preview = get_in(decoded, ["choices", Access.at(0), "message", "content"])
+        meter(instance, usage, model, started_at, body, response_preview)
 
         conn
         |> put_resp_content_type("application/json")
@@ -78,7 +80,7 @@ defmodule DruzhokWebWeb.LlmProxyController do
     end, receive_timeout: 120_000)
 
     usage = Process.get(usage_ref, %{prompt_tokens: 0, completion_tokens: 0})
-    meter(instance, usage, model, started_at)
+    meter(instance, usage, model, started_at, body, nil)
 
     case result do
       {:ok, conn} -> conn
@@ -86,11 +88,20 @@ defmodule DruzhokWebWeb.LlmProxyController do
     end
   end
 
-  defp meter(instance, usage, model, started_at) do
+  defp meter(instance, usage, model, started_at, request_body, response_preview) do
     total = usage.prompt_tokens + usage.completion_tokens
     if total > 0 do
       latency = System.monotonic_time(:millisecond) - started_at
       Budget.deduct(instance.id, total)
+
+      prompt_preview = case request_body["messages"] do
+        [_ | _] = msgs ->
+          msgs |> List.last() |> Map.get("content", "") |> String.slice(0, 500)
+        _ -> nil
+      end
+
+      resp_preview = if response_preview, do: String.slice(response_preview, 0, 500), else: nil
+
       Usage.log(%{
         instance_id: instance.id,
         model: model,
@@ -101,6 +112,8 @@ defmodule DruzhokWebWeb.LlmProxyController do
         resolved_model: model,
         provider: "openrouter",
         latency_ms: latency,
+        prompt_preview: prompt_preview,
+        response_preview: resp_preview,
       })
     end
   end

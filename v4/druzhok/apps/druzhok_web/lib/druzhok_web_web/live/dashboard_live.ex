@@ -196,8 +196,8 @@ defmodule DruzhokWebWeb.DashboardLive do
                 output_tokens: r.completion_tokens || 0,
                 tool_calls_count: 0,
                 elapsed_ms: r.latency_ms,
-                prompt_preview: nil,
-                response_preview: nil
+                prompt_preview: r.prompt_preview,
+                response_preview: r.response_preview
               }
             end)
             summary = Druzhok.Usage.daily_usage(inst[:id])
