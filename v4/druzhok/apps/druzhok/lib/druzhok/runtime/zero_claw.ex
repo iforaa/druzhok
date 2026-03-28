@@ -3,9 +3,11 @@ defmodule Druzhok.Runtime.ZeroClaw do
 
   @impl true
   def env_vars(instance) do
+    port = 19000 + (Map.get(instance, :id, 0) || 0)
     env = %{
       "ZEROCLAW_AGENT_MODEL" => Map.get(instance, :model, "default") || "default",
       "ZEROCLAW_PROVIDER_TYPE" => "compatible",
+      "ZEROCLAW_GATEWAY_PORT" => to_string(port),
     }
 
     token = Map.get(instance, :telegram_token)

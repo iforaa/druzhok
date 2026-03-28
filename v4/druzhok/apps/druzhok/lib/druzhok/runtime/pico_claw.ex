@@ -3,8 +3,10 @@ defmodule Druzhok.Runtime.PicoClaw do
 
   @impl true
   def env_vars(instance) do
+    port = 19000 + (Map.get(instance, :id, 0) || 0)
     env = %{
       "PICOCLAW_AGENTS_DEFAULTS_MODEL_NAME" => Map.get(instance, :model, "default") || "default",
+      "PICOCLAW_GATEWAY_PORT" => to_string(port),
     }
 
     token = Map.get(instance, :telegram_token)
