@@ -23,7 +23,7 @@ defmodule Druzhok.Runtime.ZeroClaw do
     files = if token do
       allowed_toml = Enum.map_join(allowed, ", ", &"\"#{&1}\"")
       toml = """
-      [channels.telegram]
+      [channels_config.telegram]
       bot_token = "#{token}"
       allowed_users = [#{allowed_toml}]
       """
@@ -44,7 +44,7 @@ defmodule Druzhok.Runtime.ZeroClaw do
   def docker_image, do: System.get_env("ZEROCLAW_IMAGE") || "zeroclaw:latest"
 
   @impl true
-  def gateway_command, do: "gateway"
+  def gateway_command, do: "daemon"
 
   @impl true
   def health_path, do: "/health"
