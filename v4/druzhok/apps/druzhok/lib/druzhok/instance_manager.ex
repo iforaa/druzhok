@@ -118,6 +118,9 @@ defmodule Druzhok.InstanceManager do
           model: config.model,
           workspace: config.workspace,
           sandbox: config.sandbox,
+          bot_runtime: config.bot_runtime,
+          tenant_key: config.tenant_key,
+          language: config[:language] || "ru",
           active: true,
         })
         |> Repo.insert()
