@@ -10,6 +10,7 @@ defmodule Druzhok.Application do
       {Registry, keys: :unique, name: Druzhok.Registry},
       {DynamicSupervisor, name: Druzhok.InstanceDynSup, strategy: :one_for_one},
       {Finch, name: Druzhok.Finch, pools: finch_pools()},
+      Druzhok.HealthMonitor,
     ]
 
     opts = [strategy: :one_for_one, name: Druzhok.Supervisor]
