@@ -47,9 +47,12 @@ defmodule Druzhok.Runtime do
     proxy_host = System.get_env("LLM_PROXY_HOST") || "host.docker.internal"
     proxy_port = System.get_env("LLM_PROXY_PORT") || "4000"
 
+    tenant_key = Map.get(instance, :tenant_key, "") || ""
     %{
       "OPENAI_BASE_URL" => "http://#{proxy_host}:#{proxy_port}/v1",
-      "OPENAI_API_KEY" => Map.get(instance, :tenant_key, "") || "",
+      "OPENAI_API_KEY" => tenant_key,
+      "ZEROCLAW_API_KEY" => tenant_key,
+      "API_KEY" => tenant_key,
       "TZ" => Map.get(instance, :timezone, "UTC") || "UTC",
     }
   end
