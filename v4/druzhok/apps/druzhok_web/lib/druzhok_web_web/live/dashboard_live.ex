@@ -5,6 +5,7 @@ defmodule DruzhokWebWeb.DashboardLive do
   import DruzhokWebWeb.Live.Components.FileBrowser
   import DruzhokWebWeb.Live.Components.ErrorsTab
   import DruzhokWebWeb.Live.Components.UsageTab
+  import DruzhokWebWeb.Live.Components.SqliteBrowser
 
   @max_events 200
   @valid_tabs %{"logs" => :logs, "files" => :files, "settings" => :settings, "usage" => :usage, "errors" => :errors}
@@ -49,7 +50,20 @@ defmodule DruzhokWebWeb.DashboardLive do
       file_saved: false,
       usage_requests: [],
       usage_summary: [],
-      expanded_request: nil
+      expanded_request: nil,
+      db_browser: nil,
+      db_tables: [],
+      db_selected_table: nil,
+      db_columns: [],
+      db_rows: [],
+      db_total_rows: 0,
+      db_offset: 0,
+      db_page_size: 50,
+      db_query: "",
+      db_error: nil,
+      db_selected_rows: [],
+      db_all_selected: false,
+      db_editing: nil
     )}
   end
 
@@ -232,33 +246,52 @@ defmodule DruzhokWebWeb.DashboardLive do
         full_rel = if current_path == "", do: path, else: Path.join(current_path, path)
         full_path = Path.join(instance[:workspace] || instance_workspace(socket.assigns.selected), full_rel)
 
-        content = cond do
-          binary_file?(full_rel) ->
-            case File.stat(full_path) do
-              {:ok, %{size: size}} -> "Binary file (#{format_file_size(size)})"
-              _ -> "Binary file"
-            end
+        if sqlite_file?(full_rel) do
+          tables = Druzhok.SqliteBrowser.tables(full_path)
+          {:noreply, assign(socket,
+            db_browser: full_path,
+            db_tables: tables,
+            db_selected_table: nil,
+            db_columns: [],
+            db_rows: [],
+            db_total_rows: 0,
+            db_offset: 0,
+            db_query: "",
+            db_error: nil,
+            db_selected_rows: [],
+            db_all_selected: false,
+            db_editing: nil,
+            file_content: %{path: full_rel, content: ""}
+          )}
+        else
+          content = cond do
+            binary_file?(full_rel) ->
+              case File.stat(full_path) do
+                {:ok, %{size: size}} -> "Binary file (#{format_file_size(size)})"
+                _ -> "Binary file"
+              end
 
-          true ->
-            case File.stat(full_path) do
-              {:ok, %{size: size}} when size > 500_000 ->
-                case File.open(full_path, [:read]) do
-                  {:ok, f} ->
-                    data = IO.read(f, 50_000)
-                    File.close(f)
-                    "#{data}\n\n... [truncated, file is #{div(size, 1024)}KB]"
-                  _ -> "Cannot read file"
-                end
-              _ ->
-                case File.read(full_path) do
-                  {:ok, c} ->
-                    if String.valid?(c), do: c, else: "Binary file (#{byte_size(c)} bytes)"
-                  {:error, _} -> "Cannot read file"
-                end
-            end
+            true ->
+              case File.stat(full_path) do
+                {:ok, %{size: size}} when size > 500_000 ->
+                  case File.open(full_path, [:read]) do
+                    {:ok, f} ->
+                      data = IO.read(f, 50_000)
+                      File.close(f)
+                      "#{data}\n\n... [truncated, file is #{div(size, 1024)}KB]"
+                    _ -> "Cannot read file"
+                  end
+                _ ->
+                  case File.read(full_path) do
+                    {:ok, c} ->
+                      if String.valid?(c), do: c, else: "Binary file (#{byte_size(c)} bytes)"
+                    {:error, _} -> "Cannot read file"
+                  end
+              end
+          end
+
+          {:noreply, assign(socket, file_content: %{path: full_rel, content: content}, editing_file: false, file_saved: false, db_browser: nil)}
         end
-
-        {:noreply, assign(socket, file_content: %{path: full_rel, content: content}, editing_file: false, file_saved: false)}
       else
         {:noreply, socket}
       end
@@ -309,6 +342,175 @@ defmodule DruzhokWebWeb.DashboardLive do
       instance = get_instance(socket.assigns.selected, socket)
       files = if instance, do: list_workspace_files(instance, parent), else: []
       {:noreply, assign(socket, file_content: nil, workspace_files: files, current_path: parent)}
+    end
+  end
+
+  # SQLite browser events
+
+  def handle_event("close_db", _, socket) do
+    {:noreply, assign(socket, db_browser: nil, file_content: nil)}
+  end
+
+  def handle_event("db_select_table", %{"table" => table}, socket) do
+    case Druzhok.SqliteBrowser.browse_table(socket.assigns.db_browser, table, socket.assigns.db_page_size, 0) do
+      {:ok, %{columns: columns, rows: rows, total: total}} ->
+        {:noreply, assign(socket,
+          db_selected_table: table,
+          db_columns: columns,
+          db_rows: rows,
+          db_total_rows: total,
+          db_offset: 0,
+          db_query: "SELECT * FROM \"#{table}\"",
+          db_error: nil,
+          db_selected_rows: [],
+          db_all_selected: false,
+          db_editing: nil
+        )}
+      {:error, reason} ->
+        {:noreply, assign(socket, db_error: reason)}
+    end
+  end
+
+  def handle_event("db_run_query", %{"query" => query}, socket) do
+    case Druzhok.SqliteBrowser.query(socket.assigns.db_browser, query, socket.assigns.db_page_size, 0) do
+      {:ok, %{columns: columns, rows: rows, total: total}} ->
+        {:noreply, assign(socket,
+          db_columns: columns,
+          db_rows: rows,
+          db_total_rows: total,
+          db_offset: 0,
+          db_query: query,
+          db_error: nil,
+          db_selected_rows: [],
+          db_all_selected: false,
+          db_editing: nil
+        )}
+      {:error, reason} ->
+        {:noreply, assign(socket, db_error: reason, db_columns: [], db_rows: [])}
+    end
+  end
+
+  def handle_event("db_edit_cell", %{"idx" => idx, "col" => col}, socket) do
+    idx = String.to_integer(idx)
+    {:noreply, assign(socket, db_editing: {idx, col})}
+  end
+
+  def handle_event("db_save_cell", %{"idx" => idx, "col" => col, "value" => value}, socket) do
+    idx = String.to_integer(idx)
+    table = socket.assigns.db_selected_table
+
+    if table do
+      rowids = Druzhok.SqliteBrowser.get_rowids(
+        socket.assigns.db_browser, table,
+        socket.assigns.db_page_size, socket.assigns.db_offset
+      )
+      rowid = Enum.at(rowids, idx)
+
+      if rowid do
+        Druzhok.SqliteBrowser.update_cell(socket.assigns.db_browser, table, rowid, col, value)
+        # Refresh current view
+        case Druzhok.SqliteBrowser.query(socket.assigns.db_browser, socket.assigns.db_query, socket.assigns.db_page_size, socket.assigns.db_offset) do
+          {:ok, %{columns: columns, rows: rows, total: total}} ->
+            {:noreply, assign(socket, db_columns: columns, db_rows: rows, db_total_rows: total, db_editing: nil)}
+          _ ->
+            {:noreply, assign(socket, db_editing: nil)}
+        end
+      else
+        {:noreply, assign(socket, db_editing: nil, db_error: "Could not find row")}
+      end
+    else
+      {:noreply, assign(socket, db_editing: nil)}
+    end
+  end
+
+  def handle_event("db_cancel_edit", _, socket) do
+    {:noreply, assign(socket, db_editing: nil)}
+  end
+
+  def handle_event("db_delete_row", %{"idx" => idx}, socket) do
+    idx = String.to_integer(idx)
+    table = socket.assigns.db_selected_table
+
+    if table do
+      rowids = Druzhok.SqliteBrowser.get_rowids(
+        socket.assigns.db_browser, table,
+        socket.assigns.db_page_size, socket.assigns.db_offset
+      )
+      rowid = Enum.at(rowids, idx)
+
+      if rowid do
+        Druzhok.SqliteBrowser.delete_rows(socket.assigns.db_browser, table, [rowid])
+        refresh_db_view(socket)
+      else
+        {:noreply, socket}
+      end
+    else
+      {:noreply, socket}
+    end
+  end
+
+  def handle_event("db_delete_selected", _, socket) do
+    table = socket.assigns.db_selected_table
+
+    if table do
+      rowids = Druzhok.SqliteBrowser.get_rowids(
+        socket.assigns.db_browser, table,
+        socket.assigns.db_page_size, socket.assigns.db_offset
+      )
+      selected_rowids = Enum.map(socket.assigns.db_selected_rows, &Enum.at(rowids, &1))
+                        |> Enum.reject(&is_nil/1)
+
+      if selected_rowids != [] do
+        Druzhok.SqliteBrowser.delete_rows(socket.assigns.db_browser, table, selected_rowids)
+        refresh_db_view(socket)
+      else
+        {:noreply, socket}
+      end
+    else
+      {:noreply, socket}
+    end
+  end
+
+  def handle_event("db_toggle_row", %{"idx" => idx}, socket) do
+    idx = String.to_integer(idx)
+    selected = socket.assigns.db_selected_rows
+
+    selected = if idx in selected do
+      List.delete(selected, idx)
+    else
+      [idx | selected]
+    end
+
+    all_selected = length(selected) == length(socket.assigns.db_rows) and selected != []
+    {:noreply, assign(socket, db_selected_rows: selected, db_all_selected: all_selected)}
+  end
+
+  def handle_event("db_toggle_all", _, socket) do
+    if socket.assigns.db_all_selected do
+      {:noreply, assign(socket, db_selected_rows: [], db_all_selected: false)}
+    else
+      all = Enum.to_list(0..(length(socket.assigns.db_rows) - 1))
+      {:noreply, assign(socket, db_selected_rows: all, db_all_selected: true)}
+    end
+  end
+
+  def handle_event("db_prev_page", _, socket) do
+    new_offset = max(socket.assigns.db_offset - socket.assigns.db_page_size, 0)
+    case Druzhok.SqliteBrowser.query(socket.assigns.db_browser, socket.assigns.db_query, socket.assigns.db_page_size, new_offset) do
+      {:ok, %{columns: columns, rows: rows, total: total}} ->
+        {:noreply, assign(socket, db_columns: columns, db_rows: rows, db_total_rows: total, db_offset: new_offset, db_selected_rows: [], db_all_selected: false, db_editing: nil)}
+      _ ->
+        {:noreply, socket}
+    end
+  end
+
+  def handle_event("db_next_page", _, socket) do
+    new_offset = socket.assigns.db_offset + socket.assigns.db_page_size
+    case Druzhok.SqliteBrowser.query(socket.assigns.db_browser, socket.assigns.db_query, socket.assigns.db_page_size, new_offset) do
+      {:ok, %{columns: columns, rows: rows, total: total}} ->
+        {:noreply, assign(socket, db_columns: columns, db_rows: rows, db_total_rows: total, db_offset: new_offset, db_selected_rows: [], db_all_selected: false, db_editing: nil)}
+      _ ->
+        {:noreply, socket}
     end
   end
 
@@ -553,7 +755,13 @@ defmodule DruzhokWebWeb.DashboardLive do
             <.event_log :if={@tab == :logs} events={@events} />
 
             <%!-- Files tab --%>
-            <.file_browser :if={@tab == :files} files={@workspace_files} file_content={@file_content} current_path={@current_path} editing={@editing_file} file_saved={@file_saved} />
+            <.sqlite_browser :if={@tab == :files && @db_browser}
+              db_path={@db_browser} db_tables={@db_tables} db_selected_table={@db_selected_table}
+              db_columns={@db_columns} db_rows={@db_rows} db_total_rows={@db_total_rows}
+              db_offset={@db_offset} db_page_size={@db_page_size} db_query={@db_query}
+              db_error={@db_error} db_selected_rows={@db_selected_rows}
+              db_all_selected={@db_all_selected} db_editing={@db_editing} />
+            <.file_browser :if={@tab == :files && !@db_browser} files={@workspace_files} file_content={@file_content} current_path={@current_path} editing={@editing_file} file_saved={@file_saved} />
 
             <%!-- Settings tab --%>
             <div :if={@tab == :settings} class="p-6 space-y-6">
@@ -755,11 +963,26 @@ defmodule DruzhokWebWeb.DashboardLive do
     Task.start(fn -> Druzhok.BotManager.restart(name) end)
   end
 
+  @sqlite_extensions ~w(.db .sqlite .sqlite3)
   @binary_extensions ~w(.db .sqlite .sqlite3 .jpg .jpeg .png .gif .bmp .ico .pdf .zip .tar .gz .bz2 .xz .exe .bin .so .dylib .wasm)
+
+  defp sqlite_file?(path) do
+    ext = Path.extname(path) |> String.downcase()
+    ext in @sqlite_extensions
+  end
 
   defp binary_file?(path) do
     ext = Path.extname(path) |> String.downcase()
     ext in @binary_extensions
+  end
+
+  defp refresh_db_view(socket) do
+    case Druzhok.SqliteBrowser.query(socket.assigns.db_browser, socket.assigns.db_query, socket.assigns.db_page_size, socket.assigns.db_offset) do
+      {:ok, %{columns: columns, rows: rows, total: total}} ->
+        {:noreply, assign(socket, db_columns: columns, db_rows: rows, db_total_rows: total, db_selected_rows: [], db_all_selected: false, db_editing: nil)}
+      _ ->
+        {:noreply, socket}
+    end
   end
 
   defp format_file_size(bytes) when bytes < 1024, do: "#{bytes} B"
