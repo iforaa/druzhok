@@ -6,8 +6,7 @@ defmodule DruzhokWebWeb.LlmProxyController do
 
   def chat_completions(conn, _params) do
     instance = conn.assigns.instance
-    {:ok, raw_body, conn} = Plug.Conn.read_body(conn, length: 10_000_000)
-    body = Jason.decode!(raw_body)
+    body = conn.body_params
 
     requested_model = body["model"] || "default"
     plan = Map.get(instance, :plan) || "free"
