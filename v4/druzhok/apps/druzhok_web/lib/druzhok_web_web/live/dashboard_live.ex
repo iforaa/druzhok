@@ -302,8 +302,10 @@ defmodule DruzhokWebWeb.DashboardLive do
       instance = get_instance(socket.assigns.selected, socket)
       if instance do
         workspace = instance[:workspace] || instance_workspace(socket.assigns.selected)
-        full_path = Path.join(workspace, path)
-        File.write!(full_path, content)
+        full_path = Path.join(workspace, path) |> Path.expand()
+        if String.starts_with?(full_path, Path.expand(workspace)) do
+          File.write!(full_path, content)
+        end
         {:noreply, assign(socket, file_content: %{path: path, content: content}, editing_file: false, file_saved: true)}
       else
         {:noreply, socket}
