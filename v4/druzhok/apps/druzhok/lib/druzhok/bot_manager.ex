@@ -52,13 +52,15 @@ defmodule Druzhok.BotManager do
         command = runtime.gateway_command()
 
         # Write runtime-specific config files to workspace
+        # Write runtime-specific config files relative to tenant data root (parent of workspace)
+        data_root = Path.dirname(instance.workspace)
         for {path, content} <- runtime.workspace_files(instance) do
-          full_path = Path.join(instance.workspace, path)
+          full_path = Path.join(data_root, path)
           File.mkdir_p!(Path.dirname(full_path))
           File.write!(full_path, content)
         end
 
-        case start_container(name, image, env, instance.workspace, command) do
+        case start_container(name, image, env, data_root, command) do
           {:ok, container_id} ->
             Logger.info("Started bot container #{name}: #{container_id}")
             Druzhok.HealthMonitor.register(name, container_id, instance.bot_runtime || "zeroclaw")
