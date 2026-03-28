@@ -15,20 +15,15 @@ defmodule DruzhokWebWeb.Live.Components.FileBrowser do
           <button phx-click="back_to_files" class="text-xs text-gray-400 hover:text-gray-900 transition">&larr; back</button>
           <span class="text-sm text-gray-500 font-mono flex-1"><%= @file_content.path %></span>
           <span :if={@file_saved} class="text-xs text-green-500 font-medium">Saved</span>
-          <button :if={!@editing} phx-click="edit_file" class="text-xs text-gray-500 hover:text-gray-900 font-medium transition">Edit</button>
-          <button :if={@editing} phx-click="save_file" class="bg-gray-900 hover:bg-gray-800 text-white rounded-lg px-3 py-1 text-xs font-medium transition">Save</button>
-          <button :if={@editing} phx-click="cancel_edit" class="text-xs text-gray-400 hover:text-gray-900 font-medium transition">Cancel</button>
+          <button phx-click="save_file" class="bg-gray-900 hover:bg-gray-800 text-white rounded-lg px-3 py-1 text-xs font-medium transition">Save</button>
         </div>
 
-        <textarea :if={@editing}
+        <textarea
           id="file-editor"
           phx-hook="FileEditor"
           name="file_content"
           class="flex-1 bg-gray-50 border border-gray-200 p-4 rounded-lg text-sm font-mono text-gray-700 leading-relaxed resize-none focus:outline-none focus:ring-1 focus:ring-gray-900 focus:border-gray-900"
           spellcheck="false"><%= @file_content.content %></textarea>
-
-        <pre :if={!@editing}
-          class="flex-1 bg-gray-50 border border-gray-200 p-4 rounded-lg text-sm overflow-auto whitespace-pre-wrap font-mono text-gray-700 leading-relaxed"><%= @file_content.content %></pre>
       </div>
 
       <div :if={!@file_content} class="py-1">
