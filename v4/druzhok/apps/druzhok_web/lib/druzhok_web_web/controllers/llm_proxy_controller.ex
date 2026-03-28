@@ -97,7 +97,16 @@ defmodule DruzhokWebWeb.LlmProxyController do
 
       prompt_preview = case request_body["messages"] do
         [_ | _] = msgs ->
-          msgs |> List.last() |> Map.get("content", "") |> String.slice(0, 500)
+          content = msgs |> List.last() |> Map.get("content", "")
+          case content do
+            text when is_binary(text) -> String.slice(text, 0, 500)
+            parts when is_list(parts) ->
+              parts
+              |> Enum.filter(&(&1["type"] == "text"))
+              |> Enum.map_join(" ", &(&1["text"] || ""))
+              |> String.slice(0, 500)
+            _ -> nil
+          end
         _ -> nil
       end
 
