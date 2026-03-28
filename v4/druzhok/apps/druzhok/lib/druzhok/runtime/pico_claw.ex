@@ -27,6 +27,39 @@ defmodule Druzhok.Runtime.PicoClaw do
   def workspace_files(_instance), do: []
 
   @impl true
+  def read_allowed_users(data_root) do
+    path = Path.join(data_root, ".allowed_users.json")
+    case File.read(path) do
+      {:ok, content} ->
+        case Jason.decode(content) do
+          {:ok, list} when is_list(list) -> list
+          _ -> []
+        end
+      {:error, _} -> []
+    end
+  end
+
+  @impl true
+  def add_allowed_user(data_root, user_id) do
+    current = read_allowed_users(data_root)
+    if user_id in current do
+      :ok
+    else
+      updated = current ++ [user_id]
+      File.write!(Path.join(data_root, ".allowed_users.json"), Jason.encode!(updated))
+      :ok
+    end
+  end
+
+  @impl true
+  def remove_allowed_user(data_root, user_id) do
+    current = read_allowed_users(data_root)
+    updated = Enum.reject(current, &(&1 == user_id))
+    File.write!(Path.join(data_root, ".allowed_users.json"), Jason.encode!(updated))
+    :ok
+  end
+
+  @impl true
   def docker_image, do: System.get_env("PICOCLAW_IMAGE") || "picoclaw:latest"
 
   @impl true

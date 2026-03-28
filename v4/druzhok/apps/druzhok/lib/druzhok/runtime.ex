@@ -13,6 +13,9 @@ defmodule Druzhok.Runtime do
   @callback health_path() :: String.t()
   @callback health_port() :: integer()
   @callback supports_feature?(atom()) :: boolean()
+  @callback read_allowed_users(data_root :: String.t()) :: [String.t()]
+  @callback add_allowed_user(data_root :: String.t(), user_id :: String.t()) :: :ok | {:error, term()}
+  @callback remove_allowed_user(data_root :: String.t(), user_id :: String.t()) :: :ok | {:error, term()}
 
   @runtimes %{
     "zeroclaw" => Druzhok.Runtime.ZeroClaw,
@@ -29,6 +32,16 @@ defmodule Druzhok.Runtime do
 
   def list, do: @runtimes
   def names, do: Map.keys(@runtimes)
+
+  def parse_user_input(input) do
+    trimmed = String.trim(input)
+    cond do
+      String.contains?(trimmed, "bind-telegram") ->
+        trimmed |> String.split() |> List.last()
+      true ->
+        trimmed
+    end
+  end
 
   def base_env(instance) do
     proxy_host = System.get_env("LLM_PROXY_HOST") || "host.docker.internal"

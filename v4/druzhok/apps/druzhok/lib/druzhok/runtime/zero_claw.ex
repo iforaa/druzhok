@@ -20,12 +20,18 @@ defmodule Druzhok.Runtime.ZeroClaw do
 
     files = []
 
+    # Include owner's Telegram ID in allowed_users if set
+    owner_id = Map.get(instance, :owner_telegram_id)
+    all_allowed = if owner_id, do: [to_string(owner_id) | allowed], else: allowed
+    all_allowed = Enum.uniq(all_allowed) |> Enum.reject(&(&1 == ""))
+
     files = if token do
-      allowed_toml = Enum.map_join(allowed, ", ", &"\"#{&1}\"")
+      allowed_toml = Enum.map_join(all_allowed, ", ", &"\"#{&1}\"")
       toml = """
       [channels_config.telegram]
       bot_token = "#{token}"
       allowed_users = [#{allowed_toml}]
+      mention_only = false
       """
       # Write to .zeroclaw/config.toml (ZeroClaw's config dir)
       [{".zeroclaw/config.toml", toml} | files]
@@ -34,6 +40,68 @@ defmodule Druzhok.Runtime.ZeroClaw do
     end
 
     files
+  end
+
+  @impl true
+  def read_allowed_users(data_root) do
+    config_path = Path.join([data_root, ".zeroclaw", "config.toml"])
+    case File.read(config_path) do
+      {:ok, content} -> parse_allowed_users(content)
+      {:error, _} -> []
+    end
+  end
+
+  @impl true
+  def add_allowed_user(data_root, user_id) do
+    config_path = Path.join([data_root, ".zeroclaw", "config.toml"])
+    case File.read(config_path) do
+      {:ok, content} ->
+        current = parse_allowed_users(content)
+        if user_id in current do
+          :ok
+        else
+          updated = current ++ [user_id]
+          new_content = replace_allowed_users(content, updated)
+          File.write!(config_path, new_content)
+          :ok
+        end
+      {:error, reason} ->
+        {:error, reason}
+    end
+  end
+
+  @impl true
+  def remove_allowed_user(data_root, user_id) do
+    config_path = Path.join([data_root, ".zeroclaw", "config.toml"])
+    case File.read(config_path) do
+      {:ok, content} ->
+        current = parse_allowed_users(content)
+        updated = Enum.reject(current, &(&1 == user_id))
+        new_content = replace_allowed_users(content, updated)
+        File.write!(config_path, new_content)
+        :ok
+      {:error, reason} ->
+        {:error, reason}
+    end
+  end
+
+  defp parse_allowed_users(toml_content) do
+    case Regex.run(~r/allowed_users\s*=\s*\[(.*?)\]/s, toml_content) do
+      [_, inner] ->
+        Regex.scan(~r/"([^"]*)"/, inner)
+        |> Enum.map(fn [_, id] -> id end)
+        |> Enum.reject(&(&1 == ""))
+      nil -> []
+    end
+  end
+
+  defp replace_allowed_users(toml_content, users) do
+    users_str = Enum.map_join(users, ", ", &"\"#{&1}\"")
+    Regex.replace(
+      ~r/allowed_users\s*=\s*\[.*?\]/s,
+      toml_content,
+      "allowed_users = [#{users_str}]"
+    )
   end
 
   @doc """

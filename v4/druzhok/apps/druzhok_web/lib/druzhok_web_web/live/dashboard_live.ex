@@ -42,6 +42,7 @@ defmodule DruzhokWebWeb.DashboardLive do
       pairing: nil,
       owner: nil,
       groups: [],
+      allowed_users: [],
       instance_errors: [],
       expanded_error: nil,
       editing_file: false,
@@ -68,6 +69,7 @@ defmodule DruzhokWebWeb.DashboardLive do
           pairing: Druzhok.InstanceManager.get_pairing(name),
           owner: Druzhok.InstanceManager.get_owner(name),
           groups: Druzhok.InstanceManager.get_groups(name),
+          allowed_users: load_allowed_users(name),
           instance_errors: [],
           expanded_error: nil
         )}
@@ -75,7 +77,7 @@ defmodule DruzhokWebWeb.DashboardLive do
   end
 
   def handle_params(_params, _uri, socket) do
-    {:noreply, assign(socket, selected: nil, workspace_files: [], file_content: nil, events: [], pairing: nil, owner: nil, groups: [])}
+    {:noreply, assign(socket, selected: nil, workspace_files: [], file_content: nil, events: [], pairing: nil, owner: nil, groups: [], allowed_users: [])}
   end
 
   @impl true
@@ -372,6 +374,39 @@ defmodule DruzhokWebWeb.DashboardLive do
     {:noreply, assign(socket, instances: list_instances())}
   end
 
+  def handle_event("approve_user", %{"user_input" => input}, socket) do
+    user_id = Druzhok.Runtime.parse_user_input(input)
+    if user_id != "" and socket.assigns.selected do
+      inst = Druzhok.Repo.get_by(Druzhok.Instance, name: socket.assigns.selected)
+      if inst && inst.workspace do
+        runtime = Druzhok.Runtime.get(inst.bot_runtime || "zeroclaw", Druzhok.Runtime.ZeroClaw)
+        data_root = Path.dirname(inst.workspace)
+        runtime.add_allowed_user(data_root, user_id)
+        {:noreply, assign(socket, allowed_users: load_allowed_users(socket.assigns.selected))}
+      else
+        {:noreply, socket}
+      end
+    else
+      {:noreply, put_flash(socket, :error, "Invalid user ID")}
+    end
+  end
+
+  def handle_event("remove_user", %{"user_id" => user_id}, socket) do
+    if socket.assigns.selected do
+      inst = Druzhok.Repo.get_by(Druzhok.Instance, name: socket.assigns.selected)
+      if inst && inst.workspace do
+        runtime = Druzhok.Runtime.get(inst.bot_runtime || "zeroclaw", Druzhok.Runtime.ZeroClaw)
+        data_root = Path.dirname(inst.workspace)
+        runtime.remove_allowed_user(data_root, user_id)
+        {:noreply, assign(socket, allowed_users: load_allowed_users(socket.assigns.selected))}
+      else
+        {:noreply, socket}
+      end
+    else
+      {:noreply, socket}
+    end
+  end
+
   def handle_event("generate_api_key", _, socket) do
     update_instance_field(socket.assigns.selected, %{api_key: Druzhok.Instance.generate_api_key()})
     {:noreply, assign(socket, instances: list_instances())}
@@ -591,6 +626,29 @@ defmodule DruzhokWebWeb.DashboardLive do
                   <button type="submit" class="px-3 py-2 bg-gray-900 text-white rounded-lg text-sm">Save</button>
                 </form>
               </div>
+
+              <hr class="border-gray-200" />
+
+              <%!-- Security: Approved Users --%>
+              <div>
+                <h3 class="text-sm font-medium text-gray-700 mb-3">Approved Telegram Users</h3>
+                <div :if={@allowed_users == []} class="text-xs text-gray-400 mb-3">
+                  No users approved yet. When someone messages the bot, it will show them an ID to paste here.
+                </div>
+                <div :if={@allowed_users != []} class="space-y-1 mb-3">
+                  <div :for={user_id <- @allowed_users} class="flex items-center justify-between bg-gray-50 rounded-lg px-3 py-2">
+                    <code class="text-sm font-mono"><%= user_id %></code>
+                    <button phx-click="remove_user" phx-value-user_id={user_id}
+                            class="text-xs text-red-500 hover:text-red-700 transition">Remove</button>
+                  </div>
+                </div>
+                <form phx-submit="approve_user" class="flex gap-2">
+                  <input name="user_input" placeholder="Paste user ID or bind command"
+                         class="flex-1 border border-gray-300 rounded-lg px-3 py-2 text-sm" />
+                  <button type="submit" class="px-3 py-2 bg-gray-900 text-white rounded-lg text-sm">Approve</button>
+                </form>
+                <p class="text-xs text-gray-400 mt-1">Paste the number from the bot's approval message</p>
+              </div>
             </div>
 
             <%!-- Usage tab --%>
@@ -637,6 +695,17 @@ defmodule DruzhokWebWeb.DashboardLive do
         if restart do
           Druzhok.InstanceManager.stop(name)
         end
+    end
+  end
+
+  defp load_allowed_users(name) do
+    inst = Druzhok.Repo.get_by(Druzhok.Instance, name: name)
+    if inst && inst.workspace do
+      runtime = Druzhok.Runtime.get(inst.bot_runtime || "zeroclaw", Druzhok.Runtime.ZeroClaw)
+      data_root = Path.dirname(inst.workspace)
+      runtime.read_allowed_users(data_root)
+    else
+      []
     end
   end
 
