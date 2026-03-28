@@ -18,6 +18,7 @@ defmodule Druzhok.Instance do
     field :language, :string, default: "ru"
     field :tenant_key, :string
     field :bot_runtime, :string, default: "zeroclaw"
+    field :on_demand_model, :string
 
     has_one :budget, Druzhok.Budget
 
@@ -26,7 +27,7 @@ defmodule Druzhok.Instance do
 
   def changeset(instance, attrs) do
     instance
-    |> cast(attrs, [:name, :telegram_token, :model, :workspace, :active, :heartbeat_interval, :owner_telegram_id, :sandbox, :timezone, :api_key, :daily_token_limit, :dream_hour, :language, :tenant_key, :bot_runtime])
+    |> cast(attrs, [:name, :telegram_token, :model, :workspace, :active, :heartbeat_interval, :owner_telegram_id, :sandbox, :timezone, :api_key, :daily_token_limit, :dream_hour, :language, :tenant_key, :bot_runtime, :on_demand_model])
     |> validate_required([:name, :model, :workspace])
     |> unique_constraint(:name)
   end

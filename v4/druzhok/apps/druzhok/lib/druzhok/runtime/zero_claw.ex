@@ -17,6 +17,8 @@ defmodule Druzhok.Runtime.ZeroClaw do
   def workspace_files(instance) do
     token = Map.get(instance, :telegram_token)
     allowed = Map.get(instance, :allowed_users, []) || []
+    on_demand_model = Map.get(instance, :on_demand_model)
+    language = Map.get(instance, :language, "ru")
 
     files = []
 
@@ -27,6 +29,19 @@ defmodule Druzhok.Runtime.ZeroClaw do
 
     files = if token do
       allowed_toml = Enum.map_join(all_allowed, ", ", &"\"#{&1}\"")
+
+      model_routes = if on_demand_model do
+        """
+
+        [[model_routes]]
+        hint = "smart"
+        provider = "custom:http://host.docker.internal:4000/v1"
+        model = "#{on_demand_model}"
+        """
+      else
+        ""
+      end
+
       toml = """
       [autonomy]
       level = "full"
@@ -35,9 +50,19 @@ defmodule Druzhok.Runtime.ZeroClaw do
       bot_token = "#{token}"
       allowed_users = [#{allowed_toml}]
       mention_only = false
+      #{model_routes}
       """
       # Write to .zeroclaw/config.toml (ZeroClaw's config dir)
       [{".zeroclaw/config.toml", toml} | files]
+    else
+      files
+    end
+
+    # TOOLS.md with orchestrator model info (written to workspace dir)
+    files = if on_demand_model do
+      default_model = Map.get(instance, :model, "default")
+      tools_content = orchestrator_tools_section(default_model, on_demand_model, language)
+      [{"workspace/TOOLS.md", tools_content} | files]
     else
       files
     end
@@ -65,6 +90,44 @@ defmodule Druzhok.Runtime.ZeroClaw do
     modify_allowed_users(data_root, fn current ->
       Enum.reject(current, &(&1 == user_id))
     end)
+  end
+
+  defp orchestrator_tools_section(default_model, on_demand_model, "ru") do
+    """
+    # TOOLS.md — Druzhok Orchestrator
+
+    ## Доступные модели
+    - **Быстрая (по умолчанию):** #{default_model} — используется для всех сообщений
+    - **Умная (по запросу):** #{on_demand_model} — только когда пользователь явно просит
+
+    ## Правила переключения моделей
+    Используй быструю модель для всего по умолчанию. Переключайся на умную ТОЛЬКО если пользователь:
+    - Говорит "подумай", "think", "используй умную модель", "/smart"
+    - Явно просит сложный анализ или глубокое рассуждение
+
+    Для переключения используй инструмент `model_switch` с `action: "set"` и `model: "hint:smart"`.
+    После выполнения запроса на умной модели — переключись обратно: `model_switch` с `model: "#{default_model}"`.
+    Никогда не переключайся на умную модель самостоятельно без явной просьбы пользователя.
+    """
+  end
+
+  defp orchestrator_tools_section(default_model, on_demand_model, _lang) do
+    """
+    # TOOLS.md — Druzhok Orchestrator
+
+    ## Available Models
+    - **Fast (default):** #{default_model} — used for all messages
+    - **Smart (on-demand):** #{on_demand_model} — only when user explicitly asks
+
+    ## Model Switching Rules
+    Use the fast model for everything by default. Switch to smart ONLY if the user:
+    - Says "think harder", "use smart model", "/smart"
+    - Explicitly asks for deep analysis or complex reasoning
+
+    To switch, use `model_switch` tool with `action: "set"` and `model: "hint:smart"`.
+    After completing the request on smart model — switch back: `model_switch` with `model: "#{default_model}"`.
+    Never switch to smart model on your own without explicit user request.
+    """
   end
 
   defp config_path(data_root), do: Path.join([data_root, ".zeroclaw", "config.toml"])

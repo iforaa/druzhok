@@ -395,6 +395,17 @@ defmodule DruzhokWebWeb.DashboardLive do
     {:noreply, assign(socket, instances: list_instances())}
   end
 
+  def handle_event("update_models", %{"name" => name, "default_model" => default_model} = params, socket) do
+    on_demand = case params["on_demand_model"] do
+      "" -> nil
+      nil -> nil
+      model -> model
+    end
+
+    update_instance_field(name, %{model: default_model, on_demand_model: on_demand})
+    {:noreply, assign(socket, instances: list_instances())}
+  end
+
   def handle_event("update_group_prompt", %{"name" => name, "chat_id" => chat_id, "value" => prompt}, socket) do
     chat_id = String.to_integer(chat_id)
     prompt = case String.trim(prompt) do
@@ -577,6 +588,35 @@ defmodule DruzhokWebWeb.DashboardLive do
                 <form :if={!token} phx-submit="save_telegram_token" class="flex gap-2">
                   <input name="token" placeholder="Bot token" class="flex-1 border border-gray-300 rounded-lg px-3 py-2 text-sm" />
                   <button type="submit" class="px-3 py-2 bg-gray-900 text-white rounded-lg text-sm">Save</button>
+                </form>
+              </div>
+
+              <hr class="border-gray-200" />
+
+              <%!-- Model Selection --%>
+              <div>
+                <h3 class="text-sm font-medium text-gray-700 mb-3">Models</h3>
+                <form phx-change="update_models">
+                  <input type="hidden" name="name" value={@selected} />
+                  <div class="grid grid-cols-2 gap-4">
+                    <div>
+                      <label class="block text-xs font-medium text-gray-500 mb-1">Default (all messages)</label>
+                      <select name="default_model" class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm">
+                        <%= for m <- Druzhok.ModelCatalog.all() do %>
+                          <option value={m.id} selected={m.id == selected_field(@instances, @selected, :model)}><%= m.name %> (<%= m.price %>)</option>
+                        <% end %>
+                      </select>
+                    </div>
+                    <div>
+                      <label class="block text-xs font-medium text-gray-500 mb-1">On-demand (user requests)</label>
+                      <select name="on_demand_model" class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm">
+                        <option value="">None</option>
+                        <%= for m <- Druzhok.ModelCatalog.smart() do %>
+                          <option value={m.id} selected={m.id == (selected_field(@instances, @selected, :on_demand_model) || "")}><%= m.name %> (<%= m.price %>)</option>
+                        <% end %>
+                      </select>
+                    </div>
+                  </div>
                 </form>
               </div>
 
