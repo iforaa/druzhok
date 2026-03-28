@@ -6,7 +6,7 @@ defmodule Druzhok.Runtime.ZeroClaw do
     port = 19000 + (Map.get(instance, :id, 0) || 0)
     %{
       "ZEROCLAW_MODEL" => Map.get(instance, :model, "default") || "default",
-      "ZEROCLAW_PROVIDER" => "custom:http://host.docker.internal:4000/v1",
+      "ZEROCLAW_PROVIDER" => "custom:http://#{proxy_host()}:4000/v1",
       "ZEROCLAW_GATEWAY_PORT" => to_string(port),
       "ZEROCLAW_CONFIG_DIR" => "/data/.zeroclaw",
       "ZEROCLAW_WORKSPACE" => "/data/workspace",
@@ -38,7 +38,7 @@ defmodule Druzhok.Runtime.ZeroClaw do
 
         [[model_routes]]
         hint = "smart"
-        provider = "custom:http://host.docker.internal:4000/v1"
+        provider = "custom:http://#{proxy_host()}:4000/v1"
         model = "#{on_demand_model}"
         """
       else
@@ -141,6 +141,8 @@ defmodule Druzhok.Runtime.ZeroClaw do
     Never switch to smart model on your own without explicit user request.
     """
   end
+
+  defp proxy_host, do: System.get_env("LLM_PROXY_HOST") || "host.docker.internal"
 
   defp config_path(data_root), do: Path.join([data_root, ".zeroclaw", "config.toml"])
 
