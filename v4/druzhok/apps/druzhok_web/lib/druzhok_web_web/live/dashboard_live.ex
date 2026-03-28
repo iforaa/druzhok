@@ -602,7 +602,7 @@ defmodule DruzhokWebWeb.DashboardLive do
                     <div>
                       <label class="block text-xs font-medium text-gray-500 mb-1">Default (all messages)</label>
                       <select name="default_model" class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm">
-                        <%= for m <- Druzhok.ModelCatalog.all() do %>
+                        <%= for m <- Druzhok.ModelCatalog.default_options() do %>
                           <option value={m.id} selected={m.id == selected_field(@instances, @selected, :model)}><%= m.name %> (<%= m.price %>)</option>
                         <% end %>
                       </select>
