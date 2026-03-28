@@ -239,7 +239,7 @@ defmodule DruzhokWebWeb.DashboardLive do
       if instance do
         current_path = socket.assigns[:current_path] || ""
         full_rel = if current_path == "", do: path, else: Path.join(current_path, path)
-        full_path = Path.join(instance_workspace(socket.assigns.selected), full_rel)
+        full_path = Path.join(instance[:workspace] || instance_workspace(socket.assigns.selected), full_rel)
         content = case File.stat(full_path) do
           {:ok, %{size: size}} when size > 500_000 ->
             case File.open(full_path, [:read]) do
@@ -281,12 +281,9 @@ defmodule DruzhokWebWeb.DashboardLive do
       path = socket.assigns.file_content.path
       instance = get_instance(socket.assigns.selected, socket)
       if instance do
-        if instance[:sandbox] == "docker" do
-          Druzhok.Sandbox.Docker.write_file(instance.name, "/workspace/#{path}", content)
-        else
-          full_path = Path.join(instance_workspace(socket.assigns.selected), path)
-          File.write!(full_path, content)
-        end
+        workspace = instance[:workspace] || instance_workspace(socket.assigns.selected)
+        full_path = Path.join(workspace, path)
+        File.write!(full_path, content)
         {:noreply, assign(socket, file_content: %{path: path, content: content}, editing_file: false, file_saved: true)}
       else
         {:noreply, socket}
