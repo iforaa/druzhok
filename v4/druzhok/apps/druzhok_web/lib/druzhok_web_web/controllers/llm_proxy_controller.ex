@@ -9,7 +9,6 @@ defmodule DruzhokWebWeb.LlmProxyController do
     body = conn.body_params
 
     requested_model = body["model"] || "default"
-    plan = Map.get(instance, :plan) || "free"
     stream = body["stream"] == true
 
     case Budget.check(instance.id) do
@@ -17,14 +16,7 @@ defmodule DruzhokWebWeb.LlmProxyController do
         json_error(conn, 429, "Token budget exceeded", "insufficient_quota")
 
       {:ok, _remaining} ->
-        {resolved_model, _} = case ModelAccess.check(plan, requested_model) do
-          {:ok, model} -> {model, requested_model}
-          {:downgrade, model} ->
-            Logger.info("Downgraded #{requested_model} → #{model} for #{instance.tenant_key}")
-            {model, requested_model}
-        end
-
-        body = Map.put(body, "model", resolved_model)
+        resolved_model = requested_model
         provider = LlmFormat.route_provider(resolved_model)
         api_key = LlmFormat.provider_key(provider)
         base_url = LlmFormat.provider_url(provider)
