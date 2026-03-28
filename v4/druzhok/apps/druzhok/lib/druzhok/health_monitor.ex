@@ -80,7 +80,7 @@ defmodule Druzhok.HealthMonitor do
   end
 
   defp do_health_check(name) do
-    container = "druzhok-bot-#{name}"
+    container = Druzhok.BotManager.container_name(name)
     case System.cmd("docker", ["inspect", "--format", "{{.State.Running}}", container], stderr_to_stdout: true) do
       {"true\n", 0} -> :ok
       _ -> :error

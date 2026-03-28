@@ -15,9 +15,7 @@ defmodule DruzhokWebWeb.LlmProxyController do
 
     case Budget.check(instance.id) do
       {:error, :exceeded} ->
-        conn
-        |> put_resp_content_type("application/json")
-        |> send_resp(429, Jason.encode!(%{error: %{message: "Token budget exceeded", type: "insufficient_quota"}}))
+        json_error(conn, 429, "Token budget exceeded", "insufficient_quota")
 
       {:ok, _remaining} ->
         {resolved_model, _} = case ModelAccess.check(plan, requested_model) do
@@ -56,20 +54,7 @@ defmodule DruzhokWebWeb.LlmProxyController do
         usage = LlmFormat.extract_usage(provider, decoded)
         total = usage.prompt_tokens + usage.completion_tokens
 
-        if total > 0 do
-          Budget.deduct(instance.id, total)
-          Usage.log(%{
-            instance_id: instance.id,
-            model: resolved_model,
-            prompt_tokens: usage.prompt_tokens,
-            completion_tokens: usage.completion_tokens,
-            total_tokens: total,
-            requested_model: requested_model,
-            resolved_model: resolved_model,
-            provider: to_string(provider),
-            latency_ms: latency,
-          })
-        end
+        meter(instance, usage, requested_model, resolved_model, provider, started_at)
 
         conn
         |> put_resp_content_type("application/json")
@@ -77,9 +62,7 @@ defmodule DruzhokWebWeb.LlmProxyController do
 
       {:error, reason} ->
         Logger.error("LLM proxy error: #{inspect(reason)}")
-        conn
-        |> put_resp_content_type("application/json")
-        |> send_resp(502, Jason.encode!(%{error: %{message: "Provider unavailable", type: "server_error"}}))
+        json_error(conn, 502, "Provider unavailable", "server_error")
     end
   end
 
@@ -115,11 +98,19 @@ defmodule DruzhokWebWeb.LlmProxyController do
         end
     end, receive_timeout: 120_000)
 
-    latency = System.monotonic_time(:millisecond) - started_at
     usage = Process.get(usage_ref, %{prompt_tokens: 0, completion_tokens: 0})
-    total = usage.prompt_tokens + usage.completion_tokens
+    meter(instance, usage, requested_model, resolved_model, provider, started_at)
 
+    case result do
+      {:ok, conn} -> conn
+      {:error, _} -> conn
+    end
+  end
+
+  defp meter(instance, usage, requested_model, resolved_model, provider, started_at) do
+    total = usage.prompt_tokens + usage.completion_tokens
     if total > 0 do
+      latency = System.monotonic_time(:millisecond) - started_at
       Budget.deduct(instance.id, total)
       Usage.log(%{
         instance_id: instance.id,
@@ -133,10 +124,11 @@ defmodule DruzhokWebWeb.LlmProxyController do
         latency_ms: latency,
       })
     end
+  end
 
-    case result do
-      {:ok, conn} -> conn
-      {:error, _} -> conn
-    end
+  defp json_error(conn, status, message, type) do
+    conn
+    |> put_resp_content_type("application/json")
+    |> send_resp(status, Jason.encode!(%{error: %{message: message, type: type}}))
   end
 end

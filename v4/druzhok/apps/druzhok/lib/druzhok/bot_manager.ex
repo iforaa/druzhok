@@ -123,7 +123,7 @@ defmodule Druzhok.BotManager do
     :ok
   end
 
-  defp container_name(name), do: "druzhok-bot-#{name}"
+  def container_name(name), do: "druzhok-bot-#{name}"
 
   defp generate_tenant_key(name) do
     random = :crypto.strong_rand_bytes(8) |> Base.url_encode64(padding: false)
