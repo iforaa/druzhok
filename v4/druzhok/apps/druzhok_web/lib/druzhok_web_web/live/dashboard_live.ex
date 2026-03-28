@@ -648,7 +648,10 @@ defmodule DruzhokWebWeb.DashboardLive do
   defp list_instances do
     Druzhok.InstanceManager.list()
     |> Enum.map(fn inst ->
-      Map.put(inst, :container_status, Druzhok.BotManager.status(inst.name))
+      inst
+      |> Map.from_struct()
+      |> Map.drop([:__meta__])
+      |> Map.put(:container_status, Druzhok.BotManager.status(inst.name))
     end)
   end
 
@@ -664,41 +667,19 @@ defmodule DruzhokWebWeb.DashboardLive do
   end
 
   defp list_workspace_files(instance, subpath \\ "") do
-    dir_path = if subpath == "", do: "/workspace", else: "/workspace/#{subpath}"
-    if instance[:sandbox] in ["docker", "firecracker"] do
-      mod = Druzhok.Sandbox.impl(instance[:sandbox])
-      case mod.list_dir(instance.name, dir_path) do
-        {:ok, data} when is_binary(data) ->
-          case Jason.decode(data) do
-            {:ok, entries} when is_list(entries) ->
-              entries
-              |> Enum.map(fn e ->
-                %{path: e["name"], is_dir: e["is_dir"] == true, size: e["size"] || 0}
-              end)
-              |> Enum.sort_by(& {!&1.is_dir, &1.path})
-            _ -> []
-          end
-        {:ok, entries} when is_list(entries) ->
-          Enum.map(entries, fn e ->
-            %{path: e[:name] || e["name"], is_dir: e[:is_dir] || e["is_dir"], size: e[:size] || e["size"] || 0}
-          end)
-          |> Enum.sort_by(& {!&1.is_dir, &1.path})
-        _ -> []
-      end
+    # In v4, workspace is on the host filesystem (bind-mounted into containers)
+    workspace = instance[:workspace] || instance_workspace(instance.name)
+    target = if subpath == "", do: workspace, else: Path.join(workspace, subpath)
+    if File.exists?(target) do
+      File.ls!(target)
+      |> Enum.map(fn name ->
+        path = Path.join(target, name)
+        stat = File.stat!(path)
+        %{path: name, is_dir: stat.type == :directory, size: stat.size}
+      end)
+      |> Enum.sort_by(& {!&1.is_dir, &1.path})
     else
-      workspace = instance_workspace(instance.name)
-      target = if subpath == "", do: workspace, else: Path.join(workspace, subpath)
-      if File.exists?(target) do
-        File.ls!(target)
-        |> Enum.map(fn name ->
-          path = Path.join(target, name)
-          stat = File.stat!(path)
-          %{path: name, is_dir: stat.type == :directory, size: stat.size}
-        end)
-        |> Enum.sort_by(& {!&1.is_dir, &1.path})
-      else
-        []
-      end
+      []
     end
   end
 end

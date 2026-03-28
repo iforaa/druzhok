@@ -33,17 +33,6 @@ defmodule Druzhok.InstanceManager do
   def list do
     import Ecto.Query
     Repo.all(from i in Instance, where: i.active == true)
-    |> Enum.map(fn inst ->
-      %{
-        name: inst.name,
-        model: inst.model,
-        sandbox: inst.sandbox || "docker",
-        bot_runtime: Map.get(inst, :bot_runtime, "zeroclaw"),
-        active: inst.active,
-        heartbeat_interval: inst.heartbeat_interval,
-        language: inst.language || "ru",
-      }
-    end)
   end
 
   def delete(name) do
