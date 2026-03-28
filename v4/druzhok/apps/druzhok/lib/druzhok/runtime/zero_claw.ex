@@ -6,7 +6,7 @@ defmodule Druzhok.Runtime.ZeroClaw do
     port = 19000 + (Map.get(instance, :id, 0) || 0)
     %{
       "ZEROCLAW_MODEL" => Map.get(instance, :model, "default") || "default",
-      "ZEROCLAW_PROVIDER" => "compatible",
+      "ZEROCLAW_PROVIDER" => "custom:http://host.docker.internal:4000/v1",
       "ZEROCLAW_GATEWAY_PORT" => to_string(port),
       "ZEROCLAW_CONFIG_DIR" => "/data/.zeroclaw",
       "ZEROCLAW_WORKSPACE" => "/data/workspace",
