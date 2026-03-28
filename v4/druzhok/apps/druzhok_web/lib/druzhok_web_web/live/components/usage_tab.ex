@@ -91,7 +91,11 @@ defmodule DruzhokWebWeb.Live.Components.UsageTab do
                       <div class="text-xs font-medium text-gray-500 uppercase mb-1">Response</div>
                       <pre class="text-xs bg-gray-50 rounded p-3 overflow-x-auto whitespace-pre-wrap max-h-96 overflow-y-auto border border-gray-200 font-mono"><%= req.response_preview %></pre>
                     </div>
-                    <div :if={(!req.prompt_preview || req.prompt_preview == "") && (!req.response_preview || req.response_preview == "")}
+                    <div :if={req[:request_body] && req[:request_body] != ""}>
+                      <div class="text-xs font-medium text-gray-500 uppercase mb-1">Full Request Body</div>
+                      <pre class="text-xs bg-gray-50 rounded p-3 overflow-x-auto whitespace-pre-wrap max-h-[600px] overflow-y-auto border border-gray-200 font-mono"><%= format_json(req[:request_body]) %></pre>
+                    </div>
+                    <div :if={(!req.prompt_preview || req.prompt_preview == "") && (!req.response_preview || req.response_preview == "") && (!req[:request_body] || req[:request_body] == "")}
                          class="text-xs text-gray-400 italic">No preview available (recorded before preview tracking was enabled)</div>
                   </div>
                 </td>
@@ -111,6 +115,14 @@ defmodule DruzhokWebWeb.Live.Components.UsageTab do
   defp format_number(nil), do: "0"
 
   defp format_time(dt), do: Calendar.strftime(dt, "%H:%M:%S")
+
+  defp format_json(json_string) when is_binary(json_string) do
+    case Jason.decode(json_string) do
+      {:ok, decoded} -> Jason.encode!(decoded, pretty: true)
+      _ -> json_string
+    end
+  end
+  defp format_json(_), do: ""
 
   defp format_elapsed(nil), do: "-"
   defp format_elapsed(ms) when ms >= 1000, do: "#{Float.round(ms / 1000, 1)}s"

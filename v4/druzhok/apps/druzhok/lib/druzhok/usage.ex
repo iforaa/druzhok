@@ -17,6 +17,7 @@ defmodule Druzhok.Usage do
     field :latency_ms, :integer
     field :prompt_preview, :string
     field :response_preview, :string
+    field :request_body, :string
     timestamps(updated_at: false)
   end
 
@@ -24,7 +25,7 @@ defmodule Druzhok.Usage do
     log
     |> cast(attrs, [:instance_id, :model, :prompt_tokens, :completion_tokens,
                     :total_tokens, :cost_cents, :requested_model, :resolved_model,
-                    :provider, :latency_ms, :prompt_preview, :response_preview])
+                    :provider, :latency_ms, :prompt_preview, :response_preview, :request_body])
     |> validate_required([:instance_id, :model, :prompt_tokens, :completion_tokens, :total_tokens])
   end
 

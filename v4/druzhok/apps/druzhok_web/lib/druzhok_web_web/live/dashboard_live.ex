@@ -54,14 +54,30 @@ defmodule DruzhokWebWeb.DashboardLive do
   end
 
   @impl true
-  def handle_params(%{"name" => name}, _uri, socket) do
+  def handle_params(%{"name" => name} = params, _uri, socket) do
     case get_instance(name, socket) do
       nil ->
         {:noreply, socket |> assign(selected: nil) |> push_patch(to: "/")}
       instance ->
+        tab = Map.get(@valid_tabs, params["tab"], :logs)
         files = list_workspace_files(instance, "")
+
+        # Load tab-specific data
+        {usage_requests, usage_summary} = if tab == :usage do
+          load_usage_data(instance)
+        else
+          {socket.assigns[:usage_requests] || [], socket.assigns[:usage_summary] || []}
+        end
+
+        instance_errors = if tab == :errors do
+          Druzhok.CrashLog.recent_for_instance(name, 100)
+        else
+          socket.assigns[:instance_errors] || []
+        end
+
         {:noreply, assign(socket,
           selected: name,
+          tab: tab,
           workspace_files: files,
           file_content: nil,
           current_path: "",
@@ -70,8 +86,10 @@ defmodule DruzhokWebWeb.DashboardLive do
           owner: Druzhok.InstanceManager.get_owner(name),
           groups: Druzhok.InstanceManager.get_groups(name),
           allowed_users: load_allowed_users(name),
-          instance_errors: [],
-          expanded_error: nil
+          instance_errors: instance_errors,
+          expanded_error: nil,
+          usage_requests: usage_requests,
+          usage_summary: usage_summary
         )}
     end
   end
@@ -172,45 +190,10 @@ defmodule DruzhokWebWeb.DashboardLive do
   end
 
   def handle_event("tab", %{"tab" => tab}, socket) do
-    case Map.get(@valid_tabs, tab) do
-      nil ->
-        {:noreply, socket}
-      :errors ->
-        errors = if socket.assigns.selected do
-          Druzhok.CrashLog.recent_for_instance(socket.assigns.selected, 100)
-        else
-          []
-        end
-        {:noreply, assign(socket, tab: :errors, instance_errors: errors)}
-      :usage ->
-        {requests, summary} = if socket.assigns.selected do
-          inst = get_instance(socket.assigns.selected, socket)
-          if inst do
-            raw_requests = Druzhok.Usage.recent(inst[:id], 50)
-            requests = Enum.map(raw_requests, fn r ->
-              %{
-                id: r.id,
-                inserted_at: r.inserted_at,
-                model: r.model,
-                input_tokens: r.prompt_tokens || 0,
-                output_tokens: r.completion_tokens || 0,
-                tool_calls_count: 0,
-                elapsed_ms: r.latency_ms,
-                prompt_preview: r.prompt_preview,
-                response_preview: r.response_preview
-              }
-            end)
-            summary = Druzhok.Usage.daily_usage(inst[:id])
-            {requests, summary}
-          else
-            {[], []}
-          end
-        else
-          {[], []}
-        end
-        {:noreply, assign(socket, tab: :usage, usage_requests: requests, usage_summary: summary)}
-      atom_tab ->
-        {:noreply, assign(socket, tab: atom_tab)}
+    if socket.assigns.selected && Map.has_key?(@valid_tabs, tab) do
+      {:noreply, push_patch(socket, to: "/instances/#{socket.assigns.selected}/#{tab}")}
+    else
+      {:noreply, socket}
     end
   end
 
@@ -672,6 +655,26 @@ defmodule DruzhokWebWeb.DashboardLive do
     with_runtime(name, fn runtime, data_root ->
       runtime.read_allowed_users(data_root)
     end) || []
+  end
+
+  defp load_usage_data(instance) do
+    raw_requests = Druzhok.Usage.recent(instance[:id], 50)
+    requests = Enum.map(raw_requests, fn r ->
+      %{
+        id: r.id,
+        inserted_at: r.inserted_at,
+        model: r.model,
+        input_tokens: r.prompt_tokens || 0,
+        output_tokens: r.completion_tokens || 0,
+        tool_calls_count: 0,
+        elapsed_ms: r.latency_ms,
+        prompt_preview: r.prompt_preview,
+        response_preview: r.response_preview,
+        request_body: r.request_body
+      }
+    end)
+    summary = Druzhok.Usage.daily_usage(instance[:id])
+    {requests, summary}
   end
 
   defp with_runtime(name, fun) do

@@ -114,6 +114,7 @@ defmodule DruzhokWebWeb.LlmProxyController do
         latency_ms: latency,
         prompt_preview: prompt_preview,
         response_preview: resp_preview,
+        request_body: Jason.encode!(request_body),
       })
     end
   end
