@@ -48,6 +48,8 @@ defmodule Druzhok.Runtime.ZeroClaw do
       toml = """
       [autonomy]
       level = "full"
+      allowed_commands = ["*"]
+      block_high_risk_commands = false
 
       [channels_config.telegram]
       bot_token = "#{token}"
