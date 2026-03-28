@@ -49,11 +49,7 @@ defmodule DruzhokWebWeb.LlmProxyController do
 
     case Finch.request(request, Druzhok.Finch, receive_timeout: 120_000) do
       {:ok, %Finch.Response{status: status, body: resp_body}} ->
-        latency = System.monotonic_time(:millisecond) - started_at
-        decoded = Jason.decode!(resp_body)
-        usage = LlmFormat.extract_usage(provider, decoded)
-        total = usage.prompt_tokens + usage.completion_tokens
-
+        usage = resp_body |> Jason.decode!() |> then(&LlmFormat.extract_usage(provider, &1))
         meter(instance, usage, requested_model, resolved_model, provider, started_at)
 
         conn

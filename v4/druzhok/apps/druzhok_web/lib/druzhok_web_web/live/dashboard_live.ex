@@ -113,22 +113,24 @@ defmodule DruzhokWebWeb.DashboardLive do
 
   def handle_event("create", %{"name" => name, "model" => model} = params, socket) do
     if name != "" do
-      workspace = instance_workspace(name)
-      sandbox = params["sandbox"] || "local"
       token = params["token"]
       token = if token == "", do: nil, else: token
+      bot_runtime = params["bot_runtime"] || "zeroclaw"
 
-      {:ok, _instance} = Druzhok.InstanceManager.create(name, %{
-        workspace: workspace,
+      case Druzhok.BotManager.create(name, %{
         model: model,
         telegram_token: token,
-        sandbox: sandbox,
-      })
-      {:noreply, assign(socket,
-        instances: list_instances(),
-        create_form: %{"name" => "", "token" => "", "model" => model},
-        show_create: false
-      )}
+        bot_runtime: bot_runtime,
+      }) do
+        {:ok, _instance} ->
+          {:noreply, assign(socket,
+            instances: list_instances(),
+            create_form: %{"name" => "", "token" => "", "model" => model},
+            show_create: false
+          )}
+        {:error, reason} ->
+          {:noreply, put_flash(socket, :error, "Failed: #{inspect(reason)}")}
+      end
     else
       {:noreply, put_flash(socket, :error, "Name is required")}
     end
@@ -494,9 +496,9 @@ defmodule DruzhokWebWeb.DashboardLive do
             <select name="model" class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-gray-900">
               <option :for={{id, label, _provider} <- @models} value={id}><%= label %></option>
             </select>
-            <select name="sandbox" class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-gray-900">
-              <option value="local">Local</option>
-              <option value="docker">Docker</option>
+            <select name="bot_runtime" class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-gray-900">
+              <option value="zeroclaw">ZeroClaw (Rust, lightweight)</option>
+              <option value="picoclaw">PicoClaw (Go, 30+ channels)</option>
             </select>
             <button type="submit" class="w-full bg-gray-900 hover:bg-gray-800 px-3 py-2 rounded-lg text-sm font-medium text-white transition">
               Create
