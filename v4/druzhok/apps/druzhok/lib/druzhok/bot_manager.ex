@@ -102,6 +102,23 @@ defmodule Druzhok.BotManager do
     if exit_code == 0, do: String.trim(output), else: "not_found"
   end
 
+  def stats(name) do
+    {output, exit_code} = System.cmd("docker", [
+      "stats", "--no-stream", "--format",
+      "{{.MemUsage}}|{{.CPUPerc}}|{{.NetIO}}",
+      container_name(name)
+    ], stderr_to_stdout: true)
+
+    if exit_code == 0 do
+      case String.trim(output) |> String.split("|") do
+        [mem, cpu, net] -> %{mem: mem, cpu: cpu, net: net}
+        _ -> nil
+      end
+    else
+      nil
+    end
+  end
+
   defp start_container(name, image, env, workspace, command) do
     env_args = Enum.flat_map(env, fn {k, v} -> ["-e", "#{k}=#{v}"] end)
 

@@ -721,6 +721,10 @@ defmodule DruzhokWebWeb.DashboardLive do
             <h2 class="text-sm font-semibold flex-1"><%= @selected %></h2>
             <span class={"px-2 py-0.5 rounded text-[10px] font-medium #{runtime_badge_color(selected_field(@instances, @selected, :bot_runtime))}"}><%= selected_field(@instances, @selected, :bot_runtime) || "zeroclaw" %></span>
             <span class={"px-2 py-0.5 rounded text-[10px] font-medium #{container_status_badge(selected_field(@instances, @selected, :container_status))}"}><%= selected_field(@instances, @selected, :container_status) || "unknown" %></span>
+            <% stats = selected_field(@instances, @selected, :container_stats) %>
+            <span :if={stats} class="text-[10px] text-gray-400 font-mono">
+              <%= stats.mem %> · <%= stats.cpu %>
+            </span>
             <button phx-click="start_bot" phx-value-name={@selected}
                     class="text-xs text-green-600 hover:text-green-800 transition font-medium">
               Start
@@ -1017,6 +1021,7 @@ defmodule DruzhokWebWeb.DashboardLive do
       |> Map.from_struct()
       |> Map.drop([:__meta__])
       |> Map.put(:container_status, Druzhok.BotManager.status(inst.name))
+      |> Map.put(:container_stats, Druzhok.BotManager.stats(inst.name))
     end)
   end
 
