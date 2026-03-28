@@ -592,6 +592,14 @@ defmodule DruzhokWebWeb.DashboardLive do
     end
   end
 
+  def handle_event("toggle_mention_only", %{"name" => name}, socket) do
+    current = selected_field(socket.assigns.instances, name, :mention_only)
+    new_val = !current
+    update_instance_field(name, %{mention_only: new_val})
+    restart_bot(name)
+    {:noreply, assign(socket, instances: list_instances())}
+  end
+
   def handle_event("clear_history", %{"name" => name}, socket) do
     with_runtime(name, fn runtime, data_root ->
       runtime.clear_sessions(data_root)
@@ -861,6 +869,19 @@ defmodule DruzhokWebWeb.DashboardLive do
                   <button type="submit" class="px-3 py-2 bg-gray-900 text-white rounded-lg text-sm">Approve</button>
                 </form>
                 <p class="text-xs text-gray-400 mt-1">Paste the number from the bot's approval message</p>
+              </div>
+
+              <hr class="border-gray-200" />
+
+              <%!-- Group Chat Behavior --%>
+              <div>
+                <h3 class="text-sm font-medium text-gray-700 mb-3">Group Chats</h3>
+                <label class="flex items-center gap-3 cursor-pointer">
+                  <input type="checkbox" phx-click="toggle_mention_only" phx-value-name={@selected}
+                         checked={selected_field(@instances, @selected, :mention_only)}
+                         class="rounded border-gray-300" />
+                  <span class="text-sm text-gray-600">Mention only — respond only when @mentioned in groups</span>
+                </label>
               </div>
 
               <hr class="border-gray-200" />

@@ -54,7 +54,7 @@ defmodule Druzhok.Runtime.ZeroClaw do
       [channels_config.telegram]
       bot_token = "#{token}"
       allowed_users = [#{allowed_toml}]
-      mention_only = false
+      mention_only = #{Map.get(instance, :mention_only, false)}
       #{model_routes}
       """
       # Write to .zeroclaw/config.toml (ZeroClaw's config dir)
