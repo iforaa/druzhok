@@ -408,8 +408,7 @@ defmodule DruzhokWebWeb.DashboardLive do
               <option :for={{id, label, _provider} <- @models} value={id}><%= label %></option>
             </select>
             <select name="bot_runtime" class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-gray-900">
-              <option value="zeroclaw">ZeroClaw (Rust, lightweight)</option>
-              <option value="picoclaw">PicoClaw (Go, 30+ channels)</option>
+              <option :for={name <- Druzhok.Runtime.names()} value={name} selected={name == "zeroclaw"}><%= name %></option>
             </select>
             <button type="submit" class="w-full bg-gray-900 hover:bg-gray-800 px-3 py-2 rounded-lg text-sm font-medium text-white transition">
               Create
@@ -528,8 +527,7 @@ defmodule DruzhokWebWeb.DashboardLive do
                   <div>
                     <label class="block text-xs font-medium text-gray-500 mb-1">Runtime</label>
                     <select name="bot_runtime" class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm">
-                      <option value="zeroclaw" selected={selected_field(@instances, @selected, :bot_runtime) != "picoclaw"}>ZeroClaw (Rust)</option>
-                      <option value="picoclaw" selected={selected_field(@instances, @selected, :bot_runtime) == "picoclaw"}>PicoClaw (Go)</option>
+                      <option :for={name <- Druzhok.Runtime.names()} value={name} selected={name == (selected_field(@instances, @selected, :bot_runtime) || "zeroclaw")}><%= name %></option>
                     </select>
                   </div>
 

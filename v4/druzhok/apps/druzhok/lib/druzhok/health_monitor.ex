@@ -13,8 +13,8 @@ defmodule Druzhok.HealthMonitor do
     GenServer.start_link(__MODULE__, opts, name: __MODULE__)
   end
 
-  def register(name, container_id) do
-    GenServer.cast(__MODULE__, {:register, name, container_id})
+  def register(name, container_id, bot_runtime \\ "zeroclaw") do
+    GenServer.cast(__MODULE__, {:register, name, container_id, bot_runtime})
   end
 
   def unregister(name) do
@@ -32,8 +32,8 @@ defmodule Druzhok.HealthMonitor do
   end
 
   @impl true
-  def handle_cast({:register, name, container_id}, state) do
-    bots = Map.put(state.bots, name, %{container_id: container_id, failures: 0, status: :healthy})
+  def handle_cast({:register, name, container_id, bot_runtime}, state) do
+    bots = Map.put(state.bots, name, %{container_id: container_id, bot_runtime: bot_runtime, failures: 0, status: :healthy})
     {:noreply, %{state | bots: bots}}
   end
 

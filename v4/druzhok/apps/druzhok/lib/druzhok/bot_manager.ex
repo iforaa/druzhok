@@ -4,7 +4,7 @@ defmodule Druzhok.BotManager do
   Creates, starts, stops, restarts Docker containers running bot runtimes.
   """
 
-  alias Druzhok.{Instance, InstanceManager, BotConfig, TokenPool, Budget, Repo}
+  alias Druzhok.{Instance, InstanceManager, TokenPool, Budget, Repo}
   require Logger
 
   def create(name, opts) do
@@ -53,13 +53,22 @@ defmodule Druzhok.BotManager do
     case Repo.get_by(Instance, name: name) do
       nil -> {:error, :not_found}
       instance ->
-        env = BotConfig.build(instance)
-        image = BotConfig.docker_image(instance)
+        runtime = Druzhok.Runtime.get(instance.bot_runtime, Druzhok.Runtime.ZeroClaw)
+        env = Druzhok.Runtime.base_env(instance) |> Map.merge(runtime.env_vars(instance))
+        image = runtime.docker_image()
+        command = runtime.gateway_command()
 
-        case start_container(name, image, env, instance.workspace) do
+        # Write runtime-specific config files to workspace
+        for {path, content} <- runtime.workspace_files(instance) do
+          full_path = Path.join(instance.workspace, path)
+          File.mkdir_p!(Path.dirname(full_path))
+          File.write!(full_path, content)
+        end
+
+        case start_container(name, image, env, instance.workspace, command) do
           {:ok, container_id} ->
             Logger.info("Started bot container #{name}: #{container_id}")
-            Druzhok.HealthMonitor.register(name, container_id)
+            Druzhok.HealthMonitor.register(name, container_id, instance.bot_runtime || "zeroclaw")
             Repo.update(Instance.changeset(instance, %{active: true}))
             {:ok, container_id}
 
@@ -102,7 +111,7 @@ defmodule Druzhok.BotManager do
     if exit_code == 0, do: String.trim(output), else: "not_found"
   end
 
-  defp start_container(name, image, env, workspace) do
+  defp start_container(name, image, env, workspace, command) do
     env_args = Enum.flat_map(env, fn {k, v} -> ["-e", "#{k}=#{v}"] end)
 
     args = ["run", "-d",
@@ -110,7 +119,7 @@ defmodule Druzhok.BotManager do
       "--network", "host",
       "--restart", "unless-stopped",
       "-v", "#{workspace}:/data",
-    ] ++ env_args ++ [image, "gateway"]
+    ] ++ env_args ++ [image, command]
 
     case System.cmd("docker", args, stderr_to_stdout: true) do
       {container_id, 0} -> {:ok, String.trim(container_id)}
