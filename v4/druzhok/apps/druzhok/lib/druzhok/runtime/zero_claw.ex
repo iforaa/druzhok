@@ -44,8 +44,7 @@ defmodule Druzhok.Runtime.ZeroClaw do
 
   @impl true
   def read_allowed_users(data_root) do
-    config_path = Path.join([data_root, ".zeroclaw", "config.toml"])
-    case File.read(config_path) do
+    case File.read(config_path(data_root)) do
       {:ok, content} -> parse_allowed_users(content)
       {:error, _} -> []
     end
@@ -53,33 +52,26 @@ defmodule Druzhok.Runtime.ZeroClaw do
 
   @impl true
   def add_allowed_user(data_root, user_id) do
-    config_path = Path.join([data_root, ".zeroclaw", "config.toml"])
-    case File.read(config_path) do
-      {:ok, content} ->
-        current = parse_allowed_users(content)
-        if user_id in current do
-          :ok
-        else
-          updated = current ++ [user_id]
-          new_content = replace_allowed_users(content, updated)
-          File.write!(config_path, new_content)
-          :ok
-        end
-      {:error, reason} ->
-        {:error, reason}
-    end
+    modify_allowed_users(data_root, fn current ->
+      if user_id in current, do: current, else: current ++ [user_id]
+    end)
   end
 
   @impl true
   def remove_allowed_user(data_root, user_id) do
-    config_path = Path.join([data_root, ".zeroclaw", "config.toml"])
-    case File.read(config_path) do
+    modify_allowed_users(data_root, fn current ->
+      Enum.reject(current, &(&1 == user_id))
+    end)
+  end
+
+  defp config_path(data_root), do: Path.join([data_root, ".zeroclaw", "config.toml"])
+
+  defp modify_allowed_users(data_root, update_fn) do
+    path = config_path(data_root)
+    case File.read(path) do
       {:ok, content} ->
-        current = parse_allowed_users(content)
-        updated = Enum.reject(current, &(&1 == user_id))
-        new_content = replace_allowed_users(content, updated)
-        File.write!(config_path, new_content)
-        :ok
+        updated = content |> parse_allowed_users() |> update_fn.()
+        File.write(path, replace_allowed_users(content, updated))
       {:error, reason} ->
         {:error, reason}
     end

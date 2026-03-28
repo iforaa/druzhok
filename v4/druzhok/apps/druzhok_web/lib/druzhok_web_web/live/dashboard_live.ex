@@ -377,15 +377,10 @@ defmodule DruzhokWebWeb.DashboardLive do
   def handle_event("approve_user", %{"user_input" => input}, socket) do
     user_id = Druzhok.Runtime.parse_user_input(input)
     if user_id != "" and socket.assigns.selected do
-      inst = Druzhok.Repo.get_by(Druzhok.Instance, name: socket.assigns.selected)
-      if inst && inst.workspace do
-        runtime = Druzhok.Runtime.get(inst.bot_runtime || "zeroclaw", Druzhok.Runtime.ZeroClaw)
-        data_root = Path.dirname(inst.workspace)
+      with_runtime(socket.assigns.selected, fn runtime, data_root ->
         runtime.add_allowed_user(data_root, user_id)
         {:noreply, assign(socket, allowed_users: load_allowed_users(socket.assigns.selected))}
-      else
-        {:noreply, socket}
-      end
+      end) || {:noreply, socket}
     else
       {:noreply, put_flash(socket, :error, "Invalid user ID")}
     end
@@ -393,15 +388,10 @@ defmodule DruzhokWebWeb.DashboardLive do
 
   def handle_event("remove_user", %{"user_id" => user_id}, socket) do
     if socket.assigns.selected do
-      inst = Druzhok.Repo.get_by(Druzhok.Instance, name: socket.assigns.selected)
-      if inst && inst.workspace do
-        runtime = Druzhok.Runtime.get(inst.bot_runtime || "zeroclaw", Druzhok.Runtime.ZeroClaw)
-        data_root = Path.dirname(inst.workspace)
+      with_runtime(socket.assigns.selected, fn runtime, data_root ->
         runtime.remove_allowed_user(data_root, user_id)
         {:noreply, assign(socket, allowed_users: load_allowed_users(socket.assigns.selected))}
-      else
-        {:noreply, socket}
-      end
+      end) || {:noreply, socket}
     else
       {:noreply, socket}
     end
@@ -699,13 +689,17 @@ defmodule DruzhokWebWeb.DashboardLive do
   end
 
   defp load_allowed_users(name) do
-    inst = Druzhok.Repo.get_by(Druzhok.Instance, name: name)
-    if inst && inst.workspace do
-      runtime = Druzhok.Runtime.get(inst.bot_runtime || "zeroclaw", Druzhok.Runtime.ZeroClaw)
-      data_root = Path.dirname(inst.workspace)
+    with_runtime(name, fn runtime, data_root ->
       runtime.read_allowed_users(data_root)
-    else
-      []
+    end) || []
+  end
+
+  defp with_runtime(name, fun) do
+    case Druzhok.Repo.get_by(Druzhok.Instance, name: name) do
+      %{workspace: workspace, bot_runtime: bot_runtime} when workspace != nil ->
+        runtime = Druzhok.Runtime.get(bot_runtime || "zeroclaw", Druzhok.Runtime.ZeroClaw)
+        fun.(runtime, Path.dirname(workspace))
+      _ -> nil
     end
   end
 
