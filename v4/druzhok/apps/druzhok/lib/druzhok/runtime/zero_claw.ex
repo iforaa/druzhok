@@ -16,15 +16,18 @@ defmodule Druzhok.Runtime.ZeroClaw do
   @impl true
   def workspace_files(instance) do
     token = Map.get(instance, :telegram_token)
-    allowed = Map.get(instance, :allowed_users, []) || []
     on_demand_model = Map.get(instance, :on_demand_model)
     language = Map.get(instance, :language, "ru")
+    workspace = Map.get(instance, :workspace, "")
+    data_root = if workspace != "", do: Path.dirname(workspace), else: ""
 
     files = []
 
-    # Include owner's Telegram ID in allowed_users if set
+    # Merge owner ID with existing approved users from config.toml
+    existing_users = if data_root != "", do: read_allowed_users(data_root), else: []
     owner_id = Map.get(instance, :owner_telegram_id)
-    all_allowed = if owner_id, do: [to_string(owner_id) | allowed], else: allowed
+    all_allowed = existing_users
+    all_allowed = if owner_id, do: [to_string(owner_id) | all_allowed], else: all_allowed
     all_allowed = Enum.uniq(all_allowed) |> Enum.reject(&(&1 == ""))
 
     files = if token do
