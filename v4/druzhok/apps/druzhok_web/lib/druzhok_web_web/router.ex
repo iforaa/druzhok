@@ -14,6 +14,18 @@ defmodule DruzhokWebWeb.Router do
     plug DruzhokWebWeb.Auth
   end
 
+  # LLM Proxy API (used by bot containers)
+  pipeline :llm_api do
+    plug :accepts, ["json"]
+    plug DruzhokWebWeb.Plugs.LlmAuth
+  end
+
+  scope "/v1", DruzhokWebWeb do
+    pipe_through :llm_api
+
+    post "/chat/completions", LlmProxyController, :chat_completions
+  end
+
   # Public routes
   scope "/", DruzhokWebWeb do
     pipe_through :browser
