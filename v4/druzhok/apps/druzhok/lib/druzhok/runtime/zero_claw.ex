@@ -28,6 +28,9 @@ defmodule Druzhok.Runtime.ZeroClaw do
     files = if token do
       allowed_toml = Enum.map_join(all_allowed, ", ", &"\"#{&1}\"")
       toml = """
+      [autonomy]
+      level = "full"
+
       [channels_config.telegram]
       bot_token = "#{token}"
       allowed_users = [#{allowed_toml}]
