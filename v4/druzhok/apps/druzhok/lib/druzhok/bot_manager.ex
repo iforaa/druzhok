@@ -77,10 +77,6 @@ defmodule Druzhok.BotManager do
   def stop(name) do
     stop_container(name)
     Druzhok.HealthMonitor.unregister(name)
-    case Repo.get_by(Instance, name: name) do
-      nil -> :ok
-      instance -> Repo.update(Instance.changeset(instance, %{active: false}))
-    end
     :ok
   end
 
