@@ -1,69 +1,75 @@
 defmodule Druzhok.ErrorLogger do
   @moduledoc """
-  Custom Logger backend that captures error-level logs and OTP crash reports
-  into the crash_logs SQLite table for dashboard viewing.
+  Erlang :logger handler that captures error-level logs into the crash_logs
+  SQLite table for dashboard viewing.
+
+  Installed via :logger.add_handler/3 in Application.start/2.
   """
-  @behaviour :gen_event
 
   @max_message_size 4096
 
-  @impl true
-  def init(_opts) do
-    {:ok, %{}}
-  end
+  # Called by :logger to check if this handler wants the log event
+  def adding_handler(config), do: {:ok, config}
+  def removing_handler(_config), do: :ok
+  def changing_config(_action, _old, new), do: {:ok, new}
 
-  @impl true
-  def handle_event({level, _gl, {Logger, message, _timestamp, metadata}}, state)
-      when level in [:error] do
+  # The main callback — receives every log event at configured level
+  def log(%{level: :error, msg: msg, meta: meta}, _config) do
     try do
-      msg = to_string(message) |> String.slice(0, @max_message_size)
-      source = extract_source(metadata)
-      instance = extract_instance(metadata, msg)
+      message = format_message(msg) |> String.slice(0, @max_message_size)
+      source = extract_source(meta)
+      instance = extract_instance(meta, message)
 
       Druzhok.CrashLog.insert(%{
-        level: to_string(level),
-        message: msg,
+        level: "error",
+        message: message,
         source: source,
         instance_name: instance
       })
     rescue
       _ -> :ok
     end
-
-    {:ok, state}
   end
 
-  def handle_event(_event, state), do: {:ok, state}
+  def log(_event, _config), do: :ok
 
-  @impl true
-  def handle_call(_request, state), do: {:ok, :ok, state}
+  defp format_message({:string, msg}), do: to_string(msg)
+  defp format_message({:report, report}) do
+    try do
+      inspect(report, limit: 500, printable_limit: 2000)
+    rescue
+      _ -> "#{inspect(report)}"
+    end
+  end
+  defp format_message({fmt, args}) when is_list(args) do
+    try do
+      :io_lib.format(fmt, args) |> to_string()
+    rescue
+      _ -> "#{inspect(fmt)} #{inspect(args)}"
+    end
+  end
+  defp format_message(other), do: inspect(other)
 
-  @impl true
-  def handle_info(_msg, state), do: {:ok, state}
-
-  @impl true
-  def terminate(_reason, _state), do: :ok
-
-  @impl true
-  def code_change(_old_vsn, state, _extra), do: {:ok, state}
-
-  defp extract_source(metadata) do
-    module = metadata[:module]
-    function = metadata[:function]
+  defp extract_source(meta) do
+    mfa = meta[:mfa]
+    module = meta[:module] || (mfa && elem(mfa, 0))
+    function = meta[:function] || (mfa && "#{elem(mfa, 1)}/#{elem(mfa, 2)}")
 
     cond do
       module && function -> "#{inspect(module)}.#{function}"
       module -> inspect(module)
-      true -> metadata[:registered_name] && to_string(metadata[:registered_name])
+      true ->
+        case meta[:registered_name] do
+          nil -> nil
+          name -> to_string(name)
+        end
     end
   end
 
-  defp extract_instance(metadata, message) do
-    # Try metadata first
-    case metadata[:instance_name] do
+  defp extract_instance(meta, message) do
+    case meta[:instance_name] do
       name when is_binary(name) -> name
       _ ->
-        # Try to extract from message (e.g. "druzhok-1-igor" or instance name references)
         case Regex.run(~r/instance[_\s]+(?:name[:\s]+)?["']?(\w+)["']?/i, message) do
           [_, name] -> name
           _ -> nil

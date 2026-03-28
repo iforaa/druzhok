@@ -134,31 +134,12 @@ defmodule DruzhokWebWeb.DashboardLive do
       :error -> 0
     end
 
-    dream_hour = case Integer.parse(params["dream_hour"] || "-1") do
-      {n, _} -> n
-      :error -> -1
-    end
-
-    heartbeat = case Integer.parse(params["heartbeat"] || "0") do
-      {n, _} -> n
-      :error -> 0
-    end
-
     language = params["language"] || "ru"
-
-    bot_runtime = params["bot_runtime"]
 
     changes = %{
       daily_token_limit: token_limit,
-      dream_hour: dream_hour,
-      heartbeat_interval: heartbeat,
       language: language
     }
-
-    # Add bot_runtime if changed
-    changes = if bot_runtime, do: Map.put(changes, :bot_runtime, bot_runtime), else: changes
-    # Add model if changed
-    changes = if params["model"], do: Map.put(changes, :model, params["model"]), else: changes
 
     update_instance_field(name, changes)
 
@@ -205,14 +186,27 @@ defmodule DruzhokWebWeb.DashboardLive do
         {requests, summary} = if socket.assigns.selected do
           inst = get_instance(socket.assigns.selected, socket)
           if inst do
-            requests = Druzhok.Usage.recent(inst[:id], 50)
+            raw_requests = Druzhok.Usage.recent(inst[:id], 50)
+            requests = Enum.map(raw_requests, fn r ->
+              %{
+                id: r.id,
+                inserted_at: r.inserted_at,
+                model: r.model,
+                input_tokens: r.prompt_tokens || 0,
+                output_tokens: r.completion_tokens || 0,
+                tool_calls_count: 0,
+                elapsed_ms: r.latency_ms,
+                prompt_preview: nil,
+                response_preview: nil
+              }
+            end)
             summary = Druzhok.Usage.daily_usage(inst[:id])
             {requests, summary}
           else
-            {[], nil}
+            {[], []}
           end
         else
-          {[], nil}
+          {[], []}
         end
         {:noreply, assign(socket, tab: :usage, usage_requests: requests, usage_summary: summary)}
       atom_tab ->
@@ -254,21 +248,33 @@ defmodule DruzhokWebWeb.DashboardLive do
         current_path = socket.assigns[:current_path] || ""
         full_rel = if current_path == "", do: path, else: Path.join(current_path, path)
         full_path = Path.join(instance[:workspace] || instance_workspace(socket.assigns.selected), full_rel)
-        content = case File.stat(full_path) do
-          {:ok, %{size: size}} when size > 500_000 ->
-            case File.open(full_path, [:read]) do
-              {:ok, f} ->
-                data = IO.read(f, 50_000)
-                File.close(f)
-                "#{data}\n\n... [truncated, file is #{div(size, 1024)}KB]"
-              _ -> "Cannot read file"
+
+        content = cond do
+          binary_file?(full_rel) ->
+            case File.stat(full_path) do
+              {:ok, %{size: size}} -> "Binary file (#{format_file_size(size)})"
+              _ -> "Binary file"
             end
-          _ ->
-            case File.read(full_path) do
-              {:ok, c} -> c
-              {:error, _} -> "Cannot read file"
+
+          true ->
+            case File.stat(full_path) do
+              {:ok, %{size: size}} when size > 500_000 ->
+                case File.open(full_path, [:read]) do
+                  {:ok, f} ->
+                    data = IO.read(f, 50_000)
+                    File.close(f)
+                    "#{data}\n\n... [truncated, file is #{div(size, 1024)}KB]"
+                  _ -> "Cannot read file"
+                end
+              _ ->
+                case File.read(full_path) do
+                  {:ok, c} ->
+                    if String.valid?(c), do: c, else: "Binary file (#{byte_size(c)} bytes)"
+                  {:error, _} -> "Cannot read file"
+                end
             end
         end
+
         {:noreply, assign(socket, file_content: %{path: full_rel, content: content}, editing_file: false, file_saved: false)}
       else
         {:noreply, socket}
@@ -552,28 +558,8 @@ defmodule DruzhokWebWeb.DashboardLive do
 
                 <div class="grid grid-cols-2 gap-4">
                   <div>
-                    <label class="block text-xs font-medium text-gray-500 mb-1">Model</label>
-                    <select name="model" class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm">
-                      <%= for {id, label, _provider} <- @models do %>
-                        <option value={id} selected={id == selected_field(@instances, @selected, :model)}><%= label %></option>
-                      <% end %>
-                    </select>
-                  </div>
-
-                  <div>
                     <label class="block text-xs font-medium text-gray-500 mb-1">Runtime</label>
-                    <select name="bot_runtime" class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm">
-                      <option :for={name <- Druzhok.Runtime.names()} value={name} selected={name == (selected_field(@instances, @selected, :bot_runtime) || "zeroclaw")}><%= name %></option>
-                    </select>
-                  </div>
-
-                  <div>
-                    <label class="block text-xs font-medium text-gray-500 mb-1">Heartbeat interval</label>
-                    <select name="heartbeat" class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm">
-                      <%= for {val, label} <- heartbeat_options() do %>
-                        <option value={val} selected={val == (selected_field(@instances, @selected, :heartbeat_interval) || 0)}><%= label %></option>
-                      <% end %>
-                    </select>
+                    <div class="w-full border border-gray-200 bg-gray-50 rounded-lg px-3 py-2 text-sm text-gray-600"><%= selected_field(@instances, @selected, :bot_runtime) || "zeroclaw" %></div>
                   </div>
 
                   <div>
@@ -588,16 +574,6 @@ defmodule DruzhokWebWeb.DashboardLive do
                     <select name="language" class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm">
                       <option value="ru" selected={selected_field(@instances, @selected, :language) == "ru"}>Russian</option>
                       <option value="en" selected={selected_field(@instances, @selected, :language) == "en"}>English</option>
-                    </select>
-                  </div>
-
-                  <div>
-                    <label class="block text-xs font-medium text-gray-500 mb-1">Dream hour</label>
-                    <select name="dream_hour" class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm">
-                      <option value="-1" selected={selected_field(@instances, @selected, :dream_hour) == -1}>Off</option>
-                      <%= for h <- 0..23 do %>
-                        <option value={h} selected={selected_field(@instances, @selected, :dream_hour) == h}><%= String.pad_leading("#{h}", 2, "0") %>:00</option>
-                      <% end %>
                     </select>
                   </div>
                 </div>
@@ -709,17 +685,16 @@ defmodule DruzhokWebWeb.DashboardLive do
     Task.start(fn -> Druzhok.BotManager.restart(name) end)
   end
 
-  defp heartbeat_options do
-    [
-      {0, "Off"},
-      {5, "5m"},
-      {15, "15m"},
-      {30, "30m"},
-      {60, "1h"},
-      {360, "6h"},
-      {1440, "24h"},
-    ]
+  @binary_extensions ~w(.db .sqlite .sqlite3 .jpg .jpeg .png .gif .bmp .ico .pdf .zip .tar .gz .bz2 .xz .exe .bin .so .dylib .wasm)
+
+  defp binary_file?(path) do
+    ext = Path.extname(path) |> String.downcase()
+    ext in @binary_extensions
   end
+
+  defp format_file_size(bytes) when bytes < 1024, do: "#{bytes} B"
+  defp format_file_size(bytes) when bytes < 1024 * 1024, do: "#{Float.round(bytes / 1024, 1)} KB"
+  defp format_file_size(bytes), do: "#{Float.round(bytes / (1024 * 1024), 1)} MB"
 
   defp list_instances do
     Druzhok.InstanceManager.list()

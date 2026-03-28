@@ -5,6 +5,9 @@ defmodule Druzhok.Application do
 
   @impl true
   def start(_type, _args) do
+    # Add error logger backend to capture errors into crash_logs table
+    :logger.add_handler(:druzhok_error_logger, Druzhok.ErrorLogger, %{level: :error})
+
     children = [
       Druzhok.Repo,
       {Registry, keys: :unique, name: Druzhok.Registry},

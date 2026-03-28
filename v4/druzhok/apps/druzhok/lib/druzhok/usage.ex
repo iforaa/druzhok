@@ -39,13 +39,15 @@ defmodule Druzhok.Usage do
     from(u in __MODULE__,
       where: u.instance_id == ^instance_id,
       where: u.inserted_at >= ^start_of_day and u.inserted_at < ^end_of_day,
+      group_by: u.model,
       select: %{
-        total_tokens: sum(u.total_tokens),
-        total_cost: sum(u.cost_cents),
+        model: u.model,
+        total_input: sum(u.prompt_tokens),
+        total_output: sum(u.completion_tokens),
         request_count: count(u.id),
       }
     )
-    |> Repo.one()
+    |> Repo.all()
   end
 
   def recent(instance_id, limit \\ 50) do
