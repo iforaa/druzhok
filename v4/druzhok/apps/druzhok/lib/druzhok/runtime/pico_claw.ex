@@ -154,7 +154,7 @@ defmodule Druzhok.Runtime.PicoClaw do
   def docker_image, do: System.get_env("PICOCLAW_IMAGE") || "picoclaw:latest"
 
   @impl true
-  def gateway_command, do: "gateway"
+  def gateway_command, do: ["gateway", "--allow-empty"]
 
   @impl true
   def health_path, do: "/health"

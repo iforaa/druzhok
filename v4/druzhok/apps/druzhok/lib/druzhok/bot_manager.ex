@@ -127,7 +127,7 @@ defmodule Druzhok.BotManager do
       "--network", "host",
       "--restart", "unless-stopped",
       "-v", "#{workspace}:/data",
-    ] ++ env_args ++ [image, command]
+    ] ++ env_args ++ [image | List.wrap(command)]
 
     case System.cmd("docker", args, stderr_to_stdout: true) do
       {container_id, 0} -> {:ok, String.trim(container_id)}

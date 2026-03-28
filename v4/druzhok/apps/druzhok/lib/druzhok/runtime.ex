@@ -9,7 +9,7 @@ defmodule Druzhok.Runtime do
   @callback env_vars(instance) :: %{String.t() => String.t()}
   @callback workspace_files(instance) :: [{path :: String.t(), content :: String.t()}]
   @callback docker_image() :: String.t()
-  @callback gateway_command() :: String.t()
+  @callback gateway_command() :: String.t() | [String.t()]
   @callback health_path() :: String.t()
   @callback health_port() :: integer()
   @callback supports_feature?(atom()) :: boolean()
