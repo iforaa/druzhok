@@ -195,6 +195,9 @@ defmodule Druzhok.Runtime.ZeroClaw do
   def health_port, do: 18790
 
   @impl true
+  def post_start(_instance), do: :ok
+
+  @impl true
   def supports_feature?(:pairing), do: true
   def supports_feature?(:hot_reload_config), do: false
   def supports_feature?(_), do: false

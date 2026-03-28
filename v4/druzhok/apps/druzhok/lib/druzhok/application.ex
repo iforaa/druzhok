@@ -13,6 +13,7 @@ defmodule Druzhok.Application do
       {Registry, keys: :unique, name: Druzhok.Registry},
       {DynamicSupervisor, name: Druzhok.InstanceDynSup, strategy: :one_for_one},
       {Finch, name: Druzhok.Finch, pools: finch_pools()},
+      {Finch, name: Druzhok.LocalFinch},
       Druzhok.HealthMonitor,
     ]
 

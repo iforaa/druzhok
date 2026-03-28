@@ -63,6 +63,14 @@ defmodule Druzhok.BotManager do
         case start_container(name, image, env, data_root, command) do
           {:ok, container_id} ->
             Logger.info("Started bot container #{name}: #{container_id}")
+
+            # Post-start configuration (e.g. PicoClaw API patching)
+            case runtime.post_start(instance) do
+              :ok -> :ok
+              {:error, reason} ->
+                Logger.warning("Post-start config for #{name} failed: #{inspect(reason)}")
+            end
+
             Druzhok.HealthMonitor.register(name, container_id, instance.bot_runtime || "zeroclaw")
             Repo.update(Instance.changeset(instance, %{active: true}))
             {:ok, container_id}

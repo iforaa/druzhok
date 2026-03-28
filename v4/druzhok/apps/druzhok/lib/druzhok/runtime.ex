@@ -12,6 +12,7 @@ defmodule Druzhok.Runtime do
   @callback gateway_command() :: String.t() | [String.t()]
   @callback health_path() :: String.t()
   @callback health_port() :: integer()
+  @callback post_start(instance) :: :ok | {:error, term()}
   @callback supports_feature?(atom()) :: boolean()
   @callback read_allowed_users(data_root :: String.t()) :: [String.t()]
   @callback add_allowed_user(data_root :: String.t(), user_id :: String.t()) :: :ok | {:error, term()}
