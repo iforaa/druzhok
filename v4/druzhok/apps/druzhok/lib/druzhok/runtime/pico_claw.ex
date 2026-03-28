@@ -106,8 +106,6 @@ defmodule Druzhok.Runtime.PicoClaw do
   def supports_feature?(:pairing), do: false
   def supports_feature?(_), do: false
 
-  # --- Post-start API helpers ---
-
   defp gateway_port(instance), do: 19000 + (Map.get(instance, :id, 0) || 0)
 
   defp wait_for_health(base, retries \\ 30) do
@@ -205,26 +203,23 @@ defmodule Druzhok.Runtime.PicoClaw do
     end
   end
 
-  defp proxy_host, do: System.get_env("LLM_PROXY_HOST") || "host.docker.internal"
+  defp proxy_host, do: Druzhok.Runtime.proxy_host()
 
   defp update_allowed_users_via_api(data_root, update_fn) do
-    instance_name = Path.basename(data_root)
-    case Druzhok.Repo.get_by(Druzhok.Instance, name: instance_name) do
-      nil -> {:error, :not_found}
-      instance ->
-        # Update the full config on disk and reload
-        current = read_allowed_users(data_root)
-        # Temporarily set the users on the instance map for build_full_config
-        # We rebuild the whole config to stay consistent
-        updated_users = update_fn.(current)
-        config = build_full_config(instance)
-        config = put_in(config, ["channels", "telegram", "allow_from"], updated_users)
+    config_path = Path.join(data_root, "config.json")
+    with {:ok, content} <- File.read(config_path),
+         {:ok, config} <- Jason.decode(content) do
+      current = get_in(config, ["channels", "telegram", "allow_from"]) || []
+      updated = update_fn.(current)
+      config = put_in(config, ["channels", "telegram", "allow_from"], updated)
+      File.write!(config_path, Jason.encode!(config, pretty: true))
 
-        config_path = Path.join(data_root, "config.json")
-        File.write!(config_path, Jason.encode!(config, pretty: true))
-
-        port = gateway_port(instance)
-        reload("http://127.0.0.1:#{port}")
+      # Reload if container is running
+      instance_name = Path.basename(data_root)
+      case Druzhok.Repo.get_by(Druzhok.Instance, name: instance_name) do
+        nil -> :ok
+        instance -> reload("http://127.0.0.1:#{gateway_port(instance)}")
+      end
     end
   end
 

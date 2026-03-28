@@ -45,8 +45,10 @@ defmodule Druzhok.Runtime do
     end
   end
 
+  def proxy_host, do: System.get_env("LLM_PROXY_HOST") || "host.docker.internal"
+
   def base_env(instance) do
-    proxy_host = System.get_env("LLM_PROXY_HOST") || "host.docker.internal"
+    proxy_host = proxy_host()
     proxy_port = System.get_env("LLM_PROXY_PORT") || "4000"
 
     tenant_key = Map.get(instance, :tenant_key, "") || ""

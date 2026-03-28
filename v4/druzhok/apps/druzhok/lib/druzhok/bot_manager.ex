@@ -64,12 +64,14 @@ defmodule Druzhok.BotManager do
           {:ok, container_id} ->
             Logger.info("Started bot container #{name}: #{container_id}")
 
-            # Post-start configuration (e.g. PicoClaw API patching)
-            case runtime.post_start(instance) do
-              :ok -> :ok
-              {:error, reason} ->
-                Logger.warning("Post-start config for #{name} failed: #{inspect(reason)}")
-            end
+            # Post-start configuration runs async (PicoClaw health wait can take ~10s)
+            Task.start(fn ->
+              case runtime.post_start(instance) do
+                :ok -> :ok
+                {:error, reason} ->
+                  Logger.error("Post-start config for #{name} failed: #{inspect(reason)}")
+              end
+            end)
 
             Druzhok.HealthMonitor.register(name, container_id, instance.bot_runtime || "zeroclaw")
             Repo.update(Instance.changeset(instance, %{active: true}))

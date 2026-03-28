@@ -144,7 +144,7 @@ defmodule Druzhok.Runtime.ZeroClaw do
     """
   end
 
-  defp proxy_host, do: System.get_env("LLM_PROXY_HOST") || "host.docker.internal"
+  defp proxy_host, do: Druzhok.Runtime.proxy_host()
 
   defp config_path(data_root), do: Path.join([data_root, ".zeroclaw", "config.toml"])
 
