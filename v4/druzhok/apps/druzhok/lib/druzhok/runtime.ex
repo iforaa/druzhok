@@ -24,6 +24,7 @@ defmodule Druzhok.Runtime do
     "zeroclaw" => Druzhok.Runtime.ZeroClaw,
     "picoclaw" => Druzhok.Runtime.PicoClaw,
     "openclaw" => Druzhok.Runtime.OpenClaw,
+    "nullclaw" => Druzhok.Runtime.NullClaw,
   }
 
   def get(name) do
