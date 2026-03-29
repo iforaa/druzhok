@@ -79,6 +79,16 @@ defmodule Druzhok.I18n do
     sandbox_docker: %{"ru" => "Docker (python3, node, bash)", "en" => "Docker (python3, node, bash)"},
     sandbox_firecracker: %{"ru" => "Firecracker (isolated VM)", "en" => "Firecracker (isolated VM)"},
     sandbox_local: %{"ru" => "Local (без песочницы)", "en" => "Local (no sandbox)"},
+
+    # Access control
+    reject_default: %{
+      "ru" => "Этот бот приватный. Ваш Telegram ID: %{user_id}. Запрос на доступ отправлен владельцу бота.",
+      "en" => "This bot is private. Your Telegram ID: %{user_id}. Access request has been sent to the bot owner."
+    },
+    welcome_default: %{
+      "ru" => "Доступ одобрен! Можете начать общение с ботом.",
+      "en" => "Access approved! You can now start chatting with the bot."
+    },
   }
 
   @doc "Get a translated string. Supports %{key} interpolation."
