@@ -1006,6 +1006,8 @@ defmodule DruzhokWebWeb.DashboardLive do
   defp container_status_color(_), do: "bg-yellow-400"
 
   defp runtime_badge_color("picoclaw"), do: "bg-amber-100 text-amber-700"
+  defp runtime_badge_color("openclaw"), do: "bg-blue-100 text-blue-700"
+  defp runtime_badge_color("nullclaw"), do: "bg-purple-100 text-purple-700"
   defp runtime_badge_color(_), do: "bg-emerald-100 text-emerald-700"
 
   defp container_status_badge("running"), do: "bg-green-100 text-green-700"
