@@ -32,8 +32,15 @@ defmodule Druzhok.Runtime.NullClaw do
   @impl true
   def post_start(_instance), do: :ok
 
+  @rejection_pattern ~r/ignoring message from unauthorized user.*user_id=(\S+)/
+
   @impl true
-  def parse_log_rejection(_line), do: :ignore
+  def parse_log_rejection(line) do
+    case Regex.run(@rejection_pattern, line) do
+      [_, user_id] when user_id != "unknown" -> {:rejected, user_id}
+      _ -> :ignore
+    end
+  end
 
   @impl true
   def clear_sessions(data_root) do
@@ -84,7 +91,7 @@ defmodule Druzhok.Runtime.NullClaw do
   def docker_image, do: System.get_env("NULLCLAW_IMAGE") || "nullclaw:latest"
 
   @impl true
-  def gateway_command, do: ["gateway", "--port", "3000", "--host", "::"]
+  def gateway_command, do: ["gateway", "--host", "::"]
 
   @impl true
   def health_path, do: "/health"
