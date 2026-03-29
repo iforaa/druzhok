@@ -66,6 +66,51 @@ defmodule Druzhok.Pairing do
     end
   end
 
+  def create_request(instance_name, telegram_user_id, username \\ nil, display_name \\ nil) do
+    case get_pending(instance_name, telegram_user_id) do
+      nil ->
+        %__MODULE__{}
+        |> changeset(%{
+          instance_name: instance_name,
+          code: "LOG-" <> generate_code(),
+          telegram_user_id: telegram_user_id,
+          username: username,
+          display_name: display_name,
+          expires_at: DateTime.add(DateTime.utc_now(), 30 * 86400, :second)
+        })
+        |> Druzhok.Repo.insert()
+      existing ->
+        {:exists, existing}
+    end
+  end
+
+  def get_pending(instance_name, telegram_user_id) do
+    from(p in __MODULE__,
+      where: p.instance_name == ^instance_name
+        and p.telegram_user_id == ^telegram_user_id
+        and p.expires_at > ^DateTime.utc_now()
+    )
+    |> Druzhok.Repo.one()
+  end
+
+  def pending_for_instance(instance_name) do
+    from(p in __MODULE__,
+      where: p.instance_name == ^instance_name
+        and p.expires_at > ^DateTime.utc_now(),
+      order_by: [desc: :inserted_at]
+    )
+    |> Druzhok.Repo.all()
+  end
+
+  def approve_request(instance_name, telegram_user_id) do
+    case get_pending(instance_name, telegram_user_id) do
+      nil -> {:error, :not_found}
+      pairing ->
+        Druzhok.Repo.delete(pairing)
+        {:ok, pairing}
+    end
+  end
+
   defp generate_code do
     for _ <- 1..@code_length, into: "" do
       <<Enum.random(@alphabet)>>
