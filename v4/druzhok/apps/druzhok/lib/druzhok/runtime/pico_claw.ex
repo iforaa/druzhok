@@ -50,6 +50,14 @@ defmodule Druzhok.Runtime.PicoClaw do
   end
 
   @impl true
+  def parse_log_rejection(line) do
+    case Regex.run(~r/rejected by allowlist.*user_id=(\S+)/, line) do
+      [_, user_id] -> {:rejected, user_id}
+      _ -> :ignore
+    end
+  end
+
+  @impl true
   def clear_sessions(data_root) do
     sessions_dir = Path.join([data_root, "workspace", "sessions"])
     if File.dir?(sessions_dir) do
@@ -147,6 +155,8 @@ defmodule Druzhok.Runtime.PicoClaw do
     owner_id = Map.get(instance, :owner_telegram_id)
     all_allowed = if owner_id, do: [to_string(owner_id) | existing_users], else: existing_users
     all_allowed = Enum.uniq(all_allowed) |> Enum.reject(&(&1 == ""))
+    # PicoClaw treats empty allow_from as "allow everyone" — block by default
+    all_allowed = if all_allowed == [], do: ["__closed__"], else: all_allowed
 
     # PicoClaw uses protocol/model format — use "openai/" since our proxy is OpenAI-compatible
     models = [

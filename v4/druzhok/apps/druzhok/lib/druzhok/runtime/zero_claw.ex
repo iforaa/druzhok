@@ -76,6 +76,14 @@ defmodule Druzhok.Runtime.ZeroClaw do
   end
 
   @impl true
+  def parse_log_rejection(line) do
+    case Regex.run(~r/ignoring message from unauthorized user.*sender_id=(\S+)/, line) do
+      [_, sender_id] when sender_id != "unknown" -> {:rejected, sender_id}
+      _ -> :ignore
+    end
+  end
+
+  @impl true
   def clear_sessions(data_root) do
     sessions_db = Path.join([data_root, "workspace", "sessions", "sessions.db"])
     File.rm(sessions_db)
