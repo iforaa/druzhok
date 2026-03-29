@@ -75,9 +75,11 @@ defmodule Druzhok.Runtime.ZeroClaw do
     files
   end
 
+  @rejection_pattern ~r/ignoring message from unauthorized user.*sender_id=(\S+)/
+
   @impl true
   def parse_log_rejection(line) do
-    case Regex.run(~r/ignoring message from unauthorized user.*sender_id=(\S+)/, line) do
+    case Regex.run(@rejection_pattern, line) do
       [_, sender_id] when sender_id != "unknown" -> {:rejected, sender_id}
       _ -> :ignore
     end

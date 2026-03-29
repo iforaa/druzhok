@@ -49,9 +49,11 @@ defmodule Druzhok.Runtime.PicoClaw do
     end
   end
 
+  @rejection_pattern ~r/rejected by allowlist.*user_id=(\S+)/
+
   @impl true
   def parse_log_rejection(line) do
-    case Regex.run(~r/rejected by allowlist.*user_id=(\S+)/, line) do
+    case Regex.run(@rejection_pattern, line) do
       [_, user_id] -> {:rejected, user_id}
       _ -> :ignore
     end

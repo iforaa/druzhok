@@ -107,17 +107,14 @@ defmodule Druzhok.LogWatcher do
   end
 
   defp handle_rejection(state, user_id) do
-    case Druzhok.Pairing.create_request(state.instance_name, String.to_integer(user_id)) do
-      {:ok, _pairing} ->
-        send_rejection_message(state, user_id)
-        Druzhok.Events.broadcast(state.instance_name, %{
-          type: :pairing_request,
-          user_id: user_id
-        })
-      {:exists, _} ->
-        :ok
-      {:error, reason} ->
-        Logger.warning("LogWatcher: failed to create pairing request: #{inspect(reason)}")
+    with {uid_int, ""} <- Integer.parse(user_id),
+         {:ok, _pairing} <- Druzhok.Pairing.create_request(state.instance_name, uid_int) do
+      send_rejection_message(state, user_id)
+      Druzhok.Events.broadcast(state.instance_name, %{type: :pairing_request, user_id: user_id})
+    else
+      {:exists, _} -> :ok
+      {:error, reason} -> Logger.warning("LogWatcher: pairing request failed: #{inspect(reason)}")
+      _ -> :ok
     end
   end
 

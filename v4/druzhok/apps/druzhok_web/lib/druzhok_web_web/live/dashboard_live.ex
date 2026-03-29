@@ -536,17 +536,14 @@ defmodule DruzhokWebWeb.DashboardLive do
     user_id = String.to_integer(user_id_str)
 
     with_runtime(name, fn runtime, data_root ->
-      # Add to runtime allow_from
       runtime.add_allowed_user(data_root, user_id_str)
-
-      # Delete pairing request
       Druzhok.Pairing.approve_request(name, user_id)
 
-      # Send welcome message
-      instance = Druzhok.Repo.get_by(Druzhok.Instance, name: name)
-      welcome = instance.welcome_message ||
-        Druzhok.I18n.t(:welcome_default, instance.language || "ru")
-      Druzhok.Telegram.API.send_message(instance.telegram_token, user_id, welcome)
+      # Send welcome message using cached instance data from assigns
+      welcome = selected_field(socket.assigns.instances, name, :welcome_message) ||
+        Druzhok.I18n.t(:welcome_default, selected_field(socket.assigns.instances, name, :language) || "ru")
+      token = selected_field(socket.assigns.instances, name, :telegram_token)
+      if token, do: Druzhok.Telegram.API.send_message(token, user_id, welcome)
 
       # Broadcast and reload
       Druzhok.Events.broadcast(name, %{type: :pairing_approved, user_id: user_id_str})
@@ -558,22 +555,13 @@ defmodule DruzhokWebWeb.DashboardLive do
     end) || {:noreply, socket}
   end
 
-  def handle_event("update_reject_message", %{"name" => name, "value" => value}, socket) do
+  def handle_event("update_" <> field, %{"name" => name, "value" => value}, socket)
+      when field in ["reject_message", "welcome_message"] do
     value = if String.trim(value) == "", do: nil, else: String.trim(value)
     case Druzhok.Repo.get_by(Druzhok.Instance, name: name) do
       nil -> {:noreply, socket}
       inst ->
-        Druzhok.Repo.update(Druzhok.Instance.changeset(inst, %{reject_message: value}))
-        {:noreply, socket}
-    end
-  end
-
-  def handle_event("update_welcome_message", %{"name" => name, "value" => value}, socket) do
-    value = if String.trim(value) == "", do: nil, else: String.trim(value)
-    case Druzhok.Repo.get_by(Druzhok.Instance, name: name) do
-      nil -> {:noreply, socket}
-      inst ->
-        Druzhok.Repo.update(Druzhok.Instance.changeset(inst, %{welcome_message: value}))
+        Druzhok.Repo.update(Druzhok.Instance.changeset(inst, %{String.to_existing_atom(field) => value}))
         {:noreply, socket}
     end
   end
