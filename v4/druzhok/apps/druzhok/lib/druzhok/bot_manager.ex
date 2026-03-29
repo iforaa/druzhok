@@ -71,6 +71,15 @@ defmodule Druzhok.BotManager do
                 {:error, reason} ->
                   Logger.error("Post-start config for #{name} failed: #{inspect(reason)}")
               end
+
+              # Start log watcher for rejection detection
+              Druzhok.LogWatcher.start_link(
+                name: name,
+                runtime: runtime,
+                bot_token: instance.telegram_token,
+                language: instance.language || "ru",
+                reject_message: instance.reject_message
+              )
             end)
 
             Druzhok.HealthMonitor.register(name, container_id, instance.bot_runtime || "zeroclaw")
@@ -85,6 +94,7 @@ defmodule Druzhok.BotManager do
   end
 
   def stop(name) do
+    Druzhok.LogWatcher.stop(name)
     stop_container(name)
     Druzhok.HealthMonitor.unregister(name)
     :ok
