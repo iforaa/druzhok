@@ -144,13 +144,16 @@ defmodule Druzhok.Runtime.NullClaw do
       }
     }
 
+    mention_only = Map.get(instance, :mention_only, false)
+
     if token do
       Map.put(config, "channels", %{
         "telegram" => %{
           "accounts" => %{
             "main" => %{
               "bot_token" => token,
-              "allow_from" => all_allowed
+              "allow_from" => all_allowed,
+              "require_mention" => mention_only
             }
           }
         }
