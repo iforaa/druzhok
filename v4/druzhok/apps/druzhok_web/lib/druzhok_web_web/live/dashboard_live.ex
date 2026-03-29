@@ -40,7 +40,6 @@ defmodule DruzhokWebWeb.DashboardLive do
       events: [],
       show_create: false,
       current_path: "",
-      pairing: nil,
       pairing_requests: [],
       owner: nil,
       groups: [],
@@ -97,7 +96,6 @@ defmodule DruzhokWebWeb.DashboardLive do
           file_content: nil,
           current_path: "",
           events: [],
-          pairing: Druzhok.InstanceManager.get_pairing(name),
           pairing_requests: Druzhok.Pairing.pending_for_instance(name),
           owner: Druzhok.InstanceManager.get_owner(name),
           groups: Druzhok.InstanceManager.get_groups(name),
@@ -111,7 +109,7 @@ defmodule DruzhokWebWeb.DashboardLive do
   end
 
   def handle_params(_params, _uri, socket) do
-    {:noreply, assign(socket, selected: nil, workspace_files: [], file_content: nil, events: [], pairing: nil, pairing_requests: [], owner: nil, groups: [], allowed_users: [])}
+    {:noreply, assign(socket, selected: nil, workspace_files: [], file_content: nil, events: [], pairing_requests: [], owner: nil, groups: [], allowed_users: [])}
   end
 
   @impl true
@@ -533,15 +531,7 @@ defmodule DruzhokWebWeb.DashboardLive do
       |> push_patch(to: "/")}
   end
 
-  def handle_event("approve_pairing", %{"name" => name}, socket) do
-    Druzhok.InstanceManager.approve_pairing(name)
-    {:noreply, assign(socket,
-      pairing: Druzhok.InstanceManager.get_pairing(name),
-      owner: Druzhok.InstanceManager.get_owner(name)
-    )}
-  end
-
-  def handle_event("approve_log_pairing", %{"user_id" => user_id_str}, socket) do
+  def handle_event("approve_pairing", %{"user_id" => user_id_str}, socket) do
     name = socket.assigns.selected
     user_id = String.to_integer(user_id_str)
 
@@ -925,7 +915,7 @@ defmodule DruzhokWebWeb.DashboardLive do
                           <span class="text-gray-500 text-sm ml-2">@<%= req.username %></span>
                         <% end %>
                       </div>
-                      <button phx-click="approve_log_pairing"
+                      <button phx-click="approve_pairing"
                               phx-value-user_id={req.telegram_user_id}
                               class="px-3 py-1 bg-green-600 text-white text-sm rounded hover:bg-green-700">
                         Approve
