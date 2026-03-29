@@ -50,20 +50,8 @@ defmodule Druzhok.Runtime.OpenClaw do
     end
   end
 
-  @rejection_pattern ~r/Blocked unauthorized telegram sender (\S+)/
-
   @impl true
-  def parse_log_rejection(line) do
-    case Regex.run(@rejection_pattern, line) do
-      [_, sender_id] -> {:rejected, sender_id}
-      _ ->
-        # Also match group rejection
-        case Regex.run(~r/skipping group message.*chatId[=:]\s*(-?\d+)/, line) do
-          [_, chat_id] -> {:rejected, chat_id}
-          _ -> :ignore
-        end
-    end
-  end
+  def parse_log_rejection(_line), do: :ignore
 
   @impl true
   def clear_sessions(data_root) do
@@ -124,9 +112,7 @@ defmodule Druzhok.Runtime.OpenClaw do
   def supports_feature?(:pairing), do: true
   def supports_feature?(_), do: false
 
-  # --- Helpers ---
-
-  defp gateway_port(instance), do: 18789 + (Map.get(instance, :id, 0) || 0)
+  defp gateway_port(instance), do: 18800 + (Map.get(instance, :id, 0) || 0)
 
   defp wait_for_health(base, retries \\ 30) do
     url = "#{base}/healthz"
@@ -191,8 +177,8 @@ defmodule Druzhok.Runtime.OpenClaw do
     if token do
       telegram_account = %{
         "botToken" => token,
-        "dmPolicy" => if(all_allowed == [], do: "pairing", else: "open"),
-        "dm" => %{"allowFrom" => if(all_allowed == [], do: [], else: all_allowed)}
+        "dmPolicy" => "pairing",
+        "dm" => %{"allowFrom" => all_allowed}
       }
 
       Map.put(config, "channels", %{
