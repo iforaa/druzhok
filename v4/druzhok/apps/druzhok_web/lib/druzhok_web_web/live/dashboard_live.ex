@@ -41,6 +41,7 @@ defmodule DruzhokWebWeb.DashboardLive do
       show_create: false,
       current_path: "",
       pairing: nil,
+      pairing_requests: [],
       owner: nil,
       groups: [],
       allowed_users: [],
@@ -97,6 +98,7 @@ defmodule DruzhokWebWeb.DashboardLive do
           current_path: "",
           events: [],
           pairing: Druzhok.InstanceManager.get_pairing(name),
+          pairing_requests: Druzhok.Pairing.pending_for_instance(name),
           owner: Druzhok.InstanceManager.get_owner(name),
           groups: Druzhok.InstanceManager.get_groups(name),
           allowed_users: load_allowed_users(name),
@@ -109,12 +111,22 @@ defmodule DruzhokWebWeb.DashboardLive do
   end
 
   def handle_params(_params, _uri, socket) do
-    {:noreply, assign(socket, selected: nil, workspace_files: [], file_content: nil, events: [], pairing: nil, owner: nil, groups: [], allowed_users: [])}
+    {:noreply, assign(socket, selected: nil, workspace_files: [], file_content: nil, events: [], pairing: nil, pairing_requests: [], owner: nil, groups: [], allowed_users: [])}
   end
 
   @impl true
   def handle_info(:refresh, socket) do
     {:noreply, assign(socket, instances: list_instances())}
+  end
+
+  def handle_info({:druzhok_event, instance_name, %{type: :pairing_request} = _event}, socket) do
+    if socket.assigns.selected == instance_name do
+      {:noreply, assign(socket,
+        pairing_requests: Druzhok.Pairing.pending_for_instance(instance_name)
+      )}
+    else
+      {:noreply, socket}
+    end
   end
 
   def handle_info({:druzhok_event, instance_name, event}, socket) do
@@ -529,6 +541,53 @@ defmodule DruzhokWebWeb.DashboardLive do
     )}
   end
 
+  def handle_event("approve_log_pairing", %{"user_id" => user_id_str}, socket) do
+    name = socket.assigns.selected
+    user_id = String.to_integer(user_id_str)
+
+    with_runtime(name, fn runtime, data_root ->
+      # Add to runtime allow_from
+      runtime.add_allowed_user(data_root, user_id_str)
+
+      # Delete pairing request
+      Druzhok.Pairing.approve_request(name, user_id)
+
+      # Send welcome message
+      instance = Druzhok.Repo.get_by(Druzhok.Instance, name: name)
+      welcome = instance.welcome_message ||
+        Druzhok.I18n.t(:welcome_default, instance.language || "ru")
+      Druzhok.Telegram.API.send_message(instance.telegram_token, user_id, welcome)
+
+      # Broadcast and reload
+      Druzhok.Events.broadcast(name, %{type: :pairing_approved, user_id: user_id_str})
+
+      {:noreply, assign(socket,
+        pairing_requests: Druzhok.Pairing.pending_for_instance(name),
+        allowed_users: runtime.read_allowed_users(data_root)
+      )}
+    end) || {:noreply, socket}
+  end
+
+  def handle_event("update_reject_message", %{"name" => name, "value" => value}, socket) do
+    value = if String.trim(value) == "", do: nil, else: String.trim(value)
+    case Druzhok.Repo.get_by(Druzhok.Instance, name: name) do
+      nil -> {:noreply, socket}
+      inst ->
+        Druzhok.Repo.update(Druzhok.Instance.changeset(inst, %{reject_message: value}))
+        {:noreply, socket}
+    end
+  end
+
+  def handle_event("update_welcome_message", %{"name" => name, "value" => value}, socket) do
+    value = if String.trim(value) == "", do: nil, else: String.trim(value)
+    case Druzhok.Repo.get_by(Druzhok.Instance, name: name) do
+      nil -> {:noreply, socket}
+      inst ->
+        Druzhok.Repo.update(Druzhok.Instance.changeset(inst, %{welcome_message: value}))
+        {:noreply, socket}
+    end
+  end
+
   def handle_event("approve_group", %{"name" => name, "chat_id" => chat_id}, socket) do
     Druzhok.InstanceManager.approve_group(name, String.to_integer(chat_id))
     {:noreply, assign(socket, groups: Druzhok.InstanceManager.get_groups(name))}
@@ -854,6 +913,28 @@ defmodule DruzhokWebWeb.DashboardLive do
 
               <hr class="border-gray-200" />
 
+              <%!-- Pending Pairing Requests --%>
+              <%= if @pairing_requests != [] do %>
+                <div class="bg-yellow-50 border border-yellow-200 rounded-lg p-4 mb-4">
+                  <h3 class="text-sm font-medium text-yellow-800 mb-2">Pending Access Requests</h3>
+                  <%= for req <- @pairing_requests do %>
+                    <div class="flex items-center justify-between py-2 border-b border-yellow-100 last:border-0">
+                      <div>
+                        <span class="font-mono text-sm"><%= req.telegram_user_id %></span>
+                        <%= if req.username do %>
+                          <span class="text-gray-500 text-sm ml-2">@<%= req.username %></span>
+                        <% end %>
+                      </div>
+                      <button phx-click="approve_log_pairing"
+                              phx-value-user_id={req.telegram_user_id}
+                              class="px-3 py-1 bg-green-600 text-white text-sm rounded hover:bg-green-700">
+                        Approve
+                      </button>
+                    </div>
+                  <% end %>
+                </div>
+              <% end %>
+
               <%!-- Security: Approved Users --%>
               <div>
                 <h3 class="text-sm font-medium text-gray-700 mb-3">Approved Telegram Users</h3>
@@ -886,6 +967,29 @@ defmodule DruzhokWebWeb.DashboardLive do
                          class="rounded border-gray-300" />
                   <span class="text-sm text-gray-600">Mention only — respond only when @mentioned in groups</span>
                 </label>
+              </div>
+
+              <hr class="border-gray-200" />
+
+              <%!-- Message Settings --%>
+              <div>
+                <h3 class="text-sm font-medium text-gray-700 mb-3">Messages</h3>
+                <div class="space-y-4">
+                  <div>
+                    <label class="block text-xs font-medium text-gray-500 mb-1">Rejection Message</label>
+                    <textarea phx-blur="update_reject_message" phx-value-name={@selected}
+                              class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm"
+                              placeholder="Uses default if empty. Use %{user_id} for the user's ID."
+                              rows="2"><%= selected_field(@instances, @selected, :reject_message) %></textarea>
+                  </div>
+                  <div>
+                    <label class="block text-xs font-medium text-gray-500 mb-1">Welcome Message</label>
+                    <textarea phx-blur="update_welcome_message" phx-value-name={@selected}
+                              class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm"
+                              placeholder="Uses default if empty."
+                              rows="2"><%= selected_field(@instances, @selected, :welcome_message) %></textarea>
+                  </div>
+                </div>
               </div>
 
               <hr class="border-gray-200" />
