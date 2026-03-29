@@ -129,8 +129,8 @@ defmodule Druzhok.Runtime.ZeroClaw do
     - Говорит "подумай", "think", "используй умную модель", "/smart"
     - Явно просит сложный анализ или глубокое рассуждение
 
-    Для переключения используй инструмент `model_switch` с `action: "set"` и `model: "hint:smart"`.
-    После выполнения запроса на умной модели — переключись обратно: `model_switch` с `model: "#{default_model}"`.
+    Для переключения используй `model_switch` с `action: "set"`, `provider: "openrouter"`, `model: "#{on_demand_model}"`.
+    После выполнения запроса на умной модели — переключись обратно: `model_switch` с `provider: "openrouter"`, `model: "#{default_model}"`.
     Никогда не переключайся на умную модель самостоятельно без явной просьбы пользователя.
     """
   end
@@ -148,8 +148,8 @@ defmodule Druzhok.Runtime.ZeroClaw do
     - Says "think harder", "use smart model", "/smart"
     - Explicitly asks for deep analysis or complex reasoning
 
-    To switch, use `model_switch` tool with `action: "set"` and `model: "hint:smart"`.
-    After completing the request on smart model — switch back: `model_switch` with `model: "#{default_model}"`.
+    To switch, use `model_switch` with `action: "set"`, `provider: "openrouter"`, `model: "#{on_demand_model}"`.
+    After completing the request — switch back: `model_switch` with `provider: "openrouter"`, `model: "#{default_model}"`.
     Never switch to smart model on your own without explicit user request.
     """
   end
