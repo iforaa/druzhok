@@ -104,7 +104,7 @@ defmodule Druzhok.Runtime.PicoClaw do
   def docker_image, do: System.get_env("PICOCLAW_IMAGE") || "picoclaw:latest"
 
   @impl true
-  def gateway_command, do: ["gateway", "--allow-empty"]
+  def gateway_command, do: ["gateway", "--allow-empty", "--debug"]
 
   @impl true
   def health_path, do: "/health"
@@ -184,7 +184,7 @@ defmodule Druzhok.Runtime.PicoClaw do
         }
       },
       "model_list" => models,
-      "gateway" => %{"host" => "0.0.0.0", "port" => port},
+      "gateway" => %{"host" => "0.0.0.0", "port" => port, "log_level" => "debug"},
       "tools" => %{
         "exec" => %{"enabled" => true, "enable_deny_patterns" => false, "allow_remote" => true},
         "read_file" => %{"enabled" => true},

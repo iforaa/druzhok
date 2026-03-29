@@ -73,13 +73,16 @@ defmodule Druzhok.BotManager do
               end
 
               # Start log watcher for rejection detection
-              Druzhok.LogWatcher.start_link(
+              case Druzhok.LogWatcher.start_link(
                 name: name,
                 runtime: runtime,
                 bot_token: instance.telegram_token,
                 language: instance.language || "ru",
                 reject_message: instance.reject_message
-              )
+              ) do
+                {:ok, pid} -> Logger.info("LogWatcher started for #{name}: #{inspect(pid)}")
+                {:error, reason} -> Logger.error("LogWatcher failed for #{name}: #{inspect(reason)}")
+              end
             end)
 
             Druzhok.HealthMonitor.register(name, container_id, instance.bot_runtime || "zeroclaw")

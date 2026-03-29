@@ -1032,9 +1032,10 @@ defmodule DruzhokWebWeb.DashboardLive do
   end
 
   defp load_allowed_users(name) do
-    with_runtime(name, fn runtime, data_root ->
+    users = with_runtime(name, fn runtime, data_root ->
       runtime.read_allowed_users(data_root)
     end) || []
+    Enum.reject(users, &(&1 == "__closed__"))
   end
 
   defp load_usage_data(instance) do

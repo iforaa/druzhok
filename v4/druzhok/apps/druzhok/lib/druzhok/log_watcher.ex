@@ -11,7 +11,7 @@ defmodule Druzhok.LogWatcher do
 
   def start_link(opts) do
     name = Keyword.fetch!(opts, :name)
-    GenServer.start_link(__MODULE__, opts, name: via(name))
+    GenServer.start(__MODULE__, opts, name: via(name))
   end
 
   def stop(instance_name) do
@@ -62,6 +62,7 @@ defmodule Druzhok.LogWatcher do
     {lines, buffer} = split_lines(state.buffer <> data)
 
     state = Enum.reduce(lines, state, fn line, acc ->
+      line = strip_ansi(line)
       case acc.runtime.parse_log_rejection(line) do
         {:rejected, user_id} ->
           handle_rejection(acc, user_id)
@@ -76,8 +77,26 @@ defmodule Druzhok.LogWatcher do
 
   @impl true
   def handle_info({port, {:exit_status, _code}}, %{port: port} = state) do
-    Logger.warning("LogWatcher port exited for #{state.instance_name}, stopping")
-    {:stop, :normal, state}
+    Logger.warning("LogWatcher port exited for #{state.instance_name}, retrying in 5s")
+    Process.send_after(self(), :reconnect_port, 5_000)
+    {:noreply, state}
+  end
+
+  def handle_info(:reconnect_port, state) do
+    container = Druzhok.BotManager.container_name(state.instance_name)
+    # Check if container is still running
+    case System.cmd("docker", ["inspect", "--format", "{{.State.Running}}", container], stderr_to_stdout: true) do
+      {"true\n", 0} ->
+        port = Port.open(
+          {:spawn_executable, "/usr/bin/env"},
+          [:binary, :exit_status, :use_stdio, :stderr_to_stdout,
+           args: ["docker", "logs", "-f", "--since=5s", container]]
+        )
+        {:noreply, %{state | port: port, buffer: ""}}
+      _ ->
+        Logger.info("LogWatcher: container #{state.instance_name} not running, stopping")
+        {:stop, :normal, state}
+    end
   end
 
   @impl true
@@ -131,6 +150,10 @@ defmodule Druzhok.LogWatcher do
         Logger.warning("LogWatcher: failed to send rejection message to #{user_id}: #{inspect(reason)}")
     end
   end
+
+  @ansi_pattern ~r/\x1b\[[0-9;]*m/
+
+  defp strip_ansi(line), do: Regex.replace(@ansi_pattern, line, "")
 
   defp split_lines(data) do
     parts = String.split(data, "\n")
