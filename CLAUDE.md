@@ -1,6 +1,6 @@
 # Druzhok
 
-Personal AI assistant as a Telegram bot. Elixir/Phoenix umbrella app with pi_core agent runtime, Telegram channel, OpenClaw-style memory, per-bot Docker sandboxes, and a web dashboard.
+Personal AI assistant platform. v3 (Elixir/Phoenix) is the legacy single-bot runtime. v4 is the multi-bot orchestrator ("Claw Hub") managing OpenClaw, ZeroClaw, PicoClaw, NullClaw instances.
 
 ## Commits
 
@@ -11,124 +11,96 @@ Always use `/my-commit` skill for committing changes. Never use raw git commit c
 ### Never wipe workspace
 Never run `rm -rf workspace` when restarting the bot. The workspace contains the bot's memory, identity, and conversation history. Only wipe if the user explicitly asks for a fresh start.
 
-### Nebius endpoint
-Use `https://api.tokenfactory.us-central1.nebius.com/v1/` (us-central1), NOT `api.tokenfactory.nebius.com`. The non-regional endpoint doesn't support tool calling in streaming mode.
-
 ### Docker container permissions
-Bot containers (ZeroClaw, PicoClaw) run as root inside Docker. Files they create in bind-mounted volumes (`/data`) are owned by root on the host. The Elixir app (running as `igor`) needs to write config files to the same directory before starting a container. Fix with `sudo chown -R igor:igor /home/igor/druzhok-data/v4-instances/<name>/` when you hit permission denied errors.
+Bot containers run as root inside Docker. Files they create in bind-mounted volumes (`/data`) are owned by root on the host. Fix with `sudo chown -R igor:igor /home/igor/druzhok-data/v4-instances/<name>/` when you hit permission denied errors.
 
 ### Reasoning models need high max_tokens
 Models like GLM-5, Kimi K2.5, DeepSeek-R1 put reasoning in `reasoning_content` and the actual reply in `content`. With low `max_tokens`, ALL tokens go to reasoning and `content` is empty. Set `maxTokens: 16384` minimum.
 
+### OpenClaw pool startup is slow
+On the 2-CPU/2GB Yandex Cloud VM, OpenClaw takes ~2.5 minutes to cold-start. Health timeout is 180s. Don't reduce it.
+
+### OpenClaw config quirks
+- `gateway.auth.mode: "none"` + `gateway.bind: "loopback"` — these must match; OpenClaw refuses `bind: "lan"` without auth.
+- `allowFrom` goes at account level, NOT nested under `"dm"`.
+- `sandbox.mode: "off"` until the Docker image is rebuilt with `OPENCLAW_INSTALL_DOCKER_CLI=1`.
+
+## Project Structure
+
+```
+v4/
+├── druzhok/           # Elixir orchestrator (Claw Hub)
+│   ├── apps/druzhok/      # Core: BotManager, PoolManager, Instance, Runtime adapters
+│   └── apps/druzhok_web/  # Phoenix dashboard (LiveView)
+├── openclaw/          # OpenClaw source (Node.js, used for Docker builds)
+├── zeroclaw/          # ZeroClaw (Rust)
+├── picoclaw/          # PicoClaw (Go)
+├── nullclaw/          # NullClaw (Zig)
+└── elixirclaw/        # ElixirClaw (extracted from v3)
+```
+
+## v4 Architecture — Pool System
+
+OpenClaw instances are pooled (10 users per container) to reduce RAM from 50GB to ~6GB for 100 users.
+
+```
+Druzhok Orchestrator (Elixir, ~300 MB)
+  ├── LLM Proxy (/v1/chat/completions) → OpenRouter (1 API key for all)
+  ├── PoolManager GenServer (manages pool containers)
+  ├── HealthMonitor (30s checks)
+  └── Dashboard (Phoenix LiveView, port 4000)
+
+Pool Container (OpenClaw slim, ~500 MB)
+  ├── agent-alice → Telegram bot 1
+  ├── agent-bob → Telegram bot 2
+  └── ... up to 10 agents per pool
+```
+
+Key modules:
+- `Druzhok.PoolManager` — assigns instances to pools, creates/restarts containers
+- `Druzhok.PoolConfig` — generates multi-agent OpenClaw JSON config
+- `Druzhok.Pool` — Ecto schema for pools table
+- `Druzhok.Runtime` — behaviour with `pooled?/0` callback
+- `Druzhok.BotManager` — branches on `pooled?()` for start/stop/restart
+
+Pool data: `/data/pools/pool-name/` (config + state)
+Instance workspaces: `/data/instances/name/workspace/` (mounted individually)
+
+Budget: `daily_token_limit: 0` means unlimited (skips budget check).
+
 ## Development Commands
 
 ```bash
-cd v3
-mix deps.get        # install dependencies
-mix compile          # compile all apps
-mix test             # run all tests
-mix phx.server       # start Phoenix server
+cd v4/druzhok
+mix deps.get && mix compile
+mix test
+DATABASE_PATH=data/druzhok.db mix phx.server   # local dev
+DATABASE_PATH=data/druzhok.db mix ecto.migrate  # run migrations
 ```
-
-## Project Structure (v3 — Elixir umbrella)
-
-```
-v3/
-├── apps/
-│   ├── pi_core/           # Agent runtime, LLM clients, tools, memory, sessions
-│   ├── druzhok/           # Instance management, Telegram, sandbox, settings, DB
-│   └── druzhok_web/       # Phoenix web dashboard, LiveView
-├── config/                # Elixir config (runtime.exs has API keys/URLs)
-└── services/
-    └── sandbox-agent/     # Go binary for per-bot sandboxes (Dockerfile)
-workspace-template/        # Default workspace (Russian, OpenClaw file conventions)
-Dockerfile                 # Legacy (not used — app runs directly on host)
-```
-
-## Architecture
-
-### Network & VPN traffic flow
-
-The Elixir app runs directly on the host (no parent Docker container). xray (vless client) provides VPN tunneling. All outbound HTTP traffic is routed through xray via Finch HTTP proxy configuration.
-
-```
-HOST (Yandex Cloud, 158.160.25.25)
-├── xray (vless client, 127.0.0.1:10809)
-│   └── outbound → VPN server → internet
-│
-├── Elixir app (systemd service, port 4000)
-│   │  HTTP_PROXY_URL=http://127.0.0.1:10809
-│   │  DATABASE_PATH=~/druzhok-data/druzhok.db
-│   │
-│   │  PiCore.Finch (single pool, all HTTP via xray proxy)
-│   │    ├── LLM calls (Nebius, Anthropic, OpenRouter) → xray → VPN
-│   │    ├── Telegram API → xray → VPN
-│   │    ├── web_fetch tool → xray → VPN
-│   │    └── embeddings (Voyage AI) → xray → VPN
-│   │
-│   └── spawns sandbox containers via Docker CLI
-│
-└── druzhok-{id}-{name} (sandbox, host network)
-    ├── No outbound internet access
-    ├── Runs bash commands and file I/O only
-    ├── Workspace bind-mounted from ~/druzhok-data/instances/*/workspace
-    └── Talks to parent via TCP on localhost (shared secret auth)
-```
-
-**Key points:**
-- `HTTP_PROXY_URL` env var configures Finch to route all HTTP through xray. If unset, Finch connects directly (for local dev).
-- The app runs on the host, not in Docker. xray listens on `127.0.0.1:10809`.
-- Sandbox containers are Docker-based (host network) and make no outbound requests.
-- There is NO separate proxy process. The Elixir app calls LLM providers directly (through xray).
-
-### Request flow
-
-```
-User → Telegram → Elixir app (host)
-  → PiCore.Finch → xray (127.0.0.1:10809) → VPN → LLM provider
-  → Response back through the chain
-  → Tool execution → sandbox container (bash/files only)
-```
-
-## Workspace Files (OpenClaw Convention)
-
-| File | Purpose | Loaded when |
-|------|---------|-------------|
-| `AGENTS.md` | Operating instructions | Every session |
-| `SOUL.md` | Personality | Every session |
-| `IDENTITY.md` | Bot name, emoji | Every session |
-| `USER.md` | User profile | DM only (never in groups) |
-| `BOOTSTRAP.md` | First-run instructions | First run, then deleted |
-| `HEARTBEAT.md` | Periodic tasks | On heartbeat tick |
-| `MEMORY.md` | Long-term memory | DM only |
-
-## Configuration
-
-**Env vars (runtime.exs):**
-- `NEBIUS_API_KEY`, `NEBIUS_BASE_URL` — Nebius LLM provider
-- `ANTHROPIC_API_KEY`, `ANTHROPIC_API_URL` — Anthropic provider
-- `OPENROUTER_API_KEY`, `OPENROUTER_API_URL` — OpenRouter provider
-- `HTTP_PROXY_URL` — HTTP proxy for all outbound traffic (xray/VPN)
-- `DATABASE_PATH` — SQLite DB path (default: `/data/druzhok.db`)
-- `SECRET_KEY_BASE`, `PORT`, `PHX_HOST` — Phoenix config
 
 ## Deploying to Cloud
 
 ```bash
-# On the server (ssh -l igor 158.160.25.25):
-
-# 1. Sync code
+# On the server (ssh -l igor 158.160.78.230):
 cd ~/druzhok && git pull
-
-# 2. Compile
-cd v3 && mix deps.get && mix compile
-
-# 3. Run migrations (if needed)
-DATABASE_PATH=/home/igor/druzhok-data/druzhok.db mix ecto.migrate
-
-# 4. Restart
+source ~/.bashrc; . ~/.asdf/asdf.sh
+cd v4/druzhok && mix deps.get && mix compile
+DATABASE_PATH=/home/igor/druzhok-data/v4-druzhok.db mix ecto.migrate
 sudo systemctl restart druzhok
-
-# 5. Check logs
 journalctl -u druzhok -f
+```
+
+## Building OpenClaw Docker Image
+
+```bash
+# Build locally for linux/amd64:
+cd v4/openclaw
+docker buildx build --platform linux/amd64 \
+  --build-arg OPENCLAW_VARIANT=slim \
+  --build-arg OPENCLAW_EXTENSIONS="telegram" \
+  -t openclaw:slim-amd64 --load .
+
+# Transfer to server:
+docker save openclaw:slim-amd64 | ssh igor@158.160.78.230 "docker load"
+ssh igor@158.160.78.230 "docker tag openclaw:slim-amd64 openclaw:slim"
 ```
