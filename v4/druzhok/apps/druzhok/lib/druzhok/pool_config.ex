@@ -94,14 +94,11 @@ defmodule Druzhok.PoolConfig do
       allowed = build_allow_from(instance)
       groups = build_group_config(instance)
 
-      mention_only = Map.get(instance, :mention_only, false)
-
       account = %{
         "botToken" => instance.telegram_token,
         "dmPolicy" => "pairing",
         "allowFrom" => allowed,
-        "groupPolicy" => "open",
-        "requireMention" => mention_only
+        "groupPolicy" => "open"
       }
 
       account = if map_size(groups) > 0 do
@@ -126,6 +123,8 @@ defmodule Druzhok.PoolConfig do
   end
 
   defp build_group_config(instance) do
+    mention_only = Map.get(instance, :mention_only, false)
+
     case Map.get(instance, :name) do
       nil -> %{}
       name ->
@@ -134,7 +133,8 @@ defmodule Druzhok.PoolConfig do
         |> Map.new(fn chat ->
           {to_string(chat.chat_id), %{
             "enabled" => true,
-            "groupPolicy" => "open"
+            "groupPolicy" => "open",
+            "requireMention" => mention_only
           }}
         end)
     end
