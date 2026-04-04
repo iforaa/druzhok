@@ -216,7 +216,7 @@ defmodule Druzhok.PoolManager do
         ["-v", "#{host_workspace}:#{container_workspace}"]
       end)
 
-    command = ["node", "openclaw.mjs", "gateway", "--allow-unconfigured", "--bind", "lan"]
+    command = ["node", "openclaw.mjs", "gateway", "--allow-unconfigured"]
 
     base_args ++ workspace_mounts ++ [image | command]
   end

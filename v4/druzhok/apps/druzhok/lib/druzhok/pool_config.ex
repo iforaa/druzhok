@@ -19,7 +19,7 @@ defmodule Druzhok.PoolConfig do
 
     %{
       "gateway" => %{
-        "bind" => "0.0.0.0",
+        "bind" => "loopback",
         "port" => port,
         "reload" => %{"mode" => "hybrid"},
         "auth" => %{"mode" => "none"}
