@@ -18,9 +18,14 @@ defmodule Druzhok.Budget do
   end
 
   def check(instance_id) do
-    case get_or_create(instance_id) do
-      %{balance: b} when b > 0 -> {:ok, b}
-      _ -> {:error, :exceeded}
+    # daily_token_limit == 0 means unlimited — skip budget check
+    case Druzhok.Repo.get(Druzhok.Instance, instance_id) do
+      %{daily_token_limit: 0} -> {:ok, :unlimited}
+      _ ->
+        case get_or_create(instance_id) do
+          %{balance: b} when b > 0 -> {:ok, b}
+          _ -> {:error, :exceeded}
+        end
     end
   end
 
