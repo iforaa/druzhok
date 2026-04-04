@@ -205,7 +205,7 @@ defmodule Druzhok.PoolManager do
       "-v", "/var/run/docker.sock:/var/run/docker.sock",
       "-e", "OPENCLAW_CONFIG_PATH=/data/openclaw.json",
       "-e", "OPENCLAW_STATE_DIR=/data/state",
-      "-e", "NODE_OPTIONS=--max-old-space-size=256",
+      "-e", "NODE_OPTIONS=--max-old-space-size=512",
       "-e", "NODE_ENV=production"
     ]
 
