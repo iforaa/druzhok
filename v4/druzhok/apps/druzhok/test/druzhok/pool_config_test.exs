@@ -80,7 +80,7 @@ defmodule Druzhok.PoolConfigTest do
 
     test "sandbox mode is 'all' in agent defaults" do
       config = PoolConfig.build([@instance1])
-      assert config["agents"]["defaults"]["sandbox"]["mode"] == "off"
+      assert config["agents"]["defaults"]["sandbox"]["mode"] == "all"
     end
 
     test "single instance agent has correct id and workspace" do

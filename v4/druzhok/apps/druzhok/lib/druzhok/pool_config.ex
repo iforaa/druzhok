@@ -31,7 +31,7 @@ defmodule Druzhok.PoolConfig do
         "providers" => build_providers(instances, proxy_host)
       },
       "agents" => %{
-        "defaults" => %{"sandbox" => %{"mode" => "off"}},
+        "defaults" => %{"sandbox" => %{"mode" => "all"}},
         "list" => build_agent_list(instances)
       },
       "channels" => %{

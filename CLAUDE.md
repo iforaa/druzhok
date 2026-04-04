@@ -23,7 +23,7 @@ On the 2-CPU/2GB Yandex Cloud VM, OpenClaw takes ~2.5 minutes to cold-start. Hea
 ### OpenClaw config quirks
 - `gateway.auth.mode: "none"` + `gateway.bind: "loopback"` — these must match; OpenClaw refuses `bind: "lan"` without auth.
 - `allowFrom` goes at account level, NOT nested under `"dm"`.
-- `sandbox.mode: "off"` until the Docker image is rebuilt with `OPENCLAW_INSTALL_DOCKER_CLI=1`.
+- `sandbox.mode: "all"` — requires Docker CLI in the image (built with `OPENCLAW_INSTALL_DOCKER_CLI=1`).
 
 ## Project Structure
 
