@@ -59,7 +59,7 @@ defmodule Druzhok.HealthMonitor do
   end
 
   defp check_one(name, info) do
-    case do_health_check(name) do
+    case do_health_check(info.container_id) do
       :ok ->
         if info.failures > 0, do: Logger.info("Bot #{name} recovered")
         %{info | failures: 0, status: :healthy}
@@ -79,8 +79,7 @@ defmodule Druzhok.HealthMonitor do
     end
   end
 
-  defp do_health_check(name) do
-    container = Druzhok.BotManager.container_name(name)
+  defp do_health_check(container) do
     case System.cmd("docker", ["inspect", "--format", "{{.State.Running}}", container], stderr_to_stdout: true) do
       {"true\n", 0} -> :ok
       _ -> :error
