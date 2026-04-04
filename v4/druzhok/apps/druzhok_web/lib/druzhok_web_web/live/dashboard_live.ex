@@ -614,11 +614,21 @@ defmodule DruzhokWebWeb.DashboardLive do
   def handle_event("approve_user", %{"user_input" => input}, socket) do
     user_id = Druzhok.Runtime.parse_user_input(input)
     if user_id != "" and socket.assigns.selected do
-      with_runtime(socket.assigns.selected, fn runtime, data_root ->
-        runtime.add_allowed_user(data_root, user_id)
-        restart_bot(socket.assigns.selected)
-        {:noreply, assign(socket, allowed_users: load_allowed_users(socket.assigns.selected), instances: list_instances())}
-      end) || {:noreply, socket}
+      name = socket.assigns.selected
+      instance = Druzhok.Repo.get_by(Druzhok.Instance, name: name)
+      runtime = instance && Druzhok.Runtime.get(instance.bot_runtime, Druzhok.Runtime.ZeroClaw)
+
+      if instance && runtime.pooled?() do
+        Druzhok.Instance.add_allowed_id(instance, user_id)
+        restart_bot(name)
+        {:noreply, assign(socket, allowed_users: load_allowed_users(name), instances: list_instances())}
+      else
+        with_runtime(name, fn runtime, data_root ->
+          runtime.add_allowed_user(data_root, user_id)
+          restart_bot(name)
+          {:noreply, assign(socket, allowed_users: load_allowed_users(name), instances: list_instances())}
+        end) || {:noreply, socket}
+      end
     else
       {:noreply, put_flash(socket, :error, "Invalid user ID")}
     end
@@ -626,11 +636,21 @@ defmodule DruzhokWebWeb.DashboardLive do
 
   def handle_event("remove_user", %{"user_id" => user_id}, socket) do
     if socket.assigns.selected do
-      with_runtime(socket.assigns.selected, fn runtime, data_root ->
-        runtime.remove_allowed_user(data_root, user_id)
-        restart_bot(socket.assigns.selected)
-        {:noreply, assign(socket, allowed_users: load_allowed_users(socket.assigns.selected), instances: list_instances())}
-      end) || {:noreply, socket}
+      name = socket.assigns.selected
+      instance = Druzhok.Repo.get_by(Druzhok.Instance, name: name)
+      runtime = instance && Druzhok.Runtime.get(instance.bot_runtime, Druzhok.Runtime.ZeroClaw)
+
+      if instance && runtime.pooled?() do
+        Druzhok.Instance.remove_allowed_id(instance, user_id)
+        restart_bot(name)
+        {:noreply, assign(socket, allowed_users: load_allowed_users(name), instances: list_instances())}
+      else
+        with_runtime(name, fn runtime, data_root ->
+          runtime.remove_allowed_user(data_root, user_id)
+          restart_bot(name)
+          {:noreply, assign(socket, allowed_users: load_allowed_users(name), instances: list_instances())}
+        end) || {:noreply, socket}
+      end
     else
       {:noreply, socket}
     end
@@ -1064,10 +1084,18 @@ defmodule DruzhokWebWeb.DashboardLive do
   end
 
   defp load_allowed_users(name) do
-    users = with_runtime(name, fn runtime, data_root ->
-      runtime.read_allowed_users(data_root)
-    end) || []
-    Enum.reject(users, &(&1 == "__closed__"))
+    case Druzhok.Repo.get_by(Druzhok.Instance, name: name) do
+      nil -> []
+      instance ->
+        runtime = Druzhok.Runtime.get(instance.bot_runtime, Druzhok.Runtime.ZeroClaw)
+        if runtime.pooled?() do
+          Druzhok.Instance.get_allowed_ids(instance)
+        else
+          data_root = Path.dirname(instance.workspace)
+          users = runtime.read_allowed_users(data_root)
+          Enum.reject(users, &(&1 == "__closed__"))
+        end
+    end
   end
 
   defp load_usage_data(instance) do

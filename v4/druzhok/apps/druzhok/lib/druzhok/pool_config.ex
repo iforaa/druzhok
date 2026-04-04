@@ -84,21 +84,48 @@ defmodule Druzhok.PoolConfig do
   defp build_telegram_accounts(instances) do
     Map.new(instances, fn instance ->
       allowed = build_allow_from(instance)
+      groups = build_group_config(instance)
 
       account = %{
         "botToken" => instance.telegram_token,
         "dmPolicy" => "pairing",
-        "allowFrom" => allowed
+        "allowFrom" => allowed,
+        "groupPolicy" => "open"
       }
+
+      account = if map_size(groups) > 0 do
+        Map.put(account, "groups", groups)
+      else
+        account
+      end
 
       {instance.name, account}
     end)
   end
 
   defp build_allow_from(instance) do
-    case Map.get(instance, :owner_telegram_id) do
+    owner = case Map.get(instance, :owner_telegram_id) do
       nil -> []
       id -> [to_string(id)]
+    end
+
+    db_ids = Druzhok.Instance.get_allowed_ids(instance)
+
+    (owner ++ db_ids) |> Enum.uniq()
+  end
+
+  defp build_group_config(instance) do
+    case Map.get(instance, :name) do
+      nil -> %{}
+      name ->
+        Druzhok.AllowedChat.groups_for_instance(name)
+        |> Enum.filter(&(&1.status == "approved"))
+        |> Map.new(fn chat ->
+          {to_string(chat.chat_id), %{
+            "enabled" => true,
+            "groupPolicy" => "open"
+          }}
+        end)
     end
   end
 
