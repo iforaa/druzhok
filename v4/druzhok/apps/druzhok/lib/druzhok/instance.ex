@@ -22,6 +22,7 @@ defmodule Druzhok.Instance do
     field :mention_only, :boolean, default: false
     field :reject_message, :string
     field :welcome_message, :string
+    field :pool_id, :id
 
     has_one :budget, Druzhok.Budget
 
@@ -30,7 +31,7 @@ defmodule Druzhok.Instance do
 
   def changeset(instance, attrs) do
     instance
-    |> cast(attrs, [:name, :telegram_token, :model, :workspace, :active, :heartbeat_interval, :owner_telegram_id, :sandbox, :timezone, :api_key, :daily_token_limit, :dream_hour, :language, :tenant_key, :bot_runtime, :on_demand_model, :mention_only, :reject_message, :welcome_message])
+    |> cast(attrs, [:name, :telegram_token, :model, :workspace, :active, :heartbeat_interval, :owner_telegram_id, :sandbox, :timezone, :api_key, :daily_token_limit, :dream_hour, :language, :tenant_key, :bot_runtime, :on_demand_model, :mention_only, :reject_message, :welcome_message, :pool_id])
     |> validate_required([:name, :model, :workspace])
     |> unique_constraint(:name)
   end
