@@ -4,7 +4,7 @@ defmodule Druzhok.PoolManager do
 
   alias Druzhok.{Repo, Pool, PoolConfig, HealthMonitor}
 
-  @health_retries 60
+  @health_retries 180
   @status_starting "starting"
   @status_running "running"
   @status_stopped "stopped"
@@ -16,7 +16,7 @@ defmodule Druzhok.PoolManager do
   end
 
   def assign(instance) do
-    GenServer.call(__MODULE__, {:assign, instance}, 120_000)
+    GenServer.call(__MODULE__, {:assign, instance}, 300_000)
   end
 
   def remove(instance) do
@@ -205,7 +205,7 @@ defmodule Druzhok.PoolManager do
       "-v", "/var/run/docker.sock:/var/run/docker.sock",
       "-e", "OPENCLAW_CONFIG_PATH=/data/openclaw.json",
       "-e", "OPENCLAW_STATE_DIR=/data/state",
-      "-e", "NODE_OPTIONS=--max-old-space-size=512",
+      "-e", "NODE_OPTIONS=--max-old-space-size=256",
       "-e", "NODE_ENV=production"
     ]
 
