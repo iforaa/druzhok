@@ -31,9 +31,11 @@ defmodule DruzhokWebWeb.DashboardLive do
     {:ok, assign(socket,
       current_user: current_user,
       instances: list_instances(),
+      pools: Druzhok.PoolManager.pools(),
       models: models,
       create_form: %{"name" => "", "token" => "", "model" => default_model},
       selected: nil,
+      selected_pool: nil,
       tab: :logs,
       workspace_files: [],
       file_content: nil,
@@ -114,7 +116,7 @@ defmodule DruzhokWebWeb.DashboardLive do
 
   @impl true
   def handle_info(:refresh, socket) do
-    {:noreply, assign(socket, instances: list_instances())}
+    {:noreply, assign(socket, instances: list_instances(), pools: Druzhok.PoolManager.pools())}
   end
 
   def handle_info({:druzhok_event, instance_name, %{type: :pairing_request} = _event}, socket) do
@@ -198,6 +200,11 @@ defmodule DruzhokWebWeb.DashboardLive do
     Druzhok.BotManager.start(name)
     Process.sleep(1_000)
     {:noreply, assign(socket, instances: list_instances())}
+  end
+
+  def handle_event("select_pool", %{"pool" => pool_name}, socket) do
+    pool = Enum.find(socket.assigns.pools, &(&1.name == pool_name))
+    {:noreply, assign(socket, :selected_pool, pool)}
   end
 
   def handle_event("select", %{"name" => name}, socket) do
@@ -713,7 +720,27 @@ defmodule DruzhokWebWeb.DashboardLive do
           <div :if={@instances == []} class="px-4 py-8 text-center text-gray-400 text-sm">
             No instances yet
           </div>
-          <div :for={inst <- @instances}
+
+          <%!-- Pool groups --%>
+          <div :for={pool <- @pools} class="mb-1">
+            <div class="flex items-center gap-2 px-4 py-1.5 cursor-pointer hover:bg-white/40 transition"
+                 phx-click="select_pool" phx-value-pool={pool.name}>
+              <div class={"w-2 h-2 rounded-full flex-shrink-0 #{if pool.status == "running", do: "bg-green-400", else: "bg-gray-300"}"}></div>
+              <span class="text-xs font-semibold text-gray-500 uppercase tracking-wide flex-1 truncate"><%= pool.name %></span>
+              <span class="text-[10px] text-gray-400"><%= length(pool.instances) %>/<%= pool.max_tenants %></span>
+            </div>
+            <div :for={inst <- pool.instances}
+                 phx-click="select" phx-value-name={inst.name}
+                 class={"flex items-center gap-3 pl-8 pr-4 py-2 cursor-pointer transition #{if @selected == inst.name, do: "bg-white border-l-2 border-gray-900 shadow-sm", else: "hover:bg-white/60 border-l-2 border-transparent"}"}>
+              <div class="flex-1 min-w-0">
+                <div class="text-sm font-medium truncate"><%= inst.name %></div>
+                <div class="text-xs text-gray-400 truncate"><%= inst.bot_runtime || "openclaw" %> &middot; <%= model_short(inst.model) %></div>
+              </div>
+            </div>
+          </div>
+
+          <%!-- Solo instances (not in any pool) --%>
+          <div :for={inst <- @instances} :if={is_nil(inst[:pool_id])}
                phx-click="select" phx-value-name={inst.name}
                class={"flex items-center gap-3 px-4 py-3 cursor-pointer transition #{if @selected == inst.name, do: "bg-white border-l-2 border-gray-900 shadow-sm", else: "hover:bg-white/60 border-l-2 border-transparent"}"}>
             <div class={"w-2 h-2 rounded-full flex-shrink-0 #{container_status_color(inst[:container_status])}"}></div>
