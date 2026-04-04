@@ -104,3 +104,19 @@ docker buildx build --platform linux/amd64 \
 docker save openclaw:slim-amd64 | ssh igor@158.160.78.230 "docker load"
 ssh igor@158.160.78.230 "docker tag openclaw:slim-amd64 openclaw:slim"
 ```
+
+## Debugging Remote Errors
+
+```bash
+# Check service logs:
+ssh -l igor 158.160.78.230 "journalctl -u druzhok --since '5 min ago' --no-pager | grep -i error | tail -20"
+
+# Check pool container logs:
+ssh -l igor 158.160.78.230 "docker logs druzhok-pool-1 2>&1 | tail -20"
+
+# Check pool health:
+ssh -l igor 158.160.78.230 "curl -s http://127.0.0.1:18800/healthz"
+
+# Check server load:
+ssh -l igor 158.160.78.230 "uptime; free -h; docker stats --no-stream"
+```
