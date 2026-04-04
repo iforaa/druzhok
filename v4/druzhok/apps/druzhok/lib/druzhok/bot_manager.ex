@@ -133,6 +133,7 @@ defmodule Druzhok.BotManager do
         runtime = Druzhok.Runtime.get(instance.bot_runtime, Druzhok.Runtime.ZeroClaw)
 
         if runtime.pooled?() do
+          instance |> Ecto.Changeset.change(%{active: false}) |> Repo.update!()
           Task.start(fn -> Druzhok.PoolManager.remove(instance) end)
         else
           stop_container(name)

@@ -193,13 +193,13 @@ defmodule DruzhokWebWeb.DashboardLive do
   def handle_event("stop", %{"name" => name}, socket) do
     Druzhok.BotManager.stop(name)
     Process.sleep(500)
-    {:noreply, assign(socket, instances: list_instances())}
+    {:noreply, assign(socket, instances: list_instances(), pools: Druzhok.PoolManager.pools())}
   end
 
   def handle_event("start_bot", %{"name" => name}, socket) do
     Druzhok.BotManager.start(name)
     Process.sleep(1_000)
-    {:noreply, assign(socket, instances: list_instances())}
+    {:noreply, assign(socket, instances: list_instances(), pools: Druzhok.PoolManager.pools())}
   end
 
   def handle_event("select_pool", %{"pool" => pool_name}, socket) do
