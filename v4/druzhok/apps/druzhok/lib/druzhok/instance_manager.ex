@@ -34,7 +34,7 @@ defmodule Druzhok.InstanceManager do
 
   def list do
     import Ecto.Query
-    Repo.all(from i in Instance, where: i.active == true)
+    Repo.all(from i in Instance, order_by: [desc: i.active, asc: i.name])
   end
 
   def delete(name) do

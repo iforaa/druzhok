@@ -748,14 +748,14 @@ defmodule DruzhokWebWeb.DashboardLive do
             No instances yet
           </div>
 
-          <%!-- Solo instances --%>
+          <%!-- Solo instances (not in any pool) --%>
           <div :for={inst <- @instances} :if={is_nil(inst[:pool_id])}
                phx-click="select" phx-value-name={inst.name}
-               class={"flex items-center gap-3 px-4 py-3 cursor-pointer transition #{if @selected == inst.name, do: "bg-white border-l-2 border-gray-900 shadow-sm", else: "hover:bg-white/60 border-l-2 border-transparent"}"}>
-            <div class={"w-2 h-2 rounded-full flex-shrink-0 #{container_status_color(inst[:container_status])}"}></div>
+               class={"flex items-center gap-3 px-4 py-3 cursor-pointer transition #{if !inst[:active], do: "opacity-50 "} #{if @selected == inst.name, do: "bg-white border-l-2 border-gray-900 shadow-sm", else: "hover:bg-white/60 border-l-2 border-transparent"}"}>
+            <div class={"w-2 h-2 rounded-full flex-shrink-0 #{if inst[:active], do: container_status_color(inst[:container_status]), else: "bg-gray-300"}"}></div>
             <div class="flex-1 min-w-0">
               <div class="text-sm font-medium truncate"><%= inst.name %></div>
-              <div class="text-xs text-gray-400 truncate"><%= inst[:bot_runtime] || "zeroclaw" %> &middot; <%= model_short(inst.model) %></div>
+              <div class="text-xs text-gray-400 truncate"><%= inst[:bot_runtime] || "zeroclaw" %> &middot; <%= model_short(inst.model) %><%= unless inst[:active], do: " · stopped" %></div>
             </div>
           </div>
 
