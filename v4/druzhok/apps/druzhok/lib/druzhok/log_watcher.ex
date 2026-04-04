@@ -31,7 +31,7 @@ defmodule Druzhok.LogWatcher do
     language = Keyword.get(opts, :language, "ru")
     reject_message = Keyword.get(opts, :reject_message)
 
-    container = Druzhok.BotManager.container_name(instance_name)
+    container = Keyword.get(opts, :container, Druzhok.BotManager.container_name(instance_name))
 
     port = Port.open(
       {:spawn_executable, "/usr/bin/env"},
@@ -45,6 +45,7 @@ defmodule Druzhok.LogWatcher do
 
     {:ok, %{
       instance_name: instance_name,
+      container: container,
       runtime: runtime_module,
       bot_token: bot_token,
       language: language,
@@ -83,7 +84,7 @@ defmodule Druzhok.LogWatcher do
   end
 
   def handle_info(:reconnect_port, state) do
-    container = Druzhok.BotManager.container_name(state.instance_name)
+    container = state.container
     # Check if container is still running
     case System.cmd("docker", ["inspect", "--format", "{{.State.Running}}", container], stderr_to_stdout: true) do
       {"true\n", 0} ->
