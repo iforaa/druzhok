@@ -40,11 +40,12 @@ defmodule Druzhok.Pool do
   end
 
   def pool_with_capacity do
+    # Prefer running pools, but also reuse failed/stopped ones to avoid creating duplicates
     from(p in __MODULE__,
       left_join: i in assoc(p, :instances),
-      where: p.status == @status_running,
       group_by: p.id,
       having: count(i.id) < p.max_tenants,
+      order_by: [desc: p.status == @status_running],
       limit: 1
     )
     |> Repo.one()

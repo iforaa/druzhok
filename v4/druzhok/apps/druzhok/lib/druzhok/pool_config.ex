@@ -21,7 +21,8 @@ defmodule Druzhok.PoolConfig do
       "gateway" => %{
         "bind" => "0.0.0.0",
         "port" => port,
-        "reload" => %{"mode" => "hybrid"}
+        "reload" => %{"mode" => "hybrid"},
+        "auth" => %{"mode" => "none"}
       },
       "session" => %{
         "dmScope" => "per-channel-peer"

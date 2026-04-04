@@ -4,7 +4,7 @@ defmodule Druzhok.PoolManager do
 
   alias Druzhok.{Repo, Pool, PoolConfig, HealthMonitor}
 
-  @health_retries 10
+  @health_retries 60
   @status_starting "starting"
   @status_running "running"
   @status_stopped "stopped"
@@ -16,7 +16,7 @@ defmodule Druzhok.PoolManager do
   end
 
   def assign(instance) do
-    GenServer.call(__MODULE__, {:assign, instance}, 60_000)
+    GenServer.call(__MODULE__, {:assign, instance}, 120_000)
   end
 
   def remove(instance) do
@@ -51,7 +51,11 @@ defmodule Druzhok.PoolManager do
 
         false ->
           Logger.warning("[pool_manager] pool=#{pool.name} container missing, restarting")
-          restart_pool_container(pool)
+          try do
+            restart_pool_container(pool)
+          rescue
+            e -> Logger.error("[pool_manager] failed to restart pool=#{pool.name}: #{inspect(e)}")
+          end
       end
     end
 
@@ -169,11 +173,18 @@ defmodule Druzhok.PoolManager do
     data_root = pool_data_root(pool)
     image = System.get_env("OPENCLAW_IMAGE") || "openclaw:slim"
 
+    # --network host works on Linux but not macOS Docker Desktop.
+    # On macOS, publish ports explicitly as fallback.
+    network_args = case :os.type() do
+      {:unix, :linux} -> ["--network", "host"]
+      _ -> ["-p", "#{pool.port}:#{pool.port}"]
+    end
+
     base_args = [
       "-d",
       "--name", pool.container,
-      "--network", "host",
-      "--restart", "unless-stopped",
+      "--restart", "unless-stopped"
+    ] ++ network_args ++ [
       "-v", "#{data_root}:/data",
       "-v", "/var/run/docker.sock:/var/run/docker.sock",
       "-e", "OPENCLAW_CONFIG_PATH=/data/openclaw.json",
@@ -224,7 +235,7 @@ defmodule Druzhok.PoolManager do
   end
 
   defp pool_data_root(pool) do
-    data_root = System.get_env("DRUZHOK_DATA_ROOT") || "/home/igor/druzhok-data"
+    data_root = System.get_env("DRUZHOK_DATA_ROOT") || Path.expand("../../data", __DIR__)
     Path.join([data_root, "pools", pool.name])
   end
 end

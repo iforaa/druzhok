@@ -49,22 +49,30 @@ defmodule Druzhok.BotManager do
         runtime = Druzhok.Runtime.get(instance.bot_runtime, Druzhok.Runtime.ZeroClaw)
 
         if runtime.pooled?() do
-          # Pool path — assign a shared container from the pool
-          {:ok, pool} = Druzhok.PoolManager.assign(instance)
-
+          # Async — pool creation + container start can take 30-60s
+          instance_name = instance.name
+          instance_id = instance.id
           Task.start(fn ->
-            Druzhok.LogWatcher.start_link(
-              name: instance.name,
-              container: pool.container,
-              runtime: Druzhok.Runtime.OpenClaw,
-              bot_token: instance.telegram_token,
-              language: instance.language || "ru",
-              reject_message: instance.reject_message
-            )
+            case Druzhok.PoolManager.assign(instance) do
+              {:ok, pool} ->
+                Druzhok.LogWatcher.start_link(
+                  name: instance_name,
+                  container: pool.container,
+                  runtime: Druzhok.Runtime.OpenClaw,
+                  bot_token: instance.telegram_token,
+                  language: instance.language || "ru",
+                  reject_message: instance.reject_message
+                )
+                Druzhok.Events.broadcast(instance_name, %{type: :started, bot_runtime: instance.bot_runtime, pool: pool.name})
+                Logger.info("Pool instance #{instance_name} started in pool #{pool.name}")
+
+              {:error, reason} ->
+                Logger.error("Pool assign failed for #{instance_name}: #{inspect(reason)}")
+                Druzhok.Events.broadcast(instance_name, %{type: :error, text: "Pool assign failed: #{inspect(reason)}"})
+            end
           end)
 
           instance |> Ecto.Changeset.change(%{active: true}) |> Repo.update!()
-          Druzhok.Events.broadcast(instance.name, %{type: :started, bot_runtime: instance.bot_runtime})
           :ok
         else
           env = Druzhok.Runtime.base_env(instance) |> Map.merge(runtime.env_vars(instance))
