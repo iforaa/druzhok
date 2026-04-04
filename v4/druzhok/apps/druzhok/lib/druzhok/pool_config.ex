@@ -17,7 +17,7 @@ defmodule Druzhok.PoolConfig do
     port = Keyword.get(opts, :port, @default_port)
     proxy_host = Druzhok.Runtime.proxy_host()
 
-    %{
+    config = %{
       "gateway" => %{
         "bind" => "loopback",
         "port" => port,
@@ -41,6 +41,14 @@ defmodule Druzhok.PoolConfig do
       },
       "bindings" => build_bindings(instances)
     }
+
+    # Add mention patterns for group chat trigger names
+    patterns = build_mention_patterns(instances)
+    if patterns != [] do
+      put_in(config, ["messages"], %{"groupChat" => %{"mentionPatterns" => patterns}})
+    else
+      config
+    end
   end
 
   defp build_providers(instances, proxy_host) do
@@ -142,5 +150,13 @@ defmodule Druzhok.PoolConfig do
         }
       }
     end)
+  end
+
+  defp build_mention_patterns(instances) do
+    instances
+    |> Enum.map(&Map.get(&1, :trigger_name))
+    |> Enum.reject(&is_nil/1)
+    |> Enum.reject(&(&1 == ""))
+    |> Enum.map(fn name -> "(?i)\\b#{Regex.escape(name)}\\b" end)
   end
 end

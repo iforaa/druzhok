@@ -664,6 +664,13 @@ defmodule DruzhokWebWeb.DashboardLive do
     {:noreply, assign(socket, instances: list_instances())}
   end
 
+  def handle_event("save_trigger_name", %{"trigger_name" => trigger_name}, socket) do
+    trigger_name = case String.trim(trigger_name) do "" -> nil; t -> t end
+    update_instance_field(socket.assigns.selected, %{trigger_name: trigger_name})
+    restart_bot(socket.assigns.selected)
+    {:noreply, assign(socket, instances: list_instances())}
+  end
+
   def handle_event("clear_history", %{"name" => name}, socket) do
     with_runtime(name, fn runtime, data_root ->
       runtime.clear_sessions(data_root)
@@ -995,6 +1002,13 @@ defmodule DruzhokWebWeb.DashboardLive do
                          class="rounded border-gray-300" />
                   <span class="text-sm text-gray-600">Mention only — respond only when @mentioned in groups</span>
                 </label>
+                <form phx-submit="save_trigger_name" class="flex gap-2 mt-3">
+                  <input name="trigger_name" value={selected_field(@instances, @selected, :trigger_name) || ""}
+                         placeholder="Trigger name (e.g. Igz)"
+                         class="flex-1 border border-gray-300 rounded-lg px-3 py-2 text-sm" />
+                  <button type="submit" class="px-3 py-2 bg-gray-900 text-white rounded-lg text-sm">Save</button>
+                </form>
+                <p class="text-xs text-gray-400 mt-1">Bot also responds when this name is mentioned in groups (case-insensitive)</p>
               </div>
 
               <hr class="border-gray-200" />
