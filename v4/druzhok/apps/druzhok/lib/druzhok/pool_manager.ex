@@ -5,6 +5,9 @@ defmodule Druzhok.PoolManager do
   alias Druzhok.{Repo, Pool, PoolConfig, HealthMonitor}
 
   @health_retries 10
+  @status_starting "starting"
+  @status_running "running"
+  @status_stopped "stopped"
 
   # --- Public API ---
 
@@ -77,15 +80,16 @@ defmodule Druzhok.PoolManager do
     |> Repo.update!()
 
     pool = Pool.with_instances(pool.id)
-    restart_pool_container(pool)
 
-    Logger.info("[pool_manager] assigned instance=#{instance.name} to pool=#{pool.name} (#{length(pool.instances)}/#{pool.max_tenants})")
+    case restart_pool_container(pool) do
+      :ok ->
+        Logger.info("[pool_manager] assigned instance=#{instance.name} to pool=#{pool.name} (#{length(pool.instances)}/#{pool.max_tenants})")
+        {:ok, pool}
 
-    {:ok, pool}
-  rescue
-    e ->
-      Logger.error("[pool_manager] assign failed: #{inspect(e)}")
-      {:error, e}
+      {:error, reason} ->
+        Logger.error("[pool_manager] assign failed for instance=#{instance.name}: #{inspect(reason)}")
+        {:error, reason}
+    end
   end
 
   defp do_remove(instance) do
@@ -99,7 +103,7 @@ defmodule Druzhok.PoolManager do
 
     if Enum.empty?(pool.instances) do
       stop_pool_container(pool)
-      pool |> Ecto.Changeset.change(%{status: "stopped"}) |> Repo.update!()
+      pool |> Ecto.Changeset.change(%{status: @status_stopped}) |> Repo.update!()
       HealthMonitor.unregister(pool.name)
       Logger.info("[pool_manager] stopped empty pool=#{pool.name}")
     else
@@ -108,10 +112,6 @@ defmodule Druzhok.PoolManager do
     end
 
     :ok
-  rescue
-    e ->
-      Logger.error("[pool_manager] remove failed: #{inspect(e)}")
-      {:error, e}
   end
 
   defp create_pool do
@@ -120,13 +120,14 @@ defmodule Druzhok.PoolManager do
     container = "druzhok-pool-#{port - 18800 + 1}"
 
     %Pool{}
-    |> Pool.changeset(%{name: name, container: container, port: port, status: "starting"})
+    |> Pool.changeset(%{name: name, container: container, port: port, status: @status_starting})
     |> Repo.insert!()
   end
 
   defp restart_pool_container(pool) do
     stop_pool_container(pool)
 
+    # Re-fetch to get current instance list after any membership changes
     pool = Pool.with_instances(pool.id)
     instances = pool.instances
 
@@ -143,13 +144,20 @@ defmodule Druzhok.PoolManager do
 
     if exit_code != 0 do
       Logger.error("[pool_manager] docker run failed for pool=#{pool.name}: #{output}")
-      raise "docker run failed: #{output}"
+      pool |> Ecto.Changeset.change(%{status: "failed"}) |> Repo.update!()
+      {:error, {:docker_failed, output}}
+    else
+      case wait_for_health(pool) do
+        :ok ->
+          pool |> Ecto.Changeset.change(%{status: @status_running}) |> Repo.update!()
+          HealthMonitor.register(pool.name, pool.container, "openclaw")
+          :ok
+
+        :timeout ->
+          pool |> Ecto.Changeset.change(%{status: "failed"}) |> Repo.update!()
+          {:error, :health_timeout}
+      end
     end
-
-    wait_for_health(pool)
-
-    pool |> Ecto.Changeset.change(%{status: "running"}) |> Repo.update!()
-    HealthMonitor.register(pool.name, pool.container, "openclaw")
   end
 
   defp stop_pool_container(pool) do
@@ -190,7 +198,7 @@ defmodule Druzhok.PoolManager do
     url = "http://127.0.0.1:#{pool.port}/healthz"
 
     Enum.reduce_while(1..@health_retries, nil, fn i, _ ->
-      Process.sleep(1_000)
+      if i > 1, do: Process.sleep(1_000)
 
       case Finch.build(:get, url) |> Finch.request(Druzhok.LocalFinch) do
         {:ok, %{status: 200}} ->

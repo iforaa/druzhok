@@ -4,6 +4,9 @@ defmodule Druzhok.Pool do
   import Ecto.Query
   alias Druzhok.{Repo, Instance}
 
+  @status_running "running"
+  @status_starting "starting"
+
   schema "pools" do
     field :name, :string
     field :container, :string
@@ -31,7 +34,7 @@ defmodule Druzhok.Pool do
   end
 
   def active_pools do
-    from(p in __MODULE__, where: p.status in ["running", "starting"])
+    from(p in __MODULE__, where: p.status in [@status_running, @status_starting])
     |> Repo.all()
     |> Repo.preload(:instances)
   end
@@ -39,7 +42,7 @@ defmodule Druzhok.Pool do
   def pool_with_capacity do
     from(p in __MODULE__,
       left_join: i in assoc(p, :instances),
-      where: p.status == "running",
+      where: p.status == @status_running,
       group_by: p.id,
       having: count(i.id) < p.max_tenants,
       limit: 1
