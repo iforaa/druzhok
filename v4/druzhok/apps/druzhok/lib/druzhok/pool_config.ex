@@ -88,7 +88,7 @@ defmodule Druzhok.PoolConfig do
       account = %{
         "botToken" => instance.telegram_token,
         "dmPolicy" => "pairing",
-        "dm" => %{"allowFrom" => allowed}
+        "allowFrom" => allowed
       }
 
       {instance.name, account}
