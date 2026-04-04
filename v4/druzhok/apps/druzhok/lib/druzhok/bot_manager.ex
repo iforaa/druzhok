@@ -47,59 +47,90 @@ defmodule Druzhok.BotManager do
       nil -> {:error, :not_found}
       instance ->
         runtime = Druzhok.Runtime.get(instance.bot_runtime, Druzhok.Runtime.ZeroClaw)
-        env = Druzhok.Runtime.base_env(instance) |> Map.merge(runtime.env_vars(instance))
-        image = runtime.docker_image()
-        command = runtime.gateway_command()
 
-        # Write runtime-specific config files to workspace
-        # Write runtime-specific config files relative to tenant data root (parent of workspace)
-        data_root = Path.dirname(instance.workspace)
-        for {path, content} <- runtime.workspace_files(instance) do
-          full_path = Path.join(data_root, path)
-          File.mkdir_p!(Path.dirname(full_path))
-          File.write!(full_path, content)
-        end
+        if runtime.pooled?() do
+          # Pool path — assign a shared container from the pool
+          {:ok, pool} = Druzhok.PoolManager.assign(instance)
 
-        case start_container(name, image, env, data_root, command) do
-          {:ok, container_id} ->
-            Logger.info("Started bot container #{name}: #{container_id}")
+          Task.start(fn ->
+            Druzhok.LogWatcher.start_link(
+              name: instance.name,
+              container: pool.container,
+              runtime: Druzhok.Runtime.OpenClaw,
+              bot_token: instance.telegram_token,
+              language: instance.language || "ru",
+              reject_message: instance.reject_message
+            )
+          end)
 
-            # Post-start configuration runs async (PicoClaw health wait can take ~10s)
-            Task.start(fn ->
-              case runtime.post_start(instance) do
-                :ok -> :ok
-                {:error, reason} ->
-                  Logger.error("Post-start config for #{name} failed: #{inspect(reason)}")
-              end
+          instance |> Ecto.Changeset.change(%{active: true}) |> Repo.update!()
+          Druzhok.Events.broadcast(instance.name, %{type: :started, bot_runtime: instance.bot_runtime})
+          :ok
+        else
+          env = Druzhok.Runtime.base_env(instance) |> Map.merge(runtime.env_vars(instance))
+          image = runtime.docker_image()
+          command = runtime.gateway_command()
 
-              # Start log watcher for rejection detection
-              case Druzhok.LogWatcher.start_link(
-                name: name,
-                runtime: runtime,
-                bot_token: instance.telegram_token,
-                language: instance.language || "ru",
-                reject_message: instance.reject_message
-              ) do
-                {:ok, pid} -> Logger.info("LogWatcher started for #{name}: #{inspect(pid)}")
-                {:error, reason} -> Logger.error("LogWatcher failed for #{name}: #{inspect(reason)}")
-              end
-            end)
+          # Write runtime-specific config files relative to tenant data root (parent of workspace)
+          data_root = Path.dirname(instance.workspace)
+          for {path, content} <- runtime.workspace_files(instance) do
+            full_path = Path.join(data_root, path)
+            File.mkdir_p!(Path.dirname(full_path))
+            File.write!(full_path, content)
+          end
 
-            Druzhok.HealthMonitor.register(name, container_id, instance.bot_runtime || "zeroclaw")
-            Repo.update(Instance.changeset(instance, %{active: true}))
-            {:ok, container_id}
+          case start_container(name, image, env, data_root, command) do
+            {:ok, container_id} ->
+              Logger.info("Started bot container #{name}: #{container_id}")
 
-          {:error, reason} ->
-            Logger.error("Failed to start bot #{name}: #{inspect(reason)}")
-            {:error, reason}
+              # Post-start configuration runs async (PicoClaw health wait can take ~10s)
+              Task.start(fn ->
+                case runtime.post_start(instance) do
+                  :ok -> :ok
+                  {:error, reason} ->
+                    Logger.error("Post-start config for #{name} failed: #{inspect(reason)}")
+                end
+
+                # Start log watcher for rejection detection
+                case Druzhok.LogWatcher.start_link(
+                  name: name,
+                  runtime: runtime,
+                  bot_token: instance.telegram_token,
+                  language: instance.language || "ru",
+                  reject_message: instance.reject_message
+                ) do
+                  {:ok, pid} -> Logger.info("LogWatcher started for #{name}: #{inspect(pid)}")
+                  {:error, reason} -> Logger.error("LogWatcher failed for #{name}: #{inspect(reason)}")
+                end
+              end)
+
+              Druzhok.HealthMonitor.register(name, container_id, instance.bot_runtime || "zeroclaw")
+              Repo.update(Instance.changeset(instance, %{active: true}))
+              {:ok, container_id}
+
+            {:error, reason} ->
+              Logger.error("Failed to start bot #{name}: #{inspect(reason)}")
+              {:error, reason}
+          end
         end
     end
   end
 
   def stop(name) do
-    Druzhok.LogWatcher.stop(name)
-    stop_container(name)
-    Druzhok.HealthMonitor.unregister(name)
+    case Repo.get_by(Instance, name: name) do
+      nil ->
+        :ok
+      instance ->
+        runtime = Druzhok.Runtime.get(instance.bot_runtime, Druzhok.Runtime.ZeroClaw)
+
+        if runtime.pooled?() do
+          Druzhok.PoolManager.remove(instance)
+        else
+          Druzhok.LogWatcher.stop(name)
+          stop_container(name)
+          Druzhok.HealthMonitor.unregister(name)
+        end
+    end
     :ok
   end
 
