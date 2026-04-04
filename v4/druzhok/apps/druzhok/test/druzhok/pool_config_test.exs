@@ -35,7 +35,7 @@ defmodule Druzhok.PoolConfigTest do
     test "gateway uses default port 18800" do
       config = PoolConfig.build([@instance1])
       assert config["gateway"]["port"] == 18800
-      assert config["gateway"]["bind"] == "0.0.0.0"
+      assert config["gateway"]["bind"] == "loopback"
       assert config["gateway"]["reload"]["mode"] == "hybrid"
     end
 

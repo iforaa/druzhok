@@ -83,8 +83,23 @@ defmodule Druzhok.PoolConfig do
 
   defp build_telegram_accounts(instances) do
     Map.new(instances, fn instance ->
-      {instance.name, %{"botToken" => instance.telegram_token}}
+      allowed = build_allow_from(instance)
+
+      account = %{
+        "botToken" => instance.telegram_token,
+        "dmPolicy" => "pairing",
+        "dm" => %{"allowFrom" => allowed}
+      }
+
+      {instance.name, account}
     end)
+  end
+
+  defp build_allow_from(instance) do
+    case Map.get(instance, :owner_telegram_id) do
+      nil -> []
+      id -> [to_string(id)]
+    end
   end
 
   defp build_bindings(instances) do
