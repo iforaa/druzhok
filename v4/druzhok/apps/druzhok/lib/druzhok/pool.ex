@@ -39,6 +39,12 @@ defmodule Druzhok.Pool do
     |> Repo.preload(:instances)
   end
 
+  def all_with_instances do
+    from(p in __MODULE__, where: p.status != "stopped", order_by: [asc: p.id])
+    |> Repo.all()
+    |> Repo.preload(:instances)
+  end
+
   def pool_with_capacity do
     # Prefer running pools, but also reuse failed/stopped ones to avoid creating duplicates
     from(p in __MODULE__,

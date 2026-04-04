@@ -41,7 +41,7 @@ defmodule Druzhok.PoolManager do
   end
 
   def pools do
-    Pool.active_pools()
+    Pool.all_with_instances()
   end
 
   # --- GenServer callbacks ---
@@ -54,17 +54,25 @@ defmodule Druzhok.PoolManager do
 
   @impl true
   def handle_info(:verify_pools, state) do
-    for pool <- Pool.active_pools() do
+    # Check all pools that have instances, not just "active" ones —
+    # a pool may have status "failed" but the container started successfully after the timeout
+    for pool <- Pool.all_with_instances() do
       case container_running?(pool.container) do
         true ->
+          if pool.status != @status_running do
+            pool |> Ecto.Changeset.change(%{status: @status_running}) |> Repo.update!()
+            Logger.info("[pool_manager] pool=#{pool.name} container is running, updated status")
+          end
           HealthMonitor.register(pool.name, pool.container, "openclaw")
 
         false ->
-          Logger.warning("[pool_manager] pool=#{pool.name} container missing, restarting")
-          try do
-            restart_pool_container(pool)
-          rescue
-            e -> Logger.error("[pool_manager] failed to restart pool=#{pool.name}: #{inspect(e)}")
+          if pool.status in [@status_running, @status_starting] do
+            Logger.warning("[pool_manager] pool=#{pool.name} container missing, restarting")
+            try do
+              restart_pool_container(pool)
+            rescue
+              e -> Logger.error("[pool_manager] failed to restart pool=#{pool.name}: #{inspect(e)}")
+            end
           end
       end
     end
