@@ -51,7 +51,6 @@ defmodule Druzhok.BotManager do
         if runtime.pooled?() do
           # Async — pool creation + container start can take 30-60s
           instance_name = instance.name
-          instance_id = instance.id
           Task.start(fn ->
             case Druzhok.PoolManager.assign(instance) do
               {:ok, pool} ->
@@ -125,6 +124,8 @@ defmodule Druzhok.BotManager do
   end
 
   def stop(name) do
+    Druzhok.LogWatcher.stop(name)
+
     case Repo.get_by(Instance, name: name) do
       nil ->
         :ok
@@ -132,9 +133,8 @@ defmodule Druzhok.BotManager do
         runtime = Druzhok.Runtime.get(instance.bot_runtime, Druzhok.Runtime.ZeroClaw)
 
         if runtime.pooled?() do
-          Druzhok.PoolManager.remove(instance)
+          Task.start(fn -> Druzhok.PoolManager.remove(instance) end)
         else
-          Druzhok.LogWatcher.stop(name)
           stop_container(name)
           Druzhok.HealthMonitor.unregister(name)
         end
@@ -143,9 +143,20 @@ defmodule Druzhok.BotManager do
   end
 
   def restart(name) do
-    stop(name)
-    Process.sleep(1_000)
-    start(name)
+    case Repo.get_by(Instance, name: name) do
+      nil -> :ok
+      instance ->
+        runtime = Druzhok.Runtime.get(instance.bot_runtime, Druzhok.Runtime.ZeroClaw)
+
+        if runtime.pooled?() do
+          # Reload pool config without full stop+start cycle
+          Task.start(fn -> Druzhok.PoolManager.reload(instance) end)
+        else
+          stop(name)
+          Process.sleep(1_000)
+          start(name)
+        end
+    end
   end
 
   def delete(name) do
@@ -160,15 +171,17 @@ defmodule Druzhok.BotManager do
   end
 
   def status(name) do
-    {output, exit_code} = System.cmd("docker", ["inspect", "--format", "{{.State.Status}}", container_name(name)], stderr_to_stdout: true)
+    container = resolve_container(name)
+    {output, exit_code} = System.cmd("docker", ["inspect", "--format", "{{.State.Status}}", container], stderr_to_stdout: true)
     if exit_code == 0, do: String.trim(output), else: "not_found"
   end
 
   def stats(name) do
+    container = resolve_container(name)
     {output, exit_code} = System.cmd("docker", [
       "stats", "--no-stream", "--format",
       "{{.MemUsage}}|{{.CPUPerc}}|{{.NetIO}}",
-      container_name(name)
+      container
     ], stderr_to_stdout: true)
 
     if exit_code == 0 do
@@ -178,6 +191,18 @@ defmodule Druzhok.BotManager do
       end
     else
       nil
+    end
+  end
+
+  # For pooled instances, check the pool container instead of a per-instance container
+  defp resolve_container(name) do
+    case Repo.get_by(Instance, name: name) do
+      %{pool_id: pool_id} when not is_nil(pool_id) ->
+        case Repo.get(Druzhok.Pool, pool_id) do
+          %{container: container} -> container
+          _ -> container_name(name)
+        end
+      _ -> container_name(name)
     end
   end
 

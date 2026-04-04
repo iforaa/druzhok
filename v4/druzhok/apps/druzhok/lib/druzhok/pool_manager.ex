@@ -23,6 +23,16 @@ defmodule Druzhok.PoolManager do
     GenServer.call(__MODULE__, {:remove, instance}, 60_000)
   end
 
+  @doc "Regenerate config and restart pool container. Use for settings changes."
+  def reload(instance) do
+    case instance.pool_id do
+      nil -> :ok
+      pool_id ->
+        pool = Pool.with_instances(pool_id)
+        GenServer.call(__MODULE__, {:reload, pool}, 120_000)
+    end
+  end
+
   def get_pool(instance) do
     case instance.pool_id do
       nil -> nil
@@ -71,6 +81,12 @@ defmodule Druzhok.PoolManager do
   @impl true
   def handle_call({:remove, instance}, _from, state) do
     result = do_remove(instance)
+    {:reply, result, state}
+  end
+
+  @impl true
+  def handle_call({:reload, pool}, _from, state) do
+    result = restart_pool_container(pool)
     {:reply, result, state}
   end
 
