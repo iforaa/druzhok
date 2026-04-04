@@ -36,12 +36,12 @@ defmodule Druzhok.Pool do
     |> Repo.preload(:instances)
   end
 
-  def pool_with_capacity(max_tenants \\ 10) do
+  def pool_with_capacity do
     from(p in __MODULE__,
       left_join: i in assoc(p, :instances),
       where: p.status == "running",
       group_by: p.id,
-      having: count(i.id) < ^max_tenants,
+      having: count(i.id) < p.max_tenants,
       limit: 1
     )
     |> Repo.one()
