@@ -170,14 +170,16 @@ defmodule Druzhok.BotManager do
     :ok
   end
 
-  def status(name) do
-    container = resolve_container(name)
+  def status(name), do: status_for_container(container_name(name))
+
+  def stats(name), do: stats_for_container(container_name(name))
+
+  def status_for_container(container) do
     {output, exit_code} = System.cmd("docker", ["inspect", "--format", "{{.State.Status}}", container], stderr_to_stdout: true)
     if exit_code == 0, do: String.trim(output), else: "not_found"
   end
 
-  def stats(name) do
-    container = resolve_container(name)
+  def stats_for_container(container) do
     {output, exit_code} = System.cmd("docker", [
       "stats", "--no-stream", "--format",
       "{{.MemUsage}}|{{.CPUPerc}}|{{.NetIO}}",
@@ -191,18 +193,6 @@ defmodule Druzhok.BotManager do
       end
     else
       nil
-    end
-  end
-
-  # For pooled instances, check the pool container instead of a per-instance container
-  defp resolve_container(name) do
-    case Repo.get_by(Instance, name: name) do
-      %{pool_id: pool_id} when not is_nil(pool_id) ->
-        case Repo.get(Druzhok.Pool, pool_id) do
-          %{container: container} -> container
-          _ -> container_name(name)
-        end
-      _ -> container_name(name)
     end
   end
 

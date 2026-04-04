@@ -1130,14 +1130,46 @@ defmodule DruzhokWebWeb.DashboardLive do
   defp format_file_size(bytes), do: "#{Float.round(bytes / (1024 * 1024), 1)} MB"
 
   defp list_instances do
-    Druzhok.InstanceManager.list()
-    |> Enum.map(fn inst ->
-      inst
+    instances = Druzhok.InstanceManager.list()
+
+    # Build pool_id -> container name cache to avoid per-instance DB lookups
+    pool_ids = instances |> Enum.map(& &1.pool_id) |> Enum.reject(&is_nil/1) |> Enum.uniq()
+    pool_containers = case pool_ids do
+      [] -> %{}
+      ids ->
+        import Ecto.Query
+        Druzhok.Repo.all(from p in Druzhok.Pool, where: p.id in ^ids, select: {p.id, p.container})
+        |> Map.new()
+    end
+
+    # Cache Docker status/stats per container to avoid duplicate calls for pooled instances
+    container_cache = %{}
+
+    {results, _cache} = Enum.map_reduce(instances, container_cache, fn inst, cache ->
+      container = case inst.pool_id do
+        nil -> Druzhok.BotManager.container_name(inst.name)
+        pool_id -> Map.get(pool_containers, pool_id, Druzhok.BotManager.container_name(inst.name))
+      end
+
+      {status, stats, cache} = case Map.get(cache, container) do
+        nil ->
+          s = Druzhok.BotManager.status_for_container(container)
+          st = Druzhok.BotManager.stats_for_container(container)
+          {s, st, Map.put(cache, container, {s, st})}
+        {s, st} ->
+          {s, st, cache}
+      end
+
+      mapped = inst
       |> Map.from_struct()
       |> Map.drop([:__meta__])
-      |> Map.put(:container_status, Druzhok.BotManager.status(inst.name))
-      |> Map.put(:container_stats, Druzhok.BotManager.stats(inst.name))
+      |> Map.put(:container_status, status)
+      |> Map.put(:container_stats, stats)
+
+      {mapped, cache}
     end)
+
+    results
   end
 
   defp get_instance(name, socket) do

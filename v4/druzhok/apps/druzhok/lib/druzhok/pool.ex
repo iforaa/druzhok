@@ -6,6 +6,7 @@ defmodule Druzhok.Pool do
 
   @status_running "running"
   @status_starting "starting"
+  @status_stopped "stopped"
 
   schema "pools" do
     field :name, :string
@@ -40,7 +41,7 @@ defmodule Druzhok.Pool do
   end
 
   def all_with_instances do
-    from(p in __MODULE__, where: p.status != "stopped", order_by: [asc: p.id])
+    from(p in __MODULE__, where: p.status != @status_stopped, order_by: [asc: p.id])
     |> Repo.all()
     |> Repo.preload(:instances)
   end

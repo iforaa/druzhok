@@ -8,6 +8,8 @@ defmodule Druzhok.PoolManager do
   @status_starting "starting"
   @status_running "running"
   @status_stopped "stopped"
+  @status_failed "failed"
+  @verify_interval 30_000
 
   # --- Public API ---
 
@@ -48,7 +50,7 @@ defmodule Druzhok.PoolManager do
 
   @impl true
   def init(_opts) do
-    Process.send_after(self(), :verify_pools, 5_000)
+    Process.send_after(self(), :verify_pools, @verify_interval)
     {:ok, %{}}
   end
 
@@ -172,7 +174,7 @@ defmodule Druzhok.PoolManager do
 
     if exit_code != 0 do
       Logger.error("[pool_manager] docker run failed for pool=#{pool.name}: #{output}")
-      pool |> Ecto.Changeset.change(%{status: "failed"}) |> Repo.update!()
+      pool |> Ecto.Changeset.change(%{status: @status_failed}) |> Repo.update!()
       {:error, {:docker_failed, output}}
     else
       case wait_for_health(pool) do
@@ -182,7 +184,7 @@ defmodule Druzhok.PoolManager do
           :ok
 
         :timeout ->
-          pool |> Ecto.Changeset.change(%{status: "failed"}) |> Repo.update!()
+          pool |> Ecto.Changeset.change(%{status: @status_failed}) |> Repo.update!()
           {:error, :health_timeout}
       end
     end
