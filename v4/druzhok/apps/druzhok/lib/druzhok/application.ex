@@ -15,6 +15,7 @@ defmodule Druzhok.Application do
       {Finch, name: Druzhok.Finch, pools: finch_pools()},
       {Finch, name: Druzhok.LocalFinch},
       Druzhok.HealthMonitor,
+      Druzhok.PoolManager,
     ]
 
     opts = [strategy: :one_for_one, name: Druzhok.Supervisor]
