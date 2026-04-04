@@ -112,6 +112,9 @@ defmodule Druzhok.Runtime.OpenClaw do
   def supports_feature?(:pairing), do: true
   def supports_feature?(_), do: false
 
+  @impl true
+  def pooled?, do: true
+
   defp gateway_port(instance), do: 18800 + (Map.get(instance, :id, 0) || 0)
 
   defp wait_for_health(base, retries \\ 30) do

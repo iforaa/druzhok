@@ -211,4 +211,7 @@ defmodule Druzhok.Runtime.ZeroClaw do
   def supports_feature?(:pairing), do: true
   def supports_feature?(:hot_reload_config), do: false
   def supports_feature?(_), do: false
+
+  @impl true
+  def pooled?, do: false
 end

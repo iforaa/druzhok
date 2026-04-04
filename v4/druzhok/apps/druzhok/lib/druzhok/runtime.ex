@@ -19,6 +19,7 @@ defmodule Druzhok.Runtime do
   @callback remove_allowed_user(data_root :: String.t(), user_id :: String.t()) :: :ok | {:error, term()}
   @callback clear_sessions(data_root :: String.t()) :: :ok
   @callback parse_log_rejection(line :: String.t()) :: {:rejected, user_id :: String.t()} | :ignore
+  @callback pooled?() :: boolean()
 
   @runtimes %{
     "zeroclaw" => Druzhok.Runtime.ZeroClaw,
@@ -37,6 +38,8 @@ defmodule Druzhok.Runtime do
 
   def list, do: @runtimes
   def names, do: Map.keys(@runtimes)
+
+  def pooled?(runtime_module), do: runtime_module.pooled?()
 
   def parse_user_input(input) do
     trimmed = String.trim(input)

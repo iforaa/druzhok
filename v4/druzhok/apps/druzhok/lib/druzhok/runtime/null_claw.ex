@@ -103,6 +103,9 @@ defmodule Druzhok.Runtime.NullClaw do
   def supports_feature?(:pairing), do: true
   def supports_feature?(_), do: false
 
+  @impl true
+  def pooled?, do: false
+
   defp gateway_port(instance), do: 3000 + (Map.get(instance, :id, 0) || 0)
 
   defp build_full_config(instance) do

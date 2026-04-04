@@ -116,6 +116,9 @@ defmodule Druzhok.Runtime.PicoClaw do
   def supports_feature?(:pairing), do: false
   def supports_feature?(_), do: false
 
+  @impl true
+  def pooled?, do: false
+
   defp gateway_port(instance), do: 19000 + (Map.get(instance, :id, 0) || 0)
 
   defp wait_for_health(base, retries \\ 30) do
