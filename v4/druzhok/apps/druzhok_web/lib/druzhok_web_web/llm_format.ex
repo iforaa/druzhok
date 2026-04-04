@@ -22,11 +22,21 @@ defmodule DruzhokWebWeb.LlmFormat do
 
   def request_url, do: provider_url() <> "/chat/completions"
 
-  def request_headers do
-    [
+  @passthrough_headers ["http-referer", "x-openrouter-title", "x-openrouter-categories"]
+
+  def request_headers(original_headers \\ []) do
+    base = [
       {"authorization", "Bearer #{provider_key()}"},
       {"content-type", "application/json"},
     ]
+
+    # Pass through OpenRouter attribution headers from the client
+    Enum.reduce(@passthrough_headers, base, fn header, acc ->
+      case Enum.find(original_headers, fn {k, _v} -> String.downcase(to_string(k)) == header end) do
+        {_k, v} -> [{header, v} | acc]
+        nil -> acc
+      end
+    end)
   end
 
   def extract_usage(body) do

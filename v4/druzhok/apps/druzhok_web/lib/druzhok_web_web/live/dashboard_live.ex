@@ -717,9 +717,23 @@ defmodule DruzhokWebWeb.DashboardLive do
         </div>
 
         <div class="flex-1 overflow-y-auto py-2">
-          <div :if={@instances == []} class="px-4 py-8 text-center text-gray-400 text-sm">
+          <div :if={@instances == [] and @pools == []} class="px-4 py-8 text-center text-gray-400 text-sm">
             No instances yet
           </div>
+
+          <%!-- Solo instances --%>
+          <div :for={inst <- @instances} :if={is_nil(inst[:pool_id])}
+               phx-click="select" phx-value-name={inst.name}
+               class={"flex items-center gap-3 px-4 py-3 cursor-pointer transition #{if @selected == inst.name, do: "bg-white border-l-2 border-gray-900 shadow-sm", else: "hover:bg-white/60 border-l-2 border-transparent"}"}>
+            <div class={"w-2 h-2 rounded-full flex-shrink-0 #{container_status_color(inst[:container_status])}"}></div>
+            <div class="flex-1 min-w-0">
+              <div class="text-sm font-medium truncate"><%= inst.name %></div>
+              <div class="text-xs text-gray-400 truncate"><%= inst[:bot_runtime] || "zeroclaw" %> &middot; <%= model_short(inst.model) %></div>
+            </div>
+          </div>
+
+          <%!-- Separator between solo and pools --%>
+          <div :if={@pools != [] and Enum.any?(@instances, &is_nil(&1[:pool_id]))} class="mx-4 my-2 border-t border-gray-200"></div>
 
           <%!-- Pool groups --%>
           <div :for={pool <- @pools} class="mb-1">
@@ -734,19 +748,8 @@ defmodule DruzhokWebWeb.DashboardLive do
                  class={"flex items-center gap-3 pl-8 pr-4 py-2 cursor-pointer transition #{if @selected == inst.name, do: "bg-white border-l-2 border-gray-900 shadow-sm", else: "hover:bg-white/60 border-l-2 border-transparent"}"}>
               <div class="flex-1 min-w-0">
                 <div class="text-sm font-medium truncate"><%= inst.name %></div>
-                <div class="text-xs text-gray-400 truncate"><%= inst.bot_runtime || "openclaw" %> &middot; <%= model_short(inst.model) %></div>
+                <div class="text-xs text-gray-400 truncate"><%= model_short(inst.model) %></div>
               </div>
-            </div>
-          </div>
-
-          <%!-- Solo instances (not in any pool) --%>
-          <div :for={inst <- @instances} :if={is_nil(inst[:pool_id])}
-               phx-click="select" phx-value-name={inst.name}
-               class={"flex items-center gap-3 px-4 py-3 cursor-pointer transition #{if @selected == inst.name, do: "bg-white border-l-2 border-gray-900 shadow-sm", else: "hover:bg-white/60 border-l-2 border-transparent"}"}>
-            <div class={"w-2 h-2 rounded-full flex-shrink-0 #{container_status_color(inst[:container_status])}"}></div>
-            <div class="flex-1 min-w-0">
-              <div class="text-sm font-medium truncate"><%= inst.name %></div>
-              <div class="text-xs text-gray-400 truncate"><%= inst[:bot_runtime] || "zeroclaw" %> &middot; <%= model_short(inst.model) %></div>
             </div>
           </div>
         </div>
