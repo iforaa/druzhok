@@ -130,14 +130,15 @@ defmodule DruzhokWebWeb.LlmProxyController do
   end
 
   def audio_transcriptions(conn, _params) do
+    instance = conn.assigns.instance
     openai_key = get_setting("openai_api_key")
 
     if is_nil(openai_key) do
       json_error(conn, 503, "Audio transcription not configured", "server_error")
     else
-      # Read the raw multipart body and forward to OpenAI
       {:ok, body, conn} = Plug.Conn.read_body(conn)
       content_type = Plug.Conn.get_req_header(conn, "content-type") |> List.first("")
+      started_at = System.monotonic_time(:millisecond)
 
       url = "https://api.openai.com/v1/audio/transcriptions"
       headers = [
@@ -149,6 +150,30 @@ defmodule DruzhokWebWeb.LlmProxyController do
 
       case Finch.request(request, Druzhok.Finch, receive_timeout: 120_000) do
         {:ok, %Finch.Response{status: status, body: resp_body}} ->
+          latency = System.monotonic_time(:millisecond) - started_at
+
+          if status == 200 do
+            transcript = case Jason.decode(resp_body) do
+              {:ok, %{"text" => t}} -> t
+              _ -> nil
+            end
+
+            Usage.log(%{
+              instance_id: instance.id,
+              model: "whisper-1",
+              prompt_tokens: byte_size(body),
+              completion_tokens: String.length(transcript || ""),
+              total_tokens: 0,
+              requested_model: "whisper-1",
+              resolved_model: "whisper-1",
+              provider: "openai",
+              latency_ms: latency,
+              prompt_preview: "[audio #{Float.round(byte_size(body) / 1024, 1)} KB]",
+              response_preview: transcript && String.slice(transcript, 0, 500),
+              request_body: "{}",
+            })
+          end
+
           conn
           |> put_resp_content_type("application/json")
           |> send_resp(status, resp_body)
