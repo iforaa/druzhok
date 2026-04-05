@@ -102,7 +102,9 @@ defmodule DruzhokWebWeb.DashboardLive do
 
   @impl true
   def handle_info(:refresh, socket) do
-    {:noreply, assign(socket, instances: list_instances(), pools: Druzhok.PoolManager.pools())}
+    # Don't clobber in-flight tab loading
+    assigns = %{instances: list_instances(), pools: Druzhok.PoolManager.pools()}
+    {:noreply, assign(socket, assigns)}
   end
 
   def handle_info({:druzhok_event, instance_name, %{type: :pairing_request} = _event}, socket) do
@@ -125,38 +127,49 @@ defmodule DruzhokWebWeb.DashboardLive do
   end
 
   def handle_info({:load_instance_data, name, tab}, socket) do
-    instance = get_instance(name, socket)
-    socket = assign(socket,
-      pairing_requests: Druzhok.Pairing.pending_for_instance(name),
-      owner: Druzhok.InstanceManager.get_owner(name),
-      groups: Druzhok.InstanceManager.get_groups(name),
-      allowed_users: load_allowed_users(name)
-    )
-    send(self(), {:load_tab_data, name, tab})
-    {:noreply, socket}
+    # Guard: user may have switched away
+    if socket.assigns.selected == name do
+      socket = assign(socket,
+        pairing_requests: Druzhok.Pairing.pending_for_instance(name),
+        owner: Druzhok.InstanceManager.get_owner(name),
+        groups: Druzhok.InstanceManager.get_groups(name),
+        allowed_users: load_allowed_users(name)
+      )
+      send(self(), {:load_tab_data, name, tab})
+      {:noreply, socket}
+    else
+      {:noreply, assign(socket, tab_loading: false)}
+    end
   end
 
   def handle_info({:load_tab_data, name, tab}, socket) do
-    instance = get_instance(name, socket)
-    tab_assigns = case tab do
-      :files ->
-        if instance do
-          %{workspace_files: list_workspace_files(instance, ""), file_content: nil, current_path: ""}
-        else
-          %{}
-        end
-      :usage ->
-        if instance do
-          {reqs, summary} = load_usage_data(instance)
-          %{usage_requests: reqs, usage_summary: summary}
-        else
-          %{}
-        end
-      :errors ->
-        %{instance_errors: Druzhok.CrashLog.recent_for_instance(name, 100)}
-      _ -> %{}
+    # Guard: user may have switched away
+    if socket.assigns.selected == name and socket.assigns.tab == tab do
+      instance = get_instance(name, socket)
+      tab_assigns = case tab do
+        :files ->
+          if instance do
+            %{workspace_files: list_workspace_files(instance, ""), file_content: nil, current_path: ""}
+          else
+            %{}
+          end
+        :usage ->
+          if instance do
+            {reqs, summary} = load_usage_data(instance)
+            %{usage_requests: reqs, usage_summary: summary}
+          else
+            %{}
+          end
+        :errors ->
+          %{instance_errors: Druzhok.CrashLog.recent_for_instance(name, 100)}
+        _ -> %{}
+      end
+      {:noreply, assign(socket, Map.put(tab_assigns, :tab_loading, false))}
+    else
+      {:noreply, assign(socket, tab_loading: false)}
     end
-    {:noreply, assign(socket, Map.put(tab_assigns, :tab_loading, false))}
+  rescue
+    _ -> {:noreply, assign(socket, tab_loading: false)}
   end
 
   def handle_info(_msg, socket), do: {:noreply, socket}
@@ -232,11 +245,10 @@ defmodule DruzhokWebWeb.DashboardLive do
     case get_instance(name, socket) do
       nil ->
         {:noreply, socket}
-      instance ->
-        files = list_workspace_files(instance)
+      _instance ->
         {:noreply,
           socket
-          |> assign(selected: name, tab: :logs, workspace_files: files, file_content: nil, events: [])
+          |> assign(selected: name, tab: :logs, file_content: nil, events: [])
           |> push_patch(to: "/instances/#{name}")}
     end
   end
