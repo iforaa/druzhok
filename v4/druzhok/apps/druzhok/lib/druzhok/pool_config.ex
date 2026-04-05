@@ -40,7 +40,7 @@ defmodule Druzhok.PoolConfig do
           "sandbox" => %{
             "mode" => "all",
             "workspaceAccess" => "rw",
-            "docker" => %{"network" => "host"}
+            "docker" => %{"network" => "bridge"}
           },
           "memorySearch" => %{
             "enabled" => true,
