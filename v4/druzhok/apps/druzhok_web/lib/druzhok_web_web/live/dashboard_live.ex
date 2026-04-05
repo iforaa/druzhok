@@ -37,6 +37,7 @@ defmodule DruzhokWebWeb.DashboardLive do
       selected: nil,
       selected_pool: nil,
       tab: :logs,
+      tab_loading: false,
       workspace_files: [],
       file_content: nil,
       events: [],
@@ -74,47 +75,24 @@ defmodule DruzhokWebWeb.DashboardLive do
     case get_instance(name, socket) do
       nil ->
         {:noreply, socket |> assign(selected: nil) |> push_patch(to: "/")}
-      instance ->
+      _instance ->
         tab = Map.get(@valid_tabs, params["tab"], :logs)
         switched_instance = socket.assigns[:selected] != name
 
-        # Only reload instance-level data when selecting a different instance
-        base_assigns = if switched_instance do
-          %{
-            selected: name,
-            events: [],
-            file_content: nil,
-            current_path: "",
-            expanded_error: nil,
-            pairing_requests: Druzhok.Pairing.pending_for_instance(name),
-            owner: Druzhok.InstanceManager.get_owner(name),
-            groups: Druzhok.InstanceManager.get_groups(name),
-            allowed_users: load_allowed_users(name),
-          }
+        # Switch tab immediately, show loading state
+        socket = assign(socket, selected: name, tab: tab, tab_loading: true)
+
+        if switched_instance do
+          socket = assign(socket, events: [], file_content: nil, current_path: "",
+            expanded_error: nil, workspace_files: [], pairing_requests: [],
+            owner: nil, groups: [], allowed_users: [], instance_errors: [],
+            usage_requests: [], usage_summary: [])
+          send(self(), {:load_instance_data, name, tab})
+          {:noreply, socket}
         else
-          %{selected: name}
+          send(self(), {:load_tab_data, name, tab})
+          {:noreply, socket}
         end
-
-        # Only load tab-specific data for the active tab
-        tab_assigns = case tab do
-          :files ->
-            %{workspace_files: list_workspace_files(instance, ""), file_content: nil, current_path: ""}
-          :usage ->
-            {reqs, summary} = load_usage_data(instance)
-            %{usage_requests: reqs, usage_summary: summary}
-          :errors ->
-            %{instance_errors: Druzhok.CrashLog.recent_for_instance(name, 100)}
-          :settings ->
-            if switched_instance do
-              %{pairing_requests: Druzhok.Pairing.pending_for_instance(name),
-                allowed_users: load_allowed_users(name)}
-            else
-              %{}
-            end
-          _ -> %{}
-        end
-
-        {:noreply, assign(socket, Map.merge(base_assigns, Map.put(tab_assigns, :tab, tab)))}
     end
   end
 
@@ -144,6 +122,41 @@ defmodule DruzhokWebWeb.DashboardLive do
     else
       {:noreply, socket}
     end
+  end
+
+  def handle_info({:load_instance_data, name, tab}, socket) do
+    instance = get_instance(name, socket)
+    socket = assign(socket,
+      pairing_requests: Druzhok.Pairing.pending_for_instance(name),
+      owner: Druzhok.InstanceManager.get_owner(name),
+      groups: Druzhok.InstanceManager.get_groups(name),
+      allowed_users: load_allowed_users(name)
+    )
+    send(self(), {:load_tab_data, name, tab})
+    {:noreply, socket}
+  end
+
+  def handle_info({:load_tab_data, name, tab}, socket) do
+    instance = get_instance(name, socket)
+    tab_assigns = case tab do
+      :files ->
+        if instance do
+          %{workspace_files: list_workspace_files(instance, ""), file_content: nil, current_path: ""}
+        else
+          %{}
+        end
+      :usage ->
+        if instance do
+          {reqs, summary} = load_usage_data(instance)
+          %{usage_requests: reqs, usage_summary: summary}
+        else
+          %{}
+        end
+      :errors ->
+        %{instance_errors: Druzhok.CrashLog.recent_for_instance(name, 100)}
+      _ -> %{}
+    end
+    {:noreply, assign(socket, Map.put(tab_assigns, :tab_loading, false))}
   end
 
   def handle_info(_msg, socket), do: {:noreply, socket}
@@ -864,7 +877,12 @@ defmodule DruzhokWebWeb.DashboardLive do
           </div>
 
           <%!-- Tab content --%>
-          <div class="flex-1 overflow-y-auto">
+          <div class="flex-1 overflow-y-auto relative">
+            <%!-- Loading spinner --%>
+            <div :if={@tab_loading} class="absolute inset-0 flex items-center justify-center bg-white/80 z-10">
+              <div class="w-6 h-6 border-2 border-gray-300 border-t-gray-900 rounded-full animate-spin"></div>
+            </div>
+
             <%!-- Logs tab --%>
             <.event_log :if={@tab == :logs} events={@events} />
 
