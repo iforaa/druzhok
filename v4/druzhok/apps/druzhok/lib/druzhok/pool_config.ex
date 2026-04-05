@@ -37,7 +37,11 @@ defmodule Druzhok.PoolConfig do
       },
       "agents" => %{
         "defaults" => %{
-          "sandbox" => %{"mode" => "all", "workspaceAccess" => "rw"},
+          "sandbox" => %{
+            "mode" => "all",
+            "workspaceAccess" => "rw",
+            "docker" => %{"network" => "host"}
+          },
           "memorySearch" => %{
             "enabled" => true,
             "provider" => "openai",
