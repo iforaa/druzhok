@@ -220,7 +220,8 @@ defmodule Druzhok.PoolManager do
       "-e", "OPENCLAW_CONFIG_PATH=/data/openclaw.json",
       "-e", "OPENCLAW_STATE_DIR=/data/state",
       "-e", "NODE_OPTIONS=--max-old-space-size=512",
-      "-e", "NODE_ENV=production"
+      "-e", "NODE_ENV=production",
+      "-e", "OPENAI_API_KEY=proxy-managed"
     ] ++ proxy_env_args()
 
     workspace_mounts =
