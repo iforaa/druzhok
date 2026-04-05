@@ -27,6 +27,11 @@ defmodule Druzhok.PoolConfig do
       "session" => %{
         "dmScope" => "per-channel-peer"
       },
+      "plugins" => %{
+        "entries" => %{
+          "openai" => %{"enabled" => true}
+        }
+      },
       "models" => %{
         "providers" => build_providers(instances, proxy_host)
       },
