@@ -206,11 +206,15 @@ defmodule Druzhok.PoolManager do
       _ -> ["-p", "#{pool.port}:#{pool.port}"]
     end
 
+    # Grant access to Docker socket for sandbox mode
+    docker_gid = get_docker_gid()
+    group_args = if docker_gid, do: ["--group-add", docker_gid], else: []
+
     base_args = [
       "-d",
       "--name", pool.container,
       "--restart", "unless-stopped"
-    ] ++ network_args ++ [
+    ] ++ network_args ++ group_args ++ [
       "-v", "#{data_root}:/data",
       "-v", "/var/run/docker.sock:/var/run/docker.sock",
       "-e", "OPENCLAW_CONFIG_PATH=/data/openclaw.json",
@@ -263,5 +267,12 @@ defmodule Druzhok.PoolManager do
   defp pool_data_root(pool) do
     data_root = System.get_env("DRUZHOK_DATA_ROOT") || Path.expand("../../data", __DIR__)
     Path.join([data_root, "pools", pool.name])
+  end
+
+  defp get_docker_gid do
+    case System.cmd("stat", ["-c", "%g", "/var/run/docker.sock"], stderr_to_stdout: true) do
+      {gid, 0} -> String.trim(gid)
+      _ -> nil
+    end
   end
 end
