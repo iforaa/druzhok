@@ -24,6 +24,7 @@ defmodule DruzhokWebWeb.Router do
     pipe_through :llm_api
 
     post "/chat/completions", LlmProxyController, :chat_completions
+    post "/audio/transcriptions", LlmProxyController, :audio_transcriptions
   end
 
   # Public routes

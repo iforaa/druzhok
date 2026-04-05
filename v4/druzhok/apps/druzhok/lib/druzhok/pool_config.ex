@@ -48,23 +48,20 @@ defmodule Druzhok.PoolConfig do
       patterns -> put_in(config, ["messages"], %{"groupChat" => %{"mentionPatterns" => patterns}})
     end
 
-    # Add audio transcription if OpenAI key is available
-    case get_setting("openai_api_key") do
-      nil -> config
-      openai_key ->
-        config
-        |> put_in(["models", "providers", "openai"], %{
-          "apiKey" => openai_key,
-          "baseUrl" => "https://api.openai.com/v1"
-        })
-        |> put_in(["tools"], %{
-          "media" => %{
-            "audio" => %{
-              "models" => [%{"provider" => "openai", "model" => "whisper-1"}]
-            }
-          }
-        })
-    end
+    # Audio transcription via our proxy → OpenAI Whisper
+    # Point the OpenAI provider at our proxy so the API key stays server-side
+    config
+    |> put_in(["models", "providers", "openai"], %{
+      "baseUrl" => "http://#{proxy_host}:4000/v1",
+      "apiKey" => List.first(instances).tenant_key
+    })
+    |> put_in(["tools"], %{
+      "media" => %{
+        "audio" => %{
+          "models" => [%{"provider" => "openai", "model" => "whisper-1"}]
+        }
+      }
+    })
   end
 
   defp build_providers(instances, proxy_host) do
@@ -176,12 +173,4 @@ defmodule Druzhok.PoolConfig do
     |> Enum.map(fn name -> "(?i)\\b#{Regex.escape(name)}\\b" end)
   end
 
-  defp get_setting(key) do
-    import Ecto.Query
-    case Druzhok.Repo.one(from s in "settings", where: s.key == ^key, select: s.value) do
-      nil -> nil
-      "" -> nil
-      value -> value
-    end
-  end
 end

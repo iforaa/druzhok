@@ -129,6 +129,42 @@ defmodule DruzhokWebWeb.LlmProxyController do
     end
   end
 
+  def audio_transcriptions(conn, _params) do
+    openai_key = get_setting("openai_api_key")
+
+    if is_nil(openai_key) do
+      json_error(conn, 503, "Audio transcription not configured", "server_error")
+    else
+      # Read the raw multipart body and forward to OpenAI
+      {:ok, body, conn} = Plug.Conn.read_body(conn)
+      content_type = Plug.Conn.get_req_header(conn, "content-type") |> List.first("")
+
+      url = "https://api.openai.com/v1/audio/transcriptions"
+      headers = [
+        {"authorization", "Bearer #{openai_key}"},
+        {"content-type", content_type}
+      ]
+
+      request = Finch.build(:post, url, headers, body)
+
+      case Finch.request(request, Druzhok.Finch, receive_timeout: 120_000) do
+        {:ok, %Finch.Response{status: status, body: resp_body}} ->
+          conn
+          |> put_resp_content_type("application/json")
+          |> send_resp(status, resp_body)
+
+        {:error, reason} ->
+          Logger.error("Audio transcription proxy error: #{inspect(reason)}")
+          json_error(conn, 502, "Transcription provider unavailable", "server_error")
+      end
+    end
+  end
+
+  defp get_setting(key) do
+    import Ecto.Query
+    Druzhok.Repo.one(from s in "settings", where: s.key == ^key, select: s.value)
+  end
+
   defp json_error(conn, status, message, type) do
     conn
     |> put_resp_content_type("application/json")
