@@ -43,11 +43,27 @@ defmodule Druzhok.PoolConfig do
     }
 
     # Add mention patterns for group chat trigger names
-    patterns = build_mention_patterns(instances)
-    if patterns != [] do
-      put_in(config, ["messages"], %{"groupChat" => %{"mentionPatterns" => patterns}})
-    else
-      config
+    config = case build_mention_patterns(instances) do
+      [] -> config
+      patterns -> put_in(config, ["messages"], %{"groupChat" => %{"mentionPatterns" => patterns}})
+    end
+
+    # Add audio transcription if OpenAI key is available
+    case get_setting("openai_api_key") do
+      nil -> config
+      openai_key ->
+        config
+        |> put_in(["models", "providers", "openai"], %{
+          "apiKey" => openai_key,
+          "baseUrl" => "https://api.openai.com/v1"
+        })
+        |> put_in(["tools"], %{
+          "media" => %{
+            "audio" => %{
+              "models" => [%{"provider" => "openai", "model" => "whisper-1"}]
+            }
+          }
+        })
     end
   end
 
@@ -158,5 +174,14 @@ defmodule Druzhok.PoolConfig do
     |> Enum.reject(&is_nil/1)
     |> Enum.reject(&(&1 == ""))
     |> Enum.map(fn name -> "(?i)\\b#{Regex.escape(name)}\\b" end)
+  end
+
+  defp get_setting(key) do
+    import Ecto.Query
+    case Druzhok.Repo.one(from s in "settings", where: s.key == ^key, select: s.value) do
+      nil -> nil
+      "" -> nil
+      value -> value
+    end
   end
 end
