@@ -135,9 +135,10 @@ defmodule DruzhokWebWeb.LlmProxyController do
     if is_nil(openai_key) do
       json_error(conn, 503, "Audio transcription not configured", "server_error")
     else
-      {:ok, body, conn} = Plug.Conn.read_body(conn)
-      content_type = Plug.Conn.get_req_header(conn, "content-type") |> List.first("")
       started_at = System.monotonic_time(:millisecond)
+
+      # Plug.Parsers already consumed the multipart body — rebuild it
+      {multipart_body, content_type} = build_multipart(conn.body_params)
 
       url = "https://api.openai.com/v1/audio/transcriptions"
       headers = [
@@ -145,14 +146,14 @@ defmodule DruzhokWebWeb.LlmProxyController do
         {"content-type", content_type}
       ]
 
-      request = Finch.build(:post, url, headers, body)
+      request = Finch.build(:post, url, headers, multipart_body)
 
       case Finch.request(request, Druzhok.Finch, receive_timeout: 120_000) do
         {:ok, %Finch.Response{status: status, body: resp_body}} ->
           latency = System.monotonic_time(:millisecond) - started_at
 
           if status == 200 do
-            Logger.info("[audio] transcription #{Float.round(byte_size(body) / 1024, 1)} KB, #{latency}ms")
+            Logger.info("[audio] transcription #{latency}ms")
           end
 
           conn
@@ -164,6 +165,20 @@ defmodule DruzhokWebWeb.LlmProxyController do
           json_error(conn, 502, "Transcription provider unavailable", "server_error")
       end
     end
+  end
+
+  defp build_multipart(params) do
+    boundary = "----ElixirMultipart#{:rand.uniform(999_999_999)}"
+    parts = Enum.map(params, fn
+      {"file", %Plug.Upload{path: path, filename: filename, content_type: ct}} ->
+        data = File.read!(path)
+        "--#{boundary}\r\nContent-Disposition: form-data; name=\"file\"; filename=\"#{filename}\"\r\nContent-Type: #{ct}\r\n\r\n#{data}\r\n"
+      {key, value} when is_binary(value) ->
+        "--#{boundary}\r\nContent-Disposition: form-data; name=\"#{key}\"\r\n\r\n#{value}\r\n"
+      _ -> ""
+    end)
+    body = Enum.join(parts) <> "--#{boundary}--\r\n"
+    {body, "multipart/form-data; boundary=#{boundary}"}
   end
 
   def embeddings(conn, _params) do
