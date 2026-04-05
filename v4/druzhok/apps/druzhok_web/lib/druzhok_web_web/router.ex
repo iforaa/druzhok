@@ -24,8 +24,12 @@ defmodule DruzhokWebWeb.Router do
     pipe_through :llm_api
 
     post "/chat/completions", LlmProxyController, :chat_completions
-    post "/audio/transcriptions", LlmProxyController, :audio_transcriptions
     post "/embeddings", LlmProxyController, :embeddings
+  end
+
+  # Audio transcription proxy — no tenant auth (called from pool containers on localhost)
+  scope "/v1", DruzhokWebWeb do
+    post "/audio/transcriptions", LlmProxyController, :audio_transcriptions
   end
 
   # Public routes

@@ -64,8 +64,8 @@ defmodule Druzhok.PoolConfig do
       patterns -> put_in(config, ["messages"], %{"groupChat" => %{"mentionPatterns" => patterns}})
     end
 
-    # Audio transcription — uses OPENAI_API_KEY env var, calls OpenAI directly
-    # (not routed through our proxy — Whisper API uses multipart, not JSON)
+    # Audio transcription routed through our proxy (no API keys in container)
+    # OpenClaw calls localhost:4000 with native fetch (no proxy agent = clean FormData)
     config
     |> put_in(["tools"], %{
       "media" => %{
@@ -74,7 +74,8 @@ defmodule Druzhok.PoolConfig do
           "echoTranscript" => true,
           "models" => [%{
             "provider" => "openai",
-            "model" => "gpt-4o-mini-transcribe"
+            "model" => "gpt-4o-mini-transcribe",
+            "baseUrl" => "http://#{proxy_host}:4000/v1"
           }]
         }
       }

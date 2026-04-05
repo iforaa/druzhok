@@ -220,8 +220,9 @@ defmodule Druzhok.PoolManager do
       "-e", "OPENCLAW_CONFIG_PATH=/data/openclaw.json",
       "-e", "OPENCLAW_STATE_DIR=/data/state",
       "-e", "NODE_OPTIONS=--max-old-space-size=512",
-      "-e", "NODE_ENV=production"
-    ] ++ openai_env_args()
+      "-e", "NODE_ENV=production",
+      "-e", "OPENAI_API_KEY=proxy-managed"
+    ]
 
     workspace_mounts =
       Enum.flat_map(instances, fn inst ->
@@ -274,15 +275,6 @@ defmodule Druzhok.PoolManager do
       nil -> []
       url ->
         ["-e", "HTTP_PROXY=#{url}", "-e", "HTTPS_PROXY=#{url}"]
-    end
-  end
-
-  defp openai_env_args do
-    import Ecto.Query
-    case Repo.one(from s in "settings", where: s.key == "openai_api_key", select: s.value) do
-      nil -> []
-      "" -> []
-      key -> ["-e", "OPENAI_API_KEY=#{key}"]
     end
   end
 

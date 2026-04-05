@@ -130,7 +130,6 @@ defmodule DruzhokWebWeb.LlmProxyController do
   end
 
   def audio_transcriptions(conn, _params) do
-    instance = conn.assigns.instance
     openai_key = get_setting("openai_api_key")
 
     if is_nil(openai_key) do
@@ -153,25 +152,7 @@ defmodule DruzhokWebWeb.LlmProxyController do
           latency = System.monotonic_time(:millisecond) - started_at
 
           if status == 200 do
-            transcript = case Jason.decode(resp_body) do
-              {:ok, %{"text" => t}} -> t
-              _ -> nil
-            end
-
-            Usage.log(%{
-              instance_id: instance.id,
-              model: "whisper-1",
-              prompt_tokens: byte_size(body),
-              completion_tokens: String.length(transcript || ""),
-              total_tokens: 0,
-              requested_model: "whisper-1",
-              resolved_model: "whisper-1",
-              provider: "openai",
-              latency_ms: latency,
-              prompt_preview: "[audio #{Float.round(byte_size(body) / 1024, 1)} KB]",
-              response_preview: transcript && String.slice(transcript, 0, 500),
-              request_body: "{}",
-            })
+            Logger.info("[audio] transcription #{Float.round(byte_size(body) / 1024, 1)} KB, #{latency}ms")
           end
 
           conn
