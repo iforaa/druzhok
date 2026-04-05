@@ -74,7 +74,7 @@ defmodule Druzhok.PoolConfig do
           "echoTranscript" => true,
           "models" => [%{
             "provider" => "openai",
-            "model" => "whisper-1"
+            "model" => "gpt-4o-mini-transcribe"
           }]
         }
       }
