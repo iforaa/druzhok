@@ -72,7 +72,7 @@ defmodule Druzhok.PoolConfig do
           }],
           "baseUrl" => "http://#{proxy_host}:4000/v1",
           "request" => %{
-            "auth" => %{"token" => first_key}
+            "auth" => %{"mode" => "authorization-bearer", "token" => first_key}
           }
         }
       }
