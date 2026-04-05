@@ -76,37 +76,45 @@ defmodule DruzhokWebWeb.DashboardLive do
         {:noreply, socket |> assign(selected: nil) |> push_patch(to: "/")}
       instance ->
         tab = Map.get(@valid_tabs, params["tab"], :logs)
-        files = list_workspace_files(instance, "")
+        switched_instance = socket.assigns[:selected] != name
 
-        # Load tab-specific data
-        {usage_requests, usage_summary} = if tab == :usage do
-          load_usage_data(instance)
+        # Only reload instance-level data when selecting a different instance
+        base_assigns = if switched_instance do
+          %{
+            selected: name,
+            events: [],
+            file_content: nil,
+            current_path: "",
+            expanded_error: nil,
+            pairing_requests: Druzhok.Pairing.pending_for_instance(name),
+            owner: Druzhok.InstanceManager.get_owner(name),
+            groups: Druzhok.InstanceManager.get_groups(name),
+            allowed_users: load_allowed_users(name),
+          }
         else
-          {socket.assigns[:usage_requests] || [], socket.assigns[:usage_summary] || []}
+          %{selected: name}
         end
 
-        instance_errors = if tab == :errors do
-          Druzhok.CrashLog.recent_for_instance(name, 100)
-        else
-          socket.assigns[:instance_errors] || []
+        # Only load tab-specific data for the active tab
+        tab_assigns = case tab do
+          :files ->
+            %{workspace_files: list_workspace_files(instance, ""), file_content: nil, current_path: ""}
+          :usage ->
+            {reqs, summary} = load_usage_data(instance)
+            %{usage_requests: reqs, usage_summary: summary}
+          :errors ->
+            %{instance_errors: Druzhok.CrashLog.recent_for_instance(name, 100)}
+          :settings ->
+            if switched_instance do
+              %{pairing_requests: Druzhok.Pairing.pending_for_instance(name),
+                allowed_users: load_allowed_users(name)}
+            else
+              %{}
+            end
+          _ -> %{}
         end
 
-        {:noreply, assign(socket,
-          selected: name,
-          tab: tab,
-          workspace_files: files,
-          file_content: nil,
-          current_path: "",
-          events: [],
-          pairing_requests: Druzhok.Pairing.pending_for_instance(name),
-          owner: Druzhok.InstanceManager.get_owner(name),
-          groups: Druzhok.InstanceManager.get_groups(name),
-          allowed_users: load_allowed_users(name),
-          instance_errors: instance_errors,
-          expanded_error: nil,
-          usage_requests: usage_requests,
-          usage_summary: usage_summary
-        )}
+        {:noreply, assign(socket, Map.merge(base_assigns, Map.put(tab_assigns, :tab, tab)))}
     end
   end
 
