@@ -25,6 +25,7 @@ defmodule DruzhokWebWeb.Router do
 
     post "/chat/completions", LlmProxyController, :chat_completions
     post "/audio/transcriptions", LlmProxyController, :audio_transcriptions
+    post "/embeddings", LlmProxyController, :embeddings
   end
 
   # Public routes

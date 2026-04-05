@@ -31,7 +31,18 @@ defmodule Druzhok.PoolConfig do
         "providers" => build_providers(instances, proxy_host)
       },
       "agents" => %{
-        "defaults" => %{"sandbox" => %{"mode" => "all"}},
+        "defaults" => %{
+          "sandbox" => %{"mode" => "all"},
+          "memorySearch" => %{
+            "enabled" => true,
+            "provider" => "openai",
+            "model" => "openai/text-embedding-3-small",
+            "remote" => %{
+              "baseUrl" => "http://#{proxy_host}:4000/v1",
+              "apiKey" => List.first(instances).tenant_key
+            }
+          }
+        },
         "list" => build_agent_list(instances)
       },
       "channels" => %{

@@ -185,6 +185,25 @@ defmodule DruzhokWebWeb.LlmProxyController do
     end
   end
 
+  def embeddings(conn, _params) do
+    body = conn.body_params
+    url = LlmFormat.provider_url() <> "/embeddings"
+    headers = LlmFormat.request_headers(conn.req_headers)
+
+    request = Finch.build(:post, url, headers, Jason.encode!(body))
+
+    case Finch.request(request, Druzhok.Finch, receive_timeout: 60_000) do
+      {:ok, %Finch.Response{status: status, body: resp_body}} ->
+        conn
+        |> put_resp_content_type("application/json")
+        |> send_resp(status, resp_body)
+
+      {:error, reason} ->
+        Logger.error("Embeddings proxy error: #{inspect(reason)}")
+        json_error(conn, 502, "Embeddings provider unavailable", "server_error")
+    end
+  end
+
   defp get_setting(key) do
     import Ecto.Query
     Druzhok.Repo.one(from s in "settings", where: s.key == ^key, select: s.value)
