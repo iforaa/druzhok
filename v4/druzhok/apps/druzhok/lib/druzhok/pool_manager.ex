@@ -270,13 +270,6 @@ defmodule Druzhok.PoolManager do
     Path.join([data_root, "pools", pool.name])
   end
 
-  defp proxy_env_args do
-    case System.get_env("HTTP_PROXY_URL") do
-      nil -> []
-      url ->
-        ["-e", "HTTP_PROXY=#{url}", "-e", "HTTPS_PROXY=#{url}"]
-    end
-  end
 
   defp get_docker_gid do
     case System.cmd("stat", ["-c", "%g", "/var/run/docker.sock"], stderr_to_stdout: true) do
