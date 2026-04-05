@@ -852,11 +852,12 @@ defmodule DruzhokWebWeb.DashboardLive do
             <span :if={stats} class="text-[10px] text-gray-400 font-mono">
               <%= stats.mem %> · <%= stats.cpu %>
             </span>
-            <button phx-click="start_bot" phx-value-name={@selected}
+            <% is_active = selected_field(@instances, @selected, :active) %>
+            <button :if={!is_active} phx-click="start_bot" phx-value-name={@selected}
                     class="text-xs text-green-600 hover:text-green-800 transition font-medium">
               Start
             </button>
-            <button phx-click="stop" phx-value-name={@selected}
+            <button :if={is_active} phx-click="stop" phx-value-name={@selected}
                     class="text-xs text-red-500 hover:text-red-700 transition font-medium">
               Stop
             </button>
