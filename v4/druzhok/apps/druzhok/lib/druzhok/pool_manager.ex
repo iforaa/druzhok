@@ -221,7 +221,7 @@ defmodule Druzhok.PoolManager do
       "-e", "OPENCLAW_STATE_DIR=/data/state",
       "-e", "NODE_OPTIONS=--max-old-space-size=512",
       "-e", "NODE_ENV=production"
-    ]
+    ] ++ proxy_env_args()
 
     workspace_mounts =
       Enum.flat_map(instances, fn inst ->
@@ -267,6 +267,14 @@ defmodule Druzhok.PoolManager do
   defp pool_data_root(pool) do
     data_root = System.get_env("DRUZHOK_DATA_ROOT") || Path.expand("../../data", __DIR__)
     Path.join([data_root, "pools", pool.name])
+  end
+
+  defp proxy_env_args do
+    case System.get_env("HTTP_PROXY_URL") do
+      nil -> []
+      url ->
+        ["-e", "HTTP_PROXY=#{url}", "-e", "HTTPS_PROXY=#{url}"]
+    end
   end
 
   defp get_docker_gid do
