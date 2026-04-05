@@ -130,4 +130,8 @@ ssh -l igor 158.160.78.230 "curl -s http://127.0.0.1:18800/healthz"
 
 # Check server load:
 ssh -l igor 158.160.78.230 "uptime; free -h; docker stats --no-stream"
+
+# Run OpenClaw with --verbose for detailed plugin/audio/media debugging:
+# (stop the pool first, run manually, then check output)
+docker run --rm --network host ... openclaw:latest node openclaw.mjs gateway --allow-unconfigured --verbose
 ```
