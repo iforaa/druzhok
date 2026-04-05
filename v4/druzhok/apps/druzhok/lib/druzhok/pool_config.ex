@@ -64,7 +64,8 @@ defmodule Druzhok.PoolConfig do
     config
     |> put_in(["models", "providers", "openai"], %{
       "baseUrl" => "http://#{proxy_host}:4000/v1",
-      "apiKey" => List.first(instances).tenant_key
+      "apiKey" => List.first(instances).tenant_key,
+      "models" => []
     })
     |> put_in(["tools"], %{
       "media" => %{
