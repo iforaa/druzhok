@@ -37,7 +37,7 @@ defmodule Druzhok.PoolConfig do
       },
       "agents" => %{
         "defaults" => %{
-          "sandbox" => %{"mode" => "off"},
+          "sandbox" => %{"mode" => "all", "workspaceAccess" => "rw"},
           "memorySearch" => %{
             "enabled" => true,
             "provider" => "openai",
@@ -112,10 +112,15 @@ defmodule Druzhok.PoolConfig do
   defp build_agent_list(instances) do
     Enum.map(instances, fn instance ->
       name = instance.name
+      # workspace is the container-internal path (for OpenClaw to read files)
+      # sandbox.workspaceRoot is the HOST path (for Docker-in-Docker mount mapping)
       %{
         "id" => name,
         "model" => "tenant-#{name}/#{instance.model}",
-        "workspace" => "/data/workspaces/#{name}"
+        "workspace" => "/data/workspaces/#{name}",
+        "sandbox" => %{
+          "workspaceRoot" => instance.workspace
+        }
       }
     end)
   end
