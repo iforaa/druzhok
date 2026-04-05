@@ -221,7 +221,7 @@ defmodule Druzhok.PoolManager do
       "-e", "OPENCLAW_STATE_DIR=/data/state",
       "-e", "NODE_OPTIONS=--max-old-space-size=512",
       "-e", "NODE_ENV=production"
-    ] ++ proxy_env_args() ++ openai_env_args()
+    ] ++ openai_env_args()
 
     workspace_mounts =
       Enum.flat_map(instances, fn inst ->
