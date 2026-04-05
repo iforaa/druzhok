@@ -68,7 +68,7 @@ defmodule Druzhok.PoolManager do
           HealthMonitor.register(pool.name, pool.container, "openclaw")
 
         false ->
-          if pool.status in [@status_running, @status_starting] do
+          if length(pool.instances) > 0 do
             Logger.warning("[pool_manager] pool=#{pool.name} container missing, restarting")
             try do
               restart_pool_container(pool)
