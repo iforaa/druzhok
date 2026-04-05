@@ -25,6 +25,9 @@ On the 2-CPU/2GB Yandex Cloud VM, OpenClaw takes ~2.5 minutes to cold-start. Hea
 - `allowFrom` goes at account level, NOT nested under `"dm"`.
 - `sandbox.mode: "all"` — requires Docker CLI in the image (built with `OPENCLAW_INSTALL_DOCKER_CLI=1`).
 
+### NEVER set HTTP_PROXY/HTTPS_PROXY env vars in pool containers
+The host's iptables routes all traffic through xray automatically (`--network host`). Setting proxy env vars causes OpenClaw's undici ProxyAgent to corrupt multipart FormData — breaking audio transcription and other file uploads. All outbound traffic from containers already goes through xray without env vars.
+
 ## Project Structure
 
 ```
