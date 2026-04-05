@@ -59,18 +59,21 @@ defmodule Druzhok.PoolConfig do
       patterns -> put_in(config, ["messages"], %{"groupChat" => %{"mentionPatterns" => patterns}})
     end
 
-    # Audio transcription via our proxy → OpenAI Whisper
-    # Point the OpenAI provider at our proxy so the API key stays server-side
+    # Audio transcription routed through our proxy → OpenAI Whisper
+    first_key = List.first(instances).tenant_key
     config
-    |> put_in(["models", "providers", "openai"], %{
-      "baseUrl" => "http://#{proxy_host}:4000/v1",
-      "apiKey" => List.first(instances).tenant_key,
-      "models" => []
-    })
     |> put_in(["tools"], %{
       "media" => %{
         "audio" => %{
-          "models" => [%{"provider" => "openai", "model" => "whisper-1"}]
+          "models" => [%{
+            "provider" => "openai",
+            "model" => "whisper-1",
+            "baseUrl" => "http://#{proxy_host}:4000/v1"
+          }],
+          "baseUrl" => "http://#{proxy_host}:4000/v1",
+          "request" => %{
+            "auth" => %{"token" => first_key}
+          }
         }
       }
     })
