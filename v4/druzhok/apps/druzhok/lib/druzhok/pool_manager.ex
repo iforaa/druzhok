@@ -197,7 +197,7 @@ defmodule Druzhok.PoolManager do
 
   defp build_docker_args(pool, instances) do
     data_root = pool_data_root(pool)
-    image = System.get_env("OPENCLAW_IMAGE") || "openclaw:slim"
+    image = System.get_env("OPENCLAW_IMAGE") || "openclaw:latest"
 
     # --network host works on Linux but not macOS Docker Desktop.
     # On macOS, publish ports explicitly as fallback.
