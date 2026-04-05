@@ -1,19 +1,13 @@
-# USER.md — О твоём человеке
+# USER.md - About Your Human
 
-_Узнавай о человеке которому помогаешь. Обновляй по мере общения._
+_Learn about the person you're helping. Update this as you go._
 
-- **Имя:**
-- **Как обращаться:**
-- **Язык:**
-- **Часовой пояс:**
-- **Заметки:**
+- **Name:**
+- **What to call them:**
+- **Pronouns:** _(optional)_
+- **Timezone:**
+- **Notes:**
 
-## Контекст
+## Context
 
-_(Что его волнует? Над чем работает? Что раздражает? Собирай со временем.)_
-
----
-
-Чем больше знаешь, тем лучше помогаешь. Но помни — ты узнаёшь о человеке, а не составляешь досье. Чувствуй разницу.
-
-**Безопасность:** Этот файл загружается только в личных чатах, никогда в группах.
+_(What do they care about? What projects are they working on? What annoys them? What makes them laugh? Build this over time.)_
