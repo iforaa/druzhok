@@ -97,13 +97,24 @@ journalctl -u druzhok -f
 cd v4/openclaw
 docker buildx build --platform linux/amd64 \
   --build-arg OPENCLAW_VARIANT=slim \
-  --build-arg OPENCLAW_EXTENSIONS="telegram" \
-  -t openclaw:slim-amd64 --load .
+  --build-arg "OPENCLAW_EXTENSIONS=telegram openai" \
+  --build-arg OPENCLAW_INSTALL_DOCKER_CLI=1 \
+  --build-arg "OPENCLAW_DOCKER_APT_PACKAGES=python3 wkhtmltopdf ffmpeg" \
+  -t openclaw:latest --load .
 
-# Transfer to server:
-docker save openclaw:slim-amd64 | ssh igor@158.160.78.230 "docker load"
-ssh igor@158.160.78.230 "docker tag openclaw:slim-amd64 openclaw:slim"
+# Compress before transfer (3GB → ~1GB, much faster + rsync resume):
+docker save openclaw:latest | gzip > /tmp/openclaw.tar.gz
+rsync --partial --progress -e ssh /tmp/openclaw.tar.gz igor@158.160.78.230:/tmp/openclaw.tar.gz
+
+# Load on server:
+ssh igor@158.160.78.230 "gunzip -c /tmp/openclaw.tar.gz | docker load && rm /tmp/openclaw.tar.gz"
 ```
+
+**Important build args:**
+- `OPENCLAW_EXTENSIONS="telegram openai"` — pre-install extension deps (openai needed for audio transcription)
+- `OPENCLAW_INSTALL_DOCKER_CLI=1` — enables sandbox mode
+- `OPENCLAW_DOCKER_APT_PACKAGES="python3 wkhtmltopdf ffmpeg"` — system tools for PDF/audio
+- `OPENCLAW_VARIANT=slim` — smaller base image (use `default` for full Debian)
 
 ## Debugging Remote Errors
 
