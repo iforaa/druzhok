@@ -3,6 +3,10 @@ defmodule Druzhok.PoolConfig do
 
   @default_port 18800
 
+  @default_image_model "google/gemini-2.5-flash-lite"
+  @default_audio_model "gpt-4o-mini-transcribe"
+  @default_embedding_model "openai/text-embedding-3-small"
+
   @doc """
   Builds a multi-agent OpenClaw JSON config map for the given list of instances.
 
@@ -17,7 +21,11 @@ defmodule Druzhok.PoolConfig do
     port = Keyword.get(opts, :port, @default_port)
     proxy_host = Druzhok.Runtime.proxy_host()
     proxy_url = "http://#{proxy_host}:4000/v1"
-    first_tenant_key = List.first(instances).tenant_key
+    first = List.first(instances)
+    first_tenant_key = first.tenant_key
+    image_model = first.image_model || @default_image_model
+    audio_model = first.audio_model || @default_audio_model
+    embedding_model = first.embedding_model || @default_embedding_model
 
     config = %{
       "gateway" => %{
@@ -47,7 +55,7 @@ defmodule Druzhok.PoolConfig do
           "memorySearch" => %{
             "enabled" => true,
             "provider" => "openai",
-            "model" => "openai/text-embedding-3-small",
+            "model" => embedding_model,
             "remote" => %{
               "baseUrl" => proxy_url,
               "apiKey" => first_tenant_key
@@ -80,7 +88,7 @@ defmodule Druzhok.PoolConfig do
           "echoTranscript" => true,
           "models" => [%{
             "provider" => "openai",
-            "model" => "gpt-4o-mini-transcribe",
+            "model" => audio_model,
             "baseUrl" => proxy_url
           }]
         },
@@ -88,7 +96,7 @@ defmodule Druzhok.PoolConfig do
           "enabled" => true,
           "models" => [%{
             "provider" => "openrouter",
-            "model" => "google/gemini-2.5-flash-lite",
+            "model" => image_model,
             "baseUrl" => proxy_url
           }],
           "request" => %{
