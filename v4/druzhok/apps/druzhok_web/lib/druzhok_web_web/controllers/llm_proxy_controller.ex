@@ -209,7 +209,16 @@ defmodule DruzhokWebWeb.LlmProxyController do
 
     request = Finch.build(:post, url, headers, Jason.encode!(chat_body))
 
-    Logger.info("[responses] model=#{chat_body["model"]} messages=#{length(chat_body["messages"])}")
+    # Log request details for debugging
+    msg_summary = Enum.map(chat_body["messages"], fn msg ->
+      content = msg["content"]
+      cond do
+        is_binary(content) -> "#{msg["role"]}:text(#{String.length(content)})"
+        is_list(content) -> "#{msg["role"]}:parts(#{length(content)})[#{Enum.map(content, & &1["type"]) |> Enum.join(",")}]"
+        true -> "#{msg["role"]}:?"
+      end
+    end) |> Enum.join(" ")
+    Logger.info("[responses] model=#{chat_body["model"]} #{msg_summary}")
 
     case Finch.request(request, Druzhok.Finch, receive_timeout: 120_000) do
       {:ok, %Finch.Response{status: status, body: resp_body}} ->
@@ -252,10 +261,11 @@ defmodule DruzhokWebWeb.LlmProxyController do
 
   defp convert_content_parts(parts) when is_list(parts) do
     Enum.map(parts, fn
-      %{"type" => "input_image", "image_url" => url} ->
-        %{"type" => "image_url", "image_url" => %{"url" => url}}
-      %{"type" => "input_image", "image_url" => url, "detail" => detail} ->
-        %{"type" => "image_url", "image_url" => %{"url" => url, "detail" => detail}}
+      %{"type" => "input_image", "image_url" => url} = part ->
+        detail = Map.get(part, "detail")
+        img = %{"url" => url}
+        img = if detail, do: Map.put(img, "detail", detail), else: img
+        %{"type" => "image_url", "image_url" => img}
       other -> other
     end)
   end
