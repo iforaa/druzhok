@@ -200,6 +200,26 @@ defmodule DruzhokWebWeb.LlmProxyController do
     end
   end
 
+  def responses_proxy(conn, _params) do
+    # OpenAI Responses API — forward to OpenRouter as chat/completions
+    body = conn.body_params
+    url = LlmFormat.request_url()
+    headers = LlmFormat.request_headers(conn.req_headers)
+
+    request = Finch.build(:post, url, headers, Jason.encode!(body))
+
+    case Finch.request(request, Druzhok.Finch, receive_timeout: 120_000) do
+      {:ok, %Finch.Response{status: status, body: resp_body}} ->
+        conn
+        |> put_resp_content_type("application/json")
+        |> send_resp(status, resp_body)
+
+      {:error, reason} ->
+        Logger.error("Responses proxy error: #{inspect(reason)}")
+        json_error(conn, 502, "Provider unavailable", "server_error")
+    end
+  end
+
   defp get_setting(key) do
     import Ecto.Query
     Druzhok.Repo.one(from s in "settings", where: s.key == ^key, select: s.value)
