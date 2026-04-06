@@ -80,6 +80,7 @@ defmodule Druzhok.PoolManager do
       end
     end
 
+    Process.send_after(self(), :verify_pools, @verify_interval)
     {:noreply, state}
   end
 
@@ -283,7 +284,6 @@ defmodule Druzhok.PoolManager do
     data_root = System.get_env("DRUZHOK_DATA_ROOT") || Path.expand("../../data", __DIR__)
     Path.join([data_root, "pools", pool.name])
   end
-
 
   defp get_docker_gid do
     case System.cmd("stat", ["-c", "%g", "/var/run/docker.sock"], stderr_to_stdout: true) do

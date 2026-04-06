@@ -16,6 +16,8 @@ defmodule Druzhok.PoolConfig do
   def build(instances, opts \\ []) do
     port = Keyword.get(opts, :port, @default_port)
     proxy_host = Druzhok.Runtime.proxy_host()
+    proxy_url = "http://#{proxy_host}:4000/v1"
+    first_tenant_key = List.first(instances).tenant_key
 
     config = %{
       "gateway" => %{
@@ -47,8 +49,8 @@ defmodule Druzhok.PoolConfig do
             "provider" => "openai",
             "model" => "openai/text-embedding-3-small",
             "remote" => %{
-              "baseUrl" => "http://#{proxy_host}:4000/v1",
-              "apiKey" => List.first(instances).tenant_key
+              "baseUrl" => proxy_url,
+              "apiKey" => first_tenant_key
             }
           }
         },
@@ -79,7 +81,7 @@ defmodule Druzhok.PoolConfig do
           "models" => [%{
             "provider" => "openai",
             "model" => "gpt-4o-mini-transcribe",
-            "baseUrl" => "http://#{proxy_host}:4000/v1"
+            "baseUrl" => proxy_url
           }]
         },
         "image" => %{
@@ -87,10 +89,10 @@ defmodule Druzhok.PoolConfig do
           "models" => [%{
             "provider" => "openrouter",
             "model" => "google/gemini-2.5-flash-lite",
-            "baseUrl" => "http://#{proxy_host}:4000/v1"
+            "baseUrl" => proxy_url
           }],
           "request" => %{
-            "auth" => %{"mode" => "authorization-bearer", "token" => List.first(instances).tenant_key}
+            "auth" => %{"mode" => "authorization-bearer", "token" => first_tenant_key}
           }
         }
       }
