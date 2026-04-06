@@ -30,9 +30,9 @@ All API calls from pool containers route through the Elixir proxy (localhost:400
 | `POST /v1/chat/completions` | tenant_key | OpenRouter | Main LLM calls |
 | `POST /v1/embeddings` | tenant_key | OpenRouter | Memory search vectors |
 | `POST /v1/audio/transcriptions` | none | OpenAI Whisper | Multipart rebuild (Plug.Parsers consumes body) |
-| `POST /v1/responses` | none | OpenRouter | Responses API → chat/completions conversion + SSE streaming |
+| `POST /v1/responses` | tenant_key (optional) | OpenRouter | Responses API → chat/completions conversion + SSE streaming |
 
-Image model hardcoded to `google/gemini-2.5-flash-lite` in responses proxy. OpenRouter response has leading whitespace — always `String.trim()` before `Jason.decode()`.
+Image/audio/embedding models are configurable per instance (fields on `instances` table). Responses proxy resolves image model from `Authorization: Bearer <tenant_key>` header, falls back to `ModelCatalog.default_image_model()`. OpenRouter response has leading whitespace — always `String.trim()` before `Jason.decode()`.
 
 ## Project Structure
 
