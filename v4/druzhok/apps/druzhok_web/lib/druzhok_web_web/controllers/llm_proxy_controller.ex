@@ -201,15 +201,18 @@ defmodule DruzhokWebWeb.LlmProxyController do
   end
 
   def responses_proxy(conn, _params) do
-    # OpenAI Responses API — forward to OpenRouter as chat/completions
+    # OpenAI Responses API → convert to chat/completions format for OpenRouter
     body = conn.body_params
+    chat_body = convert_responses_to_chat(body)
     url = LlmFormat.request_url()
     headers = LlmFormat.request_headers(conn.req_headers)
 
-    request = Finch.build(:post, url, headers, Jason.encode!(body))
+    request = Finch.build(:post, url, headers, Jason.encode!(chat_body))
 
     case Finch.request(request, Druzhok.Finch, receive_timeout: 120_000) do
       {:ok, %Finch.Response{status: status, body: resp_body}} ->
+        # Convert chat/completions response back to Responses API format
+        resp_body = convert_chat_to_responses(resp_body, body["model"])
         conn
         |> put_resp_content_type("application/json")
         |> send_resp(status, resp_body)
@@ -217,6 +220,40 @@ defmodule DruzhokWebWeb.LlmProxyController do
       {:error, reason} ->
         Logger.error("Responses proxy error: #{inspect(reason)}")
         json_error(conn, 502, "Provider unavailable", "server_error")
+    end
+  end
+
+  defp convert_responses_to_chat(body) do
+    model = body["model"] || "openai/gpt-4o-mini"
+    input = body["input"] || []
+
+    messages = Enum.map(List.wrap(input), fn
+      %{"role" => role, "content" => content} when is_list(content) ->
+        %{"role" => role, "content" => content}
+      %{"role" => role, "content" => content} when is_binary(content) ->
+        %{"role" => role, "content" => content}
+      item when is_binary(item) ->
+        %{"role" => "user", "content" => item}
+      other ->
+        %{"role" => "user", "content" => inspect(other)}
+    end)
+
+    messages = if messages == [], do: [%{"role" => "user", "content" => "Describe this image."}], else: messages
+
+    %{"model" => model, "messages" => messages, "max_tokens" => body["max_output_tokens"] || 1024}
+  end
+
+  defp convert_chat_to_responses(resp_body, model) do
+    case Jason.decode(resp_body) do
+      {:ok, %{"choices" => [%{"message" => %{"content" => content}} | _]}} ->
+        Jason.encode!(%{
+          "id" => "resp_proxy",
+          "output" => [%{"type" => "message", "role" => "assistant", "content" => [%{"type" => "output_text", "text" => content}]}],
+          "model" => model,
+          "usage" => %{"input_tokens" => 0, "output_tokens" => 0}
+        })
+      _ ->
+        resp_body
     end
   end
 
