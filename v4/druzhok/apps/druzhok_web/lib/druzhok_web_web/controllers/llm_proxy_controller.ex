@@ -220,18 +220,22 @@ defmodule DruzhokWebWeb.LlmProxyController do
     end) |> Enum.join(" ")
     Logger.info("[responses] model=#{chat_body["model"]} #{msg_summary}")
 
-    case Finch.request(request, Druzhok.Finch, receive_timeout: 120_000) do
-      {:ok, %Finch.Response{status: status, body: resp_body}} ->
-        trimmed = String.trim(resp_body)
-        Logger.info("[responses] status=#{status} body=#{String.slice(trimmed, 0, 300)}")
-        resp_body = convert_chat_to_responses(resp_body, body["model"])
-        conn
-        |> put_resp_content_type("application/json")
-        |> send_resp(status, resp_body)
+    if chat_body["stream"] do
+      stream_responses_proxy(conn, request, body["model"])
+    else
+      case Finch.request(request, Druzhok.Finch, receive_timeout: 120_000) do
+        {:ok, %Finch.Response{status: status, body: resp_body}} ->
+          trimmed = String.trim(resp_body)
+          Logger.info("[responses] status=#{status} body=#{String.slice(trimmed, 0, 300)}")
+          resp_body = convert_chat_to_responses(resp_body, body["model"])
+          conn
+          |> put_resp_content_type("application/json")
+          |> send_resp(status, resp_body)
 
-      {:error, reason} ->
-        Logger.error("Responses proxy error: #{inspect(reason)}")
-        json_error(conn, 502, "Provider unavailable", "server_error")
+        {:error, reason} ->
+          Logger.error("Responses proxy error: #{inspect(reason)}")
+          json_error(conn, 502, "Provider unavailable", "server_error")
+      end
     end
   end
 
@@ -257,7 +261,67 @@ defmodule DruzhokWebWeb.LlmProxyController do
 
     messages = if messages == [], do: [%{"role" => "user", "content" => "Describe this image."}], else: messages
 
-    %{"model" => model, "messages" => messages, "max_tokens" => body["max_output_tokens"] || 1024, "stream" => false}
+    %{"model" => model, "messages" => messages, "max_tokens" => body["max_output_tokens"] || 1024, "stream" => body["stream"] || false}
+  end
+
+  defp stream_responses_proxy(conn, request, model) do
+    conn = conn
+    |> put_resp_content_type("text/event-stream")
+    |> put_resp_header("cache-control", "no-cache")
+    |> send_chunked(200)
+
+    # Collect full streamed response, then send as Responses API events
+    result = Finch.stream(request, Druzhok.Finch, "", fn
+      {:status, _status}, acc -> acc
+      {:headers, _headers}, acc -> acc
+      {:data, data}, acc -> acc <> data
+    end, receive_timeout: 120_000)
+
+    case result do
+      {:ok, raw_data} ->
+        # Parse streamed SSE chunks to extract full text
+        text = raw_data
+        |> String.split("\n")
+        |> Enum.filter(&String.starts_with?(&1, "data: "))
+        |> Enum.map(&String.trim_leading(&1, "data: "))
+        |> Enum.reject(&(&1 == "[DONE]"))
+        |> Enum.reduce("", fn json_str, acc ->
+          case Jason.decode(json_str) do
+            {:ok, %{"choices" => [%{"delta" => %{"content" => content}} | _]}} when is_binary(content) ->
+              acc <> content
+            _ -> acc
+          end
+        end)
+
+        Logger.info("[responses] streamed text=#{String.slice(text, 0, 100)}")
+
+        # Send as Responses API SSE events
+        response_event = Jason.encode!(%{
+          "type" => "response.completed",
+          "response" => %{
+            "id" => "resp_proxy",
+            "object" => "response",
+            "status" => "completed",
+            "output" => [%{
+              "type" => "message",
+              "id" => "msg_proxy",
+              "status" => "completed",
+              "role" => "assistant",
+              "content" => [%{"type" => "output_text", "text" => text}]
+            }],
+            "model" => model,
+            "usage" => %{"input_tokens" => 0, "output_tokens" => 0}
+          }
+        })
+
+        Plug.Conn.chunk(conn, "data: #{response_event}\n\n")
+        Plug.Conn.chunk(conn, "data: [DONE]\n\n")
+        conn
+
+      {:error, reason} ->
+        Logger.error("Responses stream error: #{inspect(reason)}")
+        conn
+    end
   end
 
   defp convert_content_parts(parts) when is_list(parts) do
