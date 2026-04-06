@@ -239,11 +239,12 @@ defmodule Druzhok.PoolManager do
       "-e", "OPENROUTER_API_KEY=proxy-managed"
     ]
 
+    # Mount workspaces at their HOST path inside the pool container.
+    # This way OpenClaw's workspace path matches the host path, so
+    # Docker-in-Docker sandbox mounts resolve correctly.
     workspace_mounts =
       Enum.flat_map(instances, fn inst ->
-        host_workspace = inst.workspace
-        container_workspace = "/data/workspaces/#{inst.name}"
-        ["-v", "#{host_workspace}:#{container_workspace}"]
+        ["-v", "#{inst.workspace}:#{inst.workspace}"]
       end)
 
     command = ["node", "openclaw.mjs", "gateway", "--allow-unconfigured"]

@@ -137,12 +137,12 @@ defmodule Druzhok.PoolConfig do
   defp build_agent_list(instances) do
     Enum.map(instances, fn instance ->
       name = instance.name
-      # workspace is the container-internal path (for OpenClaw to read files)
-      # sandbox.workspaceRoot is the HOST path (for Docker-in-Docker mount mapping)
+      # workspace uses the HOST path — mounted at the same path inside the pool container.
+      # This way Docker-in-Docker sandbox mounts resolve correctly.
       %{
         "id" => name,
         "model" => "tenant-#{name}/#{instance.model}",
-        "workspace" => "/data/workspaces/#{name}",
+        "workspace" => instance.workspace,
         "sandbox" => %{
           "workspaceRoot" => instance.workspace
         }
