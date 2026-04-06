@@ -718,13 +718,7 @@ defmodule DruzhokWebWeb.DashboardLive do
   end
 
   def handle_event("update_models", %{"name" => name, "default_model" => default_model} = params, socket) do
-    on_demand = case params["on_demand_model"] do
-      "" -> nil
-      nil -> nil
-      model -> model
-    end
-
-    changes = %{model: default_model, on_demand_model: on_demand}
+    changes = %{model: default_model, on_demand_model: non_empty_param(params, "on_demand_model")}
     changes = if p = non_empty_param(params, "image_model"), do: Map.put(changes, :image_model, p), else: changes
     changes = if p = non_empty_param(params, "audio_model"), do: Map.put(changes, :audio_model, p), else: changes
     changes = if p = non_empty_param(params, "embedding_model"), do: Map.put(changes, :embedding_model, p), else: changes
@@ -992,7 +986,7 @@ defmodule DruzhokWebWeb.DashboardLive do
                       <label class="block text-xs font-medium text-gray-500 mb-1">Image model</label>
                       <select name="image_model" disabled={is_running} class={"w-full border border-gray-300 rounded-lg px-3 py-2 text-sm #{if is_running, do: "opacity-50 cursor-not-allowed"}"}>
                         <%= for m <- Druzhok.ModelCatalog.image_models() do %>
-                          <option value={m.id} selected={m.id == (selected_field(@instances, @selected, :image_model) || "google/gemini-2.5-flash-lite")}><%= m.name %></option>
+                          <option value={m.id} selected={m.id == (selected_field(@instances, @selected, :image_model) || Druzhok.ModelCatalog.default_image_model())}><%= m.name %></option>
                         <% end %>
                       </select>
                     </div>
@@ -1000,7 +994,7 @@ defmodule DruzhokWebWeb.DashboardLive do
                       <label class="block text-xs font-medium text-gray-500 mb-1">Audio model</label>
                       <select name="audio_model" disabled={is_running} class={"w-full border border-gray-300 rounded-lg px-3 py-2 text-sm #{if is_running, do: "opacity-50 cursor-not-allowed"}"}>
                         <%= for m <- Druzhok.ModelCatalog.audio_models() do %>
-                          <option value={m.id} selected={m.id == (selected_field(@instances, @selected, :audio_model) || "gpt-4o-mini-transcribe")}><%= m.name %></option>
+                          <option value={m.id} selected={m.id == (selected_field(@instances, @selected, :audio_model) || Druzhok.ModelCatalog.default_audio_model())}><%= m.name %></option>
                         <% end %>
                       </select>
                     </div>
@@ -1008,7 +1002,7 @@ defmodule DruzhokWebWeb.DashboardLive do
                       <label class="block text-xs font-medium text-gray-500 mb-1">Embedding model</label>
                       <select name="embedding_model" disabled={is_running} class={"w-full border border-gray-300 rounded-lg px-3 py-2 text-sm #{if is_running, do: "opacity-50 cursor-not-allowed"}"}>
                         <%= for m <- Druzhok.ModelCatalog.embedding_models() do %>
-                          <option value={m.id} selected={m.id == (selected_field(@instances, @selected, :embedding_model) || "openai/text-embedding-3-small")}><%= m.name %></option>
+                          <option value={m.id} selected={m.id == (selected_field(@instances, @selected, :embedding_model) || Druzhok.ModelCatalog.default_embedding_model())}><%= m.name %></option>
                         <% end %>
                       </select>
                     </div>

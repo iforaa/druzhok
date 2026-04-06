@@ -45,4 +45,8 @@ defmodule Druzhok.ModelCatalog do
   def image_models, do: @image_models
   def audio_models, do: @audio_models
   def embedding_models, do: @embedding_models
+
+  def default_image_model, do: "google/gemini-2.5-flash-lite"
+  def default_audio_model, do: "gpt-4o-mini-transcribe"
+  def default_embedding_model, do: "openai/text-embedding-3-small"
 end

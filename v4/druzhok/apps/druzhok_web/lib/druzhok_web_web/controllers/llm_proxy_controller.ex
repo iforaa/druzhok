@@ -369,7 +369,7 @@ defmodule DruzhokWebWeb.LlmProxyController do
     Druzhok.Repo.one(from s in "settings", where: s.key == ^key, select: s.value)
   end
 
-  @default_image_model "google/gemini-2.5-flash-lite"
+  @default_image_model Druzhok.ModelCatalog.default_image_model()
 
   defp resolve_image_model(conn) do
     case Plug.Conn.get_req_header(conn, "authorization") do

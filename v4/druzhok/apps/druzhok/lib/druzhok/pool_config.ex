@@ -3,9 +3,9 @@ defmodule Druzhok.PoolConfig do
 
   @default_port 18800
 
-  @default_image_model "google/gemini-2.5-flash-lite"
-  @default_audio_model "gpt-4o-mini-transcribe"
-  @default_embedding_model "openai/text-embedding-3-small"
+  @default_image_model Druzhok.ModelCatalog.default_image_model()
+  @default_audio_model Druzhok.ModelCatalog.default_audio_model()
+  @default_embedding_model Druzhok.ModelCatalog.default_embedding_model()
 
   @doc """
   Builds a multi-agent OpenClaw JSON config map for the given list of instances.
