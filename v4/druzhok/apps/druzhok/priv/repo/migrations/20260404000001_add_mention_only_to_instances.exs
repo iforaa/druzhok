@@ -2,8 +2,12 @@ defmodule Druzhok.Repo.Migrations.AddMentionOnlyToInstances do
   use Ecto.Migration
 
   def change do
-    alter table(:instances) do
-      add :mention_only, :boolean, default: false
-    end
+    # Column may already exist in production DBs (added manually before this migration)
+    execute(
+      "ALTER TABLE instances ADD COLUMN mention_only INTEGER DEFAULT 0",
+      "SELECT 1"
+    )
+  rescue
+    _ -> :ok
   end
 end

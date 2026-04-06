@@ -203,7 +203,8 @@ defmodule DruzhokWebWeb.LlmProxyController do
   def responses_proxy(conn, _params) do
     # OpenAI Responses API → convert to chat/completions format for OpenRouter
     body = conn.body_params
-    chat_body = convert_responses_to_chat(body)
+    image_model = resolve_image_model(conn)
+    chat_body = convert_responses_to_chat(body, image_model)
     url = LlmFormat.request_url()
     headers = LlmFormat.request_headers(conn.req_headers)
 
@@ -239,11 +240,7 @@ defmodule DruzhokWebWeb.LlmProxyController do
     end
   end
 
-  @image_model "google/gemini-2.5-flash-lite"
-
-  defp convert_responses_to_chat(body) do
-    # Override model — OpenClaw sends OpenAI model names but we route to OpenRouter
-    model = @image_model
+  defp convert_responses_to_chat(body, model) do
     input = body["input"] || []
 
     messages = Enum.map(List.wrap(input), fn
@@ -370,6 +367,19 @@ defmodule DruzhokWebWeb.LlmProxyController do
   defp get_setting(key) do
     import Ecto.Query
     Druzhok.Repo.one(from s in "settings", where: s.key == ^key, select: s.value)
+  end
+
+  @default_image_model "google/gemini-2.5-flash-lite"
+
+  defp resolve_image_model(conn) do
+    case Plug.Conn.get_req_header(conn, "authorization") do
+      ["Bearer " <> token] ->
+        case Druzhok.Repo.get_by(Druzhok.Instance, tenant_key: token) do
+          nil -> @default_image_model
+          instance -> instance.image_model || @default_image_model
+        end
+      _ -> @default_image_model
+    end
   end
 
   defp json_error(conn, status, message, type) do
