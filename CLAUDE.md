@@ -1,102 +1,69 @@
 # Druzhok
 
-Personal AI assistant platform. v3 (Elixir/Phoenix) is the legacy single-bot runtime. v4 is the multi-bot orchestrator ("Claw Hub") managing OpenClaw, ZeroClaw, PicoClaw, NullClaw instances.
+Personal AI assistant platform. v4 is the multi-bot orchestrator ("Claw Hub") managing OpenClaw pool containers.
 
 ## Commits
 
-Always use `/my-commit` skill for committing changes. Never use raw git commit commands.
+Always use `/my-commit` skill for committing changes.
 
 ## Critical Rules
 
-### Never wipe workspace
-Never run `rm -rf workspace` when restarting the bot. The workspace contains the bot's memory, identity, and conversation history. Only wipe if the user explicitly asks for a fresh start.
+- **Never wipe workspace** — contains bot memory/identity. Only wipe if user explicitly asks.
+- **Never set HTTP_PROXY/HTTPS_PROXY in pool containers** — host iptables routes through xray automatically. Proxy env vars corrupt multipart FormData (breaks audio/file uploads).
+- **OpenClaw cold-start: ~2.5 min** on 2-CPU VM. Health timeout is 180s. Don't reduce.
+- **Sandbox containers can steal Telegram polling** — always `docker update --restart no && docker rm -f` to kill them permanently.
 
-### Docker container permissions
-Bot containers run as root inside Docker. Files they create in bind-mounted volumes (`/data`) are owned by root on the host. Fix with `sudo chown -R igor:igor /home/igor/druzhok-data/v4-instances/<name>/` when you hit permission denied errors.
+## OpenClaw Config Rules
 
-### Reasoning models need high max_tokens
-Models like GLM-5, Kimi K2.5, DeepSeek-R1 put reasoning in `reasoning_content` and the actual reply in `content`. With low `max_tokens`, ALL tokens go to reasoning and `content` is empty. Set `maxTokens: 16384` minimum.
+- `gateway.bind: "loopback"` + `auth.mode: "none"` — must match; refuses `bind: "lan"` without auth.
+- `allowFrom` at account level, NOT nested under `"dm"`.
+- `requireMention` on per-group config, NOT account level.
+- Plugins activate via env vars (`OPENAI_API_KEY`, `OPENROUTER_API_KEY`). Pass dummy values to enable without exposing real keys.
+- `OPENCLAW_EXTENSIONS="telegram openai"` in Docker build — without `openai`, audio transcription silently fails.
 
-### OpenClaw pool startup is slow
-On the 2-CPU/2GB Yandex Cloud VM, OpenClaw takes ~2.5 minutes to cold-start. Health timeout is 180s. Don't reduce it.
+## Proxy Endpoints
 
-### OpenClaw config quirks
-- `gateway.auth.mode: "none"` + `gateway.bind: "loopback"` — these must match; OpenClaw refuses `bind: "lan"` without auth.
-- `allowFrom` goes at account level, NOT nested under `"dm"`.
-- `sandbox.mode: "all"` — requires Docker CLI in the image (built with `OPENCLAW_INSTALL_DOCKER_CLI=1`).
+All API calls from pool containers route through the Elixir proxy (localhost:4000):
 
-### NEVER set HTTP_PROXY/HTTPS_PROXY env vars in pool containers
-The host's iptables routes all traffic through xray automatically (`--network host`). Setting proxy env vars causes OpenClaw's undici ProxyAgent to corrupt multipart FormData — breaking audio transcription and other file uploads. All outbound traffic from containers already goes through xray without env vars.
+| Endpoint | Auth | Upstream | Notes |
+|----------|------|----------|-------|
+| `POST /v1/chat/completions` | tenant_key | OpenRouter | Main LLM calls |
+| `POST /v1/embeddings` | tenant_key | OpenRouter | Memory search vectors |
+| `POST /v1/audio/transcriptions` | none | OpenAI Whisper | Multipart rebuild (Plug.Parsers consumes body) |
+| `POST /v1/responses` | none | OpenRouter | Responses API → chat/completions conversion + SSE streaming |
+
+Image model hardcoded to `google/gemini-2.5-flash-lite` in responses proxy. OpenRouter response has leading whitespace — always `String.trim()` before `Jason.decode()`.
 
 ## Project Structure
 
 ```
-v4/
-├── druzhok/           # Elixir orchestrator (Claw Hub)
-│   ├── apps/druzhok/      # Core: BotManager, PoolManager, Instance, Runtime adapters
-│   └── apps/druzhok_web/  # Phoenix dashboard (LiveView)
-├── openclaw/          # OpenClaw source (Node.js, used for Docker builds)
-├── zeroclaw/          # ZeroClaw (Rust)
-├── picoclaw/          # PicoClaw (Go)
-├── nullclaw/          # NullClaw (Zig)
-└── elixirclaw/        # ElixirClaw (extracted from v3)
+v4/druzhok/apps/druzhok/     # Core: BotManager, PoolManager, PoolConfig, PoolObserver
+v4/druzhok/apps/druzhok_web/ # Phoenix dashboard + LLM proxy controller
+workspace-template/           # OpenClaw workspace templates (AGENTS.md, SOUL.md, etc.)
 ```
 
-## v4 Architecture — Pool System
-
-OpenClaw instances are pooled (10 users per container) to reduce RAM from 50GB to ~6GB for 100 users.
-
-```
-Druzhok Orchestrator (Elixir, ~300 MB)
-  ├── LLM Proxy (/v1/chat/completions) → OpenRouter (1 API key for all)
-  ├── PoolManager GenServer (manages pool containers)
-  ├── HealthMonitor (30s checks)
-  └── Dashboard (Phoenix LiveView, port 4000)
-
-Pool Container (OpenClaw slim, ~500 MB)
-  ├── agent-alice → Telegram bot 1
-  ├── agent-bob → Telegram bot 2
-  └── ... up to 10 agents per pool
-```
-
-Key modules:
-- `Druzhok.PoolManager` — assigns instances to pools, creates/restarts containers
-- `Druzhok.PoolConfig` — generates multi-agent OpenClaw JSON config
-- `Druzhok.Pool` — Ecto schema for pools table
-- `Druzhok.Runtime` — behaviour with `pooled?/0` callback
-- `Druzhok.BotManager` — branches on `pooled?()` for start/stop/restart
-
-Pool data: `/data/pools/pool-name/` (config + state)
-Instance workspaces: `/data/instances/name/workspace/` (mounted individually)
-
-Budget: `daily_token_limit: 0` means unlimited (skips budget check).
-
-## Development Commands
+## Development
 
 ```bash
 cd v4/druzhok
-mix deps.get && mix compile
-mix test
-DATABASE_PATH=data/druzhok.db mix phx.server   # local dev
-DATABASE_PATH=data/druzhok.db mix ecto.migrate  # run migrations
+mix deps.get && mix compile && mix test
+DATABASE_PATH=data/druzhok.db mix phx.server
 ```
 
-## Deploying to Cloud
+## Deploying
 
 ```bash
-# On the server (ssh -l igor 158.160.78.230):
+ssh -l igor 158.160.78.230
 cd ~/druzhok && git pull
 source ~/.bashrc; . ~/.asdf/asdf.sh
-cd v4/druzhok && mix deps.get && mix compile
+cd v4/druzhok && mix compile
 DATABASE_PATH=/home/igor/druzhok-data/v4-druzhok.db mix ecto.migrate
 sudo systemctl restart druzhok
-journalctl -u druzhok -f
 ```
 
-## Building OpenClaw Docker Image
+## Building Docker Image
 
 ```bash
-# Build locally for linux/amd64:
 cd v4/openclaw
 docker buildx build --platform linux/amd64 \
   --build-arg OPENCLAW_VARIANT=slim \
@@ -105,36 +72,23 @@ docker buildx build --platform linux/amd64 \
   --build-arg "OPENCLAW_DOCKER_APT_PACKAGES=python3 wkhtmltopdf ffmpeg" \
   -t openclaw:latest --load .
 
-# Compress before transfer (3GB → ~1GB, much faster + rsync resume):
+# Compress + transfer (3GB → ~1GB):
 docker save openclaw:latest | gzip > /tmp/openclaw.tar.gz
-rsync --partial --progress -e ssh /tmp/openclaw.tar.gz igor@158.160.78.230:/tmp/openclaw.tar.gz
-
-# Load on server:
+rsync --partial --progress -e ssh /tmp/openclaw.tar.gz igor@158.160.78.230:/tmp/
 ssh igor@158.160.78.230 "gunzip -c /tmp/openclaw.tar.gz | docker load && rm /tmp/openclaw.tar.gz"
 ```
 
-**Important build args:**
-- `OPENCLAW_EXTENSIONS="telegram openai"` — pre-install extension deps (openai needed for audio transcription)
-- `OPENCLAW_INSTALL_DOCKER_CLI=1` — enables sandbox mode
-- `OPENCLAW_DOCKER_APT_PACKAGES="python3 wkhtmltopdf ffmpeg"` — system tools for PDF/audio
-- `OPENCLAW_VARIANT=slim` — smaller base image (use `default` for full Debian)
+Also rebuild sandbox image with python3: `echo 'FROM debian:bookworm-slim\nRUN apt-get update && apt-get install -y python3 && rm -rf /var/lib/apt/lists/*' | docker build -t openclaw-sandbox:bookworm-slim -`
 
-## Debugging Remote Errors
+## Debugging
 
 ```bash
-# Check service logs:
-ssh -l igor 158.160.78.230 "journalctl -u druzhok --since '5 min ago' --no-pager | grep -i error | tail -20"
-
-# Check pool container logs:
-ssh -l igor 158.160.78.230 "docker logs druzhok-pool-1 2>&1 | tail -20"
-
-# Check pool health:
-ssh -l igor 158.160.78.230 "curl -s http://127.0.0.1:18800/healthz"
-
-# Check server load:
-ssh -l igor 158.160.78.230 "uptime; free -h; docker stats --no-stream"
-
-# Run OpenClaw with --verbose for detailed plugin/audio/media debugging:
-# (stop the pool first, run manually, then check output)
+# Service logs:
+journalctl -u druzhok --since '5 min ago' | grep -i error | tail -20
+# Container logs:
+docker logs druzhok-pool-1 2>&1 | tail -20
+# Verbose mode (stops pool, runs manually):
 docker run --rm --network host ... openclaw:latest node openclaw.mjs gateway --allow-unconfigured --verbose
+# Health check:
+curl -s http://127.0.0.1:18800/healthz
 ```
