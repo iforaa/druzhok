@@ -221,7 +221,8 @@ defmodule Druzhok.PoolManager do
       "-e", "OPENCLAW_STATE_DIR=/data/state",
       "-e", "NODE_OPTIONS=--max-old-space-size=512",
       "-e", "NODE_ENV=production",
-      "-e", "OPENAI_API_KEY=proxy-managed"
+      "-e", "OPENAI_API_KEY=proxy-managed",
+      "-e", "OPENROUTER_API_KEY=proxy-managed"
     ]
 
     workspace_mounts =

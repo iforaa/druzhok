@@ -81,6 +81,17 @@ defmodule Druzhok.PoolConfig do
             "model" => "gpt-4o-mini-transcribe",
             "baseUrl" => "http://#{proxy_host}:4000/v1"
           }]
+        },
+        "image" => %{
+          "enabled" => true,
+          "models" => [%{
+            "provider" => "openrouter",
+            "model" => "google/gemini-2.5-flash-lite",
+            "baseUrl" => "http://#{proxy_host}:4000/v1"
+          }],
+          "request" => %{
+            "auth" => %{"mode" => "authorization-bearer", "token" => List.first(instances).tenant_key}
+          }
         }
       }
     })
