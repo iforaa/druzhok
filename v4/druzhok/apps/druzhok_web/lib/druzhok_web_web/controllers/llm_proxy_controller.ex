@@ -225,8 +225,11 @@ defmodule DruzhokWebWeb.LlmProxyController do
     end
   end
 
+  @image_model "google/gemini-2.5-flash-lite"
+
   defp convert_responses_to_chat(body) do
-    model = body["model"] || "openai/gpt-4o-mini"
+    # Override model — OpenClaw sends OpenAI model names but we route to OpenRouter
+    model = @image_model
     input = body["input"] || []
 
     messages = Enum.map(List.wrap(input), fn
