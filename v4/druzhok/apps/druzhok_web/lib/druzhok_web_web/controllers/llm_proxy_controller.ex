@@ -222,7 +222,8 @@ defmodule DruzhokWebWeb.LlmProxyController do
 
     case Finch.request(request, Druzhok.Finch, receive_timeout: 120_000) do
       {:ok, %Finch.Response{status: status, body: resp_body}} ->
-        Logger.info("[responses] status=#{status} body=#{String.slice(resp_body, 0, 300)}")
+        trimmed = String.trim(resp_body)
+        Logger.info("[responses] status=#{status} body=#{String.slice(trimmed, 0, 300)}")
         resp_body = convert_chat_to_responses(resp_body, body["model"])
         conn
         |> put_resp_content_type("application/json")
