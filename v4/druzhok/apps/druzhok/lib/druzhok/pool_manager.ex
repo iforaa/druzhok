@@ -66,6 +66,7 @@ defmodule Druzhok.PoolManager do
             Logger.info("[pool_manager] pool=#{pool.name} container is running, updated status")
           end
           HealthMonitor.register(pool.name, pool.container, "openclaw")
+          start_observer(pool)
 
         false ->
           if length(pool.instances) > 0 do
@@ -198,9 +199,13 @@ defmodule Druzhok.PoolManager do
   end
 
   defp start_observer(pool) do
-    Task.start(fn ->
-      Druzhok.PoolObserver.start_link(container: pool.container, pool_name: pool.name)
-    end)
+    case Registry.lookup(Druzhok.Registry, {:pool_observer, pool.name}) do
+      [{_pid, _}] -> :ok
+      [] ->
+        Task.start(fn ->
+          Druzhok.PoolObserver.start_link(container: pool.container, pool_name: pool.name)
+        end)
+    end
   end
 
   defp build_docker_args(pool, instances) do
