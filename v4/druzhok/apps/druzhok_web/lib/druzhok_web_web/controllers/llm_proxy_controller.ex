@@ -228,8 +228,10 @@ defmodule DruzhokWebWeb.LlmProxyController do
     input = body["input"] || []
 
     messages = Enum.map(List.wrap(input), fn
+      %{"role" => "developer", "content" => content} ->
+        %{"role" => "system", "content" => content}
       %{"role" => role, "content" => content} when is_list(content) ->
-        %{"role" => role, "content" => content}
+        %{"role" => role, "content" => convert_content_parts(content)}
       %{"role" => role, "content" => content} when is_binary(content) ->
         %{"role" => role, "content" => content}
       item when is_binary(item) ->
@@ -240,7 +242,17 @@ defmodule DruzhokWebWeb.LlmProxyController do
 
     messages = if messages == [], do: [%{"role" => "user", "content" => "Describe this image."}], else: messages
 
-    %{"model" => model, "messages" => messages, "max_tokens" => body["max_output_tokens"] || 1024}
+    %{"model" => model, "messages" => messages, "max_tokens" => body["max_output_tokens"] || 1024, "stream" => false}
+  end
+
+  defp convert_content_parts(parts) when is_list(parts) do
+    Enum.map(parts, fn
+      %{"type" => "input_image", "image_url" => url} ->
+        %{"type" => "image_url", "image_url" => %{"url" => url}}
+      %{"type" => "input_image", "image_url" => url, "detail" => detail} ->
+        %{"type" => "image_url", "image_url" => %{"url" => url, "detail" => detail}}
+      other -> other
+    end)
   end
 
   defp convert_chat_to_responses(resp_body, model) do
