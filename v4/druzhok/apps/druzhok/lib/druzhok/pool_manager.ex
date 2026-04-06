@@ -181,6 +181,7 @@ defmodule Druzhok.PoolManager do
         :ok ->
           pool |> Ecto.Changeset.change(%{status: @status_running}) |> Repo.update!()
           HealthMonitor.register(pool.name, pool.container, "openclaw")
+          start_observer(pool)
           :ok
 
         :timeout ->
@@ -191,8 +192,15 @@ defmodule Druzhok.PoolManager do
   end
 
   defp stop_pool_container(pool) do
+    Druzhok.PoolObserver.stop(pool.name)
     System.cmd("docker", ["rm", "-f", pool.container], stderr_to_stdout: true)
     HealthMonitor.unregister(pool.name)
+  end
+
+  defp start_observer(pool) do
+    Task.start(fn ->
+      Druzhok.PoolObserver.start_link(container: pool.container, pool_name: pool.name)
+    end)
   end
 
   defp build_docker_args(pool, instances) do
