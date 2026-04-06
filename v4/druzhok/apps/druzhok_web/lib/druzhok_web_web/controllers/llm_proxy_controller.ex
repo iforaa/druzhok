@@ -295,27 +295,33 @@ defmodule DruzhokWebWeb.LlmProxyController do
 
         Logger.info("[responses] streamed text=#{String.slice(text, 0, 100)}")
 
-        # Send as Responses API SSE events
-        response_event = Jason.encode!(%{
-          "type" => "response.completed",
-          "response" => %{
+        # Send full Responses API SSE event sequence
+        output_item = %{
+          "type" => "message",
+          "id" => "msg_proxy",
+          "status" => "completed",
+          "role" => "assistant",
+          "content" => [%{"type" => "output_text", "text" => text}]
+        }
+
+        events = [
+          %{"type" => "response.output_item.added", "output_index" => 0, "item" => output_item},
+          %{"type" => "response.output_text.delta", "output_index" => 0, "content_index" => 0, "delta" => text},
+          %{"type" => "response.output_text.done", "output_index" => 0, "content_index" => 0, "text" => text},
+          %{"type" => "response.output_item.done", "output_index" => 0, "item" => output_item},
+          %{"type" => "response.completed", "response" => %{
             "id" => "resp_proxy",
             "object" => "response",
             "status" => "completed",
-            "output" => [%{
-              "type" => "message",
-              "id" => "msg_proxy",
-              "status" => "completed",
-              "role" => "assistant",
-              "content" => [%{"type" => "output_text", "text" => text}]
-            }],
+            "output" => [output_item],
             "model" => model,
             "usage" => %{"input_tokens" => 0, "output_tokens" => 0}
-          }
-        })
+          }}
+        ]
 
-        Plug.Conn.chunk(conn, "data: #{response_event}\n\n")
-        Plug.Conn.chunk(conn, "data: [DONE]\n\n")
+        for event <- events do
+          Plug.Conn.chunk(conn, "data: #{Jason.encode!(event)}\n\n")
+        end
         conn
 
       {:error, reason} ->
