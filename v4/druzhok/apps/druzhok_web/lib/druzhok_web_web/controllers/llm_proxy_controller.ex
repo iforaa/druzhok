@@ -271,7 +271,7 @@ defmodule DruzhokWebWeb.LlmProxyController do
   end
 
   defp convert_chat_to_responses(resp_body, model) do
-    case Jason.decode(resp_body) do
+    case Jason.decode(String.trim(resp_body)) do
       {:ok, %{"choices" => [%{"message" => %{"content" => content}} | _]}} ->
         Jason.encode!(%{
           "id" => "resp_proxy",
