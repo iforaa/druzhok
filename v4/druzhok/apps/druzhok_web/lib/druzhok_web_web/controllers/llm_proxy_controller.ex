@@ -4,6 +4,8 @@ defmodule DruzhokWebWeb.LlmProxyController do
   alias Druzhok.{Budget, Usage}
   require Logger
 
+  @default_image_model Druzhok.ModelCatalog.default_image_model()
+
   def chat_completions(conn, _params) do
     instance = conn.assigns.instance
     body = conn.body_params
@@ -487,15 +489,6 @@ defmodule DruzhokWebWeb.LlmProxyController do
   defp get_setting(key) do
     import Ecto.Query
     Druzhok.Repo.one(from s in "settings", where: s.key == ^key, select: s.value)
-  end
-
-  @default_image_model Druzhok.ModelCatalog.default_image_model()
-
-  defp resolve_image_model(conn) do
-    case resolve_instance(conn) do
-      nil -> @default_image_model
-      instance -> instance.image_model || @default_image_model
-    end
   end
 
   defp resolve_instance(conn) do
