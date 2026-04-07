@@ -90,7 +90,10 @@ defmodule Druzhok.PoolConfig do
             "provider" => "openai",
             "model" => audio_model,
             "baseUrl" => proxy_url
-          }]
+          }],
+          "request" => %{
+            "auth" => %{"mode" => "authorization-bearer", "token" => first_tenant_key}
+          }
         },
         "image" => %{
           "enabled" => true,
