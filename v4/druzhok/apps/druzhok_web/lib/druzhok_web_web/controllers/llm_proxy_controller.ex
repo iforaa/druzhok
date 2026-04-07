@@ -204,6 +204,22 @@ defmodule DruzhokWebWeb.LlmProxyController do
     # OpenAI Responses API → convert to chat/completions format for OpenRouter
     body = conn.body_params
     image_model = resolve_image_model(conn)
+    instance = resolve_instance(conn)
+
+    if instance do
+      case Budget.check(instance.id) do
+        {:error, :exceeded} ->
+          json_error(conn, 429, "Token budget exceeded", "insufficient_quota")
+        {:ok, _} ->
+          do_responses_proxy(conn, body, image_model, instance)
+      end
+    else
+      do_responses_proxy(conn, body, image_model, nil)
+    end
+  end
+
+  defp do_responses_proxy(conn, body, image_model, instance) do
+    started_at = System.monotonic_time(:millisecond)
     chat_body = convert_responses_to_chat(body, image_model)
     url = LlmFormat.request_url()
     headers = LlmFormat.request_headers(conn.req_headers)
@@ -222,13 +238,39 @@ defmodule DruzhokWebWeb.LlmProxyController do
     Logger.info("[responses] model=#{chat_body["model"]} #{msg_summary}")
 
     if chat_body["stream"] do
-      stream_responses_proxy(conn, request, body["model"])
+      stream_responses_proxy(conn, request, image_model, instance, started_at)
     else
       case Finch.request(request, Druzhok.Finch, receive_timeout: 120_000) do
         {:ok, %Finch.Response{status: status, body: resp_body}} ->
           trimmed = String.trim(resp_body)
           Logger.info("[responses] status=#{status} body=#{String.slice(trimmed, 0, 300)}")
           resp_body = convert_chat_to_responses(resp_body, body["model"])
+
+          if instance do
+            case Jason.decode(String.trim(trimmed)) do
+              {:ok, decoded} ->
+                u = LlmFormat.extract_usage(decoded)
+                total = u.prompt_tokens + u.completion_tokens
+                if total > 0 do
+                  latency = System.monotonic_time(:millisecond) - started_at
+                  Budget.deduct(instance.id, total)
+                  Usage.log(%{
+                    instance_id: instance.id,
+                    model: image_model,
+                    prompt_tokens: u.prompt_tokens,
+                    completion_tokens: u.completion_tokens,
+                    total_tokens: total,
+                    request_type: "image",
+                    requested_model: image_model,
+                    resolved_model: image_model,
+                    provider: "openrouter",
+                    latency_ms: latency
+                  })
+                end
+              _ -> :ok
+            end
+          end
+
           conn
           |> put_resp_content_type("application/json")
           |> send_resp(status, resp_body)
@@ -261,7 +303,7 @@ defmodule DruzhokWebWeb.LlmProxyController do
     %{"model" => model, "messages" => messages, "max_tokens" => body["max_output_tokens"] || 1024, "stream" => body["stream"] || false}
   end
 
-  defp stream_responses_proxy(conn, request, model) do
+  defp stream_responses_proxy(conn, request, image_model, instance, started_at) do
     conn = conn
     |> put_resp_content_type("text/event-stream")
     |> put_resp_header("cache-control", "no-cache")
@@ -276,17 +318,23 @@ defmodule DruzhokWebWeb.LlmProxyController do
 
     case result do
       {:ok, raw_data} ->
-        # Parse streamed SSE chunks to extract full text
-        text = raw_data
+        # Parse streamed SSE chunks to extract full text and usage
+        {text, usage} = raw_data
         |> String.split("\n")
         |> Enum.filter(&String.starts_with?(&1, "data: "))
         |> Enum.map(&String.trim_leading(&1, "data: "))
         |> Enum.reject(&(&1 == "[DONE]"))
-        |> Enum.reduce("", fn json_str, acc ->
+        |> Enum.reduce({"", %{prompt_tokens: 0, completion_tokens: 0}}, fn json_str, {text_acc, usage_acc} ->
           case Jason.decode(json_str) do
-            {:ok, %{"choices" => [%{"delta" => %{"content" => content}} | _]}} when is_binary(content) ->
-              acc <> content
-            _ -> acc
+            {:ok, %{"choices" => [%{"delta" => %{"content" => content}} | _]} = chunk} when is_binary(content) ->
+              new_usage = case chunk do
+                %{"usage" => u} when is_map(u) -> LlmFormat.extract_usage(%{"usage" => u})
+                _ -> usage_acc
+              end
+              {text_acc <> content, new_usage}
+            {:ok, %{"usage" => u}} when is_map(u) ->
+              {text_acc, LlmFormat.extract_usage(%{"usage" => u})}
+            _ -> {text_acc, usage_acc}
           end
         end)
 
@@ -311,14 +359,35 @@ defmodule DruzhokWebWeb.LlmProxyController do
             "object" => "response",
             "status" => "completed",
             "output" => [output_item],
-            "model" => model,
-            "usage" => %{"input_tokens" => 0, "output_tokens" => 0}
+            "model" => image_model,
+            "usage" => %{"input_tokens" => usage.prompt_tokens, "output_tokens" => usage.completion_tokens}
           }}
         ]
 
         for event <- events do
           Plug.Conn.chunk(conn, "data: #{Jason.encode!(event)}\n\n")
         end
+
+        if instance do
+          total = usage.prompt_tokens + usage.completion_tokens
+          if total > 0 do
+            latency = System.monotonic_time(:millisecond) - started_at
+            Budget.deduct(instance.id, total)
+            Usage.log(%{
+              instance_id: instance.id,
+              model: image_model,
+              prompt_tokens: usage.prompt_tokens,
+              completion_tokens: usage.completion_tokens,
+              total_tokens: total,
+              request_type: "image",
+              requested_model: image_model,
+              resolved_model: image_model,
+              provider: "openrouter",
+              latency_ms: latency
+            })
+          end
+        end
+
         conn
 
       {:error, reason} ->
