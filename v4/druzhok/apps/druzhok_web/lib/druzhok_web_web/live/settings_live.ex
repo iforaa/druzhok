@@ -36,6 +36,7 @@ defmodule DruzhokWebWeb.SettingsLive do
         transcription_model: Druzhok.Settings.get("transcription_model") || "google/gemini-2.0-flash-lite-001",
         image_generation_enabled: Druzhok.Settings.get("image_generation_enabled") || "false",
         image_generation_model: Druzhok.Settings.get("image_generation_model") || "google/gemini-2.5-flash-image",
+        audio_tokens_per_second: Druzhok.Settings.get("audio_tokens_per_second") || "10",
         saved: false
       )}
     end
@@ -66,7 +67,7 @@ defmodule DruzhokWebWeb.SettingsLive do
                 "history_budget_ratio", "tool_result_budget_ratio",
                 "response_reserve_ratio", "default_context_window",
                 "token_estimation_divisor", "embedding_api_url", "embedding_model",
-                "compaction_api_url", "compaction_model"] do
+                "compaction_api_url", "compaction_model", "audio_tokens_per_second"] do
       if val = non_empty(params[key]) do
         Druzhok.Settings.set(key, val)
       end
@@ -114,6 +115,7 @@ defmodule DruzhokWebWeb.SettingsLive do
       transcription_model: Druzhok.Settings.get("transcription_model") || "google/gemini-2.0-flash-lite-001",
       image_generation_enabled: Druzhok.Settings.get("image_generation_enabled") || "false",
       image_generation_model: Druzhok.Settings.get("image_generation_model") || "google/gemini-2.5-flash-image",
+      audio_tokens_per_second: Druzhok.Settings.get("audio_tokens_per_second") || "10",
       saved: true
     )}
   end
@@ -214,6 +216,16 @@ defmodule DruzhokWebWeb.SettingsLive do
                 <input name="image_generation_model" value={@image_generation_model}
                        class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm font-mono focus:outline-none focus:ring-1 focus:ring-gray-900" />
               </div>
+            </div>
+          </div>
+
+          <div class="bg-white rounded-xl border border-gray-200 p-6">
+            <h2 class="text-sm font-semibold mb-4">Audio Budget</h2>
+            <p class="text-xs text-gray-500 mb-4">Tokens charged per second of audio for budget accounting. Adjust based on your Whisper pricing.</p>
+            <div>
+              <label class="block text-xs text-gray-500 mb-1">Tokens per Second</label>
+              <input name="audio_tokens_per_second" value={@audio_tokens_per_second}
+                     class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm font-mono focus:outline-none focus:ring-1 focus:ring-gray-900" />
             </div>
           </div>
 
