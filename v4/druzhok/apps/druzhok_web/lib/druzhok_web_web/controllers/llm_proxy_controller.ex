@@ -184,6 +184,27 @@ defmodule DruzhokWebWeb.LlmProxyController do
     end
   end
 
+  defp meter_image(nil, _usage, _model, _started_at), do: :ok
+  defp meter_image(instance, usage, image_model, started_at) do
+    total = usage.prompt_tokens + usage.completion_tokens
+    if total > 0 do
+      latency = System.monotonic_time(:millisecond) - started_at
+      Budget.deduct(instance.id, total)
+      Usage.log(%{
+        instance_id: instance.id,
+        model: image_model,
+        prompt_tokens: usage.prompt_tokens,
+        completion_tokens: usage.completion_tokens,
+        total_tokens: total,
+        request_type: "image",
+        requested_model: image_model,
+        resolved_model: image_model,
+        provider: "openrouter",
+        latency_ms: latency
+      })
+    end
+  end
+
   defp meter_audio(nil, _resp_body, _latency, _model), do: :ok
   defp meter_audio(instance, resp_body, latency, requested_model) do
     duration_ms = case Jason.decode(resp_body) do
@@ -270,8 +291,8 @@ defmodule DruzhokWebWeb.LlmProxyController do
   def responses_proxy(conn, _params) do
     # OpenAI Responses API → convert to chat/completions format for OpenRouter
     body = conn.body_params
-    image_model = resolve_image_model(conn)
     instance = resolve_instance(conn)
+    image_model = if instance, do: instance.image_model || @default_image_model, else: @default_image_model
 
     if instance do
       case Budget.check(instance.id) do
@@ -314,26 +335,8 @@ defmodule DruzhokWebWeb.LlmProxyController do
           resp_body = convert_chat_to_responses(resp_body, body["model"])
 
           if instance do
-            case Jason.decode(String.trim(trimmed)) do
-              {:ok, decoded} ->
-                u = LlmFormat.extract_usage(decoded)
-                total = u.prompt_tokens + u.completion_tokens
-                if total > 0 do
-                  latency = System.monotonic_time(:millisecond) - started_at
-                  Budget.deduct(instance.id, total)
-                  Usage.log(%{
-                    instance_id: instance.id,
-                    model: image_model,
-                    prompt_tokens: u.prompt_tokens,
-                    completion_tokens: u.completion_tokens,
-                    total_tokens: total,
-                    request_type: "image",
-                    requested_model: image_model,
-                    resolved_model: image_model,
-                    provider: "openrouter",
-                    latency_ms: latency
-                  })
-                end
+            case Jason.decode(trimmed) do
+              {:ok, decoded} -> meter_image(instance, LlmFormat.extract_usage(decoded), image_model, started_at)
               _ -> :ok
             end
           end
@@ -435,26 +438,7 @@ defmodule DruzhokWebWeb.LlmProxyController do
           Plug.Conn.chunk(conn, "data: #{Jason.encode!(event)}\n\n")
         end
 
-        if instance do
-          total = usage.prompt_tokens + usage.completion_tokens
-          if total > 0 do
-            latency = System.monotonic_time(:millisecond) - started_at
-            Budget.deduct(instance.id, total)
-            Usage.log(%{
-              instance_id: instance.id,
-              model: image_model,
-              prompt_tokens: usage.prompt_tokens,
-              completion_tokens: usage.completion_tokens,
-              total_tokens: total,
-              request_type: "image",
-              requested_model: image_model,
-              resolved_model: image_model,
-              provider: "openrouter",
-              latency_ms: latency
-            })
-          end
-        end
-
+        meter_image(instance, usage, image_model, started_at)
         conn
 
       {:error, reason} ->
