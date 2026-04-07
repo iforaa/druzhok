@@ -32,6 +32,7 @@ defmodule Druzhok.Instance do
     field :heartbeat_active_end, :string
     field :heartbeat_target, :string
     field :fallback_models, :string
+    field :dreaming, :boolean, default: false
 
     has_one :budget, Druzhok.Budget
 
@@ -40,7 +41,7 @@ defmodule Druzhok.Instance do
 
   def changeset(instance, attrs) do
     instance
-    |> cast(attrs, [:name, :telegram_token, :model, :workspace, :active, :heartbeat_interval, :owner_telegram_id, :sandbox, :timezone, :api_key, :daily_token_limit, :dream_hour, :language, :tenant_key, :bot_runtime, :on_demand_model, :mention_only, :reject_message, :welcome_message, :pool_id, :allowed_telegram_ids, :trigger_name, :image_model, :audio_model, :embedding_model, :heartbeat_active_start, :heartbeat_active_end, :heartbeat_target, :fallback_models])
+    |> cast(attrs, [:name, :telegram_token, :model, :workspace, :active, :heartbeat_interval, :owner_telegram_id, :sandbox, :timezone, :api_key, :daily_token_limit, :dream_hour, :language, :tenant_key, :bot_runtime, :on_demand_model, :mention_only, :reject_message, :welcome_message, :pool_id, :allowed_telegram_ids, :trigger_name, :image_model, :audio_model, :embedding_model, :heartbeat_active_start, :heartbeat_active_end, :heartbeat_target, :fallback_models, :dreaming])
     |> validate_required([:name, :model, :workspace])
     |> unique_constraint(:name)
   end

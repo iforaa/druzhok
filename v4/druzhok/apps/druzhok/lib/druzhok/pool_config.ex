@@ -38,9 +38,7 @@ defmodule Druzhok.PoolConfig do
         "dmScope" => "per-channel-peer"
       },
       "plugins" => %{
-        "entries" => %{
-          "openai" => %{"enabled" => true}
-        }
+        "entries" => build_plugin_entries(instances)
       },
       "models" => %{
         "providers" => build_providers(instances, proxy_host)
@@ -108,6 +106,20 @@ defmodule Druzhok.PoolConfig do
         }
       }
     })
+  end
+
+  defp build_plugin_entries(instances) do
+    entries = %{"openai" => %{"enabled" => true}}
+
+    if Enum.any?(instances, & &1.dreaming) do
+      Map.put(entries, "memory-core", %{
+        "config" => %{
+          "dreaming" => %{"enabled" => true}
+        }
+      })
+    else
+      entries
+    end
   end
 
   defp build_providers(instances, proxy_host) do

@@ -726,6 +726,11 @@ defmodule DruzhokWebWeb.DashboardLive do
     changes = if p = non_empty_param(params, "heartbeat_active_start"), do: Map.put(changes, :heartbeat_active_start, p), else: changes
     changes = if p = non_empty_param(params, "heartbeat_active_end"), do: Map.put(changes, :heartbeat_active_end, p), else: changes
     changes = if p = non_empty_param(params, "fallback_models"), do: Map.put(changes, :fallback_models, p), else: changes
+    changes = case params["dreaming"] do
+      "true" -> Map.put(changes, :dreaming, true)
+      "false" -> Map.put(changes, :dreaming, false)
+      _ -> changes
+    end
 
     update_instance_field(name, changes)
     {:noreply, assign(socket, instances: list_instances())}
@@ -1048,6 +1053,22 @@ defmodule DruzhokWebWeb.DashboardLive do
                              placeholder="24:00" class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm font-mono" />
                     </div>
                   </div>
+                </form>
+              </div>
+
+              <hr class="border-gray-200" />
+
+              <%!-- Dreaming --%>
+              <div>
+                <h3 class="text-sm font-medium text-gray-700 mb-3">Dreaming</h3>
+                <p class="text-xs text-gray-500 mb-2">Background memory consolidation. Runs at 3 AM, promotes strong memories to MEMORY.md.</p>
+                <form phx-change="update_models">
+                  <input type="hidden" name="name" value={@selected} />
+                  <input type="hidden" name="default_model" value={selected_field(@instances, @selected, :model)} />
+                  <select name="dreaming" class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm">
+                    <option value="false" selected={!selected_field(@instances, @selected, :dreaming)}>Disabled</option>
+                    <option value="true" selected={selected_field(@instances, @selected, :dreaming) == true}>Enabled</option>
+                  </select>
                 </form>
               </div>
 
