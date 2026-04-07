@@ -18,6 +18,8 @@ defmodule Druzhok.Usage do
     field :prompt_preview, :string
     field :response_preview, :string
     field :request_body, :string
+    field :request_type, :string, default: "chat"
+    field :audio_duration_ms, :integer
     timestamps(updated_at: false)
   end
 
@@ -25,7 +27,8 @@ defmodule Druzhok.Usage do
     log
     |> cast(attrs, [:instance_id, :model, :prompt_tokens, :completion_tokens,
                     :total_tokens, :cost_cents, :requested_model, :resolved_model,
-                    :provider, :latency_ms, :prompt_preview, :response_preview, :request_body])
+                    :provider, :latency_ms, :prompt_preview, :response_preview, :request_body,
+                    :request_type, :audio_duration_ms])
     |> validate_required([:instance_id, :model, :prompt_tokens, :completion_tokens, :total_tokens])
   end
 
