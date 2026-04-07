@@ -722,6 +722,10 @@ defmodule DruzhokWebWeb.DashboardLive do
     changes = if p = non_empty_param(params, "image_model"), do: Map.put(changes, :image_model, p), else: changes
     changes = if p = non_empty_param(params, "audio_model"), do: Map.put(changes, :audio_model, p), else: changes
     changes = if p = non_empty_param(params, "embedding_model"), do: Map.put(changes, :embedding_model, p), else: changes
+    changes = if p = non_empty_param(params, "heartbeat_target"), do: Map.put(changes, :heartbeat_target, p), else: changes
+    changes = if p = non_empty_param(params, "heartbeat_active_start"), do: Map.put(changes, :heartbeat_active_start, p), else: changes
+    changes = if p = non_empty_param(params, "heartbeat_active_end"), do: Map.put(changes, :heartbeat_active_end, p), else: changes
+    changes = if p = non_empty_param(params, "fallback_models"), do: Map.put(changes, :fallback_models, p), else: changes
 
     update_instance_field(name, changes)
     {:noreply, assign(socket, instances: list_instances())}
@@ -1005,6 +1009,43 @@ defmodule DruzhokWebWeb.DashboardLive do
                           <option value={m.id} selected={m.id == (selected_field(@instances, @selected, :embedding_model) || Druzhok.ModelCatalog.default_embedding_model())}><%= m.name %></option>
                         <% end %>
                       </select>
+                    </div>
+                  </div>
+                  <div class="mt-4">
+                    <label class="block text-xs font-medium text-gray-500 mb-1">Fallback models (JSON array)</label>
+                    <input name="fallback_models" value={selected_field(@instances, @selected, :fallback_models) || ""} disabled={is_running}
+                           placeholder='["google/gemini-3-flash-preview","openai/gpt-5.4-mini"]'
+                           class={"w-full border border-gray-300 rounded-lg px-3 py-2 text-sm font-mono #{if is_running, do: "opacity-50 cursor-not-allowed"}"} />
+                  </div>
+                </form>
+              </div>
+
+              <hr class="border-gray-200" />
+
+              <%!-- Heartbeat Settings --%>
+              <div>
+                <h3 class="text-sm font-medium text-gray-700 mb-3">Heartbeat</h3>
+                <form phx-change="update_models">
+                  <input type="hidden" name="name" value={@selected} />
+                  <input type="hidden" name="default_model" value={selected_field(@instances, @selected, :model)} />
+                  <div class="grid grid-cols-3 gap-4">
+                    <div>
+                      <label class="block text-xs font-medium text-gray-500 mb-1">Target</label>
+                      <select name="heartbeat_target" class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm">
+                        <option value="" selected={is_nil(selected_field(@instances, @selected, :heartbeat_target))}>Default (none)</option>
+                        <option value="none" selected={selected_field(@instances, @selected, :heartbeat_target) == "none"}>None (silent)</option>
+                        <option value="last" selected={selected_field(@instances, @selected, :heartbeat_target) == "last"}>Last contact</option>
+                      </select>
+                    </div>
+                    <div>
+                      <label class="block text-xs font-medium text-gray-500 mb-1">Active from</label>
+                      <input name="heartbeat_active_start" value={selected_field(@instances, @selected, :heartbeat_active_start) || ""}
+                             placeholder="08:00" class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm font-mono" />
+                    </div>
+                    <div>
+                      <label class="block text-xs font-medium text-gray-500 mb-1">Active until</label>
+                      <input name="heartbeat_active_end" value={selected_field(@instances, @selected, :heartbeat_active_end) || ""}
+                             placeholder="24:00" class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm font-mono" />
                     </div>
                   </div>
                 </form>

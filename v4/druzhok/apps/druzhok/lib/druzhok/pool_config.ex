@@ -142,7 +142,7 @@ defmodule Druzhok.PoolConfig do
       name = instance.name
       # workspace uses the HOST path — mounted at the same path inside the pool container.
       # This way Docker-in-Docker sandbox mounts resolve correctly.
-      %{
+      agent = %{
         "id" => name,
         "model" => "tenant-#{name}/#{instance.model}",
         "workspace" => instance.workspace,
@@ -150,6 +150,37 @@ defmodule Druzhok.PoolConfig do
           "workspaceRoot" => instance.workspace
         }
       }
+
+      heartbeat = %{}
+      heartbeat = if instance.heartbeat_interval && instance.heartbeat_interval > 0,
+        do: Map.put(heartbeat, "every", "#{instance.heartbeat_interval}m"),
+        else: heartbeat
+      heartbeat = if instance.heartbeat_target,
+        do: Map.put(heartbeat, "target", instance.heartbeat_target),
+        else: heartbeat
+      heartbeat = if instance.heartbeat_active_start && instance.heartbeat_active_end,
+        do: Map.put(heartbeat, "activeHours", %{"start" => instance.heartbeat_active_start, "end" => instance.heartbeat_active_end}),
+        else: heartbeat
+
+      agent = if map_size(heartbeat) > 0,
+        do: Map.put(agent, "heartbeat", heartbeat),
+        else: agent
+
+      agent = case instance.fallback_models do
+        nil -> agent
+        "" -> agent
+        json ->
+          case Jason.decode(json) do
+            {:ok, models} when is_list(models) and models != [] ->
+              put_in(agent, ["model"], %{
+                "default" => "tenant-#{name}/#{instance.model}",
+                "fallbacks" => Enum.map(models, &"tenant-#{name}/#{&1}")
+              })
+            _ -> agent
+          end
+      end
+
+      agent
     end)
   end
 
@@ -162,7 +193,8 @@ defmodule Druzhok.PoolConfig do
         "botToken" => instance.telegram_token,
         "dmPolicy" => "pairing",
         "allowFrom" => allowed,
-        "groupPolicy" => "open"
+        "groupPolicy" => "open",
+        "streaming" => "partial"
       }
 
       account = if map_size(groups) > 0 do
