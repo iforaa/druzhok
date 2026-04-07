@@ -195,11 +195,13 @@ defmodule Druzhok.PoolConfig do
         Druzhok.AllowedChat.groups_for_instance(name)
         |> Enum.filter(&(&1.status == "approved"))
         |> Map.new(fn chat ->
-          {to_string(chat.chat_id), %{
+          config = %{
             "enabled" => true,
             "groupPolicy" => "open",
             "requireMention" => mention_only
-          }}
+          }
+          config = if chat.system_prompt, do: Map.put(config, "systemPrompt", chat.system_prompt), else: config
+          {to_string(chat.chat_id), config}
         end)
     end
   end
@@ -221,7 +223,7 @@ defmodule Druzhok.PoolConfig do
     |> Enum.map(&Map.get(&1, :trigger_name))
     |> Enum.reject(&is_nil/1)
     |> Enum.reject(&(&1 == ""))
-    |> Enum.map(fn name -> "(?i)\\b#{Regex.escape(name)}\\b" end)
+    |> Enum.map(fn name -> Regex.escape(name) end)
   end
 
 end
