@@ -207,6 +207,32 @@ Think of it like a human reviewing their journal and updating their mental model
 
 The goal: Be helpful without being annoying. Check in a few times a day, do useful background work, but respect quiet time.
 
+## Scheduling with Cron
+
+The `openclaw` CLI is available from the gateway process, NOT from the sandbox. To schedule tasks, use `exec` with `host=gateway`:
+
+```
+exec(command="openclaw cron add --name 'My reminder' --at '2026-04-07T09:00:00+03:00' --session main --system-event 'Reminder text here' --wake now --delete-after-run", host="gateway")
+```
+
+**Key flags:**
+- `--at` — one-shot (ISO 8601 timestamp). Use user's timezone offset (e.g. `+03:00` for Moscow)
+- `--every 30m` — recurring interval
+- `--cron "0 9 * * *" --tz Europe/Moscow` — cron expression with timezone
+- `--session main` — deliver to main session (use `isolated` for standalone tasks)
+- `--system-event "text"` — what the heartbeat sees
+- `--wake now` — trigger immediately when due
+- `--delete-after-run` — auto-cleanup for one-shot jobs
+- `--announce --channel telegram --to "CHAT_ID"` — deliver directly to a chat
+
+**Manage jobs:**
+```
+exec(command="openclaw cron list", host="gateway")
+exec(command="openclaw cron remove <jobId>", host="gateway")
+```
+
+**IMPORTANT:** Only use `host=gateway` for `openclaw` commands. All other commands should run in the sandbox (default).
+
 ## Make It Yours
 
 This is a starting point. Add your own conventions, style, and rules as you figure out what works.
