@@ -372,13 +372,17 @@ defmodule DruzhokWebWeb.LlmProxyController do
   @default_image_model Druzhok.ModelCatalog.default_image_model()
 
   defp resolve_image_model(conn) do
+    case resolve_instance(conn) do
+      nil -> @default_image_model
+      instance -> instance.image_model || @default_image_model
+    end
+  end
+
+  defp resolve_instance(conn) do
     case Plug.Conn.get_req_header(conn, "authorization") do
       ["Bearer " <> token] ->
-        case Druzhok.Repo.get_by(Druzhok.Instance, tenant_key: token) do
-          nil -> @default_image_model
-          instance -> instance.image_model || @default_image_model
-        end
-      _ -> @default_image_model
+        Druzhok.Repo.get_by(Druzhok.Instance, tenant_key: token)
+      _ -> nil
     end
   end
 
