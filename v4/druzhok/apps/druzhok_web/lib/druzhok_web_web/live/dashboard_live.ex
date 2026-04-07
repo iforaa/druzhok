@@ -1197,7 +1197,9 @@ defmodule DruzhokWebWeb.DashboardLive do
         elapsed_ms: r.latency_ms,
         prompt_preview: r.prompt_preview,
         response_preview: r.response_preview,
-        request_body: r.request_body
+        request_body: r.request_body,
+        request_type: r.request_type || "chat",
+        audio_duration_ms: r.audio_duration_ms
       }
     end)
     summary = Druzhok.Usage.daily_usage(instance[:id])

@@ -60,6 +60,7 @@ defmodule DruzhokWebWeb.Live.Components.UsageTab do
           <thead>
             <tr class="border-b border-gray-200 text-left text-xs text-gray-500 uppercase">
               <th class="px-3 py-2">Time</th>
+              <th class="px-3 py-2">Type</th>
               <th class="px-3 py-2">Model</th>
               <th class="px-3 py-2 text-right">Input</th>
               <th class="px-3 py-2 text-right">Output</th>
@@ -73,15 +74,26 @@ defmodule DruzhokWebWeb.Live.Components.UsageTab do
               <tr phx-click="toggle_request" phx-value-id={req.id}
                   class={"border-b border-gray-100 cursor-pointer transition #{if @expanded_request == req.id, do: "bg-blue-50", else: "hover:bg-gray-50"}"}>
                 <td class="px-3 py-2 text-xs text-gray-500 font-mono"><%= format_time(req.inserted_at) %></td>
+                <td class="px-3 py-2">
+                  <span class={"inline-block px-1.5 py-0.5 rounded text-[10px] font-medium #{type_badge_class(req.request_type)}"}>
+                    <%= req.request_type %>
+                  </span>
+                </td>
                 <td class="px-3 py-2 font-mono text-xs truncate max-w-[200px]"><%= short_model(req.model) %></td>
-                <td class="px-3 py-2 text-right text-blue-600 font-mono"><%= format_number(req.input_tokens) %></td>
+                <td class="px-3 py-2 text-right text-blue-600 font-mono">
+                  <%= if req[:request_type] == "audio" and req[:audio_duration_ms] do %>
+                    <%= format_duration(req.audio_duration_ms) %>
+                  <% else %>
+                    <%= format_number(req.input_tokens) %>
+                  <% end %>
+                </td>
                 <td class="px-3 py-2 text-right text-green-600 font-mono"><%= format_number(req.output_tokens) %></td>
                 <td class="px-3 py-2 text-right font-mono font-medium"><%= format_number((req.input_tokens || 0) + (req.output_tokens || 0)) %></td>
                 <td class="px-3 py-2 text-right"><%= if req.tool_calls_count > 0, do: req.tool_calls_count, else: "-" %></td>
                 <td class="px-3 py-2 text-right text-gray-500 font-mono text-xs"><%= format_elapsed(req.elapsed_ms) %></td>
               </tr>
               <tr :if={@expanded_request == req.id} class="border-b border-gray-200">
-                <td colspan="7" class="px-3 py-3">
+                <td colspan="8" class="px-3 py-3">
                   <div class="space-y-3">
                     <div :if={req.prompt_preview && req.prompt_preview != ""}>
                       <div class="text-xs font-medium text-gray-500 uppercase mb-1">Prompt</div>
@@ -138,4 +150,14 @@ defmodule DruzhokWebWeb.Live.Components.UsageTab do
   defp format_bytes(n) when n >= 1_048_576, do: "#{Float.round(n / 1_048_576, 1)}MB"
   defp format_bytes(n) when n >= 1024, do: "#{Float.round(n / 1024, 1)}KB"
   defp format_bytes(n), do: "#{n}B"
+
+  defp type_badge_class("chat"), do: "bg-blue-100 text-blue-700"
+  defp type_badge_class("image"), do: "bg-purple-100 text-purple-700"
+  defp type_badge_class("audio"), do: "bg-amber-100 text-amber-700"
+  defp type_badge_class("embedding"), do: "bg-gray-100 text-gray-600"
+  defp type_badge_class(_), do: "bg-gray-100 text-gray-600"
+
+  defp format_duration(ms) when ms >= 60_000, do: "#{Float.round(ms / 60_000, 1)}m"
+  defp format_duration(ms) when ms >= 1_000, do: "#{Float.round(ms / 1_000, 1)}s"
+  defp format_duration(ms), do: "#{ms}ms"
 end
