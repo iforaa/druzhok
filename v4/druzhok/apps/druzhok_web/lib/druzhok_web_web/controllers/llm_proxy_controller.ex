@@ -135,36 +135,82 @@ defmodule DruzhokWebWeb.LlmProxyController do
     if is_nil(openai_key) do
       json_error(conn, 503, "Audio transcription not configured", "server_error")
     else
-      started_at = System.monotonic_time(:millisecond)
+      instance = resolve_instance(conn)
 
-      # Plug.Parsers already consumed the multipart body — rebuild it
-      {multipart_body, content_type} = build_multipart(conn.body_params)
-
-      url = "https://api.openai.com/v1/audio/transcriptions"
-      headers = [
-        {"authorization", "Bearer #{openai_key}"},
-        {"content-type", content_type}
-      ]
-
-      request = Finch.build(:post, url, headers, multipart_body)
-
-      case Finch.request(request, Druzhok.Finch, receive_timeout: 120_000) do
-        {:ok, %Finch.Response{status: status, body: resp_body}} ->
-          latency = System.monotonic_time(:millisecond) - started_at
-
-          if status == 200 do
-            Logger.info("[audio] transcription #{latency}ms")
-          end
-
-          conn
-          |> put_resp_content_type("application/json")
-          |> send_resp(status, resp_body)
-
-        {:error, reason} ->
-          Logger.error("Audio transcription proxy error: #{inspect(reason)}")
-          json_error(conn, 502, "Transcription provider unavailable", "server_error")
+      if instance do
+        case Budget.check(instance.id) do
+          {:error, :exceeded} ->
+            json_error(conn, 429, "Token budget exceeded", "insufficient_quota")
+          {:ok, _} ->
+            do_audio_transcription(conn, openai_key, instance)
+        end
+      else
+        do_audio_transcription(conn, openai_key, nil)
       end
     end
+  end
+
+  defp do_audio_transcription(conn, openai_key, instance) do
+    started_at = System.monotonic_time(:millisecond)
+
+    # Plug.Parsers already consumed the multipart body — rebuild it
+    {multipart_body, content_type} = build_multipart(conn.body_params)
+
+    url = "https://api.openai.com/v1/audio/transcriptions"
+    headers = [
+      {"authorization", "Bearer #{openai_key}"},
+      {"content-type", content_type}
+    ]
+
+    request = Finch.build(:post, url, headers, multipart_body)
+
+    case Finch.request(request, Druzhok.Finch, receive_timeout: 120_000) do
+      {:ok, %Finch.Response{status: status, body: resp_body}} ->
+        latency = System.monotonic_time(:millisecond) - started_at
+
+        if status == 200 do
+          Logger.info("[audio] transcription #{latency}ms")
+          meter_audio(instance, resp_body, latency, conn.body_params["model"])
+        end
+
+        conn
+        |> put_resp_content_type("application/json")
+        |> send_resp(status, resp_body)
+
+      {:error, reason} ->
+        Logger.error("Audio transcription proxy error: #{inspect(reason)}")
+        json_error(conn, 502, "Transcription provider unavailable", "server_error")
+    end
+  end
+
+  defp meter_audio(nil, _resp_body, _latency, _model), do: :ok
+  defp meter_audio(instance, resp_body, latency, requested_model) do
+    duration_ms = case Jason.decode(resp_body) do
+      {:ok, %{"duration" => d}} when is_number(d) -> round(d * 1000)
+      _ -> nil
+    end
+
+    tokens_per_second = case get_setting("audio_tokens_per_second") do
+      nil -> 10
+      val -> String.to_integer(val)
+    end
+
+    equivalent_tokens = if duration_ms, do: div(duration_ms, 1000) * tokens_per_second, else: 0
+    if equivalent_tokens > 0, do: Budget.deduct(instance.id, equivalent_tokens)
+
+    Usage.log(%{
+      instance_id: instance.id,
+      model: requested_model || "whisper-1",
+      prompt_tokens: 0,
+      completion_tokens: 0,
+      total_tokens: equivalent_tokens,
+      request_type: "audio",
+      audio_duration_ms: duration_ms,
+      requested_model: requested_model || "whisper-1",
+      resolved_model: "whisper-1",
+      provider: "openai",
+      latency_ms: latency
+    })
   end
 
   defp build_multipart(params) do
