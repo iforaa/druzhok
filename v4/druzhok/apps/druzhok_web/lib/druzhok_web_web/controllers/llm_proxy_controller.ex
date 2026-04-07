@@ -118,6 +118,7 @@ defmodule DruzhokWebWeb.LlmProxyController do
         prompt_tokens: usage.prompt_tokens,
         completion_tokens: usage.completion_tokens,
         total_tokens: total,
+        request_type: "chat",
         requested_model: model,
         resolved_model: model,
         provider: "openrouter",
