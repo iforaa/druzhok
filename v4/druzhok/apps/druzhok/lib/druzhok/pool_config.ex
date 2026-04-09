@@ -80,6 +80,14 @@ defmodule Druzhok.PoolConfig do
     # OpenClaw calls localhost:4000 with native fetch (no proxy agent = clean FormData)
     config
     |> put_in(["tools"], %{
+      "sandbox" => %{
+        "tools" => %{
+          "allow" => [
+            "group:fs", "group:runtime", "group:sessions", "group:memory",
+            "group:web", "group:media", "group:messaging", "group:automation"
+          ]
+        }
+      },
       "media" => %{
         "audio" => %{
           "enabled" => true,
