@@ -109,7 +109,23 @@ defmodule Druzhok.PoolConfig do
   end
 
   defp build_plugin_entries(instances) do
-    entries = %{"openai" => %{"enabled" => true}}
+    proxy_host = Druzhok.Runtime.proxy_host()
+
+    entries = %{
+      "openai" => %{"enabled" => true},
+      "duckduckgo" => %{"enabled" => true}
+    }
+
+    # Perplexity web search via OpenRouter proxy
+    entries = Map.put(entries, "perplexity", %{
+      "enabled" => true,
+      "config" => %{
+        "webSearch" => %{
+          "baseUrl" => "http://#{proxy_host}:4000/v1",
+          "apiKey" => List.first(instances).tenant_key
+        }
+      }
+    })
 
     if Enum.any?(instances, & &1.dreaming) do
       Map.put(entries, "memory-core", %{
