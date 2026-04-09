@@ -84,7 +84,8 @@ defmodule Druzhok.PoolConfig do
         "tools" => %{
           "allow" => [
             "group:fs", "group:runtime", "group:sessions", "group:memory",
-            "group:web", "group:media", "group:messaging", "group:automation"
+            "group:web", "group:media", "group:messaging", "group:automation",
+            "group:ui"
           ]
         }
       },
