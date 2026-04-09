@@ -113,6 +113,7 @@ defmodule Druzhok.PoolConfig do
 
     if Enum.any?(instances, & &1.dreaming) do
       Map.put(entries, "memory-core", %{
+        "enabled" => true,
         "config" => %{
           "dreaming" => %{"enabled" => true}
         }
