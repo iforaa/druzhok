@@ -21,6 +21,20 @@ Always use `/my-commit` skill for committing changes.
 - Plugins activate via env vars (`OPENAI_API_KEY`, `OPENROUTER_API_KEY`). Pass dummy values to enable without exposing real keys.
 - `OPENCLAW_EXTENSIONS="telegram openai"` in Docker build — without `openai`, audio transcription silently fails.
 
+## Sandbox Tool Allowlist
+
+**After OpenClaw upgrades, always verify tools are available.** Since 2026.4.5, `sandbox.mode: "all"` restricts tools to only `read/write/edit` by default. PoolConfig must explicitly allow tool groups via `tools.sandbox.tools.allow`:
+
+```
+group:fs, group:runtime, group:sessions, group:memory,
+group:web, group:media, group:messaging, group:automation, group:ui
+```
+
+If the bot suddenly loses tools (exec, web_search, image, etc.) after an upgrade, check:
+1. The generated OpenClaw JSON has `tools.sandbox.tools.allow` with all groups
+2. Send `/new` to the bot to reload tool definitions in the session
+3. Verify with proxy logs: `grep -o '"name" => "[^"]*"' | sort -u` should show 15+ tools
+
 ## Proxy Endpoints
 
 All API calls from pool containers route through the Elixir proxy (localhost:4000):
@@ -29,7 +43,7 @@ All API calls from pool containers route through the Elixir proxy (localhost:400
 |----------|------|----------|-------|
 | `POST /v1/chat/completions` | tenant_key | OpenRouter | Main LLM calls |
 | `POST /v1/embeddings` | tenant_key | OpenRouter | Memory search vectors |
-| `POST /v1/audio/transcriptions` | none | OpenAI Whisper | Multipart rebuild (Plug.Parsers consumes body) |
+| `POST /v1/audio/transcriptions` | tenant_key (optional) | OpenAI Whisper | Multipart rebuild (Plug.Parsers consumes body) |
 | `POST /v1/responses` | tenant_key (optional) | OpenRouter | Responses API → chat/completions conversion + SSE streaming |
 
 Image/audio/embedding models are configurable per instance (fields on `instances` table). Responses proxy resolves image model from `Authorization: Bearer <tenant_key>` header, falls back to `ModelCatalog.default_image_model()`. OpenRouter response has leading whitespace — always `String.trim()` before `Jason.decode()`.
