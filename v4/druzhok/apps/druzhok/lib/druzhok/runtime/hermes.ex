@@ -51,8 +51,14 @@ defmodule Druzhok.Runtime.Hermes do
     # fails to mkdir `/.local` on boot (no /etc/passwd entry for uid 1000).
     # The hermes entrypoint creates `$HERMES_HOME/home` for exactly this
     # purpose — per-profile HOME for subprocesses (git, ssh, npm, …).
+    #
+    # STT_OPENAI_BASE_URL routes voice transcription through the druzhok
+    # proxy's /v1/audio/transcriptions endpoint instead of api.openai.com.
+    # The provider choice (openai vs local/faster-whisper) lives in
+    # config.yaml's `stt:` section — see build_config_yaml/1.
     tenant_key = Map.get(instance, :tenant_key, "") || ""
     model = Map.get(instance, :model) || @default_model
+    proxy_url = proxy_url()
 
     %{
       "HERMES_HOME" => @data_mount,
@@ -62,7 +68,8 @@ defmodule Druzhok.Runtime.Hermes do
       "TELEGRAM_ALLOWED_USERS" => build_allowlist(instance),
       "HERMES_INFERENCE_PROVIDER" => "custom",
       "OPENROUTER_API_KEY" => tenant_key,
-      "HERMES_MODEL" => model
+      "HERMES_MODEL" => model,
+      "STT_OPENAI_BASE_URL" => proxy_url
     }
   end
 
@@ -131,9 +138,6 @@ defmodule Druzhok.Runtime.Hermes do
   end
 
   defp build_config_yaml(instance) do
-    proxy_host = Druzhok.Runtime.proxy_host()
-    proxy_port = System.get_env("LLM_PROXY_PORT") || "4000"
-    proxy_url = "http://#{proxy_host}:#{proxy_port}/v1"
     model = Map.get(instance, :model) || @default_model
 
     """
@@ -142,7 +146,7 @@ defmodule Druzhok.Runtime.Hermes do
     model:
       default: "#{model}"
       provider: "custom"
-      base_url: "#{proxy_url}"
+      base_url: "#{proxy_url()}"
 
     platforms:
       telegram:
@@ -151,6 +155,18 @@ defmodule Druzhok.Runtime.Hermes do
     messaging:
       enabled_platforms:
         telegram: [hermes-telegram]
+
+    stt:
+      enabled: true
+      provider: "openai"
+      openai:
+        model: "whisper-1"
     """
+  end
+
+  defp proxy_url do
+    proxy_host = Druzhok.Runtime.proxy_host()
+    proxy_port = System.get_env("LLM_PROXY_PORT") || "4000"
+    "http://#{proxy_host}:#{proxy_port}/v1"
   end
 end
