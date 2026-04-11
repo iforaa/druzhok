@@ -91,6 +91,9 @@ defmodule Druzhok.Runtime.Hermes do
     # Patch just the dashboard-owned fields in config.yaml on every start
     # so the dashboard stays the source of truth for model selection
     # without clobbering hermes's runtime writes (thread IDs etc).
+    #
+    # Matches any YAML value shape hermes normalizes to: quoted
+    # (`default: "..."`), unquoted (`default: foo/bar`), or null.
     config_path = Path.join(data_root, "config.yaml")
     model = Map.get(instance, :model) || @default_model
 
@@ -98,9 +101,10 @@ defmodule Druzhok.Runtime.Hermes do
       {:ok, content} ->
         updated =
           Regex.replace(
-            ~r/^(\s*default:\s*)"[^"]*"/m,
+            ~r/^(\s*default:\s*).*$/m,
             content,
-            "\\1\"#{model}\""
+            ~s(\\1"#{model}"),
+            global: false
           )
 
         if updated != content, do: File.write!(config_path, updated)
