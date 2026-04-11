@@ -55,6 +55,7 @@ defmodule Druzhok.BotManager do
         data_root = Path.dirname(instance.workspace)
 
         write_workspace_files(data_root, runtime.workspace_files(instance))
+        sync_runtime_config(runtime, instance, data_root)
 
         case start_container(name, image, env, data_root, runtime.data_mount_path(), command) do
           {:ok, container_id} ->
@@ -151,6 +152,14 @@ defmodule Druzhok.BotManager do
       end
     else
       nil
+    end
+  end
+
+  defp sync_runtime_config(runtime, instance, data_root) do
+    if function_exported?(runtime, :sync_config, 2) do
+      runtime.sync_config(instance, data_root)
+    else
+      :ok
     end
   end
 

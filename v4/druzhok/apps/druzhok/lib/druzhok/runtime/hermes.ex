@@ -77,8 +77,34 @@ defmodule Druzhok.Runtime.Hermes do
   def workspace_files(instance) do
     # :create_only — write on fresh data root only. Hermes persists runtime
     # state (telegram thread IDs, etc.) back into config.yaml at runtime, so
-    # we must never overwrite it on restart.
+    # we must never overwrite it on restart. sync_config/2 (below) handles
+    # targeted updates on every start.
     [{"config.yaml", build_config_yaml(instance), :create_only}]
+  end
+
+  @impl true
+  def sync_config(instance, data_root) do
+    # Patch just the dashboard-owned fields in config.yaml on every start
+    # so the dashboard stays the source of truth for model selection
+    # without clobbering hermes's runtime writes (thread IDs etc).
+    config_path = Path.join(data_root, "config.yaml")
+    model = Map.get(instance, :model) || @default_model
+
+    case File.read(config_path) do
+      {:ok, content} ->
+        updated =
+          Regex.replace(
+            ~r/^(\s*default:\s*)"[^"]*"/m,
+            content,
+            "\\1\"#{model}\""
+          )
+
+        if updated != content, do: File.write!(config_path, updated)
+        :ok
+
+      {:error, _} ->
+        :ok
+    end
   end
 
   @impl true
