@@ -3,6 +3,10 @@ defmodule DruzhokWebWeb.Live.Components.SettingsTab do
 
   alias Druzhok.{Instance, Repo, Runtime, Pairing, Telegram, I18n, BotManager, ModelCatalog}
 
+  # Hermes pairing code: 8 characters from the unambiguous alphabet
+  # (A–Z minus IO, 2–9), per hermes-agent/gateway/pairing.py.
+  @pairing_code_re ~r/^[A-HJ-NP-Z2-9]{8}$/
+
   @impl true
   def update(%{instance: instance} = assigns, socket) do
     runtime = Runtime.get(instance[:bot_runtime] || "zeroclaw", Runtime.ZeroClaw)
@@ -205,11 +209,18 @@ defmodule DruzhokWebWeb.Live.Components.SettingsTab do
           </div>
         </div>
         <form phx-submit="approve_user" phx-target={@myself} class="flex gap-2">
-          <input name="user_input" placeholder="Paste user ID or bind command"
+          <input name="user_input"
+                 placeholder={if @runtime.supports_feature?(:pairing_code_approval), do: "Paste pairing code (e.g. 9AYXT8ZQ) or user ID", else: "Paste user ID or bind command"}
                  class="flex-1 border border-gray-300 rounded-lg px-3 py-2 text-sm" />
           <button type="submit" class="px-3 py-2 bg-gray-900 text-white rounded-lg text-sm">Approve</button>
         </form>
-        <p class="text-xs text-gray-400 mt-1">Paste the number from the bot's approval message</p>
+        <p class="text-xs text-gray-400 mt-1">
+          <%= if @runtime.supports_feature?(:pairing_code_approval) do %>
+            Paste the 8-character code the bot sends to new users, or a numeric user ID.
+          <% else %>
+            Paste the number from the bot's approval message.
+          <% end %>
+        </p>
       </div>
 
       <hr class="border-gray-200" />
@@ -396,20 +407,41 @@ defmodule DruzhokWebWeb.Live.Components.SettingsTab do
   end
 
   def handle_event("approve_user", %{"user_input" => input}, socket) do
-    user_id = Runtime.parse_user_input(input)
+    trimmed = String.trim(input || "") |> String.upcase()
+    runtime = socket.assigns.runtime
 
-    if user_id != "" do
-      mutate_allowlist(socket, user_id, :add)
-      notify_parent(socket)
+    cond do
+      trimmed == "" ->
+        {:noreply, socket}
+
+      Regex.match?(@pairing_code_re, trimmed) and
+          runtime.supports_feature?(:pairing_code_approval) ->
+        approve_pairing_code(socket, trimmed)
+
+      true ->
+        user_id = Runtime.parse_user_input(input)
+
+        if user_id != "" do
+          mutate_allowlist(socket, user_id, :add)
+          notify_parent(socket)
+        end
+
+        {:noreply, socket}
     end
-
-    {:noreply, socket}
   end
 
   def handle_event("remove_user", %{"user_id" => user_id}, socket) do
     mutate_allowlist(socket, user_id, :remove)
     notify_parent(socket)
     {:noreply, socket}
+  end
+
+  defp approve_pairing_code(socket, code) do
+    name = socket.assigns.instance.name
+    {output, exit_code} = BotManager.exec(name, ["hermes", "pairing", "approve", "telegram", code])
+
+    flash_kind = if exit_code == 0, do: :info, else: :error
+    {:noreply, put_flash(socket, flash_kind, String.trim(output))}
   end
 
   defp mutate_allowlist(socket, user_id, op) do

@@ -240,4 +240,14 @@ defmodule Druzhok.BotManager do
   end
 
   def container_name(name), do: "druzhok-bot-#{name}"
+
+  @doc """
+  Run a command inside a bot container. Returns `{output, exit_code}`.
+
+  Used by runtime-specific flows that need to invoke a tool inside the
+  container (e.g. hermes's pairing-code approve).
+  """
+  def exec(name, args) when is_list(args) do
+    System.cmd("docker", ["exec", container_name(name) | args], stderr_to_stdout: true)
+  end
 end

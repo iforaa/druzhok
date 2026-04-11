@@ -109,6 +109,7 @@ defmodule Druzhok.Runtime.Hermes do
 
   @impl true
   def supports_feature?(:db_allowlist), do: true
+  def supports_feature?(:pairing_code_approval), do: true
   def supports_feature?(_), do: false
 
   # --- Helpers ---
