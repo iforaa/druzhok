@@ -68,6 +68,15 @@ defmodule Druzhok.Runtime.Hermes do
       "HOME" => @data_mount <> "/home",
       "TELEGRAM_BOT_TOKEN" => Map.get(instance, :telegram_token, "") || "",
       "TELEGRAM_ALLOWED_USERS" => build_allowlist(instance),
+      "TELEGRAM_ALLOW_ALL_USERS" => to_string(Map.get(instance, :allow_all_telegram_users, false)),
+      # Group chat trigger gating. `require_mention` forces groups to need
+      # an @mention / regex trigger / reply-to-bot. `mention_patterns` is
+      # a JSON list of regexes hermes compiles with re.IGNORECASE.
+      # `free_response_chats` are chat IDs where the bot always responds
+      # even with require_mention on.
+      "TELEGRAM_REQUIRE_MENTION" => to_string(Map.get(instance, :mention_only, false)),
+      "TELEGRAM_MENTION_PATTERNS" => build_mention_patterns(instance),
+      "TELEGRAM_FREE_RESPONSE_CHATS" => build_free_response_chats(instance),
       "HERMES_INFERENCE_PROVIDER" => "custom",
       "OPENROUTER_API_KEY" => tenant_key,
       "HERMES_MODEL" => model,
@@ -160,6 +169,7 @@ defmodule Druzhok.Runtime.Hermes do
   @impl true
   def supports_feature?(:db_allowlist), do: true
   def supports_feature?(:pairing_code_approval), do: true
+  def supports_feature?(:group_chat_config), do: true
   def supports_feature?(_), do: false
 
   # --- Helpers ---
@@ -178,6 +188,43 @@ defmodule Druzhok.Runtime.Hermes do
     |> Enum.reject(&(&1 in [nil, ""]))
     |> Enum.uniq()
     |> Enum.join(",")
+  end
+
+  defp build_mention_patterns(instance) do
+    case Map.get(instance, :trigger_name) do
+      nil ->
+        ""
+
+      "" ->
+        ""
+
+      name ->
+        # One regex per name; word-boundary + case-insensitive (the re.IGNORECASE
+        # flag is applied by hermes when it compiles the pattern list).
+        Jason.encode!(["\\b#{Regex.escape(name)}\\b"])
+    end
+  end
+
+  defp build_free_response_chats(instance) do
+    case Map.get(instance, :allowed_telegram_chats) do
+      nil ->
+        ""
+
+      "" ->
+        ""
+
+      json ->
+        case Jason.decode(json) do
+          {:ok, list} when is_list(list) ->
+            list
+            |> Enum.map(&to_string/1)
+            |> Enum.reject(&(&1 == ""))
+            |> Enum.join(",")
+
+          _ ->
+            ""
+        end
+    end
   end
 
   defp build_config_yaml(instance) do

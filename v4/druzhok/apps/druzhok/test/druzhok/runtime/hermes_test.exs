@@ -11,6 +11,10 @@ defmodule Druzhok.Runtime.HermesTest do
     model: "anthropic/claude-opus-4.6",
     owner_telegram_id: 42,
     allowed_telegram_ids: Jason.encode!(["100", "200"]),
+    mention_only: false,
+    trigger_name: nil,
+    allowed_telegram_chats: nil,
+    allow_all_telegram_users: false,
     timezone: "Europe/Amsterdam",
     id: 1
   }
@@ -42,6 +46,31 @@ defmodule Druzhok.Runtime.HermesTest do
 
     test "sets HERMES_HOME to /opt/data" do
       assert Hermes.env_vars(@instance)["HERMES_HOME"] == "/opt/data"
+    end
+
+    test "TELEGRAM_REQUIRE_MENTION reflects mention_only flag" do
+      assert Hermes.env_vars(%{@instance | mention_only: true})["TELEGRAM_REQUIRE_MENTION"] == "true"
+      assert Hermes.env_vars(%{@instance | mention_only: false})["TELEGRAM_REQUIRE_MENTION"] == "false"
+    end
+
+    test "TELEGRAM_MENTION_PATTERNS wraps trigger_name in a word-bounded regex" do
+      env = Hermes.env_vars(Map.put(@instance, :trigger_name, "Вася"))
+      assert env["TELEGRAM_MENTION_PATTERNS"] == Jason.encode!(["\\bВася\\b"])
+    end
+
+    test "TELEGRAM_MENTION_PATTERNS is empty when trigger_name is nil or blank" do
+      assert Hermes.env_vars(Map.put(@instance, :trigger_name, nil))["TELEGRAM_MENTION_PATTERNS"] == ""
+      assert Hermes.env_vars(Map.put(@instance, :trigger_name, ""))["TELEGRAM_MENTION_PATTERNS"] == ""
+    end
+
+    test "TELEGRAM_FREE_RESPONSE_CHATS is a comma-separated list from the JSON array field" do
+      inst = Map.put(@instance, :allowed_telegram_chats, ~s(["-1002273542926","-12345"]))
+      assert Hermes.env_vars(inst)["TELEGRAM_FREE_RESPONSE_CHATS"] == "-1002273542926,-12345"
+    end
+
+    test "TELEGRAM_ALLOW_ALL_USERS reflects the flag" do
+      assert Hermes.env_vars(Map.put(@instance, :allow_all_telegram_users, true))["TELEGRAM_ALLOW_ALL_USERS"] == "true"
+      assert Hermes.env_vars(Map.put(@instance, :allow_all_telegram_users, false))["TELEGRAM_ALLOW_ALL_USERS"] == "false"
     end
 
     test "does not duplicate keys from Runtime.base_env/1" do
@@ -110,11 +139,14 @@ defmodule Druzhok.Runtime.HermesTest do
       assert Hermes.supports_feature?(:db_allowlist)
     end
 
-    test "returns false for all openclaw-specific features" do
+    test "returns false for features hermes doesn't support" do
       refute Hermes.supports_feature?(:dreaming)
       refute Hermes.supports_feature?(:heartbeat)
       refute Hermes.supports_feature?(:fallback_models)
-      refute Hermes.supports_feature?(:group_chat_config)
+    end
+
+    test "supports :group_chat_config — mention_only + trigger_name + allow_all + free_response_chats" do
+      assert Hermes.supports_feature?(:group_chat_config)
     end
   end
 end
