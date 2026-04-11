@@ -27,9 +27,10 @@ defmodule DruzhokWebWeb.Router do
     post "/embeddings", LlmProxyController, :embeddings
   end
 
-  # Media proxy — no tenant auth (called from pool containers on localhost)
+  # Media proxy — no tenant auth (called from bot containers on localhost).
   scope "/v1", DruzhokWebWeb do
     post "/audio/transcriptions", LlmProxyController, :audio_transcriptions
+    post "/audio/speech", LlmProxyController, :audio_speech
     post "/responses", LlmProxyController, :responses_proxy
   end
 

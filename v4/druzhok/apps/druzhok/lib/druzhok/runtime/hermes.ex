@@ -187,6 +187,14 @@ defmodule Druzhok.Runtime.Hermes do
       provider: "openai"
       openai:
         model: "whisper-1"
+
+    tts:
+      enabled: true
+      provider: "openai"
+      openai:
+        model: "gpt-4o-mini-tts"
+        voice: "alloy"
+        base_url: "#{proxy_url()}"
     """
   end
 

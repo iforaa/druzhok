@@ -186,6 +186,86 @@ defmodule DruzhokWebWeb.LlmProxyController do
     end
   end
 
+  def audio_speech(conn, _params) do
+    openai_key = get_setting("openai_api_key")
+
+    if is_nil(openai_key) do
+      json_error(conn, 503, "Text-to-speech not configured", "server_error")
+    else
+      instance = resolve_instance(conn)
+
+      case instance && Budget.check(instance.id) do
+        {:error, :exceeded} ->
+          json_error(conn, 429, "Token budget exceeded", "insufficient_quota")
+
+        _ ->
+          do_audio_speech(conn, openai_key, instance)
+      end
+    end
+  end
+
+  defp do_audio_speech(conn, openai_key, instance) do
+    started_at = System.monotonic_time(:millisecond)
+    body = conn.body_params
+
+    url = "https://api.openai.com/v1/audio/speech"
+
+    headers = [
+      {"authorization", "Bearer #{openai_key}"},
+      {"content-type", "application/json"}
+    ]
+
+    request = Finch.build(:post, url, headers, Jason.encode!(body))
+
+    case Finch.request(request, Druzhok.Finch, receive_timeout: 120_000) do
+      {:ok, %Finch.Response{status: 200, body: audio, headers: resp_headers}} ->
+        latency = System.monotonic_time(:millisecond) - started_at
+        meter_tts(instance, body, latency)
+
+        content_type =
+          Enum.find_value(resp_headers, "audio/mpeg", fn
+            {"content-type", v} -> v
+            _ -> nil
+          end)
+
+        conn
+        |> put_resp_content_type(content_type)
+        |> send_resp(200, audio)
+
+      {:ok, %Finch.Response{status: status, body: resp_body}} ->
+        conn
+        |> put_resp_content_type("application/json")
+        |> send_resp(status, resp_body)
+
+      {:error, reason} ->
+        Logger.error("TTS proxy error: #{inspect(reason)}")
+        json_error(conn, 502, "TTS provider unavailable", "server_error")
+    end
+  end
+
+  defp meter_tts(nil, _body, _latency), do: :ok
+
+  defp meter_tts(instance, body, latency) do
+    input = body["input"] || ""
+    chars = String.length(input)
+    # OpenAI gpt-4o-mini-tts is per-character priced; record chars as proxy.
+    if chars > 0, do: Budget.deduct(instance.id, chars)
+
+    Usage.log(%{
+      instance_id: instance.id,
+      model: body["model"] || "gpt-4o-mini-tts",
+      prompt_tokens: chars,
+      completion_tokens: 0,
+      total_tokens: chars,
+      request_type: "tts",
+      requested_model: body["model"],
+      resolved_model: body["model"] || "gpt-4o-mini-tts",
+      provider: "openai",
+      latency_ms: latency,
+      prompt_preview: String.slice(input, 0, 500)
+    })
+  end
+
   defp meter_image(nil, _usage, _model, _started_at), do: :ok
   defp meter_image(instance, usage, image_model, started_at) do
     total = usage.prompt_tokens + usage.completion_tokens
