@@ -21,6 +21,7 @@ defmodule Druzhok.Runtime.Hermes do
 
   @data_mount "/opt/data"
   @default_model "anthropic/claude-opus-4.6"
+  @default_vision_model "google/gemini-2.5-flash-lite"
 
   @impl true
   def docker_image, do: System.get_env("HERMES_IMAGE") || "hermes:latest"
@@ -58,6 +59,7 @@ defmodule Druzhok.Runtime.Hermes do
     # config.yaml's `stt:` section — see build_config_yaml/1.
     tenant_key = Map.get(instance, :tenant_key, "") || ""
     model = Map.get(instance, :model) || @default_model
+    vision_model = Map.get(instance, :image_model) || @default_vision_model
     proxy_url = proxy_url()
 
     %{
@@ -70,10 +72,17 @@ defmodule Druzhok.Runtime.Hermes do
       "OPENROUTER_API_KEY" => tenant_key,
       "HERMES_MODEL" => model,
       "STT_OPENAI_BASE_URL" => proxy_url,
-      # Web search: point hermes's firecrawl backend at druzhok's /v2/search
-      # shim, which forwards to OpenRouter perplexity/sonar under the hood.
+      # Web search: firecrawl backend → druzhok /v2/search → perplexity/sonar
       "FIRECRAWL_API_URL" => proxy_url |> String.replace_suffix("/v1", ""),
-      "FIRECRAWL_API_KEY" => tenant_key
+      "FIRECRAWL_API_KEY" => tenant_key,
+      # Vision: hermes's vision_analyze tool routes through a separate
+      # auxiliary client. Pin it to a vision-capable model on the druzhok
+      # proxy so it works regardless of the main chat model (e.g. when
+      # the main model is a reasoning-only one like xiaomi/mimo-v2-pro).
+      "AUXILIARY_VISION_PROVIDER" => "custom",
+      "AUXILIARY_VISION_BASE_URL" => proxy_url,
+      "AUXILIARY_VISION_API_KEY" => tenant_key,
+      "AUXILIARY_VISION_MODEL" => vision_model
     }
   end
 
