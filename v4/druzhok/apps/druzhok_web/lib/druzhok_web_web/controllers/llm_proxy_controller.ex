@@ -311,9 +311,8 @@ defmodule DruzhokWebWeb.LlmProxyController do
       "model" => @search_model,
       "messages" => [
         %{"role" => "system", "content" => @search_system_prompt},
-        %{"role" => "user", "content" => "#{query}\n\nReturn up to #{limit} results."}
-      ],
-      "response_format" => %{"type" => "json_object"}
+        %{"role" => "user", "content" => "#{query}\n\nReturn up to #{limit} results as a JSON array."}
+      ]
     }
 
     url = LlmFormat.request_url()
