@@ -207,7 +207,11 @@ defmodule Druzhok.BotManager do
   end
 
   defp stop_container(name) do
-    System.cmd("docker", ["rm", "-f", container_name(name)], stderr_to_stdout: true)
+    container = container_name(name)
+    # Clear the restart policy first so docker doesn't race to resurrect
+    # a container that's crashing in a restart loop. See CLAUDE.md.
+    System.cmd("docker", ["update", "--restart=no", container], stderr_to_stdout: true)
+    System.cmd("docker", ["rm", "-f", container], stderr_to_stdout: true)
     :ok
   end
 

@@ -45,12 +45,19 @@ defmodule Druzhok.Runtime.Hermes do
   def env_vars(instance) do
     # base_env/1 already provides OPENAI_BASE_URL, OPENAI_API_KEY, TZ —
     # only add hermes-specific keys here.
+    #
+    # HOME points at a writable directory on the mounted data root. Without
+    # it, hermes running as --user 1000:1000 hits `Path.home() == /` and
+    # fails to mkdir `/.local` on boot (no /etc/passwd entry for uid 1000).
+    # The hermes entrypoint creates `$HERMES_HOME/home` for exactly this
+    # purpose — per-profile HOME for subprocesses (git, ssh, npm, …).
     tenant_key = Map.get(instance, :tenant_key, "") || ""
     model = Map.get(instance, :model) || @default_model
 
     %{
       "HERMES_HOME" => @data_mount,
       "HERMES_QUIET" => "0",
+      "HOME" => @data_mount <> "/home",
       "TELEGRAM_BOT_TOKEN" => Map.get(instance, :telegram_token, "") || "",
       "TELEGRAM_ALLOWED_USERS" => build_allowlist(instance),
       "HERMES_INFERENCE_PROVIDER" => "custom",
