@@ -107,17 +107,14 @@ defmodule Druzhok.Runtime.PicoClaw do
   def gateway_command, do: ["gateway", "--allow-empty", "--debug"]
 
   @impl true
-  def health_path, do: "/health"
+  def data_mount_path, do: "/data"
 
   @impl true
-  def health_port, do: 18790
+  def file_browser_root(instance), do: Map.get(instance, :workspace, "")
 
   @impl true
   def supports_feature?(:pairing), do: false
   def supports_feature?(_), do: false
-
-  @impl true
-  def pooled?, do: false
 
   defp gateway_port(instance), do: 19000 + (Map.get(instance, :id, 0) || 0)
 

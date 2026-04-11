@@ -103,17 +103,18 @@ defmodule Druzhok.Runtime.OpenClaw do
   def gateway_command, do: ["node", "openclaw.mjs", "gateway", "--allow-unconfigured", "--bind", "lan"]
 
   @impl true
-  def health_path, do: "/healthz"
+  def data_mount_path, do: "/data"
 
   @impl true
-  def health_port, do: 18789
+  def file_browser_root(instance), do: Map.get(instance, :workspace, "")
 
   @impl true
   def supports_feature?(:pairing), do: true
+  def supports_feature?(:dreaming), do: true
+  def supports_feature?(:heartbeat), do: true
+  def supports_feature?(:fallback_models), do: true
+  def supports_feature?(:group_chat_config), do: true
   def supports_feature?(_), do: false
-
-  @impl true
-  def pooled?, do: true
 
   defp gateway_port(instance), do: 18800 + (Map.get(instance, :id, 0) || 0)
 

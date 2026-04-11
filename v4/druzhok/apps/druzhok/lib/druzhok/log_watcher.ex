@@ -6,6 +6,8 @@ defmodule Druzhok.LogWatcher do
   use GenServer
   require Logger
 
+  alias Druzhok.LogPort
+
   @format_check_interval :timer.hours(6)
   @format_warn_after :timer.hours(24)
 
@@ -33,14 +35,7 @@ defmodule Druzhok.LogWatcher do
 
     container = Keyword.get(opts, :container, Druzhok.BotManager.container_name(instance_name))
 
-    port = Port.open(
-      {:spawn_executable, "/usr/bin/env"},
-      [
-        :binary, :exit_status, :use_stdio, :stderr_to_stdout,
-        args: ["docker", "logs", "-f", "--since=5s", container]
-      ]
-    )
-
+    log_port = LogPort.open(container)
     schedule_format_check()
 
     {:ok, %{
@@ -50,8 +45,7 @@ defmodule Druzhok.LogWatcher do
       bot_token: bot_token,
       language: language,
       reject_message: reject_message,
-      port: port,
-      buffer: "",
+      log_port: log_port,
       last_rejection_at: nil,
       started_at: System.monotonic_time(:millisecond),
       format_warned: false
@@ -59,41 +53,37 @@ defmodule Druzhok.LogWatcher do
   end
 
   @impl true
-  def handle_info({port, {:data, data}}, %{port: port} = state) do
-    {lines, buffer} = split_lines(state.buffer <> data)
+  def handle_info({port, {:data, data}}, %{log_port: %{port: port}} = state) do
+    {lines, log_port} = LogPort.handle_data(state.log_port, data)
 
-    state = Enum.reduce(lines, state, fn line, acc ->
-      line = strip_ansi(line)
-      case acc.runtime.parse_log_rejection(line) do
-        {:rejected, user_id} ->
-          handle_rejection(acc, user_id)
-          %{acc | last_rejection_at: System.monotonic_time(:millisecond)}
-        :ignore ->
-          acc
-      end
-    end)
+    state =
+      Enum.reduce(lines, %{state | log_port: log_port}, fn line, acc ->
+        case acc.runtime.parse_log_rejection(line) do
+          {:rejected, user_id} ->
+            handle_rejection(acc, user_id)
+            %{acc | last_rejection_at: System.monotonic_time(:millisecond)}
 
-    {:noreply, %{state | buffer: buffer}}
+          :ignore ->
+            acc
+        end
+      end)
+
+    {:noreply, state}
   end
 
   @impl true
-  def handle_info({port, {:exit_status, _code}}, %{port: port} = state) do
+  def handle_info({port, {:exit_status, _code}}, %{log_port: %{port: port}} = state) do
     Logger.warning("LogWatcher port exited for #{state.instance_name}, retrying in 5s")
     Process.send_after(self(), :reconnect_port, 5_000)
     {:noreply, state}
   end
 
   def handle_info(:reconnect_port, state) do
-    container = state.container
-    # Check if container is still running
-    case System.cmd("docker", ["inspect", "--format", "{{.State.Running}}", container], stderr_to_stdout: true) do
+    # Check if container is still running before re-opening the port
+    case System.cmd("docker", ["inspect", "--format", "{{.State.Running}}", state.container], stderr_to_stdout: true) do
       {"true\n", 0} ->
-        port = Port.open(
-          {:spawn_executable, "/usr/bin/env"},
-          [:binary, :exit_status, :use_stdio, :stderr_to_stdout,
-           args: ["docker", "logs", "-f", "--since=5s", container]]
-        )
-        {:noreply, %{state | port: port, buffer: ""}}
+        {:noreply, %{state | log_port: LogPort.reopen(state.log_port)}}
+
       _ ->
         Logger.info("LogWatcher: container #{state.instance_name} not running, stopping")
         {:stop, :normal, state}
@@ -122,8 +112,7 @@ defmodule Druzhok.LogWatcher do
 
   @impl true
   def terminate(_reason, state) do
-    if Port.info(state.port), do: Port.close(state.port)
-    :ok
+    LogPort.close(state.log_port)
   end
 
   defp handle_rejection(state, user_id) do
@@ -150,15 +139,6 @@ defmodule Druzhok.LogWatcher do
       {:error, reason} ->
         Logger.warning("LogWatcher: failed to send rejection message to #{user_id}: #{inspect(reason)}")
     end
-  end
-
-  @ansi_pattern ~r/\x1b\[[0-9;]*m/
-
-  defp strip_ansi(line), do: Regex.replace(@ansi_pattern, line, "")
-
-  defp split_lines(data) do
-    parts = String.split(data, "\n")
-    {Enum.slice(parts, 0..-2//1), List.last(parts)}
   end
 
   defp schedule_format_check do

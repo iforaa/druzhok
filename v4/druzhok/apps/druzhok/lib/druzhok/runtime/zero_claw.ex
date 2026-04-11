@@ -188,10 +188,6 @@ defmodule Druzhok.Runtime.ZeroClaw do
     )
   end
 
-  @doc """
-  ZeroClaw volume mount: mount the tenant data root (parent of workspace),
-  not just the workspace itself.
-  """
   @impl true
   def docker_image, do: System.get_env("ZEROCLAW_IMAGE") || "zeroclaw:latest"
 
@@ -199,19 +195,15 @@ defmodule Druzhok.Runtime.ZeroClaw do
   def gateway_command, do: "daemon"
 
   @impl true
-  def health_path, do: "/health"
+  def data_mount_path, do: "/data"
 
   @impl true
-  def health_port, do: 18790
+  def file_browser_root(instance), do: Map.get(instance, :workspace, "")
 
   @impl true
   def post_start(_instance), do: :ok
 
   @impl true
   def supports_feature?(:pairing), do: true
-  def supports_feature?(:hot_reload_config), do: false
   def supports_feature?(_), do: false
-
-  @impl true
-  def pooled?, do: false
 end

@@ -44,81 +44,53 @@ defmodule Druzhok.BotManager do
 
   def start(name) do
     case Repo.get_by(Instance, name: name) do
-      nil -> {:error, :not_found}
+      nil ->
+        {:error, :not_found}
+
       instance ->
         runtime = Druzhok.Runtime.get(instance.bot_runtime, Druzhok.Runtime.ZeroClaw)
+        env = Druzhok.Runtime.base_env(instance) |> Map.merge(runtime.env_vars(instance))
+        image = runtime.docker_image()
+        command = runtime.gateway_command()
+        data_root = Path.dirname(instance.workspace)
 
-        if runtime.pooled?() do
-          # Async — pool creation + container start can take 30-60s
-          instance_name = instance.name
-          Task.start(fn ->
-            case Druzhok.PoolManager.assign(instance) do
-              {:ok, pool} ->
-                Druzhok.LogWatcher.start_link(
-                  name: instance_name,
-                  container: pool.container,
-                  runtime: Druzhok.Runtime.OpenClaw,
-                  bot_token: instance.telegram_token,
-                  language: instance.language || "ru",
-                  reject_message: instance.reject_message
-                )
-                Druzhok.Events.broadcast(instance_name, %{type: :started, bot_runtime: instance.bot_runtime, pool: pool.name})
-                Logger.info("Pool instance #{instance_name} started in pool #{pool.name}")
+        write_workspace_files(data_root, runtime.workspace_files(instance))
 
-              {:error, reason} ->
-                Logger.error("Pool assign failed for #{instance_name}: #{inspect(reason)}")
-                Druzhok.Events.broadcast(instance_name, %{type: :error, text: "Pool assign failed: #{inspect(reason)}"})
-            end
-          end)
+        case start_container(name, image, env, data_root, runtime.data_mount_path(), command) do
+          {:ok, container_id} ->
+            Logger.info("Started bot container #{name}: #{container_id}")
 
-          instance |> Ecto.Changeset.change(%{active: true}) |> Repo.update!()
-          :ok
-        else
-          env = Druzhok.Runtime.base_env(instance) |> Map.merge(runtime.env_vars(instance))
-          image = runtime.docker_image()
-          command = runtime.gateway_command()
+            Task.start(fn ->
+              case runtime.post_start(instance) do
+                :ok ->
+                  :ok
 
-          # Write runtime-specific config files relative to tenant data root (parent of workspace)
-          data_root = Path.dirname(instance.workspace)
-          for {path, content} <- runtime.workspace_files(instance) do
-            full_path = Path.join(data_root, path)
-            File.mkdir_p!(Path.dirname(full_path))
-            File.write!(full_path, content)
-          end
+                {:error, reason} ->
+                  Logger.error("Post-start config for #{name} failed: #{inspect(reason)}")
+              end
 
-          case start_container(name, image, env, data_root, command) do
-            {:ok, container_id} ->
-              Logger.info("Started bot container #{name}: #{container_id}")
+              case Druzhok.LogWatcher.start_link(
+                     name: name,
+                     runtime: runtime,
+                     bot_token: instance.telegram_token,
+                     language: instance.language || "ru",
+                     reject_message: instance.reject_message
+                   ) do
+                {:ok, pid} ->
+                  Logger.info("LogWatcher started for #{name}: #{inspect(pid)}")
 
-              # Post-start configuration runs async (PicoClaw health wait can take ~10s)
-              Task.start(fn ->
-                case runtime.post_start(instance) do
-                  :ok -> :ok
-                  {:error, reason} ->
-                    Logger.error("Post-start config for #{name} failed: #{inspect(reason)}")
-                end
+                {:error, reason} ->
+                  Logger.error("LogWatcher failed for #{name}: #{inspect(reason)}")
+              end
+            end)
 
-                # Start log watcher for rejection detection
-                case Druzhok.LogWatcher.start_link(
-                  name: name,
-                  runtime: runtime,
-                  bot_token: instance.telegram_token,
-                  language: instance.language || "ru",
-                  reject_message: instance.reject_message
-                ) do
-                  {:ok, pid} -> Logger.info("LogWatcher started for #{name}: #{inspect(pid)}")
-                  {:error, reason} -> Logger.error("LogWatcher failed for #{name}: #{inspect(reason)}")
-                end
-              end)
+            Druzhok.HealthMonitor.register(name, container_id, instance.bot_runtime || "zeroclaw")
+            Repo.update(Instance.changeset(instance, %{active: true}))
+            {:ok, container_id}
 
-              Druzhok.HealthMonitor.register(name, container_id, instance.bot_runtime || "zeroclaw")
-              Repo.update(Instance.changeset(instance, %{active: true}))
-              {:ok, container_id}
-
-            {:error, reason} ->
-              Logger.error("Failed to start bot #{name}: #{inspect(reason)}")
-              {:error, reason}
-          end
+          {:error, reason} ->
+            Logger.error("Failed to start bot #{name}: #{inspect(reason)}")
+            {:error, reason}
         end
     end
   end
@@ -129,35 +101,20 @@ defmodule Druzhok.BotManager do
     case Repo.get_by(Instance, name: name) do
       nil ->
         :ok
-      instance ->
-        runtime = Druzhok.Runtime.get(instance.bot_runtime, Druzhok.Runtime.ZeroClaw)
 
-        if runtime.pooled?() do
-          instance |> Ecto.Changeset.change(%{active: false}) |> Repo.update!()
-          Task.start(fn -> Druzhok.PoolManager.remove(instance) end)
-        else
-          stop_container(name)
-          Druzhok.HealthMonitor.unregister(name)
-        end
+      instance ->
+        stop_container(name)
+        Druzhok.HealthMonitor.unregister(name)
+        instance |> Ecto.Changeset.change(%{active: false}) |> Repo.update!()
     end
+
     :ok
   end
 
   def restart(name) do
-    case Repo.get_by(Instance, name: name) do
-      nil -> :ok
-      instance ->
-        runtime = Druzhok.Runtime.get(instance.bot_runtime, Druzhok.Runtime.ZeroClaw)
-
-        if runtime.pooled?() do
-          # Reload pool config without full stop+start cycle
-          Task.start(fn -> Druzhok.PoolManager.reload(instance) end)
-        else
-          stop(name)
-          Process.sleep(1_000)
-          start(name)
-        end
-    end
+    stop(name)
+    Process.sleep(1_000)
+    start(name)
   end
 
   def delete(name) do
@@ -197,15 +154,51 @@ defmodule Druzhok.BotManager do
     end
   end
 
-  defp start_container(name, image, env, workspace, command) do
-    env_args = Enum.flat_map(env, fn {k, v} -> ["-e", "#{k}=#{v}"] end)
+  defp write_workspace_files(data_root, files) do
+    for entry <- files do
+      {rel_path, content, mode} =
+        case entry do
+          {p, c} -> {p, c, :always}
+          {p, c, m} -> {p, c, m}
+        end
 
-    args = ["run", "-d",
-      "--name", container_name(name),
-      "--network", "host",
-      "--restart", "unless-stopped",
-      "-v", "#{workspace}:/data",
-    ] ++ env_args ++ [image | List.wrap(command)]
+      full_path = Path.join(data_root, rel_path)
+      File.mkdir_p!(Path.dirname(full_path))
+
+      cond do
+        mode == :create_only and File.exists?(full_path) ->
+          :ok
+
+        true ->
+          File.write!(full_path, content)
+      end
+    end
+
+    :ok
+  end
+
+  defp start_container(name, image, env, data_root, mount_path, command) do
+    env_args = Enum.flat_map(env, fn {k, v} -> ["-e", "#{k}=#{v}"] end)
+    user_flag = case host_user_gid() do
+      nil -> []
+      ids -> ["--user", ids]
+    end
+
+    args =
+      [
+        "run",
+        "-d",
+        "--name",
+        container_name(name),
+        "--network",
+        "host",
+        "--restart",
+        "unless-stopped",
+        "--shm-size",
+        "2g",
+        "-v",
+        "#{data_root}:#{mount_path}"
+      ] ++ user_flag ++ env_args ++ [image | List.wrap(command)]
 
     case System.cmd("docker", args, stderr_to_stdout: true) do
       {container_id, 0} -> {:ok, String.trim(container_id)}
@@ -218,6 +211,29 @@ defmodule Druzhok.BotManager do
     :ok
   end
 
-  def container_name(name), do: "druzhok-bot-#{name}"
+  # Run containers as the host UID:GID so files created inside the container
+  # stay owned by the druzhok host user (prevents root-owned files in the
+  # mounted data root that the dashboard's file browser can't edit).
+  defp host_user_gid do
+    case :persistent_term.get({__MODULE__, :host_user_gid}, :unset) do
+      :unset ->
+        value = compute_host_user_gid()
+        :persistent_term.put({__MODULE__, :host_user_gid}, value)
+        value
 
+      cached ->
+        cached
+    end
+  end
+
+  defp compute_host_user_gid do
+    with {uid, 0} <- System.cmd("id", ["-u"]),
+         {gid, 0} <- System.cmd("id", ["-g"]) do
+      "#{String.trim(uid)}:#{String.trim(gid)}"
+    else
+      _ -> nil
+    end
+  end
+
+  def container_name(name), do: "druzhok-bot-#{name}"
 end

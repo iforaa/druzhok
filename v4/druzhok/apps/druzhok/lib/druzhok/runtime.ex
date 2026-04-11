@@ -1,17 +1,21 @@
 defmodule Druzhok.Runtime do
   @moduledoc """
-  Behaviour for bot runtime adapters. Each supported runtime (ZeroClaw, PicoClaw, etc.)
-  implements this behaviour. Adding a new runtime = one new module + one registry entry.
+  Behaviour for bot runtime adapters. Each supported runtime (Hermes, ZeroClaw,
+  PicoClaw, OpenClaw, NullClaw) implements this behaviour. Adding a new runtime
+  = one new module + one registry entry.
   """
 
   @type instance :: map()
+  @type workspace_file ::
+          {path :: String.t(), content :: String.t()}
+          | {path :: String.t(), content :: String.t(), :always | :create_only}
 
   @callback env_vars(instance) :: %{String.t() => String.t()}
-  @callback workspace_files(instance) :: [{path :: String.t(), content :: String.t()}]
+  @callback workspace_files(instance) :: [workspace_file()]
   @callback docker_image() :: String.t()
   @callback gateway_command() :: String.t() | [String.t()]
-  @callback health_path() :: String.t()
-  @callback health_port() :: integer()
+  @callback data_mount_path() :: String.t()
+  @callback file_browser_root(instance) :: String.t()
   @callback post_start(instance) :: :ok | {:error, term()}
   @callback supports_feature?(atom()) :: boolean()
   @callback read_allowed_users(data_root :: String.t()) :: [String.t()]
@@ -19,9 +23,9 @@ defmodule Druzhok.Runtime do
   @callback remove_allowed_user(data_root :: String.t(), user_id :: String.t()) :: :ok | {:error, term()}
   @callback clear_sessions(data_root :: String.t()) :: :ok
   @callback parse_log_rejection(line :: String.t()) :: {:rejected, user_id :: String.t()} | :ignore
-  @callback pooled?() :: boolean()
 
   @runtimes %{
+    "hermes" => Druzhok.Runtime.Hermes,
     "zeroclaw" => Druzhok.Runtime.ZeroClaw,
     "picoclaw" => Druzhok.Runtime.PicoClaw,
     "openclaw" => Druzhok.Runtime.OpenClaw,
@@ -38,8 +42,6 @@ defmodule Druzhok.Runtime do
 
   def list, do: @runtimes
   def names, do: Map.keys(@runtimes)
-
-  def pooled?(runtime_module), do: runtime_module.pooled?()
 
   def parse_user_input(input) do
     trimmed = String.trim(input)
