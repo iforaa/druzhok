@@ -69,7 +69,11 @@ defmodule Druzhok.Runtime.Hermes do
       "HERMES_INFERENCE_PROVIDER" => "custom",
       "OPENROUTER_API_KEY" => tenant_key,
       "HERMES_MODEL" => model,
-      "STT_OPENAI_BASE_URL" => proxy_url
+      "STT_OPENAI_BASE_URL" => proxy_url,
+      # Web search: point hermes's firecrawl backend at druzhok's /v2/search
+      # shim, which forwards to OpenRouter perplexity/sonar under the hood.
+      "FIRECRAWL_API_URL" => proxy_url |> String.replace_suffix("/v1", ""),
+      "FIRECRAWL_API_KEY" => tenant_key
     }
   end
 

@@ -34,6 +34,13 @@ defmodule DruzhokWebWeb.Router do
     post "/responses", LlmProxyController, :responses_proxy
   end
 
+  # Firecrawl-compatible v2 API (currently only /search — used by hermes
+  # web_search_tool via FIRECRAWL_API_URL env var). Forwards to OpenRouter
+  # perplexity/sonar under the hood and reuses tenant-keyed metering.
+  scope "/v2", DruzhokWebWeb do
+    post "/search", LlmProxyController, :firecrawl_search
+  end
+
   # Public routes
   scope "/", DruzhokWebWeb do
     pipe_through :browser

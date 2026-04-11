@@ -266,6 +266,154 @@ defmodule DruzhokWebWeb.LlmProxyController do
     })
   end
 
+  @search_model "perplexity/sonar"
+  @search_system_prompt ~s"""
+  You are a web search API. Given a user query, perform a web search and \
+  respond with ONLY a JSON array of results. No markdown, no commentary, \
+  no preamble, just a raw JSON array.
+
+  Each result must have exactly these fields:
+    - "title": the page title (string)
+    - "url": the page URL (string)
+    - "description": a 1-2 sentence summary of the page relevance to the \
+      query (string)
+
+  Return at most the number of results requested by the user. If there are \
+  no relevant results, return an empty array `[]`.
+  """
+
+  def firecrawl_search(conn, _params) do
+    body = conn.body_params
+    query = body["query"] || ""
+    limit = Map.get(body, "limit", 5) |> normalize_limit()
+
+    cond do
+      query == "" ->
+        send_resp(conn, 400, Jason.encode!(%{success: false, error: "query is required"}))
+
+      true ->
+        instance = resolve_instance(conn)
+
+        case instance && Budget.check(instance.id) do
+          {:error, :exceeded} ->
+            send_resp(conn, 429, Jason.encode!(%{success: false, error: "Token budget exceeded"}))
+
+          _ ->
+            do_firecrawl_search(conn, instance, query, limit)
+        end
+    end
+  end
+
+  defp do_firecrawl_search(conn, instance, query, limit) do
+    started_at = System.monotonic_time(:millisecond)
+
+    chat_body = %{
+      "model" => @search_model,
+      "messages" => [
+        %{"role" => "system", "content" => @search_system_prompt},
+        %{"role" => "user", "content" => "#{query}\n\nReturn up to #{limit} results."}
+      ],
+      "response_format" => %{"type" => "json_object"}
+    }
+
+    url = LlmFormat.request_url()
+    headers = LlmFormat.request_headers(conn.req_headers)
+    request = Finch.build(:post, url, headers, Jason.encode!(chat_body))
+
+    case Finch.request(request, Druzhok.Finch, receive_timeout: 120_000) do
+      {:ok, %Finch.Response{status: 200, body: resp_body}} ->
+        case Jason.decode(String.trim(resp_body)) do
+          {:ok, decoded} ->
+            results = parse_search_results(decoded, limit)
+            meter_search(instance, decoded, query, started_at)
+
+            conn
+            |> put_resp_content_type("application/json")
+            |> send_resp(200, Jason.encode!(%{success: true, data: %{web: results}}))
+
+          _ ->
+            send_resp(conn, 502, Jason.encode!(%{success: false, error: "invalid upstream response"}))
+        end
+
+      {:ok, %Finch.Response{status: status, body: resp_body}} ->
+        Logger.error("Search proxy upstream #{status}: #{String.slice(resp_body, 0, 200)}")
+        send_resp(conn, status, Jason.encode!(%{success: false, error: "upstream error"}))
+
+      {:error, reason} ->
+        Logger.error("Search proxy network error: #{inspect(reason)}")
+        send_resp(conn, 502, Jason.encode!(%{success: false, error: "search provider unavailable"}))
+    end
+  end
+
+  defp normalize_limit(limit) when is_integer(limit) and limit > 0 and limit <= 20, do: limit
+  defp normalize_limit(limit) when is_binary(limit) do
+    case Integer.parse(limit) do
+      {n, _} when n > 0 and n <= 20 -> n
+      _ -> 5
+    end
+  end
+  defp normalize_limit(_), do: 5
+
+  defp parse_search_results(decoded, limit) do
+    content = get_in(decoded, ["choices", Access.at(0), "message", "content"]) || ""
+
+    parsed =
+      case Jason.decode(String.trim(content)) do
+        {:ok, list} when is_list(list) -> list
+        {:ok, %{"results" => list}} when is_list(list) -> list
+        {:ok, %{"web" => list}} when is_list(list) -> list
+        _ -> extract_json_array(content)
+      end
+
+    parsed
+    |> Enum.take(limit)
+    |> Enum.with_index(1)
+    |> Enum.map(fn {item, pos} ->
+      %{
+        "title" => Map.get(item, "title", ""),
+        "url" => Map.get(item, "url", ""),
+        "description" => Map.get(item, "description") || Map.get(item, "snippet") || "",
+        "position" => pos
+      }
+    end)
+  end
+
+  defp meter_search(nil, _decoded, _query, _started_at), do: :ok
+
+  defp meter_search(instance, decoded, query, started_at) do
+    usage = LlmFormat.extract_usage(decoded)
+    total = usage.prompt_tokens + usage.completion_tokens
+    if total > 0, do: Budget.deduct(instance.id, total)
+
+    Usage.log(%{
+      instance_id: instance.id,
+      model: @search_model,
+      prompt_tokens: usage.prompt_tokens,
+      completion_tokens: usage.completion_tokens,
+      total_tokens: total,
+      request_type: "search",
+      requested_model: @search_model,
+      resolved_model: @search_model,
+      provider: "openrouter",
+      latency_ms: System.monotonic_time(:millisecond) - started_at,
+      prompt_preview: String.slice(query, 0, 500)
+    })
+  end
+
+  # Fallback when the LLM wraps the array in stray text.
+  defp extract_json_array(content) do
+    case Regex.run(~r/\[\s*\{.*\}\s*\]/s, content) do
+      [match] ->
+        case Jason.decode(match) do
+          {:ok, list} when is_list(list) -> list
+          _ -> []
+        end
+
+      _ ->
+        []
+    end
+  end
+
   defp meter_image(nil, _usage, _model, _started_at), do: :ok
   defp meter_image(instance, usage, image_model, started_at) do
     total = usage.prompt_tokens + usage.completion_tokens
