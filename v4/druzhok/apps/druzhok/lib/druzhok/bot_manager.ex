@@ -188,10 +188,19 @@ defmodule Druzhok.BotManager do
 
   defp start_container(name, image, env, data_root, mount_path, command) do
     env_args = Enum.flat_map(env, fn {k, v} -> ["-e", "#{k}=#{v}"] end)
-    user_flag = case host_user_gid() do
-      nil -> []
-      ids -> ["--user", ids]
-    end
+
+    # If the adapter sets HERMES_UID, it handles privilege dropping itself
+    # via gosu in the entrypoint — don't pass --user or it bypasses gosu.
+    # Other runtimes (zeroclaw, picoclaw, etc.) need --user explicitly.
+    user_flag =
+      if Map.has_key?(env, "HERMES_UID") do
+        []
+      else
+        case host_user_gid() do
+          nil -> []
+          ids -> ["--user", ids]
+        end
+      end
 
     args =
       [
