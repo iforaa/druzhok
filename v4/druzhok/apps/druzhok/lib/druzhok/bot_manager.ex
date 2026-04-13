@@ -233,14 +233,22 @@ defmodule Druzhok.BotManager do
     :ok
   end
 
-  # Run containers as the host UID:GID so files created inside the container
-  # stay owned by the druzhok host user (prevents root-owned files in the
-  # mounted data root that the dashboard's file browser can't edit).
-  defp host_user_gid do
-    case :persistent_term.get({__MODULE__, :host_user_gid}, :unset) do
+  @doc "Host user UID, cached for the BEAM lifetime. Returns nil on failure."
+  def host_uid, do: cached_id(:host_uid, "-u")
+
+  @doc "Host user GID, cached for the BEAM lifetime. Returns nil on failure."
+  def host_gid, do: cached_id(:host_gid, "-g")
+
+  defp cached_id(key, flag) do
+    case :persistent_term.get({__MODULE__, key}, :unset) do
       :unset ->
-        value = compute_host_user_gid()
-        :persistent_term.put({__MODULE__, :host_user_gid}, value)
+        value =
+          case System.cmd("id", [flag], stderr_to_stdout: true) do
+            {out, 0} -> String.trim(out)
+            _ -> nil
+          end
+
+        :persistent_term.put({__MODULE__, key}, value)
         value
 
       cached ->
@@ -248,11 +256,9 @@ defmodule Druzhok.BotManager do
     end
   end
 
-  defp compute_host_user_gid do
-    with {uid, 0} <- System.cmd("id", ["-u"]),
-         {gid, 0} <- System.cmd("id", ["-g"]) do
-      "#{String.trim(uid)}:#{String.trim(gid)}"
-    else
+  defp host_user_gid do
+    case {host_uid(), host_gid()} do
+      {uid, gid} when is_binary(uid) and is_binary(gid) -> "#{uid}:#{gid}"
       _ -> nil
     end
   end

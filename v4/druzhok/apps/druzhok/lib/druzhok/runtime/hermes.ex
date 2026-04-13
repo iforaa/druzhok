@@ -17,7 +17,7 @@ defmodule Druzhok.Runtime.Hermes do
 
   @behaviour Druzhok.Runtime
 
-  alias Druzhok.Instance
+  alias Druzhok.{BotManager, Instance}
 
   @data_mount "/opt/data"
   @default_model "anthropic/claude-opus-4.6"
@@ -85,8 +85,8 @@ defmodule Druzhok.Runtime.Hermes do
       # Hermes now uses gosu for UID remapping (Dockerfile creates user
       # hermes with UID 10000). Pass HERMES_UID/GID so the entrypoint
       # remaps to the host user before dropping root.
-      "HERMES_UID" => host_uid(),
-      "HERMES_GID" => host_gid()
+      "HERMES_UID" => BotManager.host_uid() || "1000",
+      "HERMES_GID" => BotManager.host_gid() || "1000"
     }
   end
 
@@ -304,27 +304,5 @@ defmodule Druzhok.Runtime.Hermes do
     proxy_host = Druzhok.Runtime.proxy_host()
     proxy_port = System.get_env("LLM_PROXY_PORT") || "4000"
     "http://#{proxy_host}:#{proxy_port}/v1"
-  end
-
-  defp host_uid do
-    case :persistent_term.get({__MODULE__, :host_uid}, :unset) do
-      :unset ->
-        {uid, 0} = System.cmd("id", ["-u"])
-        val = String.trim(uid)
-        :persistent_term.put({__MODULE__, :host_uid}, val)
-        val
-      val -> val
-    end
-  end
-
-  defp host_gid do
-    case :persistent_term.get({__MODULE__, :host_gid}, :unset) do
-      :unset ->
-        {gid, 0} = System.cmd("id", ["-g"])
-        val = String.trim(gid)
-        :persistent_term.put({__MODULE__, :host_gid}, val)
-        val
-      val -> val
-    end
   end
 end
