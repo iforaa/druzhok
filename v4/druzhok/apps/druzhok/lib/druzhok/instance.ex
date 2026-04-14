@@ -17,7 +17,7 @@ defmodule Druzhok.Instance do
     field :dream_hour, :integer, default: -1
     field :language, :string, default: "ru"
     field :tenant_key, :string
-    field :bot_runtime, :string, default: "zeroclaw"
+    field :bot_runtime, :string, default: "hermes"
     field :on_demand_model, :string
     field :mention_only, :boolean, default: false
     field :reject_message, :string

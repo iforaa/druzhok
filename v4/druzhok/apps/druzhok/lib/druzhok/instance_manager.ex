@@ -12,7 +12,7 @@ defmodule Druzhok.InstanceManager do
       model: opts[:model] || "default",
       heartbeat_interval: opts[:heartbeat_interval] || 0,
       sandbox: opts[:sandbox] || "docker",
-      bot_runtime: opts[:bot_runtime] || "zeroclaw",
+      bot_runtime: opts[:bot_runtime] || "hermes",
       tenant_key: opts[:tenant_key] || Instance.generate_tenant_key(name),
       telegram_token: opts[:telegram_token],
     }

@@ -32,7 +32,7 @@ defmodule DruzhokWebWeb.DashboardLive do
       current_user: current_user,
       instances: list_instances(),
       models: models,
-      create_form: %{"name" => "", "token" => "", "model" => default_model},
+      create_form: %{"name" => "", "token" => "", "model" => default_model, "bot_runtime" => "hermes"},
       selected: nil,
       tab: :logs,
       tab_loading: false,
@@ -44,7 +44,10 @@ defmodule DruzhokWebWeb.DashboardLive do
       expanded_error: nil,
       usage_requests: [],
       usage_summary: [],
-      expanded_request: nil
+      expanded_request: nil,
+      palette_open: false,
+      palette_query: "",
+      palette_cursor: 0
     )}
   end
 
@@ -174,6 +177,10 @@ defmodule DruzhokWebWeb.DashboardLive do
     {:noreply, assign(socket, show_create: !socket.assigns.show_create)}
   end
 
+  def handle_event("update_create_form", params, socket) do
+    {:noreply, assign(socket, create_form: Map.merge(socket.assigns.create_form, params))}
+  end
+
   def handle_event("create", %{"name" => name, "model" => model} = params, socket) do
     if name != "" do
       token = params["token"]
@@ -188,7 +195,7 @@ defmodule DruzhokWebWeb.DashboardLive do
         {:ok, _instance} ->
           {:noreply, assign(socket,
             instances: list_instances(),
-            create_form: %{"name" => "", "token" => "", "model" => model},
+            create_form: %{"name" => "", "token" => "", "model" => model, "bot_runtime" => bot_runtime},
             show_create: false
           )}
         {:error, reason} ->
@@ -259,148 +266,251 @@ defmodule DruzhokWebWeb.DashboardLive do
     {:noreply, assign(socket, instance_errors: [])}
   end
 
+  # --- Command palette (⌘K / Ctrl+K) -----------------------------------------
+  def handle_event("toggle_palette", _, socket) do
+    {:noreply, assign(socket,
+      palette_open: !socket.assigns.palette_open,
+      palette_query: "",
+      palette_cursor: 0
+    )}
+  end
+
+  def handle_event("close_palette", _, socket) do
+    {:noreply, assign(socket, palette_open: false)}
+  end
+
+  def handle_event("palette_query", %{"q" => q}, socket) do
+    {:noreply, assign(socket, palette_query: q, palette_cursor: 0)}
+  end
+
+  def handle_event("palette_move", %{"dir" => dir}, socket) do
+    total = length(palette_matches(socket.assigns.instances, socket.assigns.palette_query))
+    cursor =
+      if total == 0, do: 0,
+         else: rem(socket.assigns.palette_cursor + dir + total, total)
+    {:noreply, assign(socket, palette_cursor: cursor)}
+  end
+
+  def handle_event("palette_select", _, socket) do
+    case Enum.at(
+           palette_matches(socket.assigns.instances, socket.assigns.palette_query),
+           socket.assigns.palette_cursor
+         ) do
+      nil -> {:noreply, assign(socket, palette_open: false)}
+      inst ->
+        {:noreply,
+         socket
+         |> assign(palette_open: false, palette_query: "", palette_cursor: 0)
+         |> push_patch(to: "/instances/#{inst.name}")}
+    end
+  end
+
+  def handle_event("palette_pick", %{"name" => name}, socket) do
+    {:noreply,
+     socket
+     |> assign(palette_open: false, palette_query: "", palette_cursor: 0)
+     |> push_patch(to: "/instances/#{name}")}
+  end
+
+  defp palette_matches(instances, ""), do: instances
+  defp palette_matches(instances, q) do
+    q = String.downcase(q)
+    Enum.filter(instances, fn inst ->
+      String.contains?(String.downcase(inst.name), q) or
+        String.contains?(String.downcase(inst[:bot_runtime] || ""), q) or
+        String.contains?(String.downcase(inst.model || ""), q)
+    end)
+  end
+
   @impl true
   def render(assigns) do
     ~H"""
-    <div class="flex h-screen">
-      <%!-- Sidebar --%>
-      <div class="w-72 bg-gray-50 border-r border-gray-200 flex flex-col">
-        <div class="p-4 border-b border-gray-200">
-          <div class="flex items-center justify-between">
-            <h1 class="text-lg font-bold tracking-tight">Druzhok</h1>
-            <button phx-click="toggle_create"
-                    class="w-7 h-7 flex items-center justify-center rounded-full border border-gray-900 text-gray-900 hover:bg-gray-900 hover:text-white text-sm font-bold transition">
-              +
-            </button>
-          </div>
+    <div id="dashboard-root" phx-hook="CmdK" class="flex h-screen bg-bg text-fg">
+      <%!-- ══════════════════════════════ SIDEBAR ══════════════════════════════ --%>
+      <aside class="w-72 bg-panel border-r border-line flex flex-col scanlines relative">
+        <%!-- Brand --%>
+        <div class="px-5 py-5 border-b border-line flex items-center justify-between">
+          <a href="/" class="group flex items-center gap-2.5">
+            <span class="w-1.5 h-1.5 bg-accent rounded-full group-hover:animate-dot-pulse"></span>
+            <span class="font-display text-[13px] font-semibold tracking-caps uppercase">Druzhok</span>
+          </a>
+          <button phx-click="toggle_create"
+                  aria-label="Create instance"
+                  class={"w-7 h-7 flex items-center justify-center border font-display text-sm transition " <>
+                         if @show_create,
+                           do: "bg-accent border-accent text-bg",
+                           else: "border-line2 text-muted hover:border-accent hover:text-accent"}>
+            <%= if @show_create, do: "×", else: "+" %>
+          </button>
         </div>
 
-        <div :if={@show_create} class="p-4 border-b border-gray-200">
-          <form phx-submit="create" class="space-y-3">
-            <input name="name" value={@create_form["name"]} placeholder="Instance name"
-                   class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-gray-900 focus:border-gray-900" />
-            <input name="token" value={@create_form["token"]} placeholder="Telegram bot token (optional)"
-                   class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-gray-900 focus:border-gray-900" />
-            <select name="model" class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-gray-900">
-              <option :for={{id, label, _provider} <- @models} value={id}><%= label %></option>
-            </select>
-            <select name="bot_runtime" class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-gray-900">
-              <option :for={name <- Druzhok.Runtime.names()} value={name} selected={name == "zeroclaw"}><%= name %></option>
-            </select>
-            <button type="submit" class="w-full bg-gray-900 hover:bg-gray-800 px-3 py-2 rounded-lg text-sm font-medium text-white transition">
-              Create
+        <%!-- Create form --%>
+        <div :if={@show_create} class="px-5 py-4 border-b border-line space-y-3 animate-reveal">
+          <form phx-submit="create" phx-change="update_create_form" class="space-y-3">
+            <.term_input name="name" value={@create_form["name"]} placeholder="instance name" />
+            <.term_input name="token" value={@create_form["token"]} placeholder="telegram token (optional)" />
+            <.term_select name="model">
+              <option :for={{id, label, _provider} <- @models} value={id}
+                      selected={id == @create_form["model"]}>
+                <%= label %>
+              </option>
+            </.term_select>
+            <.term_select name="bot_runtime">
+              <option :for={name <- Druzhok.Runtime.names()} value={name}
+                      selected={name == (@create_form["bot_runtime"] || "hermes")}>
+                <%= String.upcase(name) %>
+              </option>
+            </.term_select>
+            <button type="submit"
+                    class="w-full bg-accent text-bg font-display uppercase tracking-wider2 text-xs py-2 hover:bg-fg hover:text-bg transition-colors">
+              Create instance
             </button>
           </form>
         </div>
 
-        <div class="flex-1 overflow-y-auto py-2">
-          <div :if={@instances == []} class="px-4 py-8 text-center text-gray-400 text-sm">
-            No instances yet
+        <%!-- Instance list --%>
+        <div class="flex-1 overflow-y-auto py-1">
+          <div :if={@instances == []} class="px-5 py-10 text-center text-subtle text-xs font-display uppercase tracking-wider2">
+            no instances yet
           </div>
 
-          <div :for={inst <- @instances}
-               phx-click="select" phx-value-name={inst.name}
-               class={"flex items-center gap-3 px-4 py-3 cursor-pointer transition #{if !inst[:active], do: "opacity-50 "} #{if @selected == inst.name, do: "bg-white border-l-2 border-gray-900 shadow-sm", else: "hover:bg-white/60 border-l-2 border-transparent"}"}>
-            <div class={"w-2 h-2 rounded-full flex-shrink-0 #{if inst[:active], do: container_status_color(inst[:container_status]), else: "bg-gray-300"}"}></div>
+          <div :for={{inst, idx} <- Enum.with_index(@instances)}
+               phx-click="select"
+               phx-value-name={inst.name}
+               style={"animation-delay: #{idx * 28}ms"}
+               class={[
+                 "relative group flex items-center gap-3 px-5 py-3 cursor-pointer transition-all animate-reveal",
+                 !inst[:active] && "opacity-55",
+                 @selected == inst.name && "bg-raised",
+                 "hover:bg-raised/60"
+               ]}>
+            <%!-- accent bar, expands on selection --%>
+            <span class={[
+              "absolute left-0 top-0 bottom-0 w-[2px] bg-accent transition-all duration-200",
+              (if @selected == inst.name, do: "opacity-100 scale-y-100", else: "opacity-0 scale-y-0")
+            ]}></span>
+
+            <span class={[
+              "w-1.5 h-1.5 rounded-full flex-shrink-0",
+              status_dot(inst),
+              (if inst[:container_status] in ["restarting", "starting"], do: "animate-dot-pulse")
+            ]}></span>
+
             <div class="flex-1 min-w-0">
-              <div class="text-sm font-medium truncate"><%= inst.name %></div>
-              <div class="text-xs text-gray-400 truncate"><%= inst[:bot_runtime] || "zeroclaw" %> &middot; <%= model_short(inst.model) %><%= unless inst[:active], do: " · stopped" %></div>
+              <div class="font-display text-sm text-fg truncate"><%= inst.name %></div>
+              <div class="text-[10px] text-muted uppercase tracking-wider2 font-display truncate">
+                <%= String.upcase(inst[:bot_runtime] || "zeroclaw") %>
+                <span class="text-faint">·</span>
+                <%= model_short(inst.model) %><%= if !inst[:active], do: " · stopped" %>
+              </div>
             </div>
           </div>
         </div>
 
         <%!-- User footer --%>
-        <div :if={@current_user} class="p-4 border-t border-gray-200">
-          <div class="flex items-center justify-between">
+        <div :if={@current_user} class="px-5 py-4 border-t border-line">
+          <div class="flex items-center justify-between gap-3">
             <div class="min-w-0">
-              <div class="text-sm font-medium truncate"><%= @current_user.email %></div>
-              <div class="text-xs text-gray-400"><%= @current_user.role %></div>
+              <div class="font-display text-xs text-fg truncate"><%= @current_user.email %></div>
+              <div class="text-[10px] text-subtle uppercase tracking-wider2 font-display"><%= @current_user.role %></div>
             </div>
-            <div class="flex gap-2">
-              <a href="/processes" class="text-xs text-gray-400 hover:text-gray-600 transition">Processes</a>
-              <a href="/errors" class="text-xs text-gray-400 hover:text-red-600 transition">Errors</a>
-              <a :if={@current_user.role == "admin"} href="/settings" class="text-xs text-gray-400 hover:text-gray-900 transition">Settings</a>
-              <a href="/auth/logout" class="text-xs text-gray-400 hover:text-gray-900 transition">Logout</a>
-            </div>
+            <button phx-click="toggle_palette"
+                    title="Command palette (⌘K)"
+                    class="text-[10px] font-display uppercase tracking-wider2 text-muted hover:text-accent border border-line2 px-1.5 py-0.5 transition-colors">
+              ⌘K
+            </button>
+          </div>
+          <div class="mt-3 flex gap-4 text-[10px] font-display uppercase tracking-wider2">
+            <a href="/processes" class="text-muted hover:text-fg transition-colors">procs</a>
+            <a href="/errors" class="text-muted hover:text-err transition-colors">errors</a>
+            <a :if={@current_user.role == "admin"} href="/settings"
+               class="text-muted hover:text-accent transition-colors">settings</a>
+            <a href="/auth/logout" class="ml-auto text-muted hover:text-fg transition-colors">logout</a>
           </div>
         </div>
-      </div>
+      </aside>
 
-      <%!-- Main content --%>
-      <div class="flex-1 flex flex-col min-w-0">
-        <div :if={!@selected} class="flex-1 flex items-center justify-center text-gray-400">
+      <%!-- ══════════════════════════════ MAIN ══════════════════════════════ --%>
+      <main class="flex-1 flex flex-col min-w-0 relative">
+        <%!-- Empty state --%>
+        <div :if={!@selected} class="flex-1 flex items-center justify-center">
           <div class="text-center">
-            <div class="text-5xl mb-4">&#128054;</div>
-            <div class="text-lg font-medium text-gray-600">Select an instance</div>
-            <div class="text-sm mt-1">or create a new one with the + button</div>
+            <div class="text-6xl mb-5 grayscale opacity-60">&#128054;</div>
+            <div class="font-display uppercase tracking-caps text-sm text-muted">select an instance</div>
+            <div class="mt-2 text-xs text-subtle font-display tracking-wider2">
+              press <kbd class="border border-line2 px-1.5 py-0.5 text-fg">⌘K</kbd>
+              <span class="mx-1">or</span>
+              <span class="text-fg">+</span>
+              <span class="ml-1">to create one</span>
+            </div>
           </div>
         </div>
 
         <div :if={@selected} class="flex-1 flex flex-col min-h-0">
           <%!-- Top bar --%>
-          <div class="px-6 py-3 border-b border-gray-200 flex items-center gap-4">
-            <button phx-click="back" class="text-gray-400 hover:text-gray-900 transition text-sm">&larr;</button>
-            <h2 class="text-sm font-semibold flex-1"><%= @selected %></h2>
-            <span class={"px-2 py-0.5 rounded text-[10px] font-medium #{runtime_badge_color(selected_field(@instances, @selected, :bot_runtime))}"}><%= selected_field(@instances, @selected, :bot_runtime) || "zeroclaw" %></span>
-            <span class={"px-2 py-0.5 rounded text-[10px] font-medium #{container_status_badge(selected_field(@instances, @selected, :container_status))}"}><%= selected_field(@instances, @selected, :container_status) || "unknown" %></span>
-            <% stats = selected_field(@instances, @selected, :container_stats) %>
-            <span :if={stats} class="text-[10px] text-gray-400 font-mono">
-              <%= stats.mem %> · <%= stats.cpu %>
-            </span>
-            <% is_active = selected_field(@instances, @selected, :active) %>
-            <button :if={!is_active} phx-click="start_bot" phx-value-name={@selected}
-                    class="text-xs text-green-600 hover:text-green-800 transition font-medium">
-              Start
+          <% runtime = selected_field(@instances, @selected, :bot_runtime) || "zeroclaw" %>
+          <% status  = selected_field(@instances, @selected, :container_status) || "unknown" %>
+          <% stats   = selected_field(@instances, @selected, :container_stats) %>
+          <% active? = selected_field(@instances, @selected, :active) %>
+
+          <div class="px-6 py-3.5 border-b border-line flex items-center gap-5">
+            <button phx-click="back"
+                    class="font-display text-muted hover:text-accent transition-colors text-sm">
+              ←
             </button>
-            <button :if={is_active} phx-click="stop" phx-value-name={@selected}
-                    class="text-xs text-red-500 hover:text-red-700 transition font-medium">
-              Stop
+
+            <h2 class="font-display text-base text-fg truncate"><%= @selected %></h2>
+
+            <%!-- Runtime: uppercase label + 1px accent underline --%>
+            <span class={runtime_chip(runtime)}><%= String.upcase(runtime) %></span>
+
+            <%!-- Status dot + text --%>
+            <span class="flex items-center gap-1.5">
+              <span class={[
+                "w-1.5 h-1.5 rounded-full",
+                status_dot_color(status),
+                (if status in ["restarting", "starting"], do: "animate-dot-pulse")
+              ]}></span>
+              <span class="font-display text-[10px] uppercase tracking-wider2 text-muted"><%= status %></span>
+            </span>
+
+            <%!-- mem · cpu --%>
+            <span :if={stats} class="font-mono text-[10px] text-subtle ml-auto">
+              <%= stats.mem %> <span class="text-faint">/</span> <%= stats.cpu %>
+            </span>
+
+            <button :if={!active?} phx-click="start_bot" phx-value-name={@selected}
+                    class="font-display uppercase tracking-wider2 text-[10px] text-ok hover:text-fg border border-line2 hover:border-ok px-2 py-1 transition-colors">
+              ▶ start
+            </button>
+            <button :if={active?} phx-click="stop" phx-value-name={@selected}
+                    class="font-display uppercase tracking-wider2 text-[10px] text-err hover:text-fg border border-line2 hover:border-err px-2 py-1 transition-colors">
+              ■ stop
             </button>
           </div>
 
           <%!-- Tabs --%>
-          <div class="px-6 border-b border-gray-200 flex gap-0">
-            <button phx-click="tab" phx-value-tab="logs"
-                    class={"px-4 py-2.5 text-sm font-medium border-b-2 transition #{if @tab == :logs, do: "border-gray-900 text-gray-900", else: "border-transparent text-gray-400 hover:text-gray-600"}"}>
-              Logs
-              <span :if={@events != []} class="ml-1.5 px-1.5 py-0.5 rounded-full text-xs bg-gray-100 text-gray-600"><%= length(@events) %></span>
-            </button>
-            <button phx-click="tab" phx-value-tab="files"
-                    class={"px-4 py-2.5 text-sm font-medium border-b-2 transition #{if @tab == :files, do: "border-gray-900 text-gray-900", else: "border-transparent text-gray-400 hover:text-gray-600"}"}>
-              Files
-            </button>
-            <button phx-click="tab" phx-value-tab="settings"
-                    class={"px-4 py-2.5 text-sm font-medium border-b-2 transition #{if @tab == :settings, do: "border-gray-900 text-gray-900", else: "border-transparent text-gray-400 hover:text-gray-600"}"}>
-              Settings
-            </button>
-            <button phx-click="tab" phx-value-tab="usage"
-                    class={"px-4 py-2.5 text-sm font-medium border-b-2 transition #{if @tab == :usage, do: "border-blue-500 text-blue-600", else: "border-transparent text-gray-400 hover:text-gray-600"}"}>
-              Usage
-            </button>
-            <button phx-click="tab" phx-value-tab="errors"
-                    class={"px-4 py-2.5 text-sm font-medium border-b-2 transition #{if @tab == :errors, do: "border-red-500 text-red-600", else: "border-transparent text-gray-400 hover:text-gray-600"}"}>
-              Errors
-              <span :if={@instance_errors != []} class="ml-1.5 px-1.5 py-0.5 rounded-full text-xs bg-red-100 text-red-600"><%= length(@instance_errors) %></span>
-            </button>
-          </div>
+          <nav class="px-6 border-b border-line flex gap-0" role="tablist">
+            <.tab_btn tab={:logs}   active={@tab} label="logs"     count={length(@events)} />
+            <.tab_btn tab={:files}  active={@tab} label="files" />
+            <.tab_btn tab={:settings} active={@tab} label="settings" />
+            <.tab_btn tab={:usage}  active={@tab} label="usage" />
+            <.tab_btn tab={:errors} active={@tab} label="errors" count={length(@instance_errors)} color={:err} />
+          </nav>
 
           <%!-- Tab content --%>
           <div class="flex-1 overflow-y-auto relative">
-            <%!-- Loading spinner --%>
-            <div :if={@tab_loading} class="absolute inset-0 flex items-center justify-center bg-white/80 z-10">
-              <div class="w-6 h-6 border-2 border-gray-300 border-t-gray-900 rounded-full animate-spin"></div>
+            <div :if={@tab_loading} class="absolute inset-0 flex items-center justify-center bg-bg/80 z-10 backdrop-blur-sm">
+              <div class="w-5 h-5 border border-faint border-t-accent rounded-full animate-spin"></div>
             </div>
 
-            <%!-- Logs tab --%>
             <.event_log :if={@tab == :logs} events={@events} />
 
-            <%!-- Files tab --%>
             <.live_component :if={@tab == :files && @selected}
               module={FilesTab}
               id={"files-tab-#{@selected}"}
               instance={Enum.find(@instances, &(&1.name == @selected))} />
 
-            <%!-- Settings tab --%>
             <.live_component :if={@tab == :settings && @selected}
               module={SettingsTab}
               id={"settings-tab-#{@selected}"}
@@ -408,11 +518,55 @@ defmodule DruzhokWebWeb.DashboardLive do
               pairing_requests={@pairing_requests}
               allowed_users={@allowed_users} />
 
-            <%!-- Usage tab --%>
             <.usage_tab :if={@tab == :usage} requests={@usage_requests} summary={@usage_summary} tool_stats={[]} instance_name={@selected} expanded_request={@expanded_request} />
 
-            <%!-- Errors tab --%>
             <.errors_tab :if={@tab == :errors} errors={@instance_errors} instance_name={@selected} expanded={@expanded_error} />
+          </div>
+        </div>
+      </main>
+
+      <%!-- ═══════════════════════════ COMMAND PALETTE ═══════════════════════════ --%>
+      <div :if={@palette_open}
+           phx-click="close_palette"
+           class="fixed inset-0 z-50 bg-bg/85 backdrop-blur-[2px] flex items-start justify-center pt-[18vh]">
+        <div phx-click-away="close_palette"
+             onclick="event.stopPropagation()"
+             class="w-[560px] max-w-[90vw] bg-panel border border-line2 shadow-2xl scanlines animate-reveal">
+          <form phx-change="palette_query" phx-submit="palette_select"
+                class="flex items-center gap-3 border-b border-line px-4 py-3">
+            <span class="font-display text-accent text-sm">›</span>
+            <input id="palette-input" phx-hook="PaletteInput"
+                   name="q" value={@palette_query}
+                   placeholder="jump to instance…"
+                   autocomplete="off" spellcheck="false"
+                   class="flex-1 bg-transparent border-0 outline-none focus:ring-0 font-display text-sm text-fg placeholder:text-subtle p-0" />
+            <span class="font-display text-[10px] text-subtle uppercase tracking-wider2">ESC</span>
+          </form>
+
+          <% matches = palette_matches(@instances, @palette_query) %>
+          <div class="max-h-[40vh] overflow-y-auto">
+            <div :if={matches == []} class="px-4 py-6 text-center text-subtle text-xs font-display uppercase tracking-wider2">
+              no match
+            </div>
+            <button :for={{inst, i} <- Enum.with_index(matches)}
+                    phx-click="palette_pick" phx-value-name={inst.name}
+                    class={[
+                      "w-full text-left px-4 py-2.5 flex items-center gap-3 transition-colors",
+                      (if i == @palette_cursor, do: "bg-raised", else: "hover:bg-raised/50")
+                    ]}>
+              <span class={"w-1.5 h-1.5 rounded-full flex-shrink-0 #{status_dot(inst)}"}></span>
+              <span class="font-display text-sm text-fg flex-1 truncate"><%= inst.name %></span>
+              <span class="font-display text-[10px] text-muted uppercase tracking-wider2">
+                <%= String.upcase(inst[:bot_runtime] || "zeroclaw") %>
+              </span>
+              <span class="font-mono text-[10px] text-subtle"><%= model_short(inst.model) %></span>
+            </button>
+          </div>
+
+          <div class="border-t border-line px-4 py-2 flex gap-4 text-[10px] font-display uppercase tracking-wider2 text-subtle">
+            <span><kbd class="text-muted">↑↓</kbd> move</span>
+            <span><kbd class="text-muted">↵</kbd> open</span>
+            <span class="ml-auto"><kbd class="text-muted">esc</kbd> close</span>
           </div>
         </div>
       </div>
@@ -420,25 +574,89 @@ defmodule DruzhokWebWeb.DashboardLive do
     """
   end
 
-  defp model_short(model) do
-    model |> String.split("/") |> List.last()
+  # ── Sub-components ─────────────────────────────────────────────────────────
+
+  attr :name, :string, required: true
+  attr :value, :string, default: ""
+  attr :placeholder, :string, default: ""
+
+  defp term_input(assigns) do
+    ~H"""
+    <input name={@name} value={@value} placeholder={@placeholder}
+           autocomplete="off" spellcheck="false"
+           class="w-full bg-transparent border-0 border-b border-line2 text-sm text-fg
+                  placeholder:text-subtle px-0 py-1.5
+                  focus:outline-none focus:border-accent focus:ring-0 transition-colors" />
+    """
   end
 
-  defp container_status_color("running"), do: "bg-green-500"
-  defp container_status_color("exited"), do: "bg-red-400"
-  defp container_status_color("not_found"), do: "bg-gray-300"
-  defp container_status_color(_), do: "bg-yellow-400"
+  attr :name, :string, required: true
+  slot :inner_block, required: true
 
-  defp runtime_badge_color("hermes"), do: "bg-rose-100 text-rose-700"
-  defp runtime_badge_color("picoclaw"), do: "bg-amber-100 text-amber-700"
-  defp runtime_badge_color("openclaw"), do: "bg-blue-100 text-blue-700"
-  defp runtime_badge_color("nullclaw"), do: "bg-purple-100 text-purple-700"
-  defp runtime_badge_color(_), do: "bg-emerald-100 text-emerald-700"
+  defp term_select(assigns) do
+    ~H"""
+    <select name={@name}
+            class="w-full bg-transparent border-0 border-b border-line2 text-sm text-fg
+                   px-0 py-1.5 focus:outline-none focus:border-accent focus:ring-0 transition-colors">
+      <%= render_slot(@inner_block) %>
+    </select>
+    """
+  end
 
-  defp container_status_badge("running"), do: "bg-green-100 text-green-700"
-  defp container_status_badge("exited"), do: "bg-red-100 text-red-700"
-  defp container_status_badge("not_found"), do: "bg-gray-100 text-gray-500"
-  defp container_status_badge(_), do: "bg-yellow-100 text-yellow-700"
+  attr :tab, :atom, required: true
+  attr :active, :atom, required: true
+  attr :label, :string, required: true
+  attr :count, :integer, default: 0
+  attr :color, :atom, default: :accent
+
+  defp tab_btn(assigns) do
+    ~H"""
+    <button phx-click="tab" phx-value-tab={Atom.to_string(@tab)}
+            class={[
+              "relative px-4 py-3 font-display uppercase tracking-wider2 text-[11px] transition-colors",
+              (if @tab == @active, do: "text-fg", else: "text-muted hover:text-fg"),
+              "after:absolute after:left-3 after:right-3 after:bottom-0 after:h-[2px]",
+              "after:transition-transform after:duration-200 after:origin-left",
+              (if @tab == @active,
+                 do: "after:scale-x-100 " <> (if @color == :err, do: "after:bg-err", else: "after:bg-accent"),
+                 else: "after:scale-x-0 after:bg-accent")
+            ]}>
+      <%= @label %>
+      <span :if={@count > 0}
+            class={[
+              "ml-2 font-mono text-[10px]",
+              (if @color == :err, do: "text-err", else: "text-muted")
+            ]}><%= @count %></span>
+    </button>
+    """
+  end
+
+  # ── Style helpers ──────────────────────────────────────────────────────────
+
+  defp model_short(model) when is_binary(model), do: model |> String.split("/") |> List.last()
+  defp model_short(_), do: ""
+
+  defp status_dot(inst) do
+    cond do
+      !inst[:active] -> "bg-idle"
+      inst[:container_status] == "running" -> "bg-ok"
+      inst[:container_status] in ["exited", "dead"] -> "bg-err"
+      inst[:container_status] == "not_found" -> "bg-idle"
+      true -> "bg-warn"
+    end
+  end
+
+  defp status_dot_color("running"), do: "bg-ok"
+  defp status_dot_color("exited"), do: "bg-err"
+  defp status_dot_color("dead"), do: "bg-err"
+  defp status_dot_color("not_found"), do: "bg-idle"
+  defp status_dot_color(_), do: "bg-warn"
+
+  # Runtime chip: uppercase monospace with a 1px accent underline. No fills.
+  defp runtime_chip(_) do
+    "font-display text-[10px] uppercase tracking-caps text-fg " <>
+      "border-b border-accent pb-0.5 px-0.5"
+  end
 
   defp selected_field(instances, name, field) do
     case Enum.find(instances, &(&1.name == name)) do

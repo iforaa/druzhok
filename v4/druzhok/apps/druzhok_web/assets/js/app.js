@@ -42,6 +42,47 @@ Hooks.CopyToClipboard = {
   }
 }
 
+Hooks.CmdK = {
+  mounted() {
+    this._onKey = (e) => {
+      const mod = e.metaKey || e.ctrlKey
+      if (mod && (e.key === "k" || e.key === "K")) {
+        e.preventDefault()
+        this.pushEvent("toggle_palette", {})
+      } else if (e.key === "Escape") {
+        this.pushEvent("close_palette", {})
+      }
+    }
+    window.addEventListener("keydown", this._onKey)
+  },
+  destroyed() {
+    window.removeEventListener("keydown", this._onKey)
+  }
+}
+
+Hooks.PaletteInput = {
+  mounted() {
+    // Focus the palette input and handle arrow/enter navigation locally
+    setTimeout(() => this.el.focus(), 20)
+    this._onKey = (e) => {
+      if (e.key === "ArrowDown") {
+        e.preventDefault()
+        this.pushEvent("palette_move", {dir: 1})
+      } else if (e.key === "ArrowUp") {
+        e.preventDefault()
+        this.pushEvent("palette_move", {dir: -1})
+      } else if (e.key === "Enter") {
+        e.preventDefault()
+        this.pushEvent("palette_select", {})
+      }
+    }
+    this.el.addEventListener("keydown", this._onKey)
+  },
+  destroyed() {
+    this.el.removeEventListener("keydown", this._onKey)
+  }
+}
+
 Hooks.FileEditor = {
   mounted() {
     this.handleEvent("request_file_content", () => {
@@ -71,7 +112,7 @@ let liveSocket = new LiveSocket("/live", Socket, {
 })
 
 // Show progress bar on live navigation and form submits
-topbar.config({barColors: {0: "#29d"}, shadowColor: "rgba(0, 0, 0, .3)"})
+topbar.config({barColors: {0: "#FD4F00"}, shadowColor: "rgba(253, 79, 0, .35)"})
 window.addEventListener("phx:page-loading-start", _info => topbar.show(300))
 window.addEventListener("phx:page-loading-stop", _info => topbar.hide())
 

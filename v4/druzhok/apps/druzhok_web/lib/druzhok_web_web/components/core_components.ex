@@ -114,20 +114,23 @@ defmodule DruzhokWebWeb.CoreComponents do
       phx-click={JS.push("lv:clear-flash", value: %{key: @kind}) |> hide("##{@id}")}
       role="alert"
       class={[
-        "fixed top-2 right-2 mr-2 w-80 sm:w-96 z-50 rounded-lg p-3 ring-1",
-        @kind == :info && "bg-emerald-50 text-emerald-800 ring-emerald-500 fill-cyan-900",
-        @kind == :error && "bg-rose-50 text-rose-900 shadow-md ring-rose-500 fill-rose-900"
+        "fixed top-3 right-3 w-80 sm:w-96 z-50 p-3.5 border bg-panel scanlines animate-reveal font-display",
+        @kind == :info && "border-ok text-fg border-l-[3px]",
+        @kind == :error && "border-err text-fg border-l-[3px]"
       ]}
       {@rest}
     >
-      <p :if={@title} class="flex items-center gap-1.5 text-sm font-semibold leading-6">
-        <.icon :if={@kind == :info} name="hero-information-circle-mini" class="h-4 w-4" />
-        <.icon :if={@kind == :error} name="hero-exclamation-circle-mini" class="h-4 w-4" />
+      <p :if={@title} class="flex items-center gap-2 text-[10px] uppercase tracking-wider2">
+        <span class={[
+          "w-1.5 h-1.5 rounded-full",
+          @kind == :info && "bg-ok",
+          @kind == :error && "bg-err"
+        ]}></span>
         <%= @title %>
       </p>
-      <p class="mt-2 text-sm leading-5"><%= msg %></p>
-      <button type="button" class="group absolute top-1 right-1 p-2" aria-label="close">
-        <.icon name="hero-x-mark-solid" class="h-5 w-5 opacity-40 group-hover:opacity-70" />
+      <p class="mt-1.5 text-sm leading-relaxed font-sans text-fg"><%= msg %></p>
+      <button type="button" class="group absolute top-1.5 right-1.5 p-1 text-muted hover:text-fg transition-colors" aria-label="close">
+        <.icon name="hero-x-mark-mini" class="h-4 w-4" />
       </button>
     </div>
     """

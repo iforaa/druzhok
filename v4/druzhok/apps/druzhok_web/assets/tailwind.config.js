@@ -1,6 +1,3 @@
-// See the Tailwind configuration guide for advanced usage
-// https://tailwindcss.com/docs/configuration
-
 const plugin = require("tailwindcss/plugin")
 const fs = require("fs")
 const path = require("path")
@@ -14,24 +11,61 @@ module.exports = {
   theme: {
     extend: {
       colors: {
-        brand: "#FD4F00",
-      }
+        bg:      "#0B0B0D",
+        panel:   "#111113",
+        raised:  "#17171A",
+        line:    "rgb(232 228 216 / 0.08)",
+        line2:   "rgb(232 228 216 / 0.16)",
+        fg:      "#E8E4D8",
+        muted:   "rgb(232 228 216 / 0.55)",
+        subtle:  "rgb(232 228 216 / 0.32)",
+        faint:   "rgb(232 228 216 / 0.18)",
+        accent:  "#FD4F00",
+        ok:      "#57C36A",
+        err:     "#C44A45",
+        warn:    "#D4A23A",
+        idle:    "#8A8176",
+        brand:   "#FD4F00",
+      },
+      fontFamily: {
+        display: ['"JetBrains Mono"', "ui-monospace", "SFMono-Regular", "Menlo", "monospace"],
+        sans:    ['"IBM Plex Sans"', "ui-sans-serif", "system-ui", "sans-serif"],
+        mono:    ['"JetBrains Mono"', "ui-monospace", "monospace"],
+      },
+      letterSpacing: {
+        wider2: "0.14em",
+        caps:   "0.22em",
+      },
+      boxShadow: {
+        cut: "inset 0 -1px 0 0 rgb(232 228 216 / 0.16)",
+      },
+      keyframes: {
+        reveal: {
+          from: { opacity: "0", transform: "translateY(-3px)" },
+          to:   { opacity: "1", transform: "translateY(0)" },
+        },
+        "dot-pulse": {
+          "0%, 100%": { transform: "scale(1)", opacity: "1" },
+          "50%":      { transform: "scale(1.6)", opacity: "0.5" },
+        },
+        scanshift: {
+          from: { backgroundPosition: "0 0" },
+          to:   { backgroundPosition: "0 3px" },
+        },
+      },
+      animation: {
+        reveal: "reveal 280ms cubic-bezier(0.22, 1, 0.36, 1) both",
+        "dot-pulse": "dot-pulse 1.4s ease-in-out infinite",
+      },
     },
   },
   plugins: [
     require("@tailwindcss/forms"),
-    // Allows prefixing tailwind classes with LiveView classes to add rules
-    // only when LiveView classes are applied, for example:
-    //
-    //     <div class="phx-click-loading:animate-ping">
-    //
     plugin(({addVariant}) => addVariant("phx-click-loading", [".phx-click-loading&", ".phx-click-loading &"])),
     plugin(({addVariant}) => addVariant("phx-submit-loading", [".phx-submit-loading&", ".phx-submit-loading &"])),
     plugin(({addVariant}) => addVariant("phx-change-loading", [".phx-change-loading&", ".phx-change-loading &"])),
 
-    // Embeds Heroicons (https://heroicons.com) into your app.css bundle
-    // See your `CoreComponents.icon/1` for more information.
-    //
+    // Heroicons
     plugin(function({matchComponents, theme}) {
       let iconsDir = path.join(__dirname, "../../../deps/heroicons/optimized")
       let values = {}
