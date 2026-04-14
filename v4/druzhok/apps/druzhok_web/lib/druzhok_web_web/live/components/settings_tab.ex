@@ -228,11 +228,12 @@ defmodule DruzhokWebWeb.Live.Components.SettingsTab do
       <%!-- Group Chats --%>
       <div>
         <h3 class="text-sm font-medium text-gray-700 mb-3">Group Chats</h3>
-        <label class="flex items-center gap-3 cursor-pointer">
+        <label class="flex items-center gap-3 cursor-pointer select-none">
           <input type="checkbox" phx-click="toggle_mention_only" phx-target={@myself}
+                 phx-throttle="1000"
                  checked={@instance[:mention_only]}
-                 class="rounded border-gray-300" />
-          <span class="text-sm text-gray-600">Mention only — respond only when @mentioned in groups</span>
+                 class="w-4 h-4 border border-line2 bg-panel accent-accent focus:ring-0 focus:ring-offset-0" />
+          <span class="text-sm text-fg">Mention only — respond only when @mentioned in groups</span>
         </label>
         <form phx-submit="save_trigger_name" phx-target={@myself} class="flex gap-2 mt-3">
           <input name="trigger_name" value={@instance[:trigger_name] || ""}
@@ -438,7 +439,10 @@ defmodule DruzhokWebWeb.Live.Components.SettingsTab do
 
   defp approve_pairing_code(socket, code) do
     name = socket.assigns.instance.name
-    {output, exit_code} = BotManager.exec(name, ["hermes", "pairing", "approve", "telegram", code])
+    # Absolute path: `hermes` lives in the venv, which docker-exec does not
+    # activate (the entrypoint does, but exec bypasses it).
+    {output, exit_code} =
+      BotManager.exec(name, ["/opt/hermes/.venv/bin/hermes", "pairing", "approve", "telegram", code])
 
     flash_kind = if exit_code == 0, do: :info, else: :error
     {:noreply, put_flash(socket, flash_kind, String.trim(output))}

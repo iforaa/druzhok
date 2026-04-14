@@ -15,14 +15,23 @@
   }
   ::selection { background: theme('colors.accent'); color: theme('colors.bg'); }
 
-  /* Native form elements against dark bg */
-  input, select, textarea {
+  /* Text-like inputs against dark bg. Exclude boxes whose background is
+     part of their visual meaning (checkbox/radio/range) — otherwise the
+     @tailwindcss/forms checked-state fill is wiped out and the user can't
+     tell whether a checkbox is on. */
+  input:not([type="checkbox"]):not([type="radio"]):not([type="range"]),
+  select, textarea {
     background: transparent !important;
     color: theme('colors.fg');
     caret-color: theme('colors.accent');
   }
   input::placeholder, textarea::placeholder { color: theme('colors.subtle'); }
   select option { background: theme('colors.panel'); color: theme('colors.fg'); }
+
+  /* Native form controls render their own fill; paint it with the accent. */
+  input[type="checkbox"], input[type="radio"] {
+    accent-color: theme('colors.accent');
+  }
 
   /* Firefox scrollbar */
   * { scrollbar-width: thin; scrollbar-color: rgb(232 228 216 / 0.2) transparent; }
