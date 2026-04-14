@@ -444,8 +444,16 @@ defmodule DruzhokWebWeb.Live.Components.SettingsTab do
     {output, exit_code} =
       BotManager.exec(name, ["/opt/hermes/.venv/bin/hermes", "pairing", "approve", "telegram", code])
 
-    flash_kind = if exit_code == 0, do: :info, else: :error
-    {:noreply, put_flash(socket, flash_kind, String.trim(output))}
+    trimmed = String.trim(output)
+    # Hermes exits 0 on "code not found or expired" too — detect failure from
+    # the output text so the user sees a red flash, not a misleading green one.
+    looks_like_error =
+      trimmed
+      |> String.downcase()
+      |> String.contains?(["not found", "expired", "invalid", "error", "failed"])
+
+    flash_kind = if exit_code == 0 and not looks_like_error, do: :info, else: :error
+    {:noreply, put_flash(socket, flash_kind, trimmed)}
   end
 
   defp mutate_allowlist(socket, user_id, op) do
