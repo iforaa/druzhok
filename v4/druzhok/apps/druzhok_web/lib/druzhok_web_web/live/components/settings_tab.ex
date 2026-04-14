@@ -441,8 +441,13 @@ defmodule DruzhokWebWeb.Live.Components.SettingsTab do
     name = socket.assigns.instance.name
     # Absolute path: `hermes` lives in the venv, which docker-exec does not
     # activate (the entrypoint does, but exec bypasses it).
+    # Run as `hermes` (uid 1000) so files get written with correct ownership.
+    # Default docker exec is root — that left approved.json owned by root:root
+    # 0600, which the gateway process (uid 1000) couldn't read, so every
+    # subsequent message from an "approved" user was still rejected.
     {output, exit_code} =
-      BotManager.exec(name, ["/opt/hermes/.venv/bin/hermes", "pairing", "approve", "telegram", code])
+      BotManager.exec(name, ["/opt/hermes/.venv/bin/hermes", "pairing", "approve", "telegram", code],
+                      user: "hermes")
 
     trimmed = String.trim(output)
     # Hermes exits 0 on "code not found or expired" too — detect failure from

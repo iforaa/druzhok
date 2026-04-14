@@ -289,8 +289,21 @@ defmodule Druzhok.BotManager do
 
   Used by runtime-specific flows that need to invoke a tool inside the
   container (e.g. hermes's pairing-code approve).
+
+  ## Options
+
+    * `:user` — run as a specific user inside the container (string passed
+      to `docker exec -u`). Defaults to the container default, which is
+      **root** for most images — this is usually wrong for hermes, whose
+      gateway runs as uid 1000, so callers should pass e.g. `user: "hermes"`
+      when exec'ing tools that touch files the server will later read.
   """
-  def exec(name, args) when is_list(args) do
-    System.cmd("docker", ["exec", container_name(name) | args], stderr_to_stdout: true)
+  def exec(name, args, opts \\ []) when is_list(args) do
+    user_flag = case Keyword.get(opts, :user) do
+      nil -> []
+      user -> ["-u", to_string(user)]
+    end
+
+    System.cmd("docker", ["exec"] ++ user_flag ++ [container_name(name) | args], stderr_to_stdout: true)
   end
 end
