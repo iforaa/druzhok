@@ -185,7 +185,7 @@ defmodule DruzhokWebWeb.DashboardLive do
     if name != "" do
       token = params["token"]
       token = if token == "", do: nil, else: token
-      bot_runtime = params["bot_runtime"] || "zeroclaw"
+      bot_runtime = params["bot_runtime"] || "hermes"
 
       case Druzhok.BotManager.create(name, %{
         model: model,
@@ -268,15 +268,11 @@ defmodule DruzhokWebWeb.DashboardLive do
 
   # --- Command palette (⌘K / Ctrl+K) -----------------------------------------
   def handle_event("toggle_palette", _, socket) do
-    {:noreply, assign(socket,
-      palette_open: !socket.assigns.palette_open,
-      palette_query: "",
-      palette_cursor: 0
-    )}
+    {:noreply, reset_palette(socket, open: !socket.assigns.palette_open)}
   end
 
   def handle_event("close_palette", _, socket) do
-    {:noreply, assign(socket, palette_open: false)}
+    {:noreply, reset_palette(socket, open: false)}
   end
 
   def handle_event("palette_query", %{"q" => q}, socket) do
@@ -296,11 +292,11 @@ defmodule DruzhokWebWeb.DashboardLive do
            palette_matches(socket.assigns.instances, socket.assigns.palette_query),
            socket.assigns.palette_cursor
          ) do
-      nil -> {:noreply, assign(socket, palette_open: false)}
+      nil -> {:noreply, reset_palette(socket, open: false)}
       inst ->
         {:noreply,
          socket
-         |> assign(palette_open: false, palette_query: "", palette_cursor: 0)
+         |> reset_palette(open: false)
          |> push_patch(to: "/instances/#{inst.name}")}
     end
   end
@@ -308,8 +304,12 @@ defmodule DruzhokWebWeb.DashboardLive do
   def handle_event("palette_pick", %{"name" => name}, socket) do
     {:noreply,
      socket
-     |> assign(palette_open: false, palette_query: "", palette_cursor: 0)
+     |> reset_palette(open: false)
      |> push_patch(to: "/instances/#{name}")}
+  end
+
+  defp reset_palette(socket, open: open) do
+    assign(socket, palette_open: open, palette_query: "", palette_cursor: 0)
   end
 
   defp palette_matches(instances, ""), do: instances
@@ -399,7 +399,7 @@ defmodule DruzhokWebWeb.DashboardLive do
             <div class="flex-1 min-w-0">
               <div class="font-display text-sm text-fg truncate"><%= inst.name %></div>
               <div class="text-[10px] text-muted uppercase tracking-wider2 font-display truncate">
-                <%= String.upcase(inst[:bot_runtime] || "zeroclaw") %>
+                <%= String.upcase(inst[:bot_runtime] || "hermes") %>
                 <span class="text-faint">·</span>
                 <%= model_short(inst.model) %><%= if !inst[:active], do: " · stopped" %>
               </div>
@@ -448,7 +448,7 @@ defmodule DruzhokWebWeb.DashboardLive do
 
         <div :if={@selected} class="flex-1 flex flex-col min-h-0">
           <%!-- Top bar --%>
-          <% runtime = selected_field(@instances, @selected, :bot_runtime) || "zeroclaw" %>
+          <% runtime = selected_field(@instances, @selected, :bot_runtime) || "hermes" %>
           <% status  = selected_field(@instances, @selected, :container_status) || "unknown" %>
           <% stats   = selected_field(@instances, @selected, :container_stats) %>
           <% active? = selected_field(@instances, @selected, :active) %>
@@ -462,7 +462,7 @@ defmodule DruzhokWebWeb.DashboardLive do
             <h2 class="font-display text-base text-fg truncate"><%= @selected %></h2>
 
             <%!-- Runtime: uppercase label + 1px accent underline --%>
-            <span class={runtime_chip(runtime)}><%= String.upcase(runtime) %></span>
+            <span class="font-display text-[10px] uppercase tracking-caps text-fg border-b border-accent pb-0.5 px-0.5"><%= String.upcase(runtime) %></span>
 
             <%!-- Status dot + text --%>
             <span class="flex items-center gap-1.5">
@@ -557,7 +557,7 @@ defmodule DruzhokWebWeb.DashboardLive do
               <span class={"w-1.5 h-1.5 rounded-full flex-shrink-0 #{status_dot(inst)}"}></span>
               <span class="font-display text-sm text-fg flex-1 truncate"><%= inst.name %></span>
               <span class="font-display text-[10px] text-muted uppercase tracking-wider2">
-                <%= String.upcase(inst[:bot_runtime] || "zeroclaw") %>
+                <%= String.upcase(inst[:bot_runtime] || "hermes") %>
               </span>
               <span class="font-mono text-[10px] text-subtle"><%= model_short(inst.model) %></span>
             </button>
@@ -652,12 +652,6 @@ defmodule DruzhokWebWeb.DashboardLive do
   defp status_dot_color("not_found"), do: "bg-idle"
   defp status_dot_color(_), do: "bg-warn"
 
-  # Runtime chip: uppercase monospace with a 1px accent underline. No fills.
-  defp runtime_chip(_) do
-    "font-display text-[10px] uppercase tracking-caps text-fg " <>
-      "border-b border-accent pb-0.5 px-0.5"
-  end
-
   defp selected_field(instances, name, field) do
     case Enum.find(instances, &(&1.name == name)) do
       nil -> nil
@@ -726,18 +720,36 @@ defmodule DruzhokWebWeb.DashboardLive do
   end
 
   defp list_instances do
-    instances = Druzhok.InstanceManager.list()
+    # `docker stats --no-stream` alone is ~500 ms per container; sequential
+    # polling over N instances exceeds the 5 s refresh tick and saturates the
+    # LV process. Parallelize with bounded concurrency.
+    Druzhok.InstanceManager.list()
+    |> Task.async_stream(
+      fn inst ->
+        container = Druzhok.BotManager.container_name(inst.name)
 
-    Enum.map(instances, fn inst ->
-      container = Druzhok.BotManager.container_name(inst.name)
-      status = Druzhok.BotManager.status_for_container(container)
-      stats = Druzhok.BotManager.stats_for_container(container)
+        [status_task, stats_task] =
+          Enum.map(
+            [
+              fn -> Druzhok.BotManager.status_for_container(container) end,
+              fn -> Druzhok.BotManager.stats_for_container(container) end
+            ],
+            &Task.async/1
+          )
 
-      inst
-      |> Map.from_struct()
-      |> Map.drop([:__meta__])
-      |> Map.put(:container_status, status)
-      |> Map.put(:container_stats, stats)
+        inst
+        |> Map.from_struct()
+        |> Map.drop([:__meta__])
+        |> Map.put(:container_status, Task.await(status_task, 4_000))
+        |> Map.put(:container_stats, Task.await(stats_task, 4_000))
+      end,
+      max_concurrency: 8,
+      timeout: 6_000,
+      on_timeout: :kill_task
+    )
+    |> Enum.flat_map(fn
+      {:ok, inst} -> [inst]
+      _ -> []
     end)
   end
 

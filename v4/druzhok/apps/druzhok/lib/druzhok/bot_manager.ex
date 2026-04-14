@@ -113,14 +113,8 @@ defmodule Druzhok.BotManager do
   end
 
   def restart(name) do
-    # Serialize concurrent restarts per bot. Rapid UI toggles (e.g. clicking
-    # a settings checkbox several times) spawn one Task per click, each
-    # calling restart/1. Without a lock, their stop+run cycles race on the
-    # container name and Docker errors with "name already in use", leaving
-    # the bot in a half-started state. `retries: 0` makes set_lock return
-    # false immediately when another restart is in flight — the redundant
-    # ones become no-ops, and the winner's start/1 re-reads the latest DB
-    # state so no settings change is lost.
+    # Serialize per-bot: rapid UI clicks race on `docker run --name`. Losers
+    # no-op; the winner's start/1 re-reads DB state so no change is lost.
     case :global.set_lock({{:bot_restart, name}, self()}, [node()], 0) do
       true ->
         try do
