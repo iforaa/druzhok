@@ -149,4 +149,24 @@ defmodule Druzhok.Runtime.HermesTest do
       assert Hermes.supports_feature?(:group_chat_config)
     end
   end
+
+  describe "build_config_yaml/1" do
+    test "emits group_sessions_per_user: true when set" do
+      inst = Map.put(@instance, :group_sessions_per_user, true)
+      yaml = Hermes.build_config_yaml(inst)
+      assert yaml =~ ~r/^group_sessions_per_user: true$/m
+    end
+
+    test "emits group_sessions_per_user: false when set" do
+      inst = Map.put(@instance, :group_sessions_per_user, false)
+      yaml = Hermes.build_config_yaml(inst)
+      assert yaml =~ ~r/^group_sessions_per_user: false$/m
+    end
+
+    test "defaults to true when key missing on the instance map" do
+      inst = Map.delete(@instance, :group_sessions_per_user)
+      yaml = Hermes.build_config_yaml(inst)
+      assert yaml =~ ~r/^group_sessions_per_user: true$/m
+    end
+  end
 end
