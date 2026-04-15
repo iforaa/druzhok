@@ -242,6 +242,13 @@ defmodule DruzhokWebWeb.Live.Components.SettingsTab do
                  class="w-4 h-4 border border-line2 bg-panel accent-accent focus:ring-0 focus:ring-offset-0" />
           <span class="text-sm text-fg">Shared group memory — one conversation per group (instead of per user)</span>
         </label>
+        <label class="flex items-center gap-3 cursor-pointer select-none mt-3">
+          <input type="checkbox" phx-click="toggle_group_shared_memory" phx-target={@myself}
+                 phx-throttle="1000"
+                 checked={@instance[:group_shared_memory]}
+                 class="w-4 h-4 border border-line2 bg-panel accent-accent focus:ring-0 focus:ring-offset-0" />
+          <span class="text-sm text-fg">Record all group messages — bot reads everything, answers only when addressed</span>
+        </label>
         <form phx-submit="save_trigger_name" phx-target={@myself} class="flex gap-2 mt-3">
           <input name="trigger_name" value={@instance[:trigger_name] || ""}
                  placeholder="Trigger name (e.g. Igz)"
@@ -361,6 +368,15 @@ defmodule DruzhokWebWeb.Live.Components.SettingsTab do
     current = socket.assigns.instance[:group_sessions_per_user]
     # UI shows "shared" when DB value is false; toggling flips it.
     update_instance(name, %{group_sessions_per_user: !current})
+    restart_bot(name)
+    notify_parent(socket)
+    {:noreply, socket}
+  end
+
+  def handle_event("toggle_group_shared_memory", _params, socket) do
+    name = socket.assigns.instance.name
+    current = socket.assigns.instance[:group_shared_memory]
+    update_instance(name, %{group_shared_memory: !current})
     restart_bot(name)
     notify_parent(socket)
     {:noreply, socket}
