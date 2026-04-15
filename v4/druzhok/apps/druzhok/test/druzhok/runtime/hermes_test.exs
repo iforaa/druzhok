@@ -200,4 +200,24 @@ defmodule Druzhok.Runtime.HermesTest do
       assert yaml =~ ~r/^group_sessions_per_user: true$/m
     end
   end
+
+  describe "build_config_yaml/1 — group_shared_memory" do
+    test "emits group_shared_memory: true when set" do
+      inst = Map.put(@instance, :group_shared_memory, true)
+      yaml = Hermes.build_config_yaml(inst)
+      assert yaml =~ ~r/^group_shared_memory: true$/m
+    end
+
+    test "emits group_shared_memory: false when set" do
+      inst = Map.put(@instance, :group_shared_memory, false)
+      yaml = Hermes.build_config_yaml(inst)
+      assert yaml =~ ~r/^group_shared_memory: false$/m
+    end
+
+    test "defaults to false when key missing on the instance map" do
+      inst = Map.delete(@instance, :group_shared_memory)
+      yaml = Hermes.build_config_yaml(inst)
+      assert yaml =~ ~r/^group_shared_memory: false$/m
+    end
+  end
 end
