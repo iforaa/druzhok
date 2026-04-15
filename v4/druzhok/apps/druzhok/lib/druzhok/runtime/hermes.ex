@@ -116,6 +116,7 @@ defmodule Druzhok.Runtime.Hermes do
           |> sync_model_default(model)
           |> sync_auxiliary_vision(vision_model, tenant_key)
           |> sync_group_sessions_per_user(instance)
+          |> sync_group_shared_memory(instance)
 
         if updated != content, do: File.write!(config_path, updated)
         :ok
@@ -167,6 +168,17 @@ defmodule Druzhok.Runtime.Hermes do
 
     if Regex.match?(~r/^group_sessions_per_user:.*$/m, content) do
       Regex.replace(~r/^group_sessions_per_user:.*$/m, content, line)
+    else
+      String.trim_trailing(content) <> "\n\n" <> line <> "\n"
+    end
+  end
+
+  defp sync_group_shared_memory(content, instance) do
+    value = Map.get(instance, :group_shared_memory, false)
+    line = "group_shared_memory: #{value}"
+
+    if Regex.match?(~r/^group_shared_memory:.*$/m, content) do
+      Regex.replace(~r/^group_shared_memory:.*$/m, content, line)
     else
       String.trim_trailing(content) <> "\n\n" <> line <> "\n"
     end

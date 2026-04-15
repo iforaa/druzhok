@@ -201,6 +201,37 @@ defmodule Druzhok.Runtime.HermesTest do
     end
   end
 
+  describe "sync_config/2 — group_shared_memory" do
+    @tag :tmp_dir
+    test "appends the key when absent", %{tmp_dir: tmp_dir} do
+      File.write!(Path.join(tmp_dir, "config.yaml"), "model:\n  default: \"x\"\n")
+
+      inst = Map.put(@instance, :group_shared_memory, true)
+      assert :ok = Hermes.sync_config(inst, tmp_dir)
+
+      yaml = File.read!(Path.join(tmp_dir, "config.yaml"))
+      assert yaml =~ ~r/^group_shared_memory: true$/m
+    end
+
+    @tag :tmp_dir
+    test "overwrites an existing value rather than duplicating", %{tmp_dir: tmp_dir} do
+      File.write!(Path.join(tmp_dir, "config.yaml"), """
+      model:
+        default: "x"
+
+      group_shared_memory: false
+      """)
+
+      inst = Map.put(@instance, :group_shared_memory, true)
+      assert :ok = Hermes.sync_config(inst, tmp_dir)
+
+      yaml = File.read!(Path.join(tmp_dir, "config.yaml"))
+      matches = Regex.scan(~r/^group_shared_memory:/m, yaml)
+      assert length(matches) == 1
+      assert yaml =~ ~r/^group_shared_memory: true$/m
+    end
+  end
+
   describe "build_config_yaml/1 — group_shared_memory" do
     test "emits group_shared_memory: true when set" do
       inst = Map.put(@instance, :group_shared_memory, true)
