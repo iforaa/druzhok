@@ -150,6 +150,37 @@ defmodule Druzhok.Runtime.HermesTest do
     end
   end
 
+  describe "sync_config/2 — group_sessions_per_user" do
+    @tag :tmp_dir
+    test "appends the key when absent", %{tmp_dir: tmp_dir} do
+      File.write!(Path.join(tmp_dir, "config.yaml"), "model:\n  default: \"x\"\n")
+
+      inst = Map.put(@instance, :group_sessions_per_user, false)
+      assert :ok = Hermes.sync_config(inst, tmp_dir)
+
+      yaml = File.read!(Path.join(tmp_dir, "config.yaml"))
+      assert yaml =~ ~r/^group_sessions_per_user: false$/m
+    end
+
+    @tag :tmp_dir
+    test "overwrites an existing value rather than duplicating", %{tmp_dir: tmp_dir} do
+      File.write!(Path.join(tmp_dir, "config.yaml"), """
+      model:
+        default: "x"
+
+      group_sessions_per_user: true
+      """)
+
+      inst = Map.put(@instance, :group_sessions_per_user, false)
+      assert :ok = Hermes.sync_config(inst, tmp_dir)
+
+      yaml = File.read!(Path.join(tmp_dir, "config.yaml"))
+      matches = Regex.scan(~r/^group_sessions_per_user:/m, yaml)
+      assert length(matches) == 1
+      assert yaml =~ ~r/^group_sessions_per_user: false$/m
+    end
+  end
+
   describe "build_config_yaml/1" do
     test "emits group_sessions_per_user: true when set" do
       inst = Map.put(@instance, :group_sessions_per_user, true)

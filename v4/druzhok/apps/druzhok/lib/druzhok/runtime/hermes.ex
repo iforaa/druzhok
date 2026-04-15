@@ -115,6 +115,7 @@ defmodule Druzhok.Runtime.Hermes do
           content
           |> sync_model_default(model)
           |> sync_auxiliary_vision(vision_model, tenant_key)
+          |> sync_group_sessions_per_user(instance)
 
         if updated != content, do: File.write!(config_path, updated)
         :ok
@@ -157,6 +158,17 @@ defmodule Druzhok.Runtime.Hermes do
       )
     else
       content <> "\n" <> vision_block <> "\n"
+    end
+  end
+
+  defp sync_group_sessions_per_user(content, instance) do
+    value = Map.get(instance, :group_sessions_per_user, true)
+    line = "group_sessions_per_user: #{value}"
+
+    if Regex.match?(~r/^group_sessions_per_user:.*$/m, content) do
+      Regex.replace(~r/^group_sessions_per_user:.*$/m, content, line)
+    else
+      String.trim_trailing(content) <> "\n\n" <> line <> "\n"
     end
   end
 
