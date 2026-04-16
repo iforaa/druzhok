@@ -201,6 +201,23 @@ defmodule Druzhok.Runtime.HermesTest do
     end
   end
 
+  describe "env_vars/1 — BOT_SITE_BASE_URL" do
+    test "emits URL when hosting is enabled" do
+      inst = Map.merge(@instance, %{website_hosting_enabled: true, name: "alice"})
+      assert Hermes.env_vars(inst)["BOT_SITE_BASE_URL"] == "https://alice.oldey.dev"
+    end
+
+    test "emits empty string when hosting is disabled" do
+      inst = Map.put(@instance, :website_hosting_enabled, false)
+      assert Hermes.env_vars(inst)["BOT_SITE_BASE_URL"] == ""
+    end
+
+    test "defaults to empty string when key missing on instance map" do
+      inst = Map.delete(@instance, :website_hosting_enabled)
+      assert Hermes.env_vars(inst)["BOT_SITE_BASE_URL"] == ""
+    end
+  end
+
   describe "env_vars/1 — TELEGRAM_GROUP_SHARED_MEMORY" do
     test "emits \"true\" when flag is on" do
       inst = Map.put(@instance, :group_shared_memory, true)

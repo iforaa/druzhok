@@ -78,6 +78,10 @@ defmodule Druzhok.Runtime.Hermes do
       # Druzhok patch: enables thread_id collapse + silent observer for
       # group chats (see gateway/platforms/telegram.py patches).
       "TELEGRAM_GROUP_SHARED_MEMORY" => to_string(Map.get(instance, :group_shared_memory, false)),
+      # Druzhok website hosting: when enabled, the bot knows its public
+      # base URL; otherwise this is empty and the agent refuses to
+      # publish (see workspace/AGENTS.md "Публикация сайтов").
+      "BOT_SITE_BASE_URL" => build_bot_site_base_url(instance),
       "HERMES_INFERENCE_PROVIDER" => "custom",
       "OPENROUTER_API_KEY" => tenant_key,
       "HERMES_MODEL" => model,
@@ -244,6 +248,14 @@ defmodule Druzhok.Runtime.Hermes do
         # One regex per name; word-boundary + case-insensitive (the re.IGNORECASE
         # flag is applied by hermes when it compiles the pattern list).
         Jason.encode!(["\\b#{Regex.escape(name)}\\b"])
+    end
+  end
+
+  defp build_bot_site_base_url(instance) do
+    if Map.get(instance, :website_hosting_enabled, false) do
+      "https://#{instance.name}.oldey.dev"
+    else
+      ""
     end
   end
 
