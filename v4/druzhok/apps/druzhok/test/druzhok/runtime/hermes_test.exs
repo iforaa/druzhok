@@ -234,4 +234,44 @@ defmodule Druzhok.Runtime.HermesTest do
       assert Hermes.env_vars(inst)["TELEGRAM_GROUP_SHARED_MEMORY"] == "false"
     end
   end
+
+  describe "sync_agents_md/2" do
+    @tag :tmp_dir
+    test "appends the sites section when absent", %{tmp_dir: tmp_dir} do
+      workspace = Path.join(tmp_dir, "workspace")
+      File.mkdir_p!(workspace)
+      File.write!(Path.join(workspace, "AGENTS.md"), "# AGENTS.md\n\nExisting content.\n")
+
+      assert :ok = Hermes.sync_agents_md(@instance, tmp_dir)
+
+      content = File.read!(Path.join(workspace, "AGENTS.md"))
+      assert content =~ "## Публикация сайтов"
+      assert content =~ "BOT_SITE_BASE_URL"
+    end
+
+    @tag :tmp_dir
+    test "is idempotent when section already present", %{tmp_dir: tmp_dir} do
+      workspace = Path.join(tmp_dir, "workspace")
+      File.mkdir_p!(workspace)
+      File.write!(Path.join(workspace, "AGENTS.md"), "# AGENTS.md\n\nExisting content.\n")
+
+      assert :ok = Hermes.sync_agents_md(@instance, tmp_dir)
+      first = File.read!(Path.join(workspace, "AGENTS.md"))
+
+      assert :ok = Hermes.sync_agents_md(@instance, tmp_dir)
+      second = File.read!(Path.join(workspace, "AGENTS.md"))
+
+      assert first == second
+    end
+
+    @tag :tmp_dir
+    test "is a no-op when AGENTS.md does not exist", %{tmp_dir: tmp_dir} do
+      workspace = Path.join(tmp_dir, "workspace")
+      File.mkdir_p!(workspace)
+
+      assert :ok = Hermes.sync_agents_md(@instance, tmp_dir)
+
+      refute File.exists?(Path.join(workspace, "AGENTS.md"))
+    end
+  end
 end

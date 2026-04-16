@@ -23,6 +23,20 @@ defmodule Druzhok.Runtime.Hermes do
   @default_model "anthropic/claude-opus-4.6"
   @default_vision_model "google/gemini-2.5-flash-lite"
 
+  @agents_md_sites_section """
+  ## Публикация сайтов
+
+  Если пользователь просит сделать лендинг, сайт, демо-страницу и т.п.:
+
+  1. Проверь переменную окружения `BOT_SITE_BASE_URL`. Если пусто — хостинг не включён; сообщи пользователю и не пиши файлы.
+  2. Выбери короткое имя сайта (`^[a-z0-9][a-z0-9-]*$`, до 50 символов).
+  3. Запиши все файлы в `/opt/data/workspace/sites/<имя>/`. Входная точка — `index.html`. Всего до ~50 MB на сайт, до ~100 файлов.
+  4. Ответь пользователю одной кликабельной ссылкой: `$BOT_SITE_BASE_URL/<имя>/`.
+  5. Удалить сайт: `rm -rf /opt/data/workspace/sites/<имя>/`.
+
+  Файлы в `sites/<имя>/` публичны. Не клади туда секреты, токены, файлы, начинающиеся с точки.
+  """
+
   @impl true
   def docker_image, do: System.get_env("HERMES_IMAGE") || "hermes:latest"
 
@@ -108,6 +122,8 @@ defmodule Druzhok.Runtime.Hermes do
 
   @impl true
   def sync_config(instance, data_root) do
+    sync_agents_md(instance, data_root)
+
     # Patch dashboard-owned fields in config.yaml on every start so the
     # dashboard stays the source of truth without clobbering hermes's
     # runtime writes (thread IDs etc).
@@ -176,6 +192,24 @@ defmodule Druzhok.Runtime.Hermes do
       Regex.replace(~r/^group_sessions_per_user:.*$/m, content, line)
     else
       String.trim_trailing(content) <> "\n\n" <> line <> "\n"
+    end
+  end
+
+  def sync_agents_md(_instance, data_root) do
+    agents_path = Path.join([data_root, "workspace", "AGENTS.md"])
+
+    case File.read(agents_path) do
+      {:ok, content} ->
+        if String.contains?(content, "## Публикация сайтов") do
+          :ok
+        else
+          updated = String.trim_trailing(content) <> "\n\n" <> @agents_md_sites_section
+          File.write!(agents_path, updated)
+          :ok
+        end
+
+      {:error, _} ->
+        :ok
     end
   end
 
