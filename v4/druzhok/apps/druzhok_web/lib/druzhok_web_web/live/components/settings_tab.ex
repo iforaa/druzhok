@@ -1,7 +1,7 @@
 defmodule DruzhokWebWeb.Live.Components.SettingsTab do
   use DruzhokWebWeb, :live_component
 
-  alias Druzhok.{Instance, Repo, Runtime, Pairing, Telegram, I18n, BotManager, ModelCatalog}
+  alias Druzhok.{Instance, Repo, Runtime, Pairing, Telegram, I18n, BotManager, ModelCatalog, SiteLister}
 
   # Hermes pairing code: 8 characters from the unambiguous alphabet
   # (A–Z minus IO, 2–9), per hermes-agent/gateway/pairing.py.
@@ -10,7 +10,14 @@ defmodule DruzhokWebWeb.Live.Components.SettingsTab do
   @impl true
   def update(%{instance: instance} = assigns, socket) do
     runtime = Runtime.get(instance[:bot_runtime] || "zeroclaw", Runtime.ZeroClaw)
-    {:ok, socket |> assign(assigns) |> assign(:runtime, runtime)}
+
+    sites =
+      case assigns[:instance] do
+        %{website_hosting_enabled: true} = inst -> SiteLister.list(inst)
+        _ -> []
+      end
+
+    {:ok, socket |> assign(assigns) |> assign(:runtime, runtime) |> assign(:sites, sites)}
   end
 
   @impl true
@@ -260,6 +267,51 @@ defmodule DruzhokWebWeb.Live.Components.SettingsTab do
 
       <hr class="border-gray-200" />
 
+      <%!-- Website Hosting --%>
+      <div>
+        <h3 class="text-sm font-medium text-gray-700 mb-3">Website Hosting</h3>
+        <label class="flex items-center gap-3 cursor-pointer select-none">
+          <input type="checkbox" phx-click="toggle_website_hosting" phx-target={@myself}
+                 phx-throttle="1000"
+                 checked={@instance[:website_hosting_enabled]}
+                 class="w-4 h-4 border border-line2 bg-panel accent-accent focus:ring-0 focus:ring-offset-0" />
+          <span class="text-sm text-fg">
+            Enable website hosting — publish static sites at <code>{@instance.name}.oldey.dev</code>
+          </span>
+        </label>
+
+        <%= if @instance[:website_hosting_enabled] do %>
+          <div class="mt-3">
+            <%= if Enum.empty?(@sites) do %>
+              <p class="text-xs text-gray-400">
+                No sites published yet. Ask the bot to create one.
+              </p>
+            <% else %>
+              <ul class="space-y-2">
+                <%= for site <- @sites do %>
+                  <li class="flex items-center justify-between text-sm border border-gray-200 rounded-lg px-3 py-2">
+                    <div>
+                      <a href={site.url} target="_blank" class="font-mono text-accent">
+                        {site.url}
+                      </a>
+                      <div class="text-xs text-gray-500">
+                        {format_bytes(site.size)} · updated {Calendar.strftime(site.mtime, "%Y-%m-%d %H:%M")}
+                      </div>
+                    </div>
+                  </li>
+                <% end %>
+              </ul>
+            <% end %>
+          </div>
+        <% else %>
+          <p class="text-xs text-gray-400 mt-1">
+            Enable to let the bot publish static pages.
+          </p>
+        <% end %>
+      </div>
+
+      <hr class="border-gray-200" />
+
       <%!-- Messages --%>
       <div>
         <h3 class="text-sm font-medium text-gray-700 mb-3">Messages</h3>
@@ -377,6 +429,15 @@ defmodule DruzhokWebWeb.Live.Components.SettingsTab do
     name = socket.assigns.instance.name
     current = socket.assigns.instance[:group_shared_memory]
     update_instance(name, %{group_shared_memory: !current})
+    restart_bot(name)
+    notify_parent(socket)
+    {:noreply, socket}
+  end
+
+  def handle_event("toggle_website_hosting", _params, socket) do
+    name = socket.assigns.instance.name
+    current = socket.assigns.instance[:website_hosting_enabled]
+    update_instance(name, %{website_hosting_enabled: !current})
     restart_bot(name)
     notify_parent(socket)
     {:noreply, socket}
@@ -562,4 +623,8 @@ defmodule DruzhokWebWeb.Live.Components.SettingsTab do
     send(self(), :settings_updated)
     :ok
   end
+
+  defp format_bytes(n) when n < 1024, do: "#{n} B"
+  defp format_bytes(n) when n < 1024 * 1024, do: "#{Float.round(n / 1024, 1)} KB"
+  defp format_bytes(n), do: "#{Float.round(n / (1024 * 1024), 1)} MB"
 end
