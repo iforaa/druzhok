@@ -1,14 +1,18 @@
 defmodule DruzhokWebWeb.Endpoint do
   use Phoenix.Endpoint, otp_app: :druzhok_web
 
-  # The session will be stored in the cookie and signed,
-  # this means its contents can be read but not tampered with.
-  # Set :encryption_salt if you would also like to encrypt it.
+  # Session cookie is host-only (no domain set) so a hostile subdomain
+  # (e.g. a malicious bot-hosted site at vasya.oldey.dev) cannot read
+  # or overwrite it. SameSite=Strict prevents the cookie from being
+  # sent on cross-site navigations — user must be actively on the
+  # dashboard host. Secure + HttpOnly are standard hardening.
   @session_options [
     store: :cookie,
     key: "_druzhok_web_key",
     signing_salt: "9Ma3K3Mm",
-    same_site: "Lax"
+    same_site: "Strict",
+    secure: true,
+    http_only: true
   ]
 
   socket "/live", Phoenix.LiveView.Socket,
