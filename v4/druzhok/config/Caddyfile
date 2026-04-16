@@ -1,0 +1,45 @@
+# Druzhok Caddy config — deployed to /etc/caddy/Caddyfile on the VM.
+#
+# Serves:
+#   dashboard.oldey.dev → reverse proxy to Phoenix on 127.0.0.1:4000
+#   <bot>.oldey.dev     → static file server from the bot's workspace
+#   *.oldey.dev (any other host) → druzhok-branded default page
+#
+# TLS: wildcard cert obtained via DNS-01 against Cloudflare.
+#
+# Note to operator: CLOUDFLARE_API_TOKEN must be present in Caddy's
+# environment (systemd unit or /etc/default/caddy). If DNS provider
+# changes, adjust the tls block.
+
+{
+    email igor.n.kuz@gmail.com
+}
+
+*.oldey.dev {
+    tls {
+        dns cloudflare {env.CLOUDFLARE_API_TOKEN}
+    }
+
+    @dashboard host dashboard.oldey.dev
+    handle @dashboard {
+        reverse_proxy 127.0.0.1:4000
+    }
+
+    @botsite host_regexp bot ^([a-z0-9][a-z0-9-]+)\.oldey\.dev$
+    handle @botsite {
+        root * /home/igor/druzhok-data/v4-instances/{re.bot.1}/workspace/sites
+        file_server {
+            hide .* _*
+        }
+        handle_errors {
+            root * /opt/druzhok-assets/default-page
+            file_server
+        }
+    }
+
+    # Fallback: no subdomain pattern matched — show default page.
+    handle {
+        root * /opt/druzhok-assets/default-page
+        file_server
+    }
+}
