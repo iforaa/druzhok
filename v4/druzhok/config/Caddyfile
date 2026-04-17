@@ -1,28 +1,31 @@
 # Druzhok Caddy config — deployed to /etc/caddy/Caddyfile on the VM.
 #
 # Serves:
-#   dashboard.oldey.dev → reverse proxy to Phoenix on 127.0.0.1:4000
+#   oldey.dev           → reverse proxy to Phoenix on 127.0.0.1:4000
 #   <bot>.oldey.dev     → static file server from the bot's workspace
 #   *.oldey.dev (any other host) → druzhok-branded default page
 #
-# TLS: wildcard cert obtained via DNS-01 against Cloudflare.
+# TLS:
+#   oldey.dev       → automatic (HTTP-01 or TLS-ALPN-01)
+#   *.oldey.dev     → wildcard cert via DNS-01 against Cloudflare
 #
 # Note to operator: CLOUDFLARE_API_TOKEN must be present in Caddy's
 # environment (systemd unit or /etc/default/caddy). If DNS provider
-# changes, adjust the tls block.
+# changes, adjust the tls block in the wildcard site.
 
 {
     email igor.n.kuz@gmail.com
 }
 
+# Dashboard — bare domain, own cert (automatic)
+oldey.dev {
+    reverse_proxy 127.0.0.1:4000
+}
+
+# Bot sites + fallback — wildcard, cert via DNS-01
 *.oldey.dev {
     tls {
         dns cloudflare {env.CLOUDFLARE_API_TOKEN}
-    }
-
-    @dashboard host dashboard.oldey.dev
-    handle @dashboard {
-        reverse_proxy 127.0.0.1:4000
     }
 
     @botsite host_regexp bot ^([a-z0-9][a-z0-9-]+)\.oldey\.dev$
