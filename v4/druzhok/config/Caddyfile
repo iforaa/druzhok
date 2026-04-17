@@ -34,15 +34,18 @@ oldey.dev {
         file_server {
             hide .* _*
         }
-        handle_errors {
-            root * /opt/druzhok-assets/default-page
-            file_server
-        }
     }
 
     # Fallback: no subdomain pattern matched — show default page.
     handle {
         root * /opt/druzhok-assets/default-page
+        file_server
+    }
+
+    # Error handler (404 from file_server etc.) — show default page.
+    handle_errors {
+        root * /opt/druzhok-assets/default-page
+        rewrite * /index.html
         file_server
     }
 }
