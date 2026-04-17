@@ -28,7 +28,7 @@ oldey.dev {
         dns cloudflare {env.CLOUDFLARE_API_TOKEN}
     }
 
-    @botsite host_regexp bot ^([a-z0-9][a-z0-9-]+)\.oldey\.dev$
+    @botsite header_regexp bot Host ^([a-z0-9][a-z0-9-]+)\.oldey\.dev$
     handle @botsite {
         root * /home/igor/druzhok-data/v4-instances/{re.bot.1}/workspace/sites
         file_server {
