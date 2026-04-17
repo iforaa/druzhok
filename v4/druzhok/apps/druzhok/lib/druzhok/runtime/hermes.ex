@@ -78,6 +78,9 @@ defmodule Druzhok.Runtime.Hermes do
     %{
       "HERMES_HOME" => @data_mount,
       "HERMES_QUIET" => "0",
+      # Set MESSAGING_CWD so hermes's prompt_builder loads AGENTS.md
+      # from the workspace, not from /root or /opt/hermes.
+      "MESSAGING_CWD" => @data_mount <> "/workspace",
       "TELEGRAM_BOT_TOKEN" => Map.get(instance, :telegram_token, "") || "",
       "TELEGRAM_ALLOWED_USERS" => build_allowlist(instance),
       "TELEGRAM_ALLOW_ALL_USERS" => to_string(Map.get(instance, :allow_all_telegram_users, false)),
