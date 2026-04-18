@@ -95,15 +95,12 @@ defmodule DruzhokWebWeb.DashboardLive do
 
   @impl true
   def handle_info(:load_instances, socket) do
-    {:noreply, assign(socket, instances: list_instances())}
+    {:noreply, assign_instances_if_changed(socket, list_instances())}
   end
 
   def handle_info(:refresh, socket) do
-    # Only refresh docker stats when on the main dashboard (no instance selected)
-    # or when the sidebar is visible. Skip heavy polling when user is drilling
-    # into a specific bot's tab.
     if socket.assigns[:selected] == nil do
-      {:noreply, assign(socket, instances: list_instances())}
+      {:noreply, assign_instances_if_changed(socket, list_instances())}
     else
       {:noreply, socket}
     end
@@ -679,7 +676,7 @@ defmodule DruzhokWebWeb.DashboardLive do
         instances
 
       fresh ->
-        fresh_map = fresh |> Map.from_struct() |> Map.drop([:__meta__])
+        fresh_map = instance_to_map(fresh)
 
         Enum.map(instances, fn inst ->
           if inst.name == name do
@@ -733,23 +730,38 @@ defmodule DruzhokWebWeb.DashboardLive do
     {requests, summary}
   end
 
+  defp instance_to_map(inst), do: inst |> Map.from_struct() |> Map.drop([:__meta__])
+
+  # Skip re-render if instance data (names + statuses) hasn't changed.
+  defp assign_instances_if_changed(socket, new_instances) do
+    old = socket.assigns[:instances] || []
+    if instances_same?(old, new_instances),
+      do: socket,
+      else: assign(socket, instances: new_instances)
+  end
+
+  defp instances_same?(old, new) when length(old) != length(new), do: false
+  defp instances_same?(old, new) do
+    Enum.zip(old, new)
+    |> Enum.all?(fn {o, n} ->
+      o[:name] == n[:name] and o[:container_status] == n[:container_status] and
+        o[:container_stats] == n[:container_stats] and o[:active] == n[:active]
+    end)
+  end
+
   # Fast listing: DB only, no docker calls. Used for initial render so the
   # page appears instantly. Full stats arrive via :load_instances async.
   defp list_instances_fast do
     Druzhok.InstanceManager.list()
     |> Enum.map(fn inst ->
       inst
-      |> Map.from_struct()
-      |> Map.drop([:__meta__])
+      |> instance_to_map()
       |> Map.put(:container_status, if(inst.active, do: "loading", else: "stopped"))
       |> Map.put(:container_stats, nil)
     end)
   end
 
   defp list_instances do
-    # `docker stats --no-stream` alone is ~500 ms per container; sequential
-    # polling over N instances exceeds the refresh tick and saturates the
-    # LV process. Parallelize with bounded concurrency.
     Druzhok.InstanceManager.list()
     |> Task.async_stream(
       fn inst ->
@@ -765,8 +777,7 @@ defmodule DruzhokWebWeb.DashboardLive do
           )
 
         inst
-        |> Map.from_struct()
-        |> Map.drop([:__meta__])
+        |> instance_to_map()
         |> Map.put(:container_status, Task.await(status_task, 4_000))
         |> Map.put(:container_stats, Task.await(stats_task, 4_000))
       end,
