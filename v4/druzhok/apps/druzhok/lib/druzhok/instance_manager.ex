@@ -121,6 +121,9 @@ defmodule Druzhok.InstanceManager do
           bot_runtime: config.bot_runtime,
           tenant_key: config.tenant_key,
           language: config[:language] || "ru",
+          owner_telegram_id: config[:owner_telegram_id],
+          mention_only: config[:mention_only] || false,
+          allow_all_telegram_users: config[:allow_all_telegram_users] || false,
           active: true,
         })
         |> Repo.insert()

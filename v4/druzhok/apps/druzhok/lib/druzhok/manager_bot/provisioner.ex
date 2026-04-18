@@ -33,6 +33,10 @@ defmodule Druzhok.ManagerBot.Provisioner do
          {:ok, _result} <- BotManager.create(instance_name, opts) do
       apply_personality(instance_name, session[:personality])
       auto_pair_owner(instance_name, session[:owner_id])
+      # Restart so the container picks up the updated allowlist env var
+      # (BotManager.create already started it, but owner wasn't in the
+      # allowlist at that point because save_to_db runs before auto_pair).
+      BotManager.restart(instance_name)
       {:ok, instance_name, bot_username}
     else
       {:error, reason} ->
