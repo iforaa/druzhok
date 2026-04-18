@@ -90,6 +90,14 @@ defmodule Druzhok.Telegram.API do
     call(token, "sendChatAction", %{chat_id: chat_id, action: action})
   end
 
+  def answer_callback_query(token, callback_query_id, opts \\ %{}) do
+    call(token, "answerCallbackQuery", Map.merge(%{callback_query_id: callback_query_id}, opts))
+  end
+
+  def get_managed_bot_token(token, bot_user_id) do
+    call(token, "getManagedBotToken", %{user_id: bot_user_id})
+  end
+
   defp call(token, method, params) do
     url = "#{@base_url}#{token}/#{method}"
     body = Jason.encode!(params)
