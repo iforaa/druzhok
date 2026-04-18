@@ -23,293 +23,265 @@ defmodule DruzhokWebWeb.Live.Components.SettingsTab do
   @impl true
   def render(assigns) do
     ~H"""
-    <div class="p-4 space-y-3">
-      <form phx-change="settings_changed" phx-target={@myself}>
-        <div class="grid grid-cols-3 gap-3">
-          <div>
-            <label class="block text-xs text-muted mb-0.5">Runtime</label>
-            <div class="border border-line2 bg-raised rounded px-2 py-1.5 text-xs text-muted"><%= @instance[:bot_runtime] || "zeroclaw" %></div>
-          </div>
-          <div>
-            <label class="block text-xs text-muted mb-0.5">Token limit</label>
-            <input type="number" name="token_limit" min="0" step="100000" phx-debounce="blur"
-                   value={@instance[:daily_token_limit] || 0}
-                   class="w-full border border-line2 bg-panel text-fg rounded px-2 py-1.5 text-xs font-mono" />
-          </div>
-          <div>
-            <label class="block text-xs text-muted mb-0.5">Language</label>
-            <select name="language" class="w-full border border-line2 bg-panel text-fg rounded px-2 py-1.5 text-xs">
-              <option value="ru" selected={@instance[:language] == "ru"}>Russian</option>
-              <option value="en" selected={@instance[:language] == "en"}>English</option>
-            </select>
-          </div>
-        </div>
-      </form>
+    <div class="p-5 max-w-2xl">
+      <div class="grid grid-cols-2 gap-4">
+        <%!-- ═══ LEFT COLUMN ═══ --%>
+        <div class="space-y-4">
 
-      <hr class="border-line" />
-
-      <%!-- Telegram token --%>
-      <div>
-        <h3 class="text-xs font-medium text-fg mb-1">Telegram Token</h3>
-        <% token = @instance[:telegram_token] %>
-        <div :if={token} class="flex items-center gap-2">
-          <code class="text-xs bg-raised text-muted px-2 py-0.5 rounded flex-1 truncate"><%= String.slice(token, 0, 10) %>...</code>
-          <button phx-click="remove_telegram_token" phx-target={@myself} class="text-xs text-err hover:text-err/80">Remove</button>
-        </div>
-        <form :if={!token} phx-submit="save_telegram_token" phx-target={@myself} class="flex gap-2">
-          <input name="token" placeholder="Bot token" class="flex-1 border border-line2 bg-panel text-fg rounded px-2 py-1.5 text-xs" />
-          <button type="submit" class="px-2 py-1.5 bg-accent text-bg rounded text-xs hover:bg-accent/80">Save</button>
-        </form>
-      </div>
-
-      <hr class="border-line" />
-
-      <%!-- Models --%>
-      <% is_running = @instance[:container_status] == "running" %>
-      <div>
-        <h3 class="text-xs font-medium text-fg mb-1">Models</h3>
-        <div :if={is_running} class="text-xs text-warn bg-warn/10 border border-warn/20 rounded px-2 py-1 mb-2">
-          Stop the bot to change model settings
-        </div>
-        <form phx-change="update_models" phx-target={@myself}>
-          <div class="grid grid-cols-2 gap-3">
+          <%!-- Card: General --%>
+          <div class="bg-raised/50 border border-line rounded-lg p-3 space-y-2.5">
+            <h3 class="label">General</h3>
+            <form phx-change="settings_changed" phx-target={@myself} class="space-y-2">
+              <div class="grid grid-cols-2 gap-2">
+                <div>
+                  <label class="block text-[10px] text-muted mb-0.5">Token limit</label>
+                  <input type="number" name="token_limit" min="0" step="100000" phx-debounce="blur"
+                         value={@instance[:daily_token_limit] || 0}
+                         class="w-full border border-line2 rounded px-2 py-1 text-xs font-mono" />
+                </div>
+                <div>
+                  <label class="block text-[10px] text-muted mb-0.5">Language</label>
+                  <select name="language" class="w-full border border-line2 rounded px-2 py-1 text-xs">
+                    <option value="ru" selected={@instance[:language] == "ru"}>Russian</option>
+                    <option value="en" selected={@instance[:language] == "en"}>English</option>
+                  </select>
+                </div>
+              </div>
+            </form>
             <div>
-              <label class="block text-xs text-muted mb-0.5">Default</label>
-              <select name="default_model" disabled={is_running} class={"w-full border border-line2 bg-panel text-fg rounded px-2 py-1.5 text-xs #{if is_running, do: "opacity-50 cursor-not-allowed"}"}>
-                <%= for m <- ModelCatalog.default_options() do %>
-                  <option value={m.id} selected={m.id == @instance[:model]}><%= m.name %> (<%= m.price %>)</option>
-                <% end %>
-              </select>
-            </div>
-            <div :if={@runtime.supports_feature?(:on_demand_model)}>
-              <label class="block text-xs text-muted mb-0.5">On-demand</label>
-              <select name="on_demand_model" disabled={is_running} class={"w-full border border-line2 bg-panel text-fg rounded px-2 py-1.5 text-xs #{if is_running, do: "opacity-50 cursor-not-allowed"}"}>
-                <option value="">None</option>
-                <%= for m <- ModelCatalog.smart() do %>
-                  <option value={m.id} selected={m.id == (@instance[:on_demand_model] || "")}><%= m.name %> (<%= m.price %>)</option>
-                <% end %>
-              </select>
-            </div>
-            <div>
-              <label class="block text-xs text-muted mb-0.5">Image</label>
-              <select name="image_model" disabled={is_running} class={"w-full border border-line2 bg-panel text-fg rounded px-2 py-1.5 text-xs #{if is_running, do: "opacity-50 cursor-not-allowed"}"}>
-                <%= for m <- ModelCatalog.image_models() do %>
-                  <option value={m.id} selected={m.id == (@instance[:image_model] || ModelCatalog.default_image_model())}><%= m.name %></option>
-                <% end %>
-              </select>
-            </div>
-            <div :if={@runtime.supports_feature?(:audio_model)}>
-              <label class="block text-xs text-muted mb-0.5">Audio</label>
-              <select name="audio_model" disabled={is_running} class={"w-full border border-line2 bg-panel text-fg rounded px-2 py-1.5 text-xs #{if is_running, do: "opacity-50 cursor-not-allowed"}"}>
-                <%= for m <- ModelCatalog.audio_models() do %>
-                  <option value={m.id} selected={m.id == (@instance[:audio_model] || ModelCatalog.default_audio_model())}><%= m.name %></option>
-                <% end %>
-              </select>
-            </div>
-            <div :if={@runtime.supports_feature?(:embedding_model)}>
-              <label class="block text-xs text-muted mb-0.5">Embedding</label>
-              <select name="embedding_model" disabled={is_running} class={"w-full border border-line2 bg-panel text-fg rounded px-2 py-1.5 text-xs #{if is_running, do: "opacity-50 cursor-not-allowed"}"}>
-                <%= for m <- ModelCatalog.embedding_models() do %>
-                  <option value={m.id} selected={m.id == (@instance[:embedding_model] || ModelCatalog.default_embedding_model())}><%= m.name %></option>
-                <% end %>
-              </select>
+              <label class="block text-[10px] text-muted mb-0.5">Telegram token</label>
+              <% token = @instance[:telegram_token] %>
+              <div :if={token} class="flex items-center gap-2">
+                <code class="text-[10px] bg-raised text-muted px-1.5 py-0.5 rounded flex-1 truncate"><%= String.slice(token, 0, 12) %>...</code>
+                <button phx-click="remove_telegram_token" phx-target={@myself} class="text-[10px] text-err hover:text-err/80">remove</button>
+              </div>
+              <form :if={!token} phx-submit="save_telegram_token" phx-target={@myself} class="flex gap-1.5">
+                <input name="token" placeholder="Bot token" class="flex-1 border border-line2 rounded px-2 py-1 text-xs" />
+                <button type="submit" class="px-2 py-1 bg-accent text-bg rounded text-xs">Save</button>
+              </form>
             </div>
           </div>
-          <div :if={@runtime.supports_feature?(:fallback_models)} class="mt-2">
-            <label class="block text-xs text-muted mb-0.5">Fallback models (JSON)</label>
-            <input name="fallback_models" value={@instance[:fallback_models] || ""} disabled={is_running}
-                   phx-debounce="blur" placeholder='["model/a","model/b"]'
-                   class={"w-full border border-line2 bg-panel text-fg rounded px-2 py-1.5 text-xs font-mono #{if is_running, do: "opacity-50 cursor-not-allowed"}"} />
-          </div>
-        </form>
-      </div>
 
-      <hr :if={@runtime.supports_feature?(:heartbeat)} class="border-line" />
-
-      <%!-- Heartbeat --%>
-      <div :if={@runtime.supports_feature?(:heartbeat)}>
-        <h3 class="text-xs font-medium text-fg mb-1">Heartbeat</h3>
-        <form phx-change="update_models" phx-target={@myself}>
-          <input type="hidden" name="default_model" value={@instance[:model]} />
-          <div class="grid grid-cols-3 gap-3">
-            <div>
-              <label class="block text-xs text-muted mb-0.5">Target</label>
-              <select name="heartbeat_target" class="w-full border border-line2 bg-panel text-fg rounded px-2 py-1.5 text-xs">
-                <option value="" selected={is_nil(@instance[:heartbeat_target])}>Default</option>
-                <option value="none" selected={@instance[:heartbeat_target] == "none"}>Silent</option>
-                <option value="last" selected={@instance[:heartbeat_target] == "last"}>Last contact</option>
-              </select>
+          <%!-- Card: Models --%>
+          <% is_running = @instance[:container_status] == "running" %>
+          <div class="bg-raised/50 border border-line rounded-lg p-3 space-y-2.5">
+            <h3 class="label">Models</h3>
+            <div :if={is_running} class="text-[10px] text-warn bg-warn/10 border border-warn/20 rounded px-2 py-1">
+              Stop bot to change models
             </div>
-            <div>
-              <label class="block text-xs text-muted mb-0.5">From</label>
-              <input name="heartbeat_active_start" value={@instance[:heartbeat_active_start] || ""}
-                     phx-debounce="blur" placeholder="08:00"
-                     class="w-full border border-line2 bg-panel text-fg rounded px-2 py-1.5 text-xs font-mono" />
-            </div>
-            <div>
-              <label class="block text-xs text-muted mb-0.5">Until</label>
-              <input name="heartbeat_active_end" value={@instance[:heartbeat_active_end] || ""}
-                     phx-debounce="blur" placeholder="24:00"
-                     class="w-full border border-line2 bg-panel text-fg rounded px-2 py-1.5 text-xs font-mono" />
-            </div>
-          </div>
-        </form>
-      </div>
-
-      <hr :if={@runtime.supports_feature?(:dreaming)} class="border-line" />
-
-      <%!-- Dreaming --%>
-      <div :if={@runtime.supports_feature?(:dreaming)}>
-        <h3 class="text-xs font-medium text-fg mb-1">Dreaming</h3>
-        <form phx-change="update_models" phx-target={@myself}>
-          <input type="hidden" name="default_model" value={@instance[:model]} />
-          <select name="dreaming" class="w-full border border-line2 bg-panel text-fg rounded px-2 py-1.5 text-xs">
-            <option value="false" selected={!@instance[:dreaming]}>Disabled</option>
-            <option value="true" selected={@instance[:dreaming] == true}>Enabled</option>
-          </select>
-        </form>
-      </div>
-
-      <hr class="border-line" />
-
-      <%!-- Pending Pairing Requests --%>
-      <%= if @pairing_requests != [] do %>
-        <div class="bg-warn/10 border border-warn/20 rounded p-3 mb-2">
-          <h3 class="text-xs font-medium text-warn mb-1">Pending Access Requests</h3>
-          <%= for req <- @pairing_requests do %>
-            <div class="flex items-center justify-between py-1 border-b border-warn/10 last:border-0">
+            <form phx-change="update_models" phx-target={@myself} class="space-y-2">
               <div>
-                <span class="font-mono text-xs text-fg"><%= req.telegram_user_id %></span>
-                <%= if req.username do %>
-                  <span class="text-muted text-xs ml-1">@<%= req.username %></span>
+                <label class="block text-[10px] text-muted mb-0.5">Default</label>
+                <select name="default_model" disabled={is_running} class={"w-full border border-line2 rounded px-2 py-1 text-xs #{if is_running, do: "opacity-50 cursor-not-allowed"}"}>
+                  <%= for m <- ModelCatalog.default_options() do %>
+                    <option value={m.id} selected={m.id == @instance[:model]}><%= m.name %> (<%= m.price %>)</option>
+                  <% end %>
+                </select>
+              </div>
+              <div :if={@runtime.supports_feature?(:on_demand_model)}>
+                <label class="block text-[10px] text-muted mb-0.5">On-demand</label>
+                <select name="on_demand_model" disabled={is_running} class={"w-full border border-line2 rounded px-2 py-1 text-xs #{if is_running, do: "opacity-50 cursor-not-allowed"}"}>
+                  <option value="">None</option>
+                  <%= for m <- ModelCatalog.smart() do %>
+                    <option value={m.id} selected={m.id == (@instance[:on_demand_model] || "")}><%= m.name %> (<%= m.price %>)</option>
+                  <% end %>
+                </select>
+              </div>
+              <div>
+                <label class="block text-[10px] text-muted mb-0.5">Vision / image</label>
+                <select name="image_model" disabled={is_running} class={"w-full border border-line2 rounded px-2 py-1 text-xs #{if is_running, do: "opacity-50 cursor-not-allowed"}"}>
+                  <%= for m <- ModelCatalog.image_models() do %>
+                    <option value={m.id} selected={m.id == (@instance[:image_model] || ModelCatalog.default_image_model())}><%= m.name %></option>
+                  <% end %>
+                </select>
+              </div>
+              <div :if={@runtime.supports_feature?(:audio_model)}>
+                <label class="block text-[10px] text-muted mb-0.5">Audio</label>
+                <select name="audio_model" disabled={is_running} class={"w-full border border-line2 rounded px-2 py-1 text-xs #{if is_running, do: "opacity-50 cursor-not-allowed"}"}>
+                  <%= for m <- ModelCatalog.audio_models() do %>
+                    <option value={m.id} selected={m.id == (@instance[:audio_model] || ModelCatalog.default_audio_model())}><%= m.name %></option>
+                  <% end %>
+                </select>
+              </div>
+              <div :if={@runtime.supports_feature?(:embedding_model)}>
+                <label class="block text-[10px] text-muted mb-0.5">Embedding</label>
+                <select name="embedding_model" disabled={is_running} class={"w-full border border-line2 rounded px-2 py-1 text-xs #{if is_running, do: "opacity-50 cursor-not-allowed"}"}>
+                  <%= for m <- ModelCatalog.embedding_models() do %>
+                    <option value={m.id} selected={m.id == (@instance[:embedding_model] || ModelCatalog.default_embedding_model())}><%= m.name %></option>
+                  <% end %>
+                </select>
+              </div>
+              <div :if={@runtime.supports_feature?(:fallback_models)}>
+                <label class="block text-[10px] text-muted mb-0.5">Fallback (JSON)</label>
+                <input name="fallback_models" value={@instance[:fallback_models] || ""} disabled={is_running}
+                       phx-debounce="blur" placeholder='["model/a"]'
+                       class={"w-full border border-line2 rounded px-2 py-1 text-xs font-mono #{if is_running, do: "opacity-50 cursor-not-allowed"}"} />
+              </div>
+            </form>
+          </div>
+
+          <%!-- Card: Heartbeat (conditional) --%>
+          <div :if={@runtime.supports_feature?(:heartbeat)} class="bg-raised/50 border border-line rounded-lg p-3 space-y-2.5">
+            <h3 class="label">Heartbeat</h3>
+            <form phx-change="update_models" phx-target={@myself} class="grid grid-cols-3 gap-2">
+              <input type="hidden" name="default_model" value={@instance[:model]} />
+              <div>
+                <label class="block text-[10px] text-muted mb-0.5">Target</label>
+                <select name="heartbeat_target" class="w-full border border-line2 rounded px-2 py-1 text-xs">
+                  <option value="" selected={is_nil(@instance[:heartbeat_target])}>Default</option>
+                  <option value="none" selected={@instance[:heartbeat_target] == "none"}>Silent</option>
+                  <option value="last" selected={@instance[:heartbeat_target] == "last"}>Last contact</option>
+                </select>
+              </div>
+              <div>
+                <label class="block text-[10px] text-muted mb-0.5">From</label>
+                <input name="heartbeat_active_start" value={@instance[:heartbeat_active_start] || ""}
+                       phx-debounce="blur" placeholder="08:00"
+                       class="w-full border border-line2 rounded px-2 py-1 text-xs font-mono" />
+              </div>
+              <div>
+                <label class="block text-[10px] text-muted mb-0.5">Until</label>
+                <input name="heartbeat_active_end" value={@instance[:heartbeat_active_end] || ""}
+                       phx-debounce="blur" placeholder="24:00"
+                       class="w-full border border-line2 rounded px-2 py-1 text-xs font-mono" />
+              </div>
+            </form>
+          </div>
+
+          <%!-- Card: Dreaming (conditional) --%>
+          <div :if={@runtime.supports_feature?(:dreaming)} class="bg-raised/50 border border-line rounded-lg p-3 space-y-2.5">
+            <h3 class="label">Dreaming</h3>
+            <form phx-change="update_models" phx-target={@myself}>
+              <input type="hidden" name="default_model" value={@instance[:model]} />
+              <select name="dreaming" class="w-full border border-line2 rounded px-2 py-1 text-xs">
+                <option value="false" selected={!@instance[:dreaming]}>Disabled</option>
+                <option value="true" selected={@instance[:dreaming] == true}>Enabled</option>
+              </select>
+            </form>
+          </div>
+        </div>
+
+        <%!-- ═══ RIGHT COLUMN ═══ --%>
+        <div class="space-y-4">
+
+          <%!-- Card: Telegram Users --%>
+          <div class="bg-raised/50 border border-line rounded-lg p-3 space-y-2.5">
+            <h3 class="label">Telegram Users</h3>
+
+            <%= if @pairing_requests != [] do %>
+              <div class="bg-warn/10 border border-warn/20 rounded p-2 space-y-1">
+                <div class="text-[10px] text-warn font-medium">Pending requests</div>
+                <%= for req <- @pairing_requests do %>
+                  <div class="flex items-center justify-between">
+                    <span class="font-mono text-[10px] text-fg"><%= req.telegram_user_id %><%= if req.username, do: " @#{req.username}" %></span>
+                    <button phx-click="approve_pairing" phx-target={@myself}
+                            phx-value-user_id={req.telegram_user_id}
+                            class="px-1.5 py-0.5 bg-ok text-bg text-[10px] rounded">Approve</button>
+                  </div>
                 <% end %>
               </div>
-              <button phx-click="approve_pairing" phx-target={@myself}
-                      phx-value-user_id={req.telegram_user_id}
-                      class="px-2 py-0.5 bg-ok text-bg text-xs rounded hover:bg-ok/80">
-                Approve
-              </button>
+            <% end %>
+
+            <div :if={@allowed_users != []} class="space-y-0.5">
+              <div :for={user_id <- @allowed_users} class="flex items-center justify-between bg-raised rounded px-2 py-0.5">
+                <code class="text-[10px] font-mono text-fg"><%= user_id %></code>
+                <button phx-click="remove_user" phx-target={@myself} phx-value-user_id={user_id}
+                        class="text-[10px] text-err hover:text-err/80">×</button>
+              </div>
             </div>
-          <% end %>
-        </div>
-      <% end %>
+            <div :if={@allowed_users == []} class="text-[10px] text-subtle">No approved users yet</div>
 
-      <%!-- Approved Users --%>
-      <div>
-        <h3 class="text-xs font-medium text-fg mb-1">Approved Telegram Users</h3>
-        <div :if={@allowed_users == []} class="text-xs text-subtle mb-2">
-          No users approved yet.
-        </div>
-        <div :if={@allowed_users != []} class="space-y-0.5 mb-2">
-          <div :for={user_id <- @allowed_users} class="flex items-center justify-between bg-raised rounded px-2 py-1">
-            <code class="text-xs font-mono text-fg"><%= user_id %></code>
-            <button phx-click="remove_user" phx-target={@myself} phx-value-user_id={user_id}
-                    class="text-xs text-err hover:text-err/80">Remove</button>
+            <form phx-submit="approve_user" phx-target={@myself} class="flex gap-1.5">
+              <input name="user_input"
+                     placeholder={if @runtime.supports_feature?(:pairing_code_approval), do: "Code or ID", else: "User ID"}
+                     class="flex-1 border border-line2 rounded px-2 py-1 text-xs" />
+              <button type="submit" class="px-2 py-1 bg-accent text-bg rounded text-xs">Add</button>
+            </form>
           </div>
-        </div>
-        <form phx-submit="approve_user" phx-target={@myself} class="flex gap-2">
-          <input name="user_input"
-                 placeholder={if @runtime.supports_feature?(:pairing_code_approval), do: "Pairing code or user ID", else: "User ID"}
-                 class="flex-1 border border-line2 bg-panel text-fg rounded px-2 py-1.5 text-xs" />
-          <button type="submit" class="px-2 py-1.5 bg-accent text-bg rounded text-xs hover:bg-accent/80">Approve</button>
-        </form>
-      </div>
 
-      <hr class="border-line" />
+          <%!-- Card: Group Chats --%>
+          <div class="bg-raised/50 border border-line rounded-lg p-3 space-y-2.5">
+            <h3 class="label">Group Chats</h3>
+            <div class="space-y-1">
+              <label class="flex items-center gap-2 cursor-pointer select-none">
+                <input type="checkbox" phx-click="toggle_mention_only" phx-target={@myself}
+                       phx-throttle="1000" checked={@instance[:mention_only]}
+                       class="w-3 h-3 border border-line2 bg-panel accent-accent focus:ring-0 focus:ring-offset-0 rounded-sm" />
+                <span class="text-[11px] text-fg">Mention only</span>
+              </label>
+              <label class="flex items-center gap-2 cursor-pointer select-none">
+                <input type="checkbox" phx-click="toggle_group_sessions_per_user" phx-target={@myself}
+                       phx-throttle="1000" checked={!@instance[:group_sessions_per_user]}
+                       class="w-3 h-3 border border-line2 bg-panel accent-accent focus:ring-0 focus:ring-offset-0 rounded-sm" />
+                <span class="text-[11px] text-fg">Shared group memory</span>
+              </label>
+              <label class="flex items-center gap-2 cursor-pointer select-none">
+                <input type="checkbox" phx-click="toggle_group_shared_memory" phx-target={@myself}
+                       phx-throttle="1000" checked={@instance[:group_shared_memory]}
+                       class="w-3 h-3 border border-line2 bg-panel accent-accent focus:ring-0 focus:ring-offset-0 rounded-sm" />
+                <span class="text-[11px] text-fg">Record all messages</span>
+              </label>
+            </div>
+            <form phx-submit="save_trigger_name" phx-target={@myself} class="flex gap-1.5">
+              <input name="trigger_name" value={@instance[:trigger_name] || ""}
+                     placeholder="Trigger name"
+                     class="flex-1 border border-line2 rounded px-2 py-1 text-xs" />
+              <button type="submit" class="px-2 py-1 bg-accent text-bg rounded text-xs">Save</button>
+            </form>
+          </div>
 
-      <%!-- Group Chats --%>
-      <div>
-        <h3 class="text-xs font-medium text-fg mb-1">Group Chats</h3>
-        <div class="space-y-1.5">
-          <label class="flex items-center gap-2 cursor-pointer select-none">
-            <input type="checkbox" phx-click="toggle_mention_only" phx-target={@myself}
-                   phx-throttle="1000" checked={@instance[:mention_only]}
-                   class="w-3.5 h-3.5 border border-line2 bg-panel accent-accent focus:ring-0 focus:ring-offset-0" />
-            <span class="text-xs text-fg">Mention only</span>
-          </label>
-          <label class="flex items-center gap-2 cursor-pointer select-none">
-            <input type="checkbox" phx-click="toggle_group_sessions_per_user" phx-target={@myself}
-                   phx-throttle="1000" checked={!@instance[:group_sessions_per_user]}
-                   class="w-3.5 h-3.5 border border-line2 bg-panel accent-accent focus:ring-0 focus:ring-offset-0" />
-            <span class="text-xs text-fg">Shared group memory</span>
-          </label>
-          <label class="flex items-center gap-2 cursor-pointer select-none">
-            <input type="checkbox" phx-click="toggle_group_shared_memory" phx-target={@myself}
-                   phx-throttle="1000" checked={@instance[:group_shared_memory]}
-                   class="w-3.5 h-3.5 border border-line2 bg-panel accent-accent focus:ring-0 focus:ring-offset-0" />
-            <span class="text-xs text-fg">Record all group messages</span>
-          </label>
-        </div>
-        <form phx-submit="save_trigger_name" phx-target={@myself} class="flex gap-2 mt-2">
-          <input name="trigger_name" value={@instance[:trigger_name] || ""}
-                 placeholder="Trigger name (e.g. Igz)"
-                 class="flex-1 border border-line2 bg-panel text-fg rounded px-2 py-1.5 text-xs" />
-          <button type="submit" class="px-2 py-1.5 bg-accent text-bg rounded text-xs hover:bg-accent/80">Save</button>
-        </form>
-      </div>
-
-      <hr class="border-line" />
-
-      <%!-- Website Hosting --%>
-      <div>
-        <h3 class="text-xs font-medium text-fg mb-1">Website Hosting</h3>
-        <label class="flex items-center gap-2 cursor-pointer select-none">
-          <input type="checkbox" phx-click="toggle_website_hosting" phx-target={@myself}
-                 phx-throttle="1000" checked={@instance[:website_hosting_enabled]}
-                 class="w-3.5 h-3.5 border border-line2 bg-panel accent-accent focus:ring-0 focus:ring-offset-0" />
-          <span class="text-xs text-fg">
-            Publish at <code class="text-accent">{@instance.name}.oldey.dev</code>
-          </span>
-        </label>
-        <%= if @instance[:website_hosting_enabled] do %>
-          <div class="mt-1.5">
-            <%= if Enum.empty?(@sites) do %>
-              <p class="text-xs text-subtle">No sites yet.</p>
-            <% else %>
-              <ul class="space-y-1">
+          <%!-- Card: Website Hosting --%>
+          <div class="bg-raised/50 border border-line rounded-lg p-3 space-y-2.5">
+            <h3 class="label">Website Hosting</h3>
+            <label class="flex items-center gap-2 cursor-pointer select-none">
+              <input type="checkbox" phx-click="toggle_website_hosting" phx-target={@myself}
+                     phx-throttle="1000" checked={@instance[:website_hosting_enabled]}
+                     class="w-3 h-3 border border-line2 bg-panel accent-accent focus:ring-0 focus:ring-offset-0 rounded-sm" />
+              <span class="text-[11px] text-fg">
+                Publish at <code class="text-accent text-[10px]">{@instance.name}.oldey.dev</code>
+              </span>
+            </label>
+            <%= if @instance[:website_hosting_enabled] && !Enum.empty?(@sites) do %>
+              <div class="space-y-0.5">
                 <%= for site <- @sites do %>
-                  <li class="text-xs border border-line2 rounded px-2 py-1.5">
-                    <a href={site.url} target="_blank" class="font-mono text-accent hover:text-accent/80">{site.url}</a>
-                    <span class="text-muted ml-1">{format_bytes(site.size)}</span>
-                  </li>
+                  <div class="flex items-center gap-2 text-[10px] bg-raised rounded px-2 py-0.5">
+                    <a href={site.url} target="_blank" class="font-mono text-accent hover:text-accent/80 truncate">{site.url}</a>
+                    <span class="text-muted">{format_bytes(site.size)}</span>
+                  </div>
                 <% end %>
-              </ul>
+              </div>
             <% end %>
           </div>
-        <% end %>
-      </div>
 
-      <hr class="border-line" />
-
-      <%!-- Messages --%>
-      <div>
-        <h3 class="text-xs font-medium text-fg mb-1">Messages</h3>
-        <div class="grid grid-cols-2 gap-3">
-          <div>
-            <label class="block text-xs text-muted mb-0.5">Rejection</label>
-            <textarea phx-blur="update_reject_message" phx-target={@myself}
-                      class="w-full border border-line2 bg-panel text-fg rounded px-2 py-1.5 text-xs"
-                      placeholder="Default if empty" rows="1"><%= @instance[:reject_message] %></textarea>
+          <%!-- Card: Auto-messages --%>
+          <div class="bg-raised/50 border border-line rounded-lg p-3 space-y-2.5">
+            <h3 class="label">Auto-messages</h3>
+            <div class="space-y-2">
+              <div>
+                <label class="block text-[10px] text-muted mb-0.5">Sent to unauthorized users</label>
+                <textarea phx-blur="update_reject_message" phx-target={@myself}
+                          class="w-full border border-line2 rounded px-2 py-1 text-xs resize-none"
+                          placeholder="Default rejection" rows="1"><%= @instance[:reject_message] %></textarea>
+              </div>
+              <div>
+                <label class="block text-[10px] text-muted mb-0.5">Sent on user approval</label>
+                <textarea phx-blur="update_welcome_message" phx-target={@myself}
+                          class="w-full border border-line2 rounded px-2 py-1 text-xs resize-none"
+                          placeholder="Default welcome" rows="1"><%= @instance[:welcome_message] %></textarea>
+              </div>
+            </div>
           </div>
-          <div>
-            <label class="block text-xs text-muted mb-0.5">Welcome</label>
-            <textarea phx-blur="update_welcome_message" phx-target={@myself}
-                      class="w-full border border-line2 bg-panel text-fg rounded px-2 py-1.5 text-xs"
-                      placeholder="Default if empty" rows="1"><%= @instance[:welcome_message] %></textarea>
+
+          <%!-- Danger zone --%>
+          <div class="flex items-center gap-2">
+            <button phx-click="clear_history" phx-target={@myself}
+                    class="px-2 py-1 bg-err/10 text-err border border-err/20 rounded text-[10px] hover:bg-err/20 transition"
+                    data-confirm="Clear all conversation history? The bot will restart with a fresh session.">
+              Clear History
+            </button>
+            <span class="text-[10px] text-subtle">Wipes sessions & restarts</span>
           </div>
         </div>
-      </div>
-
-      <hr class="border-line" />
-
-      <%!-- Session --%>
-      <div class="flex items-center gap-3">
-        <button phx-click="clear_history" phx-target={@myself}
-                class="px-2 py-1.5 bg-err/10 text-err border border-err/20 rounded text-xs hover:bg-err/20 transition"
-                data-confirm="Clear all conversation history? The bot will restart with a fresh session.">
-          Clear History & Restart
-        </button>
-        <span class="text-xs text-subtle">Wipes all sessions and restarts</span>
       </div>
     </div>
     """

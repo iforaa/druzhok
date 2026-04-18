@@ -695,16 +695,19 @@ defmodule DruzhokWebWeb.DashboardLive do
 
       instance ->
         runtime = Druzhok.Runtime.get(instance.bot_runtime, Druzhok.Runtime.ZeroClaw)
+        data_root = Path.dirname(instance.workspace || "")
 
-        if runtime.supports_feature?(:db_allowlist) do
-          Druzhok.Instance.get_allowed_ids(instance)
-        else
-          data_root = Path.dirname(instance.workspace)
-
-          data_root
-          |> runtime.read_allowed_users()
+        # Merge both sources: DB allowlist + runtime's pairing file.
+        # Hermes uses its own telegram-approved.json for users who pair
+        # through the bot; druzhok stores manually-added IDs in the DB.
+        db_ids = if runtime.supports_feature?(:db_allowlist),
+          do: Druzhok.Instance.get_allowed_ids(instance), else: []
+        file_ids = runtime.read_allowed_users(data_root)
           |> Enum.reject(&(&1 == "__closed__"))
-        end
+
+        (db_ids ++ file_ids)
+        |> Enum.uniq()
+        |> Enum.sort()
     end
   end
 
