@@ -89,6 +89,9 @@ defmodule Druzhok.Runtime.Hermes do
       # a JSON list of regexes hermes compiles with re.IGNORECASE.
       # `free_response_chats` are chat IDs where the bot always responds
       # even with require_mention on.
+      # Auto-set home channel to the owner's DM so hermes doesn't nag
+      # on first message. In Telegram, DM chat_id == user_id.
+      "TELEGRAM_HOME_CHANNEL" => to_string(Map.get(instance, :owner_telegram_id, "") || ""),
       "TELEGRAM_REQUIRE_MENTION" => to_string(Map.get(instance, :mention_only, false)),
       "TELEGRAM_MENTION_PATTERNS" => build_mention_patterns(instance),
       "TELEGRAM_FREE_RESPONSE_CHATS" => build_free_response_chats(instance),

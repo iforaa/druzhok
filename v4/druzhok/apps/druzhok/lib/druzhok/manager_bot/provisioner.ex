@@ -32,6 +32,7 @@ defmodule Druzhok.ManagerBot.Provisioner do
          }),
          {:ok, _result} <- BotManager.create(instance_name, opts) do
       apply_personality(instance_name, session[:personality])
+      write_soul(instance_name, session[:name])
       auto_pair_owner(instance_name, session[:owner_id])
       # Restart so the container picks up the updated allowlist env var
       # (BotManager.create already started it, but owner wasn't in the
@@ -97,6 +98,21 @@ defmodule Druzhok.ManagerBot.Provisioner do
             end
         end
       nil -> :ok
+    end
+  end
+
+  defp write_soul(instance_name, display_name) do
+    case Repo.get_by(Instance, name: instance_name) do
+      nil -> :ok
+      instance ->
+        soul_path = Path.join(Path.dirname(instance.workspace || ""), "SOUL.md")
+        name = display_name || instance_name
+        soul = """
+        Тебя зовут #{name}. Ты персональный AI-ассистент. Ты помогаешь пользователю
+        с любыми задачами: отвечаешь на вопросы, пишешь и редактируешь код, анализируешь
+        информацию, выполняешь действия через инструменты. Общаешься понятно и по делу.
+        """
+        File.write!(soul_path, String.trim(soul))
     end
   end
 
