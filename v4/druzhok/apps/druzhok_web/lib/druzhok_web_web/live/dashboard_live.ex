@@ -13,8 +13,9 @@ defmodule DruzhokWebWeb.DashboardLive do
   @impl true
   def mount(_params, session, socket) do
     if connected?(socket) do
-      :timer.send_interval(5_000, self(), :refresh)
+      :timer.send_interval(15_000, self(), :refresh)
       Druzhok.Events.subscribe_all()
+      send(self(), :load_instances)
     end
 
     current_user = case session["user_id"] do
@@ -28,9 +29,11 @@ defmodule DruzhokWebWeb.DashboardLive do
       _ -> ""
     end
 
+    # Render immediately with lightweight instance list (no docker stats).
+    # Full stats load async via :load_instances message.
     {:ok, assign(socket,
       current_user: current_user,
-      instances: list_instances(),
+      instances: list_instances_fast(),
       models: models,
       create_form: %{"name" => "", "token" => "", "model" => default_model, "bot_runtime" => "hermes"},
       selected: nil,
@@ -91,8 +94,19 @@ defmodule DruzhokWebWeb.DashboardLive do
   end
 
   @impl true
-  def handle_info(:refresh, socket) do
+  def handle_info(:load_instances, socket) do
     {:noreply, assign(socket, instances: list_instances())}
+  end
+
+  def handle_info(:refresh, socket) do
+    # Only refresh docker stats when on the main dashboard (no instance selected)
+    # or when the sidebar is visible. Skip heavy polling when user is drilling
+    # into a specific bot's tab.
+    if socket.assigns[:selected] == nil do
+      {:noreply, assign(socket, instances: list_instances())}
+    else
+      {:noreply, socket}
+    end
   end
 
   def handle_info({:druzhok_event, instance_name, %{type: :pairing_request} = _event}, socket) do
@@ -719,9 +733,22 @@ defmodule DruzhokWebWeb.DashboardLive do
     {requests, summary}
   end
 
+  # Fast listing: DB only, no docker calls. Used for initial render so the
+  # page appears instantly. Full stats arrive via :load_instances async.
+  defp list_instances_fast do
+    Druzhok.InstanceManager.list()
+    |> Enum.map(fn inst ->
+      inst
+      |> Map.from_struct()
+      |> Map.drop([:__meta__])
+      |> Map.put(:container_status, if(inst.active, do: "loading", else: "stopped"))
+      |> Map.put(:container_stats, nil)
+    end)
+  end
+
   defp list_instances do
     # `docker stats --no-stream` alone is ~500 ms per container; sequential
-    # polling over N instances exceeds the 5 s refresh tick and saturates the
+    # polling over N instances exceeds the refresh tick and saturates the
     # LV process. Parallelize with bounded concurrency.
     Druzhok.InstanceManager.list()
     |> Task.async_stream(
