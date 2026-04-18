@@ -9,45 +9,45 @@ defmodule DruzhokWebWeb.Live.Components.UsageTab do
 
   def usage_tab(assigns) do
     ~H"""
-    <div class="p-6 space-y-6">
+    <div class="p-5 space-y-5 max-w-5xl">
       <%!-- Summary cards --%>
-      <div class="grid grid-cols-3 gap-4">
+      <div class="grid grid-cols-3 gap-3">
         <%= for s <- @summary do %>
-          <div class="bg-gray-50 rounded-lg p-4 border border-gray-200">
-            <div class="text-xs text-gray-500 uppercase font-medium truncate"><%= s.model %></div>
-            <div class="mt-2 flex items-baseline gap-3">
-              <span class="text-lg font-bold text-blue-600"><%= format_number(s.total_input) %></span>
-              <span class="text-xs text-gray-400">in</span>
-              <span class="text-lg font-bold text-green-600"><%= format_number(s.total_output) %></span>
-              <span class="text-xs text-gray-400">out</span>
+          <div class="bg-raised/50 rounded-lg p-3 border border-line">
+            <div class="text-[10px] text-muted uppercase font-display tracking-wider2 truncate"><%= s.model %></div>
+            <div class="mt-1.5 flex items-baseline gap-2">
+              <span class="text-base font-bold text-accent font-mono"><%= format_number(s.total_input) %></span>
+              <span class="text-[10px] text-subtle">in</span>
+              <span class="text-base font-bold text-ok font-mono"><%= format_number(s.total_output) %></span>
+              <span class="text-[10px] text-subtle">out</span>
             </div>
-            <div class="text-xs text-gray-400 mt-1"><%= s.request_count %> calls today</div>
+            <div class="text-[10px] text-subtle mt-0.5"><%= s.request_count %> calls today</div>
           </div>
         <% end %>
-        <div :if={@summary == []} class="col-span-3 text-center text-gray-400 text-sm py-4">No requests today</div>
+        <div :if={@summary == []} class="col-span-3 text-center text-subtle text-xs py-4">No requests today</div>
       </div>
 
       <%!-- Tool execution stats --%>
       <div :if={@tool_stats != []} class="overflow-x-auto">
-        <h3 class="text-sm font-medium text-gray-700 mb-2">Tool Usage Today</h3>
-        <table class="w-full text-sm">
+        <h3 class="label mb-2">Tool Usage Today</h3>
+        <table class="w-full text-xs">
           <thead>
-            <tr class="border-b border-gray-200 text-left text-xs text-gray-500 uppercase">
-              <th class="px-3 py-2">Tool</th>
-              <th class="px-3 py-2 text-right">Calls</th>
-              <th class="px-3 py-2 text-right">Errors</th>
-              <th class="px-3 py-2 text-right">Avg Time</th>
-              <th class="px-3 py-2 text-right">Output</th>
+            <tr class="border-b border-line2 text-left text-[10px] text-muted uppercase tracking-wider2">
+              <th class="px-2 py-1.5">Tool</th>
+              <th class="px-2 py-1.5 text-right">Calls</th>
+              <th class="px-2 py-1.5 text-right">Errors</th>
+              <th class="px-2 py-1.5 text-right">Avg Time</th>
+              <th class="px-2 py-1.5 text-right">Output</th>
             </tr>
           </thead>
           <tbody>
             <%= for t <- @tool_stats do %>
-              <tr class="border-b border-gray-100 hover:bg-gray-50">
-                <td class="px-3 py-2 font-mono text-xs"><%= t.tool_name %></td>
-                <td class="px-3 py-2 text-right font-mono"><%= t.call_count %></td>
-                <td class={"px-3 py-2 text-right font-mono #{if (t.error_count || 0) > 0, do: "text-red-600", else: "text-gray-400"}"}><%= t.error_count || 0 %></td>
-                <td class="px-3 py-2 text-right text-gray-500 font-mono text-xs"><%= format_elapsed(round_avg(t.avg_elapsed)) %></td>
-                <td class="px-3 py-2 text-right text-gray-500 font-mono text-xs"><%= format_bytes(t.total_output) %></td>
+              <tr class="border-b border-line hover:bg-raised/50">
+                <td class="px-2 py-1.5 font-mono"><%= t.tool_name %></td>
+                <td class="px-2 py-1.5 text-right font-mono"><%= t.call_count %></td>
+                <td class={"px-2 py-1.5 text-right font-mono #{if (t.error_count || 0) > 0, do: "text-err", else: "text-subtle"}"}><%= t.error_count || 0 %></td>
+                <td class="px-2 py-1.5 text-right text-muted font-mono"><%= format_elapsed(round_avg(t.avg_elapsed)) %></td>
+                <td class="px-2 py-1.5 text-right text-muted font-mono"><%= format_bytes(t.total_output) %></td>
               </tr>
             <% end %>
           </tbody>
@@ -56,66 +56,66 @@ defmodule DruzhokWebWeb.Live.Components.UsageTab do
 
       <%!-- Request log table --%>
       <div class="overflow-x-auto">
-        <table class="w-full text-sm">
+        <table class="w-full text-xs">
           <thead>
-            <tr class="border-b border-gray-200 text-left text-xs text-gray-500 uppercase">
-              <th class="px-3 py-2">Time</th>
-              <th class="px-3 py-2">Type</th>
-              <th class="px-3 py-2">Model</th>
-              <th class="px-3 py-2 text-right">Input</th>
-              <th class="px-3 py-2 text-right">Output</th>
-              <th class="px-3 py-2 text-right">Total</th>
-              <th class="px-3 py-2 text-right">Tools</th>
-              <th class="px-3 py-2 text-right">Time</th>
+            <tr class="border-b border-line2 text-left text-[10px] text-muted uppercase tracking-wider2">
+              <th class="px-2 py-1.5">Time</th>
+              <th class="px-2 py-1.5">Type</th>
+              <th class="px-2 py-1.5">Model</th>
+              <th class="px-2 py-1.5 text-right">Input</th>
+              <th class="px-2 py-1.5 text-right">Output</th>
+              <th class="px-2 py-1.5 text-right">Total</th>
+              <th class="px-2 py-1.5 text-right">Tools</th>
+              <th class="px-2 py-1.5 text-right">Time</th>
             </tr>
           </thead>
           <tbody>
             <%= for req <- @requests do %>
               <tr phx-click="toggle_request" phx-value-id={req.id}
-                  class={"border-b border-gray-100 cursor-pointer transition #{if @expanded_request == req.id, do: "bg-blue-50", else: "hover:bg-gray-50"}"}>
-                <td class="px-3 py-2 text-xs text-gray-500 font-mono"><%= format_time(req.inserted_at) %></td>
-                <td class="px-3 py-2">
+                  class={"border-b border-line cursor-pointer transition #{if @expanded_request == req.id, do: "bg-raised", else: "hover:bg-raised/50"}"}>
+                <td class="px-2 py-1.5 text-muted font-mono"><%= format_time(req.inserted_at) %></td>
+                <td class="px-2 py-1.5">
                   <span class={"inline-block px-1.5 py-0.5 rounded text-[10px] font-medium #{type_badge_class(req.request_type)}"}>
                     <%= req.request_type %>
                   </span>
                 </td>
-                <td class="px-3 py-2 font-mono text-xs truncate max-w-[200px]"><%= short_model(req.model) %></td>
-                <td class="px-3 py-2 text-right text-blue-600 font-mono">
+                <td class="px-2 py-1.5 font-mono truncate max-w-[180px] text-fg"><%= short_model(req.model) %></td>
+                <td class="px-2 py-1.5 text-right text-accent font-mono">
                   <%= if req[:request_type] == "audio" and req[:audio_duration_ms] do %>
                     <%= format_duration(req.audio_duration_ms) %>
                   <% else %>
                     <%= format_number(req.input_tokens) %>
                   <% end %>
                 </td>
-                <td class="px-3 py-2 text-right text-green-600 font-mono"><%= format_number(req.output_tokens) %></td>
-                <td class="px-3 py-2 text-right font-mono font-medium"><%= format_number((req.input_tokens || 0) + (req.output_tokens || 0)) %></td>
-                <td class="px-3 py-2 text-right"><%= if req.tool_calls_count > 0, do: req.tool_calls_count, else: "-" %></td>
-                <td class="px-3 py-2 text-right text-gray-500 font-mono text-xs"><%= format_elapsed(req.elapsed_ms) %></td>
+                <td class="px-2 py-1.5 text-right text-ok font-mono"><%= format_number(req.output_tokens) %></td>
+                <td class="px-2 py-1.5 text-right font-mono text-fg font-medium"><%= format_number((req.input_tokens || 0) + (req.output_tokens || 0)) %></td>
+                <td class="px-2 py-1.5 text-right text-muted"><%= if req.tool_calls_count > 0, do: req.tool_calls_count, else: "-" %></td>
+                <td class="px-2 py-1.5 text-right text-muted font-mono"><%= format_elapsed(req.elapsed_ms) %></td>
               </tr>
-              <tr :if={@expanded_request == req.id} class="border-b border-gray-200">
-                <td colspan="8" class="px-3 py-3">
-                  <div class="space-y-3">
+              <tr :if={@expanded_request == req.id} class="border-b border-line2">
+                <td colspan="8" class="px-2 py-2">
+                  <div class="space-y-2">
                     <div :if={req.prompt_preview && req.prompt_preview != ""}>
-                      <div class="text-xs font-medium text-gray-500 uppercase mb-1">Prompt</div>
-                      <pre class="text-xs bg-gray-50 rounded p-3 overflow-x-auto whitespace-pre-wrap max-h-96 overflow-y-auto border border-gray-200 font-mono"><%= req.prompt_preview %></pre>
+                      <div class="label mb-1">Prompt</div>
+                      <pre class="text-[10px] bg-raised rounded p-2 overflow-x-auto whitespace-pre-wrap max-h-80 overflow-y-auto border border-line font-mono text-fg"><%= req.prompt_preview %></pre>
                     </div>
                     <div :if={req.response_preview && req.response_preview != ""}>
-                      <div class="text-xs font-medium text-gray-500 uppercase mb-1">Response</div>
-                      <pre class="text-xs bg-gray-50 rounded p-3 overflow-x-auto whitespace-pre-wrap max-h-96 overflow-y-auto border border-gray-200 font-mono"><%= req.response_preview %></pre>
+                      <div class="label mb-1">Response</div>
+                      <pre class="text-[10px] bg-raised rounded p-2 overflow-x-auto whitespace-pre-wrap max-h-80 overflow-y-auto border border-line font-mono text-fg"><%= req.response_preview %></pre>
                     </div>
                     <div :if={req[:request_body] && req[:request_body] != ""}>
-                      <div class="text-xs font-medium text-gray-500 uppercase mb-1">Full Request Body</div>
-                      <pre class="text-xs bg-gray-50 rounded p-3 overflow-x-auto whitespace-pre-wrap max-h-[600px] overflow-y-auto border border-gray-200 font-mono"><%= format_json(req[:request_body]) %></pre>
+                      <div class="label mb-1">Full Request Body</div>
+                      <pre class="text-[10px] bg-raised rounded p-2 overflow-x-auto whitespace-pre-wrap max-h-[500px] overflow-y-auto border border-line font-mono text-fg"><%= format_json(req[:request_body]) %></pre>
                     </div>
                     <div :if={(!req.prompt_preview || req.prompt_preview == "") && (!req.response_preview || req.response_preview == "") && (!req[:request_body] || req[:request_body] == "")}
-                         class="text-xs text-gray-400 italic">No preview available (recorded before preview tracking was enabled)</div>
+                         class="text-[10px] text-subtle italic">No preview available</div>
                   </div>
                 </td>
               </tr>
             <% end %>
           </tbody>
         </table>
-        <div :if={@requests == []} class="text-center text-gray-400 py-8 text-sm">No requests yet</div>
+        <div :if={@requests == []} class="text-center text-subtle py-6 text-xs">No requests yet</div>
       </div>
     </div>
     """
@@ -151,11 +151,11 @@ defmodule DruzhokWebWeb.Live.Components.UsageTab do
   defp format_bytes(n) when n >= 1024, do: "#{Float.round(n / 1024, 1)}KB"
   defp format_bytes(n), do: "#{n}B"
 
-  defp type_badge_class("chat"), do: "bg-blue-100 text-blue-700"
-  defp type_badge_class("image"), do: "bg-purple-100 text-purple-700"
-  defp type_badge_class("audio"), do: "bg-amber-100 text-amber-700"
-  defp type_badge_class("embedding"), do: "bg-gray-100 text-gray-600"
-  defp type_badge_class(_), do: "bg-gray-100 text-gray-600"
+  defp type_badge_class("chat"), do: "bg-accent/15 text-accent"
+  defp type_badge_class("image"), do: "bg-warn/15 text-warn"
+  defp type_badge_class("audio"), do: "bg-ok/15 text-ok"
+  defp type_badge_class("embedding"), do: "bg-faint text-muted"
+  defp type_badge_class(_), do: "bg-faint text-muted"
 
   defp format_duration(ms) when ms >= 60_000, do: "#{Float.round(ms / 60_000, 1)}m"
   defp format_duration(ms) when ms >= 1_000, do: "#{Float.round(ms / 1_000, 1)}s"
