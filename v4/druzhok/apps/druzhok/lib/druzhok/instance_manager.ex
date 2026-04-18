@@ -15,6 +15,10 @@ defmodule Druzhok.InstanceManager do
       bot_runtime: opts[:bot_runtime] || "hermes",
       tenant_key: opts[:tenant_key] || Instance.generate_tenant_key(name),
       telegram_token: opts[:telegram_token],
+      owner_telegram_id: opts[:owner_telegram_id],
+      language: opts[:language] || "ru",
+      mention_only: opts[:mention_only] || false,
+      allow_all_telegram_users: opts[:allow_all_telegram_users] || false,
     }
 
     ensure_workspace(config.workspace)
