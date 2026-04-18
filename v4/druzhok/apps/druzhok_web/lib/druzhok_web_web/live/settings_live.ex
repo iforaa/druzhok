@@ -44,52 +44,26 @@ defmodule DruzhokWebWeb.SettingsLive do
 
   @impl true
   def handle_event("save", params, socket) do
-    if val = non_masked(params["nebius_api_key"]) do
-      Druzhok.Settings.set("nebius_api_key", val)
-    end
-    if val = non_empty(params["nebius_api_url"]) do
-      Druzhok.Settings.set("nebius_api_url", val)
-    end
-    if val = non_masked(params["anthropic_api_key"]) do
-      Druzhok.Settings.set("anthropic_api_key", val)
-    end
-    if val = non_empty(params["anthropic_api_url"]) do
-      Druzhok.Settings.set("anthropic_api_url", val)
-    end
-    if val = non_masked(params["openrouter_api_key"]) do
-      Druzhok.Settings.set("openrouter_api_key", val)
-    end
-    if val = non_empty(params["openrouter_api_url"]) do
-      Druzhok.Settings.set("openrouter_api_url", val)
-    end
+    if val = non_masked(params["nebius_api_key"]), do: Druzhok.Settings.set("nebius_api_key", val)
+    if val = non_empty(params["nebius_api_url"]), do: Druzhok.Settings.set("nebius_api_url", val)
+    if val = non_masked(params["anthropic_api_key"]), do: Druzhok.Settings.set("anthropic_api_key", val)
+    if val = non_empty(params["anthropic_api_url"]), do: Druzhok.Settings.set("anthropic_api_url", val)
+    if val = non_masked(params["openrouter_api_key"]), do: Druzhok.Settings.set("openrouter_api_key", val)
+    if val = non_empty(params["openrouter_api_url"]), do: Druzhok.Settings.set("openrouter_api_url", val)
 
     for key <- ["system_prompt_budget_ratio", "tool_definitions_budget_ratio",
                 "history_budget_ratio", "tool_result_budget_ratio",
                 "response_reserve_ratio", "default_context_window",
                 "token_estimation_divisor", "embedding_api_url", "embedding_model",
                 "compaction_api_url", "compaction_model", "audio_tokens_per_second"] do
-      if val = non_empty(params[key]) do
-        Druzhok.Settings.set(key, val)
-      end
+      if val = non_empty(params[key]), do: Druzhok.Settings.set(key, val)
     end
-    if val = non_masked(params["embedding_api_key"]) do
-      Druzhok.Settings.set("embedding_api_key", val)
-    end
-    if val = non_masked(params["compaction_api_key"]) do
-      Druzhok.Settings.set("compaction_api_key", val)
-    end
-    if val = non_empty(params["transcription_enabled"]) do
-      Druzhok.Settings.set("transcription_enabled", val)
-    end
-    if val = non_empty(params["transcription_model"]) do
-      Druzhok.Settings.set("transcription_model", val)
-    end
-    if val = non_empty(params["image_generation_enabled"]) do
-      Druzhok.Settings.set("image_generation_enabled", val)
-    end
-    if val = non_empty(params["image_generation_model"]) do
-      Druzhok.Settings.set("image_generation_model", val)
-    end
+    if val = non_masked(params["embedding_api_key"]), do: Druzhok.Settings.set("embedding_api_key", val)
+    if val = non_masked(params["compaction_api_key"]), do: Druzhok.Settings.set("compaction_api_key", val)
+    if val = non_empty(params["transcription_enabled"]), do: Druzhok.Settings.set("transcription_enabled", val)
+    if val = non_empty(params["transcription_model"]), do: Druzhok.Settings.set("transcription_model", val)
+    if val = non_empty(params["image_generation_enabled"]), do: Druzhok.Settings.set("image_generation_enabled", val)
+    if val = non_empty(params["image_generation_model"]), do: Druzhok.Settings.set("image_generation_model", val)
 
     {:noreply, assign(socket,
       nebius_api_key: mask(Druzhok.Settings.get("nebius_api_key")),
@@ -123,206 +97,115 @@ defmodule DruzhokWebWeb.SettingsLive do
   @impl true
   def render(assigns) do
     ~H"""
-    <div class="min-h-screen bg-gray-50">
-      <div class="max-w-2xl mx-auto p-6">
-        <div class="flex items-center justify-between mb-6">
-          <h1 class="text-xl font-bold">Settings</h1>
-          <a href="/" class="text-sm text-gray-500 hover:text-gray-900">&larr; Dashboard</a>
-        </div>
+    <div class="min-h-screen bg-bg">
+      <%!-- Nav bar --%>
+      <div class="border-b border-line px-6 py-3 flex items-center gap-4">
+        <a href="/" class="font-display text-sm text-muted hover:text-accent transition">← Dashboard</a>
+        <span class="text-faint">·</span>
+        <a href="/processes" class="font-display text-[10px] uppercase tracking-wider2 text-muted hover:text-fg transition">Processes</a>
+        <a href="/errors" class="font-display text-[10px] uppercase tracking-wider2 text-muted hover:text-err transition">Errors</a>
+        <span class="font-display text-[10px] uppercase tracking-wider2 text-accent border-b border-accent pb-0.5">Settings</span>
+      </div>
 
-        <form phx-submit="save" class="space-y-6">
-          <div class="bg-white rounded-xl border border-gray-200 p-6">
-            <h2 class="text-sm font-semibold mb-4">Nebius (OpenAI-compatible)</h2>
-            <div class="space-y-3">
-              <div>
-                <label class="block text-xs text-gray-500 mb-1">API Key</label>
-                <input name="nebius_api_key" value={@nebius_api_key} placeholder="Paste new key to update"
-                       class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm font-mono focus:outline-none focus:ring-1 focus:ring-gray-900" />
-              </div>
-              <div>
-                <label class="block text-xs text-gray-500 mb-1">API URL</label>
-                <input name="nebius_api_url" value={@nebius_api_url}
-                       class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm font-mono focus:outline-none focus:ring-1 focus:ring-gray-900" />
-              </div>
-            </div>
+      <div class="max-w-2xl mx-auto p-5">
+        <form phx-submit="save" class="space-y-4">
+          <.card title="Nebius (OpenAI-compatible)">
+            <.field name="nebius_api_key" label="API Key" value={@nebius_api_key} placeholder="Paste new key" mono />
+            <.field name="nebius_api_url" label="API URL" value={@nebius_api_url} mono />
+          </.card>
+
+          <.card title="Anthropic">
+            <.field name="anthropic_api_key" label="API Key" value={@anthropic_api_key} placeholder="Paste new key" mono />
+            <.field name="anthropic_api_url" label="API URL" value={@anthropic_api_url} mono />
+          </.card>
+
+          <.card title="OpenRouter">
+            <.field name="openrouter_api_key" label="API Key" value={@openrouter_api_key} placeholder="Paste new key" mono />
+            <.field name="openrouter_api_url" label="API URL" value={@openrouter_api_url} mono />
+          </.card>
+
+          <div class="grid grid-cols-2 gap-4">
+            <.card title="Voice Transcription">
+              <.field name="transcription_enabled" label="Enabled" value={@transcription_enabled} type="select" options={[{"Yes", "true"}, {"No", "false"}]} />
+              <.field name="transcription_model" label="Model" value={@transcription_model} mono />
+            </.card>
+
+            <.card title="Image Generation">
+              <.field name="image_generation_enabled" label="Enabled" value={@image_generation_enabled} type="select" options={[{"No", "false"}, {"Yes", "true"}]} />
+              <.field name="image_generation_model" label="Model" value={@image_generation_model} mono />
+            </.card>
           </div>
 
-          <div class="bg-white rounded-xl border border-gray-200 p-6">
-            <h2 class="text-sm font-semibold mb-4">Anthropic</h2>
-            <div class="space-y-3">
-              <div>
-                <label class="block text-xs text-gray-500 mb-1">API Key</label>
-                <input name="anthropic_api_key" value={@anthropic_api_key} placeholder="Paste new key to update"
-                       class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm font-mono focus:outline-none focus:ring-1 focus:ring-gray-900" />
-              </div>
-              <div>
-                <label class="block text-xs text-gray-500 mb-1">API URL</label>
-                <input name="anthropic_api_url" value={@anthropic_api_url}
-                       class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm font-mono focus:outline-none focus:ring-1 focus:ring-gray-900" />
-              </div>
+          <.card title="Token Budget Ratios">
+            <div class="grid grid-cols-3 gap-2">
+              <.field name="system_prompt_budget_ratio" label="System prompt" value={@system_prompt_ratio} mono />
+              <.field name="tool_definitions_budget_ratio" label="Tool defs" value={@tool_definitions_ratio} mono />
+              <.field name="history_budget_ratio" label="History" value={@history_ratio} mono />
+              <.field name="tool_result_budget_ratio" label="Tool results" value={@tool_results_ratio} mono />
+              <.field name="response_reserve_ratio" label="Response" value={@response_reserve_ratio} mono />
+              <.field name="default_context_window" label="Context window" value={@default_context_window} mono />
             </div>
-          </div>
+            <.field name="token_estimation_divisor" label="Token estimation divisor" value={@token_estimation_divisor} mono />
+            <.field name="audio_tokens_per_second" label="Audio tokens/sec" value={@audio_tokens_per_second} mono />
+          </.card>
 
-          <div class="bg-white rounded-xl border border-gray-200 p-6">
-            <h2 class="text-sm font-semibold mb-4">OpenRouter</h2>
-            <div class="space-y-3">
-              <div>
-                <label class="block text-xs text-gray-500 mb-1">API Key</label>
-                <input name="openrouter_api_key" value={@openrouter_api_key} placeholder="Paste new key to update"
-                       class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm font-mono focus:outline-none focus:ring-1 focus:ring-gray-900" />
-              </div>
-              <div>
-                <label class="block text-xs text-gray-500 mb-1">API URL</label>
-                <input name="openrouter_api_url" value={@openrouter_api_url}
-                       class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm font-mono focus:outline-none focus:ring-1 focus:ring-gray-900" />
-              </div>
-            </div>
-          </div>
+          <.card title="Embeddings">
+            <.field name="embedding_api_url" label="API URL" value={@embedding_api_url} mono placeholder="https://api.tokenfactory.nebius.com/v1" />
+            <.field name="embedding_api_key" label="API Key" value={@embedding_api_key} mono placeholder="Paste key" />
+            <.field name="embedding_model" label="Model" value={@embedding_model} mono placeholder="BAAI/bge-multilingual-gemma2" />
+          </.card>
 
-          <div class="bg-white rounded-xl border border-gray-200 p-6">
-            <h2 class="text-sm font-semibold mb-4">Voice Transcription</h2>
-            <p class="text-xs text-gray-500 mb-4">Uses OpenRouter to transcribe voice messages to text. Requires OpenRouter API key.</p>
-            <div class="space-y-3">
-              <div>
-                <label class="block text-xs text-gray-500 mb-1">Enabled</label>
-                <select name="transcription_enabled"
-                        class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-gray-900">
-                  <option value="true" selected={@transcription_enabled == "true"}>Yes</option>
-                  <option value="false" selected={@transcription_enabled == "false"}>No</option>
-                </select>
-              </div>
-              <div>
-                <label class="block text-xs text-gray-500 mb-1">Model</label>
-                <input name="transcription_model" value={@transcription_model}
-                       class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm font-mono focus:outline-none focus:ring-1 focus:ring-gray-900" />
-              </div>
-            </div>
-          </div>
-
-          <div class="bg-white rounded-xl border border-gray-200 p-6">
-            <h2 class="text-sm font-semibold mb-4">Image Generation</h2>
-            <p class="text-xs text-gray-500 mb-4">Allows the bot to generate images. Requires OpenRouter API key. Off by default.</p>
-            <div class="space-y-3">
-              <div>
-                <label class="block text-xs text-gray-500 mb-1">Enabled</label>
-                <select name="image_generation_enabled"
-                        class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-gray-900">
-                  <option value="false" selected={@image_generation_enabled != "true"}>No</option>
-                  <option value="true" selected={@image_generation_enabled == "true"}>Yes</option>
-                </select>
-              </div>
-              <div>
-                <label class="block text-xs text-gray-500 mb-1">Model</label>
-                <input name="image_generation_model" value={@image_generation_model}
-                       class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm font-mono focus:outline-none focus:ring-1 focus:ring-gray-900" />
-              </div>
-            </div>
-          </div>
-
-          <div class="bg-white rounded-xl border border-gray-200 p-6">
-            <h2 class="text-sm font-semibold mb-4">Audio Budget</h2>
-            <p class="text-xs text-gray-500 mb-4">Tokens charged per second of audio for budget accounting. Adjust based on your Whisper pricing.</p>
-            <div>
-              <label class="block text-xs text-gray-500 mb-1">Tokens per Second</label>
-              <input name="audio_tokens_per_second" value={@audio_tokens_per_second}
-                     class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm font-mono focus:outline-none focus:ring-1 focus:ring-gray-900" />
-            </div>
-          </div>
-
-          <div class="bg-white rounded-xl border border-gray-200 p-6">
-            <h2 class="text-sm font-semibold mb-4">Token Budget Ratios</h2>
-            <p class="text-xs text-gray-500 mb-4">Controls how the context window is divided. Must sum to 1.0 or less.</p>
-            <div class="grid grid-cols-2 gap-3">
-              <div>
-                <label class="block text-xs text-gray-500 mb-1">System Prompt</label>
-                <input name="system_prompt_budget_ratio" value={@system_prompt_ratio}
-                       class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm font-mono focus:outline-none focus:ring-1 focus:ring-gray-900" />
-              </div>
-              <div>
-                <label class="block text-xs text-gray-500 mb-1">Tool Definitions</label>
-                <input name="tool_definitions_budget_ratio" value={@tool_definitions_ratio}
-                       class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm font-mono focus:outline-none focus:ring-1 focus:ring-gray-900" />
-              </div>
-              <div>
-                <label class="block text-xs text-gray-500 mb-1">Conversation History</label>
-                <input name="history_budget_ratio" value={@history_ratio}
-                       class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm font-mono focus:outline-none focus:ring-1 focus:ring-gray-900" />
-              </div>
-              <div>
-                <label class="block text-xs text-gray-500 mb-1">Tool Results</label>
-                <input name="tool_result_budget_ratio" value={@tool_results_ratio}
-                       class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm font-mono focus:outline-none focus:ring-1 focus:ring-gray-900" />
-              </div>
-              <div>
-                <label class="block text-xs text-gray-500 mb-1">Response Reserve</label>
-                <input name="response_reserve_ratio" value={@response_reserve_ratio}
-                       class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm font-mono focus:outline-none focus:ring-1 focus:ring-gray-900" />
-              </div>
-              <div>
-                <label class="block text-xs text-gray-500 mb-1">Default Context Window</label>
-                <input name="default_context_window" value={@default_context_window}
-                       class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm font-mono focus:outline-none focus:ring-1 focus:ring-gray-900" />
-              </div>
-              <div>
-                <label class="block text-xs text-gray-500 mb-1">Token Estimation Divisor</label>
-                <input name="token_estimation_divisor" value={@token_estimation_divisor}
-                       class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm font-mono focus:outline-none focus:ring-1 focus:ring-gray-900" />
-              </div>
-            </div>
-          </div>
-
-          <div class="bg-white rounded-xl border border-gray-200 p-6">
-            <h2 class="text-sm font-semibold mb-4">Embeddings (for memory search)</h2>
-            <p class="text-xs text-gray-500 mb-4">OpenAI-compatible embeddings API. Default: Nebius (bge-multilingual-gemma2). Also supports Voyage AI, OpenAI, etc.</p>
-            <div class="space-y-3">
-              <div>
-                <label class="block text-xs text-gray-500 mb-1">API URL</label>
-                <input name="embedding_api_url" value={@embedding_api_url} placeholder="https://api.tokenfactory.nebius.com/v1"
-                       class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm font-mono focus:outline-none focus:ring-1 focus:ring-gray-900" />
-              </div>
-              <div>
-                <label class="block text-xs text-gray-500 mb-1">API Key</label>
-                <input name="embedding_api_key" value={@embedding_api_key} placeholder="Paste key to update"
-                       class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm font-mono focus:outline-none focus:ring-1 focus:ring-gray-900" />
-              </div>
-              <div>
-                <label class="block text-xs text-gray-500 mb-1">Model</label>
-                <input name="embedding_model" value={@embedding_model} placeholder="BAAI/bge-multilingual-gemma2"
-                       class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm font-mono focus:outline-none focus:ring-1 focus:ring-gray-900" />
-              </div>
-            </div>
-          </div>
-
-          <div class="bg-white rounded-xl border border-gray-200 p-6">
-            <h2 class="text-sm font-semibold mb-4">Compaction Model (for summarization)</h2>
-            <p class="text-xs text-gray-500 mb-4">Use a cheaper model for compaction and memory flush. Leave empty to use the main chat model.</p>
-            <div class="space-y-3">
-              <div>
-                <label class="block text-xs text-gray-500 mb-1">API URL</label>
-                <input name="compaction_api_url" value={@compaction_api_url} placeholder="https://api.openai.com/v1"
-                       class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm font-mono focus:outline-none focus:ring-1 focus:ring-gray-900" />
-              </div>
-              <div>
-                <label class="block text-xs text-gray-500 mb-1">API Key</label>
-                <input name="compaction_api_key" value={@compaction_api_key} placeholder="Paste key to update"
-                       class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm font-mono focus:outline-none focus:ring-1 focus:ring-gray-900" />
-              </div>
-              <div>
-                <label class="block text-xs text-gray-500 mb-1">Model</label>
-                <input name="compaction_model" value={@compaction_model} placeholder="gpt-4o-mini"
-                       class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm font-mono focus:outline-none focus:ring-1 focus:ring-gray-900" />
-              </div>
-            </div>
-          </div>
+          <.card title="Compaction Model">
+            <.field name="compaction_api_url" label="API URL" value={@compaction_api_url} mono placeholder="https://api.openai.com/v1" />
+            <.field name="compaction_api_key" label="API Key" value={@compaction_api_key} mono placeholder="Paste key" />
+            <.field name="compaction_model" label="Model" value={@compaction_model} mono placeholder="gpt-4o-mini" />
+          </.card>
 
           <div class="flex items-center gap-3">
-            <button type="submit" class="bg-gray-900 hover:bg-gray-800 text-white rounded-lg px-4 py-2 text-sm font-medium transition">
+            <button type="submit" class="bg-accent hover:bg-accent/80 text-bg rounded px-3 py-1.5 text-xs font-medium transition">
               Save
             </button>
-            <span :if={@saved} class="text-sm text-green-600">Saved</span>
+            <span :if={@saved} class="text-xs text-ok">Saved</span>
           </div>
         </form>
       </div>
+    </div>
+    """
+  end
+
+  # --- Components ---
+
+  defp card(assigns) do
+    ~H"""
+    <div class="bg-raised/50 border border-line rounded-lg p-3 space-y-2">
+      <h2 class="label"><%= @title %></h2>
+      <%= render_slot(@inner_block) %>
+    </div>
+    """
+  end
+
+  attr :name, :string, required: true
+  attr :label, :string, required: true
+  attr :value, :string, required: true
+  attr :placeholder, :string, default: nil
+  attr :mono, :boolean, default: false
+  attr :type, :string, default: "text"
+  attr :options, :list, default: []
+
+  defp field(assigns) do
+    ~H"""
+    <div>
+      <label class="block text-[10px] text-muted mb-0.5"><%= @label %></label>
+      <%= if @type == "select" do %>
+        <select name={@name} class="w-full border border-line2 rounded px-2 py-1 text-xs">
+          <%= for {label, val} <- @options do %>
+            <option value={val} selected={@value == val}><%= label %></option>
+          <% end %>
+        </select>
+      <% else %>
+        <input name={@name} value={@value} placeholder={@placeholder}
+               class={"w-full border border-line2 rounded px-2 py-1 text-xs #{if @mono, do: "font-mono"}"} />
+      <% end %>
     </div>
     """
   end
@@ -336,9 +219,7 @@ defmodule DruzhokWebWeb.SettingsLive do
 
   defp non_masked(nil), do: nil
   defp non_masked(""), do: nil
-  defp non_masked(val) do
-    if String.contains?(val, "****"), do: nil, else: val
-  end
+  defp non_masked(val), do: if(String.contains?(val, "****"), do: nil, else: val)
 
   defp non_empty(nil), do: nil
   defp non_empty(""), do: nil
