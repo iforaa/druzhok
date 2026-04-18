@@ -253,6 +253,12 @@ defmodule Druzhok.Runtime.Hermes do
   def supports_feature?(:db_allowlist), do: true
   def supports_feature?(:pairing_code_approval), do: true
   def supports_feature?(:group_chat_config), do: true
+  def supports_feature?(:website_hosting), do: true
+  # Hermes manages these via its own config.yaml, not through druzhok env vars.
+  # Hide the dashboard dropdowns to avoid confusion.
+  def supports_feature?(:on_demand_model), do: false
+  def supports_feature?(:audio_model), do: false
+  def supports_feature?(:embedding_model), do: false
   def supports_feature?(_), do: false
 
   # --- Helpers ---
