@@ -14,7 +14,8 @@ defmodule Druzhok.Application do
       {DynamicSupervisor, name: Druzhok.InstanceDynSup, strategy: :one_for_one},
       {Finch, name: Druzhok.Finch, pools: finch_pools()},
       {Finch, name: Druzhok.LocalFinch},
-      Druzhok.HealthMonitor
+      Druzhok.HealthMonitor,
+      Druzhok.ManagerBot
     ]
 
     opts = [strategy: :one_for_one, name: Druzhok.Supervisor]
