@@ -301,4 +301,19 @@ defmodule Druzhok.Runtime.HermesTest do
       assert decoded["ru"]["✨ New session started!"] == "✨ Новая сессия!"
     end
   end
+
+  describe "sync_config/2 — translations injection" do
+    @tag :tmp_dir
+    test "writes translations.json alongside config.yaml", %{tmp_dir: tmp_dir} do
+      File.write!(Path.join(tmp_dir, "config.yaml"), "model:\n  default: \"x\"\n")
+
+      assert :ok = Hermes.sync_config(@instance, tmp_dir)
+
+      translations_path = Path.join(tmp_dir, "translations.json")
+      assert File.exists?(translations_path)
+
+      decoded = File.read!(translations_path) |> Jason.decode!()
+      assert decoded["ru"]["✨ New session started!"] == "✨ Новая сессия!"
+    end
+  end
 end

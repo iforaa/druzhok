@@ -132,6 +132,7 @@ defmodule Druzhok.Runtime.Hermes do
   @impl true
   def sync_config(instance, data_root) do
     sync_agents_md(instance, data_root)
+    sync_translations_file(data_root)
 
     # Patch dashboard-owned fields in config.yaml on every start so the
     # dashboard stays the source of truth without clobbering hermes's
