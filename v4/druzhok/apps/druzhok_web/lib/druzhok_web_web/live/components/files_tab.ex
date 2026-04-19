@@ -66,12 +66,14 @@ defmodule DruzhokWebWeb.Live.Components.FilesTab do
     ~H"""
     <div>
       <.sqlite_browser :if={@db_browser}
+        target={@myself}
         db_path={@db_browser} db_tables={@db_tables} db_selected_table={@db_selected_table}
         db_columns={@db_columns} db_rows={@db_rows} db_total_rows={@db_total_rows}
         db_offset={@db_offset} db_page_size={@page_size} db_query={@db_query}
         db_error={@db_error} db_selected_rows={@db_selected_rows}
         db_all_selected={@db_all_selected} db_editing={@db_editing} />
       <.file_browser :if={!@db_browser}
+        target={@myself}
         files={@workspace_files}
         file_content={@file_content}
         current_path={@current_path}
