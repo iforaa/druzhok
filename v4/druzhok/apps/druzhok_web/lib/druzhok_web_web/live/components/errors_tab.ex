@@ -1,6 +1,8 @@
 defmodule DruzhokWebWeb.Live.Components.ErrorsTab do
   use Phoenix.Component
 
+  @time_format "%b %d %H:%M:%S"
+
   attr :errors, :list, default: []
   attr :instance_name, :string, default: nil
   attr :expanded, :string, default: nil
@@ -42,11 +44,7 @@ defmodule DruzhokWebWeb.Live.Components.ErrorsTab do
   end
 
   defp format_time(nil), do: ""
-  defp format_time(%NaiveDateTime{} = dt) do
-    Calendar.strftime(dt, "%b %d %H:%M:%S")
-  end
-  defp format_time(%DateTime{} = dt) do
-    Calendar.strftime(dt, "%b %d %H:%M:%S")
-  end
+  defp format_time(%NaiveDateTime{} = dt), do: Calendar.strftime(dt, @time_format)
+  defp format_time(%DateTime{} = dt), do: Calendar.strftime(dt, @time_format)
   defp format_time(_), do: ""
 end

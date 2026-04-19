@@ -177,8 +177,12 @@ defmodule Druzhok.ManagerBot.Onboarding do
   end
 
   defp bot_handle(bot) do
-    name = bot.name || ""
-    if String.ends_with?(name, "_bot"), do: name, else: name <> "_bot"
+    case bot[:trigger_name] do
+      handle when is_binary(handle) and handle != "" -> handle
+      _ ->
+        name = bot.name
+        if String.ends_with?(name, "_bot"), do: name, else: name <> "_bot"
+    end
   end
 
   # --- Username generation ---
