@@ -22,11 +22,106 @@ defmodule DruzhokWebWeb.LlmProxyController do
         body = LlmFormat.prepare_body(body)
         started_at = System.monotonic_time(:millisecond)
 
-        if stream do
-          stream_proxy(conn, instance, url, headers, body, model, started_at)
-        else
-          sync_proxy(conn, instance, url, headers, body, model, started_at)
+        cond do
+          stream and broken_streaming?(model) ->
+            fake_stream_proxy(conn, instance, url, headers, body, model, started_at)
+
+          stream ->
+            stream_proxy(conn, instance, url, headers, body, model, started_at)
+
+          true ->
+            sync_proxy(conn, instance, url, headers, body, model, started_at)
         end
+    end
+  end
+
+  defp broken_streaming?(model), do: String.starts_with?(model || "", "xiaomi/mimo")
+
+  defp fake_stream_proxy(conn, instance, url, headers, body, model, started_at) do
+    sync_body = body |> Map.put("stream", false) |> Map.delete("stream_options")
+    request = Finch.build(:post, url, headers, Jason.encode!(sync_body))
+
+    conn =
+      conn
+      |> put_resp_content_type("text/event-stream")
+      |> put_resp_header("cache-control", "no-cache")
+      |> send_chunked(200)
+
+    case Finch.request(request, Druzhok.Finch, receive_timeout: 120_000) do
+      {:ok, %Finch.Response{status: 200, body: resp_body}} ->
+        decoded = Jason.decode!(resp_body)
+        usage = LlmFormat.extract_usage(decoded)
+        content = get_in(decoded, ["choices", Access.at(0), "message", "content"]) || ""
+        tool_calls = get_in(decoded, ["choices", Access.at(0), "message", "tool_calls"])
+        finish_reason = get_in(decoded, ["choices", Access.at(0), "finish_reason"]) || "stop"
+        model_id = decoded["model"] || model
+        response_id = decoded["id"] || "chatcmpl-fake"
+
+        conn = emit_fake_stream(conn, response_id, model_id, content, tool_calls, finish_reason, usage, body["stream_options"])
+        meter(instance, usage, model, started_at, body, content)
+        conn
+
+      {:ok, %Finch.Response{status: status, body: resp_body}} ->
+        Plug.Conn.chunk(conn, "data: #{resp_body}\n\n")
+        Plug.Conn.chunk(conn, "data: [DONE]\n\n")
+        Logger.warning("fake_stream_proxy upstream #{status}")
+        conn
+
+      {:error, reason} ->
+        Logger.error("fake_stream_proxy error: #{inspect(reason)}")
+        Plug.Conn.chunk(conn, ~s(data: {"error":"upstream failed"}\n\n))
+        Plug.Conn.chunk(conn, "data: [DONE]\n\n")
+        conn
+    end
+  end
+
+  defp emit_fake_stream(conn, id, model, content, tool_calls, finish_reason, usage, stream_options) do
+    delta = if tool_calls, do: %{"tool_calls" => tool_calls}, else: %{"role" => "assistant", "content" => content}
+
+    content_chunk = %{
+      "id" => id,
+      "object" => "chat.completion.chunk",
+      "model" => model,
+      "choices" => [%{"index" => 0, "delta" => delta, "finish_reason" => nil}]
+    }
+
+    final_chunk = %{
+      "id" => id,
+      "object" => "chat.completion.chunk",
+      "model" => model,
+      "choices" => [%{"index" => 0, "delta" => %{}, "finish_reason" => finish_reason}]
+    }
+
+    conn = chunk_sse(conn, content_chunk)
+    conn = chunk_sse(conn, final_chunk)
+
+    conn =
+      if is_map(stream_options) and stream_options["include_usage"] do
+        usage_chunk = %{
+          "id" => id,
+          "object" => "chat.completion.chunk",
+          "model" => model,
+          "choices" => [],
+          "usage" => %{
+            "prompt_tokens" => usage.prompt_tokens,
+            "completion_tokens" => usage.completion_tokens,
+            "total_tokens" => usage.prompt_tokens + usage.completion_tokens
+          }
+        }
+
+        chunk_sse(conn, usage_chunk)
+      else
+        conn
+      end
+
+    {:ok, conn} = Plug.Conn.chunk(conn, "data: [DONE]\n\n")
+    conn
+  end
+
+  defp chunk_sse(conn, payload) do
+    case Plug.Conn.chunk(conn, "data: #{Jason.encode!(payload)}\n\n") do
+      {:ok, conn} -> conn
+      {:error, _} -> conn
     end
   end
 
