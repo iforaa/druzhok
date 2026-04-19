@@ -92,6 +92,8 @@ defmodule Druzhok.Runtime.Hermes do
       # Auto-set home channel to the owner's DM so hermes doesn't nag
       # on first message. In Telegram, DM chat_id == user_id.
       "TELEGRAM_HOME_CHANNEL" => to_string(Map.get(instance, :owner_telegram_id, "") || ""),
+      # Language for system message translation (druzhok downstream patch).
+      "HERMES_LANGUAGE" => Map.get(instance, :language, "ru") || "ru",
       "TELEGRAM_REQUIRE_MENTION" => to_string(Map.get(instance, :mention_only, false)),
       "TELEGRAM_MENTION_PATTERNS" => build_mention_patterns(instance),
       "TELEGRAM_FREE_RESPONSE_CHATS" => build_free_response_chats(instance),
