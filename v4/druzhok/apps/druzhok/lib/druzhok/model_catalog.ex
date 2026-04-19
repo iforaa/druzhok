@@ -53,4 +53,21 @@ defmodule Druzhok.ModelCatalog do
   def default_image_model, do: "google/gemini-2.5-flash-lite"
   def default_audio_model, do: "gpt-4o-mini-transcribe"
   def default_embedding_model, do: "openai/text-embedding-3-small"
+
+  # Fallback prices used only when OpenRouter's usage.cost is missing from
+  # the response. Values are cents per 1,000,000 tokens. Check
+  # https://openrouter.ai/models for current published prices.
+  @prices %{
+    "xiaomi/mimo-v2-pro" => %{input: 10, output: 150},
+    "google/gemini-2.5-flash-lite" => %{input: 10, output: 40},
+    "google/gemini-3-flash-preview" => %{input: 30, output: 120},
+    "anthropic/claude-sonnet-4-6" => %{input: 300, output: 1500},
+    "openai/gpt-5.4-nano" => %{input: 5, output: 20},
+    "openai/gpt-5.4-mini" => %{input: 25, output: 100},
+    "qwen/qwen3.5-flash" => %{input: 7, output: 28},
+    "deepseek/deepseek-v3.2" => %{input: 30, output: 140},
+  }
+
+  def price_per_million(nil), do: %{input: 0, output: 0}
+  def price_per_million(model), do: Map.get(@prices, model, %{input: 0, output: 0})
 end
