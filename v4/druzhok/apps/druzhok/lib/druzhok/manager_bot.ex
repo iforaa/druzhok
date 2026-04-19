@@ -200,7 +200,11 @@ defmodule Druzhok.ManagerBot do
         where: i.owner_telegram_id == ^user_id,
         order_by: [desc: i.active, asc: i.name])
     )
-    |> Enum.map(&Map.from_struct/1)
+    |> Enum.map(fn inst ->
+      inst
+      |> Map.from_struct()
+      |> Map.put(:spent_today_cents, Druzhok.Budget.spent_today_cents(inst.id))
+    end)
 
     {text, buttons} = Onboarding.my_bots_message(bots)
 

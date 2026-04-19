@@ -161,10 +161,7 @@ defmodule Druzhok.ManagerBot.Onboarding do
     if bots == [] do
       {"У тебя пока нет ботов. Нажми «🤖 Создать бота» чтобы начать!", []}
     else
-      lines = Enum.map(bots, fn bot ->
-        status = if bot[:active], do: "🟢", else: "🔴"
-        "#{status} *#{bot.name}*"
-      end)
+      lines = Enum.map(bots, &bot_line/1)
       text = "Твои боты:\n\n" <> Enum.join(lines, "\n")
 
       buttons = Enum.map(bots, fn bot ->
@@ -174,6 +171,21 @@ defmodule Druzhok.ManagerBot.Onboarding do
 
       {text, buttons}
     end
+  end
+
+  defp bot_line(bot) do
+    status = if bot[:active], do: "🟢", else: "🔴"
+    budget = format_budget(bot[:daily_budget_cents] || 0, bot[:spent_today_cents] || 0)
+    "#{status} *#{bot.name}* — #{budget}"
+  end
+
+  defp format_budget(0, spent) do
+    "без лимита, $#{Druzhok.Budget.cents_to_dollars(spent)}"
+  end
+
+  defp format_budget(limit, spent) do
+    pct = round(spent * 100 / limit)
+    "$#{Druzhok.Budget.cents_to_dollars(spent)} / $#{Druzhok.Budget.cents_to_dollars(limit)} (#{pct}%)"
   end
 
   defp bot_handle(bot) do
