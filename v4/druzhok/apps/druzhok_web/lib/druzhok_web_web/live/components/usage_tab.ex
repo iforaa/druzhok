@@ -6,6 +6,8 @@ defmodule DruzhokWebWeb.Live.Components.UsageTab do
   attr :tool_stats, :list, required: true
   attr :instance_name, :string, required: true
   attr :expanded_request, :any, default: nil
+  attr :expanded_request_body, :any, default: nil
+  attr :has_more, :boolean, default: false
 
   def usage_tab(assigns) do
     ~H"""
@@ -103,11 +105,11 @@ defmodule DruzhokWebWeb.Live.Components.UsageTab do
                       <div class="label mb-1">Response</div>
                       <pre class="text-[10px] bg-raised rounded p-2 overflow-x-auto whitespace-pre-wrap max-h-80 overflow-y-auto border border-line font-mono text-fg"><%= req.response_preview %></pre>
                     </div>
-                    <div :if={req[:request_body] && req[:request_body] != ""}>
+                    <div :if={@expanded_request_body && @expanded_request_body != ""}>
                       <div class="label mb-1">Full Request Body</div>
-                      <pre class="text-[10px] bg-raised rounded p-2 overflow-x-auto whitespace-pre-wrap max-h-[500px] overflow-y-auto border border-line font-mono text-fg"><%= format_json(req[:request_body]) %></pre>
+                      <pre class="text-[10px] bg-raised rounded p-2 overflow-x-auto whitespace-pre-wrap max-h-[500px] overflow-y-auto border border-line font-mono text-fg"><%= format_json(@expanded_request_body) %></pre>
                     </div>
-                    <div :if={(!req.prompt_preview || req.prompt_preview == "") && (!req.response_preview || req.response_preview == "") && (!req[:request_body] || req[:request_body] == "")}
+                    <div :if={(!req.prompt_preview || req.prompt_preview == "") && (!req.response_preview || req.response_preview == "") && (!@expanded_request_body || @expanded_request_body == "")}
                          class="text-[10px] text-subtle italic">No preview available</div>
                   </div>
                 </td>
@@ -116,6 +118,12 @@ defmodule DruzhokWebWeb.Live.Components.UsageTab do
           </tbody>
         </table>
         <div :if={@requests == []} class="text-center text-subtle py-6 text-xs">No requests yet</div>
+        <div :if={@has_more} class="py-2 text-center">
+          <button phx-click="load_more_usage"
+                  class="text-[11px] text-muted hover:text-fg border border-line2 hover:border-accent rounded px-3 py-1 transition">
+            Load more
+          </button>
+        </div>
       </div>
     </div>
     """

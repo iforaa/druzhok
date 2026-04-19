@@ -56,12 +56,35 @@ defmodule Druzhok.Usage do
     |> Repo.all()
   end
 
-  def recent(instance_id, limit \\ 50) do
+  @doc """
+  List recent usage logs for a bot, newest first. Omits `request_body` because
+  it can be tens of kilobytes per row — fetch it on demand with `get_body/1`.
+  """
+  def recent(instance_id, limit \\ 20, offset \\ 0) do
     from(u in __MODULE__,
       where: u.instance_id == ^instance_id,
       order_by: [desc: :inserted_at],
-      limit: ^limit
+      limit: ^limit,
+      offset: ^offset,
+      select: %{
+        id: u.id,
+        inserted_at: u.inserted_at,
+        model: u.model,
+        prompt_tokens: u.prompt_tokens,
+        completion_tokens: u.completion_tokens,
+        cost_cents: u.cost_cents,
+        latency_ms: u.latency_ms,
+        prompt_preview: u.prompt_preview,
+        response_preview: u.response_preview,
+        request_type: u.request_type,
+        audio_duration_ms: u.audio_duration_ms
+      }
     )
     |> Repo.all()
+  end
+
+  def get_body(log_id) do
+    from(u in __MODULE__, where: u.id == ^log_id, select: u.request_body)
+    |> Repo.one()
   end
 end

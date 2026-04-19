@@ -47,7 +47,9 @@ defmodule DruzhokWebWeb.DashboardLive do
       expanded_error: nil,
       usage_requests: [],
       usage_summary: [],
+      usage_has_more: false,
       expanded_request: nil,
+      expanded_request_body: nil,
       palette_open: false,
       palette_query: "",
       palette_cursor: 0
@@ -173,8 +175,15 @@ defmodule DruzhokWebWeb.DashboardLive do
   defp load_tab_assigns(:usage, _name, nil), do: %{}
 
   defp load_tab_assigns(:usage, _name, instance) do
-    {reqs, summary} = load_usage_data(instance)
-    %{usage_requests: reqs, usage_summary: summary}
+    {reqs, summary, has_more} = load_usage_data(instance, 0)
+
+    %{
+      usage_requests: reqs,
+      usage_summary: summary,
+      usage_has_more: has_more,
+      expanded_request: nil,
+      expanded_request_body: nil
+    }
   end
 
   defp load_tab_assigns(:errors, name, _instance) do
@@ -256,8 +265,30 @@ defmodule DruzhokWebWeb.DashboardLive do
 
   def handle_event("toggle_request", %{"id" => id}, socket) do
     id = String.to_integer(id)
-    expanded = if socket.assigns.expanded_request == id, do: nil, else: id
-    {:noreply, assign(socket, expanded_request: expanded)}
+
+    if socket.assigns.expanded_request == id do
+      {:noreply, assign(socket, expanded_request: nil, expanded_request_body: nil)}
+    else
+      body = Druzhok.Usage.get_body(id)
+      {:noreply, assign(socket, expanded_request: id, expanded_request_body: body)}
+    end
+  end
+
+  def handle_event("load_more_usage", _, socket) do
+    case get_instance(socket.assigns.selected, socket) do
+      nil ->
+        {:noreply, socket}
+
+      instance ->
+        offset = length(socket.assigns.usage_requests)
+        {more, _summary, has_more} = load_usage_data(instance, offset)
+
+        {:noreply,
+         assign(socket,
+           usage_requests: socket.assigns.usage_requests ++ more,
+           usage_has_more: has_more
+         )}
+    end
   end
 
   def handle_event("back", _, socket) do
@@ -533,7 +564,7 @@ defmodule DruzhokWebWeb.DashboardLive do
               pairing_requests={@pairing_requests}
               allowed_users={@allowed_users} />
 
-            <.usage_tab :if={@tab == :usage} requests={@usage_requests} summary={@usage_summary} tool_stats={[]} instance_name={@selected} expanded_request={@expanded_request} />
+            <.usage_tab :if={@tab == :usage} requests={@usage_requests} summary={@usage_summary} tool_stats={[]} instance_name={@selected} expanded_request={@expanded_request} expanded_request_body={@expanded_request_body} has_more={@usage_has_more} />
 
             <.errors_tab :if={@tab == :errors} errors={@instance_errors} instance_name={@selected} expanded={@expanded_error} />
           </div>
@@ -738,26 +769,31 @@ defmodule DruzhokWebWeb.DashboardLive do
     end
   end
 
-  defp load_usage_data(instance) do
-    raw_requests = Druzhok.Usage.recent(instance[:id], 50)
-    requests = Enum.map(raw_requests, fn r ->
-      %{
-        id: r.id,
-        inserted_at: r.inserted_at,
-        model: r.model,
-        input_tokens: r.prompt_tokens || 0,
-        output_tokens: r.completion_tokens || 0,
-        tool_calls_count: 0,
-        elapsed_ms: r.latency_ms,
-        prompt_preview: r.prompt_preview,
-        response_preview: r.response_preview,
-        request_body: r.request_body,
-        request_type: r.request_type || "chat",
-        audio_duration_ms: r.audio_duration_ms
-      }
-    end)
+  @usage_page_size 20
+
+  defp load_usage_data(instance, offset) do
+    # Fetch page_size + 1 to cheaply detect if there's a next page.
+    raw = Druzhok.Usage.recent(instance[:id], @usage_page_size + 1, offset)
+    has_more = length(raw) > @usage_page_size
+    requests = raw |> Enum.take(@usage_page_size) |> Enum.map(&usage_row/1)
     summary = Druzhok.Usage.daily_usage(instance[:id])
-    {requests, summary}
+    {requests, summary, has_more}
+  end
+
+  defp usage_row(r) do
+    %{
+      id: r.id,
+      inserted_at: r.inserted_at,
+      model: r.model,
+      input_tokens: r.prompt_tokens || 0,
+      output_tokens: r.completion_tokens || 0,
+      tool_calls_count: 0,
+      elapsed_ms: r.latency_ms,
+      prompt_preview: r.prompt_preview,
+      response_preview: r.response_preview,
+      request_type: r.request_type || "chat",
+      audio_duration_ms: r.audio_duration_ms
+    }
   end
 
   defp instance_to_map(inst), do: inst |> Map.from_struct() |> Map.drop([:__meta__])
