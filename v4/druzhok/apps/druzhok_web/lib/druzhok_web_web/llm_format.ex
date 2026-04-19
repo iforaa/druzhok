@@ -49,10 +49,21 @@ defmodule DruzhokWebWeb.LlmFormat do
   def prepare_body(body) do
     model = body["model"] || ""
 
-    body = Map.put_new(body, "max_tokens", @default_max_tokens)
+    body =
+      body
+      |> Map.put_new("max_tokens", @default_max_tokens)
+      |> apply_reasoning_override(model)
 
     if model in @non_vision_models do
       Map.update(body, "messages", [], &strip_images/1)
+    else
+      body
+    end
+  end
+
+  defp apply_reasoning_override(body, model) do
+    if String.starts_with?(model, "xiaomi/mimo") do
+      Map.put_new(body, "reasoning", %{"exclude" => true})
     else
       body
     end
