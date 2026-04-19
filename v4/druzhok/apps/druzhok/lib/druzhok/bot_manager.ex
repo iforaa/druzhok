@@ -159,13 +159,34 @@ defmodule Druzhok.BotManager do
 
     if exit_code == 0 do
       case String.trim(output) |> String.split("|") do
-        [mem, cpu, net] -> %{mem: mem, cpu: cpu, net: net}
-        _ -> nil
+        [mem, cpu, net] ->
+          # docker .MemUsage is "31.02MiB / 1.921GiB" — the denominator is host
+          # RAM (no --memory cap set), useful only as a reference.
+          mem_used = mem |> String.split("/") |> List.first() |> String.trim()
+          %{mem: mem_used, mem_bytes: parse_mem_bytes(mem_used), cpu: cpu, net: net}
+
+        _ ->
+          nil
       end
     else
       nil
     end
   end
+
+  @mem_regex ~r/^\s*([\d.]+)\s*(KiB|MiB|GiB|TiB|B)?/
+  @unit_factors %{"B" => 1, "KiB" => 1024, "MiB" => 1024 * 1024,
+                  "GiB" => 1024 * 1024 * 1024, "TiB" => 1024 * 1024 * 1024 * 1024}
+
+  defp parse_mem_bytes(mem_string) when is_binary(mem_string) do
+    with [_, n, unit] <- Regex.run(@mem_regex, mem_string),
+         {value, _} <- Float.parse(n) do
+      round(value * Map.get(@unit_factors, unit, 1))
+    else
+      _ -> 0
+    end
+  end
+
+  defp parse_mem_bytes(_), do: 0
 
   defp sync_runtime_config(runtime, instance, data_root) do
     if function_exported?(runtime, :sync_config, 2) do

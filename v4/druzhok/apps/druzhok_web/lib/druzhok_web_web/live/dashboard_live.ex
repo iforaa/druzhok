@@ -487,7 +487,7 @@ defmodule DruzhokWebWeb.DashboardLive do
 
             <%!-- mem this · all bots total · cpu --%>
             <span :if={stats} class="font-mono text-xs text-fg ml-auto flex items-center gap-2">
-              <span><span class="text-muted">bot</span> <%= bot_mem(stats.mem) %></span>
+              <span><span class="text-muted">bot</span> <%= stats.mem %></span>
               <span class="text-faint">·</span>
               <span><span class="text-muted">all</span> <%= total_mem_across_instances(@instances) %></span>
               <span class="text-faint">·</span>
@@ -674,42 +674,14 @@ defmodule DruzhokWebWeb.DashboardLive do
     end
   end
 
-  # docker stats .MemUsage looks like "31.02MiB / 1.921GiB" — keep only the
-  # actual-usage side; the denominator is just host RAM and misleads.
-  defp bot_mem(mem_string) when is_binary(mem_string) do
-    mem_string |> String.split("/") |> List.first() |> String.trim()
-  end
-
-  defp bot_mem(_), do: "-"
-
   defp total_mem_across_instances(instances) do
     instances
     |> Enum.map(&Map.get(&1, :container_stats))
     |> Enum.filter(& &1)
-    |> Enum.map(&parse_mem_bytes(&1.mem))
+    |> Enum.map(& &1.mem_bytes)
     |> Enum.sum()
     |> format_bytes()
   end
-
-  defp parse_mem_bytes(mem_string) when is_binary(mem_string) do
-    case Regex.run(~r/^\s*([\d.]+)\s*(KiB|MiB|GiB|TiB|B)?/, mem_string) do
-      [_, n, unit] ->
-        value = String.to_float(if String.contains?(n, "."), do: n, else: n <> ".0")
-        round(value * unit_factor(unit))
-
-      _ ->
-        0
-    end
-  end
-
-  defp parse_mem_bytes(_), do: 0
-
-  defp unit_factor("B"), do: 1
-  defp unit_factor("KiB"), do: 1024
-  defp unit_factor("MiB"), do: 1024 * 1024
-  defp unit_factor("GiB"), do: 1024 * 1024 * 1024
-  defp unit_factor("TiB"), do: 1024 * 1024 * 1024 * 1024
-  defp unit_factor(_), do: 1
 
   defp format_bytes(bytes) when bytes >= 1024 * 1024 * 1024 do
     "#{Float.round(bytes / (1024 * 1024 * 1024), 2)} GiB"
