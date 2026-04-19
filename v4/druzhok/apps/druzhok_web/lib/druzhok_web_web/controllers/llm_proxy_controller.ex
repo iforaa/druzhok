@@ -415,7 +415,8 @@ defmodule DruzhokWebWeb.LlmProxyController do
       "messages" => [
         %{"role" => "system", "content" => @search_system_prompt},
         %{"role" => "user", "content" => "#{query}\n\nReturn up to #{limit} results as a JSON array."}
-      ]
+      ],
+      "usage" => %{"include" => true}
     }
 
     url = LlmFormat.request_url()
@@ -485,7 +486,8 @@ defmodule DruzhokWebWeb.LlmProxyController do
   defp meter_search(instance, decoded, query, started_at) do
     usage = LlmFormat.extract_usage(decoded)
     total = usage.prompt_tokens + usage.completion_tokens
-    if total > 0, do: Budget.deduct(instance.id, total)
+    cost_cents = LlmFormat.extract_cost_cents(decoded, @search_model)
+    Budget.deduct(instance.id, cost_cents)
 
     Usage.log(%{
       instance_id: instance.id,
@@ -493,6 +495,7 @@ defmodule DruzhokWebWeb.LlmProxyController do
       prompt_tokens: usage.prompt_tokens,
       completion_tokens: usage.completion_tokens,
       total_tokens: total,
+      cost_cents: cost_cents,
       request_type: "search",
       requested_model: @search_model,
       resolved_model: @search_model,
@@ -516,18 +519,19 @@ defmodule DruzhokWebWeb.LlmProxyController do
     end
   end
 
-  defp meter_image(nil, _usage, _model, _started_at), do: :ok
-  defp meter_image(instance, usage, image_model, started_at) do
+  defp meter_image(nil, _usage, _model, _started_at, _cost_cents), do: :ok
+  defp meter_image(instance, usage, image_model, started_at, cost_cents) do
     total = usage.prompt_tokens + usage.completion_tokens
     if total > 0 do
       latency = System.monotonic_time(:millisecond) - started_at
-      Budget.deduct(instance.id, total)
+      Budget.deduct(instance.id, cost_cents)
       Usage.log(%{
         instance_id: instance.id,
         model: image_model,
         prompt_tokens: usage.prompt_tokens,
         completion_tokens: usage.completion_tokens,
         total_tokens: total,
+        cost_cents: cost_cents,
         request_type: "image",
         requested_model: image_model,
         resolved_model: image_model,
@@ -668,7 +672,9 @@ defmodule DruzhokWebWeb.LlmProxyController do
 
           if instance do
             case Jason.decode(trimmed) do
-              {:ok, decoded} -> meter_image(instance, LlmFormat.extract_usage(decoded), image_model, started_at)
+              {:ok, decoded} ->
+                cost_cents = LlmFormat.extract_cost_cents(decoded, image_model)
+                meter_image(instance, LlmFormat.extract_usage(decoded), image_model, started_at, cost_cents)
               _ -> :ok
             end
           end
@@ -702,7 +708,13 @@ defmodule DruzhokWebWeb.LlmProxyController do
 
     messages = if messages == [], do: [%{"role" => "user", "content" => "Describe this image."}], else: messages
 
-    %{"model" => model, "messages" => messages, "max_tokens" => body["max_output_tokens"] || 1024, "stream" => body["stream"] || false}
+    %{
+      "model" => model,
+      "messages" => messages,
+      "max_tokens" => body["max_output_tokens"] || 1024,
+      "stream" => body["stream"] || false,
+      "usage" => %{"include" => true}
+    }
   end
 
   defp stream_responses_proxy(conn, request, image_model, instance, started_at) do
@@ -720,23 +732,25 @@ defmodule DruzhokWebWeb.LlmProxyController do
 
     case result do
       {:ok, raw_data} ->
-        # Parse streamed SSE chunks to extract full text and usage
-        {text, usage} = raw_data
+        # Parse streamed SSE chunks to extract full text, usage, and cost
+        {text, usage, cost_cents} = raw_data
         |> String.split("\n")
         |> Enum.filter(&String.starts_with?(&1, "data: "))
         |> Enum.map(&String.trim_leading(&1, "data: "))
         |> Enum.reject(&(&1 == "[DONE]"))
-        |> Enum.reduce({"", %{prompt_tokens: 0, completion_tokens: 0}}, fn json_str, {text_acc, usage_acc} ->
+        |> Enum.reduce({"", %{prompt_tokens: 0, completion_tokens: 0}, 0}, fn json_str, {text_acc, usage_acc, cost_acc} ->
           case Jason.decode(json_str) do
             {:ok, %{"choices" => [%{"delta" => %{"content" => content}} | _]} = chunk} when is_binary(content) ->
-              new_usage = case chunk do
-                %{"usage" => u} when is_map(u) -> LlmFormat.extract_usage(%{"usage" => u})
-                _ -> usage_acc
+              {new_usage, new_cost} = case chunk do
+                %{"usage" => u} when is_map(u) ->
+                  {LlmFormat.extract_usage(%{"usage" => u}), LlmFormat.extract_cost_cents(chunk, image_model)}
+                _ ->
+                  {usage_acc, cost_acc}
               end
-              {text_acc <> content, new_usage}
-            {:ok, %{"usage" => u}} when is_map(u) ->
-              {text_acc, LlmFormat.extract_usage(%{"usage" => u})}
-            _ -> {text_acc, usage_acc}
+              {text_acc <> content, new_usage, new_cost}
+            {:ok, %{"usage" => u} = chunk} when is_map(u) ->
+              {text_acc, LlmFormat.extract_usage(%{"usage" => u}), LlmFormat.extract_cost_cents(chunk, image_model)}
+            _ -> {text_acc, usage_acc, cost_acc}
           end
         end)
 
@@ -770,7 +784,7 @@ defmodule DruzhokWebWeb.LlmProxyController do
           Plug.Conn.chunk(conn, "data: #{Jason.encode!(event)}\n\n")
         end
 
-        meter_image(instance, usage, image_model, started_at)
+        meter_image(instance, usage, image_model, started_at, cost_cents)
         conn
 
       {:error, reason} ->
