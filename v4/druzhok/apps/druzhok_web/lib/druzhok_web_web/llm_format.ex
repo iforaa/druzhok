@@ -44,8 +44,13 @@ defmodule DruzhokWebWeb.LlmFormat do
     %{prompt_tokens: usage["prompt_tokens"] || 0, completion_tokens: usage["completion_tokens"] || 0}
   end
 
+  @default_max_tokens 4096
+
   def prepare_body(body) do
     model = body["model"] || ""
+
+    body = Map.put_new(body, "max_tokens", @default_max_tokens)
+
     if model in @non_vision_models do
       Map.update(body, "messages", [], &strip_images/1)
     else
