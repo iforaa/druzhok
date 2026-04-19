@@ -17,6 +17,7 @@ defmodule Druzhok.Runtime.Hermes do
 
   @behaviour Druzhok.Runtime
 
+  require Logger
   alias Druzhok.{BotManager, Instance}
 
   @data_mount "/opt/data"
@@ -251,7 +252,6 @@ defmodule Druzhok.Runtime.Hermes do
   to all bots on restart without an image rebuild.
   """
   def sync_translations_file(data_root) do
-    require Logger
     priv_path = Path.join(:code.priv_dir(:druzhok), "translations.json")
     dest = Path.join(data_root, "translations.json")
 
