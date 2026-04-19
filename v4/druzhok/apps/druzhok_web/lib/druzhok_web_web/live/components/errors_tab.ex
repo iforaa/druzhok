@@ -43,10 +43,10 @@ defmodule DruzhokWebWeb.Live.Components.ErrorsTab do
 
   defp format_time(nil), do: ""
   defp format_time(%NaiveDateTime{} = dt) do
-    Calendar.strftime(dt, "%H:%M:%S")
+    Calendar.strftime(dt, "%b %d %H:%M:%S")
   end
   defp format_time(%DateTime{} = dt) do
-    Calendar.strftime(dt, "%H:%M:%S")
+    Calendar.strftime(dt, "%b %d %H:%M:%S")
   end
   defp format_time(_), do: ""
 end

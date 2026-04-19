@@ -123,6 +123,19 @@ defmodule Druzhok.ManagerBot.OnboardingTest do
       assert text =~ "🟢"
       assert text =~ "vasya"
     end
+
+    test "button URL appends _bot to the handle" do
+      bots = [%{name: "fedya_b318", active: true, trigger_name: nil}]
+      {_text, [[btn]]} = Onboarding.my_bots_message(bots)
+      assert btn.text == "💬 @fedya_b318_bot"
+      assert btn.url == "https://t.me/fedya_b318_bot"
+    end
+
+    test "button URL does not double-append _bot" do
+      bots = [%{name: "already_bot", active: true, trigger_name: nil}]
+      {_text, [[btn]]} = Onboarding.my_bots_message(bots)
+      assert btn.url == "https://t.me/already_bot"
+    end
   end
 
   describe "personalities/0" do

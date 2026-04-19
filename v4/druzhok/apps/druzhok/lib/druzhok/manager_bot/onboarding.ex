@@ -168,11 +168,17 @@ defmodule Druzhok.ManagerBot.Onboarding do
       text = "Твои боты:\n\n" <> Enum.join(lines, "\n")
 
       buttons = Enum.map(bots, fn bot ->
-        [%{text: "💬 @#{bot[:trigger_name] || bot.name}", url: "https://t.me/#{bot[:trigger_name] || bot.name}"}]
+        handle = bot_handle(bot)
+        [%{text: "💬 @#{handle}", url: "https://t.me/#{handle}"}]
       end)
 
       {text, buttons}
     end
+  end
+
+  defp bot_handle(bot) do
+    name = bot.name || ""
+    if String.ends_with?(name, "_bot"), do: name, else: name <> "_bot"
   end
 
   # --- Username generation ---
