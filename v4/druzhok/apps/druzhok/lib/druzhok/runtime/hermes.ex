@@ -242,6 +242,30 @@ defmodule Druzhok.Runtime.Hermes do
     end
   end
 
+  @doc """
+  Write priv/translations.json into data_root so hermes's patched
+  gateway/translations.py can load it at import time.
+
+  Called from sync_config/2 on every bot start — overwriting with the
+  same content is harmless and keeps edits in druzhok's priv/ propagating
+  to all bots on restart without an image rebuild.
+  """
+  def sync_translations_file(data_root) do
+    require Logger
+    priv_path = Path.join(:code.priv_dir(:druzhok), "translations.json")
+    dest = Path.join(data_root, "translations.json")
+
+    case File.read(priv_path) do
+      {:ok, content} ->
+        File.write!(dest, content)
+        :ok
+
+      {:error, reason} ->
+        Logger.warning("sync_translations_file: cannot read #{priv_path}: #{inspect(reason)}")
+        :ok
+    end
+  end
+
   @impl true
   def post_start(_instance), do: :ok
 
