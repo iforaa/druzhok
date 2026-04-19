@@ -60,7 +60,7 @@ defmodule DruzhokWebWeb.DashboardLive do
       nil ->
         {:noreply, socket |> assign(selected: nil) |> push_patch(to: "/")}
       _instance ->
-        tab = Map.get(@valid_tabs, params["tab"], :logs)
+        tab = Map.get(@valid_tabs, params["tab"], :settings)
         switched_instance = socket.assigns[:selected] != name
 
         socket = assign(socket, selected: name, tab: tab, tab_loading: true)
