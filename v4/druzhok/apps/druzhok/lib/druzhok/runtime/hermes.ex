@@ -202,22 +202,23 @@ defmodule Druzhok.Runtime.Hermes do
     end
   end
 
-  # Ensure memory is enabled in config.yaml — hermes defaults to false when
-  # the memory: section is absent, which breaks the memory tool for bots
-  # provisioned before we added the section to build_config_yaml.
+  # Ensure memory + quick_commands are present in config.yaml.
+  # Memory: hermes defaults to disabled when section absent.
+  # Quick commands: /start alias to /new so Telegram's first-interaction
+  # command doesn't show "Unknown command".
   defp sync_memory_enabled(content) do
-    if content =~ ~r/^\s*memory_enabled:/m do
+    content = if content =~ ~r/^\s*memory_enabled:/m do
       content
     else
-      memory_block = """
+      block = "memory:\n  memory_enabled: true\n  user_profile_enabled: true\n  memory_char_limit: 2200\n  user_char_limit: 1375"
+      String.trim_trailing(content) <> "\n\n" <> block <> "\n"
+    end
 
-      memory:
-        memory_enabled: true
-        user_profile_enabled: true
-        memory_char_limit: 2200
-        user_char_limit: 1375
-      """
-      String.trim_trailing(content) <> "\n" <> String.trim(memory_block) <> "\n"
+    if content =~ ~r/^\s*quick_commands:/m do
+      content
+    else
+      block = "quick_commands:\n  start:\n    type: alias\n    target: new"
+      String.trim_trailing(content) <> "\n\n" <> block <> "\n"
     end
   end
 
@@ -397,6 +398,11 @@ defmodule Druzhok.Runtime.Hermes do
       user_profile_enabled: true
       memory_char_limit: 2200
       user_char_limit: 1375
+
+    quick_commands:
+      start:
+        type: alias
+        target: new
 
     group_sessions_per_user: #{group_sessions_per_user}
     """
