@@ -4,7 +4,7 @@ defmodule Druzhok.BotManager do
   Creates, starts, stops, restarts Docker containers running bot runtimes.
   """
 
-  alias Druzhok.{Instance, InstanceManager, TokenPool, Budget, Repo}
+  alias Druzhok.{Instance, InstanceManager, TokenPool, Repo}
   require Logger
 
   def create(name, opts) do
@@ -30,7 +30,6 @@ defmodule Druzhok.BotManager do
 
         case InstanceManager.create(name, config) do
           {:ok, instance} ->
-            Budget.get_or_create(instance.id)
             start(name)
             {:ok, %{name: name, model: instance.model}}
 
