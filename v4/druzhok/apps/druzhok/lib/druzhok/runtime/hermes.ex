@@ -23,6 +23,7 @@ defmodule Druzhok.Runtime.Hermes do
   @data_mount "/opt/data"
   @default_model "anthropic/claude-opus-4.6"
   @default_vision_model "google/gemini-2.5-flash-lite"
+  @translations_filename "translations.json"
 
   @agents_md_sites_section """
   ## Публикация сайтов
@@ -253,16 +254,15 @@ defmodule Druzhok.Runtime.Hermes do
   to all bots on restart without an image rebuild.
   """
   def sync_translations_file(data_root) do
-    priv_path = Path.join(:code.priv_dir(:druzhok), "translations.json")
-    dest = Path.join(data_root, "translations.json")
+    priv_path = Path.join(:code.priv_dir(:druzhok), @translations_filename)
+    dest = Path.join(data_root, @translations_filename)
 
-    case File.read(priv_path) do
-      {:ok, content} ->
-        File.write!(dest, content)
+    case File.cp(priv_path, dest) do
+      :ok ->
         :ok
 
       {:error, reason} ->
-        Logger.warning("sync_translations_file: cannot read #{priv_path}: #{inspect(reason)}")
+        Logger.warning("sync_translations_file: cannot copy #{priv_path}: #{inspect(reason)}")
         :ok
     end
   end

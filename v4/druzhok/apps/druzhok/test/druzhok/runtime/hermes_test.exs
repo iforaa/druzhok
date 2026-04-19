@@ -277,26 +277,13 @@ defmodule Druzhok.Runtime.HermesTest do
 
   describe "sync_translations_file/1" do
     @tag :tmp_dir
-    test "writes priv/translations.json verbatim to data_root", %{tmp_dir: tmp_dir} do
-      assert :ok = Hermes.sync_translations_file(tmp_dir)
-
+    test "copies priv/translations.json into data_root, overwriting any stale copy", %{tmp_dir: tmp_dir} do
       dest = Path.join(tmp_dir, "translations.json")
-      assert File.exists?(dest)
-
-      content = File.read!(dest)
-      decoded = Jason.decode!(content)
-      assert is_map(decoded["ru"])
-      assert decoded["ru"]["✨ New session started!"] == "✨ Новая сессия!"
-    end
-
-    @tag :tmp_dir
-    test "overwrites an existing translations.json on every call", %{tmp_dir: tmp_dir} do
-      stale = Path.join(tmp_dir, "translations.json")
-      File.write!(stale, ~s({"ru":{"old":"stale"}}))
+      File.write!(dest, ~s({"ru":{"old":"stale"}}))
 
       assert :ok = Hermes.sync_translations_file(tmp_dir)
 
-      decoded = File.read!(stale) |> Jason.decode!()
+      decoded = File.read!(dest) |> Jason.decode!()
       refute Map.has_key?(decoded["ru"], "old")
       assert decoded["ru"]["✨ New session started!"] == "✨ Новая сессия!"
     end
