@@ -85,13 +85,17 @@ Hooks.PaletteInput = {
 
 Hooks.FileEditor = {
   mounted() {
+    const target = this.el.dataset.target
+    const push = (event, payload) =>
+      target ? this.pushEventTo(target, event, payload) : this.pushEvent(event, payload)
+
     this.handleEvent("request_file_content", () => {
-      this.pushEvent("do_save_file", {content: this.el.value})
+      push("do_save_file", {content: this.el.value})
     })
     this.el.addEventListener("keydown", (e) => {
       if ((e.ctrlKey || e.metaKey) && e.key === "s") {
         e.preventDefault()
-        this.pushEvent("do_save_file", {content: this.el.value})
+        push("do_save_file", {content: this.el.value})
       }
       if (e.key === "Tab") {
         e.preventDefault()
