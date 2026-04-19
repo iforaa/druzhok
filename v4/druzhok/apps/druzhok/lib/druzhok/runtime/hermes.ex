@@ -145,6 +145,7 @@ defmodule Druzhok.Runtime.Hermes do
           |> sync_model_default(model)
           |> sync_auxiliary_vision(vision_model, tenant_key)
           |> sync_group_sessions_per_user(instance)
+          |> sync_memory_enabled()
 
         if updated != content, do: File.write!(config_path, updated)
         :ok
@@ -198,6 +199,25 @@ defmodule Druzhok.Runtime.Hermes do
       Regex.replace(~r/^group_sessions_per_user:.*$/m, content, line)
     else
       String.trim_trailing(content) <> "\n\n" <> line <> "\n"
+    end
+  end
+
+  # Ensure memory is enabled in config.yaml — hermes defaults to false when
+  # the memory: section is absent, which breaks the memory tool for bots
+  # provisioned before we added the section to build_config_yaml.
+  defp sync_memory_enabled(content) do
+    if content =~ ~r/^\s*memory_enabled:/m do
+      content
+    else
+      memory_block = """
+
+      memory:
+        memory_enabled: true
+        user_profile_enabled: true
+        memory_char_limit: 2200
+        user_char_limit: 1375
+      """
+      String.trim_trailing(content) <> "\n" <> String.trim(memory_block) <> "\n"
     end
   end
 
@@ -371,6 +391,12 @@ defmodule Druzhok.Runtime.Hermes do
         base_url: "#{url}"
         api_key: "#{tenant_key}"
         model: "#{vision_model}"
+
+    memory:
+      memory_enabled: true
+      user_profile_enabled: true
+      memory_char_limit: 2200
+      user_char_limit: 1375
 
     group_sessions_per_user: #{group_sessions_per_user}
     """
