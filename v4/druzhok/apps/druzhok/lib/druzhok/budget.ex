@@ -12,7 +12,6 @@ defmodule Druzhok.Budget do
 
   use Ecto.Schema
   import Ecto.Changeset
-  import Ecto.Query
   alias Druzhok.{Instance, Repo}
 
   schema "budgets" do
@@ -83,6 +82,16 @@ defmodule Druzhok.Budget do
         budget.balance
     end
   end
+
+  @doc """
+  Formats cents as a two-decimal dollar string, e.g. `120 -> "1.20"`.
+  Shared across proxy error messages and dashboard UI.
+  """
+  def cents_to_dollars(cents) when is_integer(cents) do
+    :io_lib.format("~.2f", [cents / 100]) |> IO.iodata_to_binary()
+  end
+
+  def cents_to_dollars(_), do: "0.00"
 
   # --- Private ---
 

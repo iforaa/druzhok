@@ -1,7 +1,7 @@
 defmodule DruzhokWebWeb.Live.Components.SettingsTab do
   use DruzhokWebWeb, :live_component
 
-  alias Druzhok.{Instance, Repo, Runtime, Pairing, Telegram, I18n, BotManager, ModelCatalog, SiteLister}
+  alias Druzhok.{Instance, Repo, Runtime, Pairing, Telegram, I18n, BotManager, ModelCatalog, SiteLister, Budget}
 
   # Hermes pairing code: 8 characters from the unambiguous alphabet
   # (A–Z minus IO, 2–9), per hermes-agent/gateway/pairing.py.
@@ -17,7 +17,14 @@ defmodule DruzhokWebWeb.Live.Components.SettingsTab do
         _ -> []
       end
 
-    {:ok, socket |> assign(assigns) |> assign(:runtime, runtime) |> assign(:sites, sites)}
+    spent_cents = Budget.spent_today_cents(instance[:id] || instance.id)
+
+    {:ok,
+     socket
+     |> assign(assigns)
+     |> assign(:runtime, runtime)
+     |> assign(:sites, sites)
+     |> assign(:spent_cents, spent_cents)}
   end
 
   @impl true
@@ -38,9 +45,9 @@ defmodule DruzhokWebWeb.Live.Components.SettingsTab do
                   <input type="number" name="daily_budget_dollars" min="0" step="0.10" phx-debounce="blur"
                          value={budget_dollars(@instance)}
                          class="w-full border border-line2 rounded px-2 py-1 text-xs font-mono" />
-                  <div class="text-[10px] text-muted mt-0.5 font-mono"><%= usage_line(@instance) %></div>
+                  <div class="text-[10px] text-muted mt-0.5 font-mono"><%= usage_line(@instance, @spent_cents) %></div>
                   <div class="h-1 bg-line2 rounded mt-1 overflow-hidden">
-                    <div class={"h-full #{usage_bar_color(@instance)}"} style={"width: #{usage_bar_width(@instance)}%"}></div>
+                    <div class={"h-full #{usage_bar_color(@instance, @spent_cents)}"} style={"width: #{usage_bar_width(@instance, @spent_cents)}%"}></div>
                   </div>
                 </div>
                 <div>
@@ -571,37 +578,27 @@ defmodule DruzhokWebWeb.Live.Components.SettingsTab do
   defp format_bytes(n), do: "#{Float.round(n / (1024 * 1024), 1)} MB"
 
   defp budget_dollars(instance) do
-    cents = instance[:daily_budget_cents] || 0
-    :io_lib.format("~.2f", [cents / 100]) |> IO.iodata_to_binary()
+    Budget.cents_to_dollars(instance[:daily_budget_cents] || 0)
   end
 
-  defp usage_line(instance) do
+  defp usage_line(instance, spent) do
     limit = instance[:daily_budget_cents] || 0
-    id = instance[:id] || instance.id
-    spent = Druzhok.Budget.spent_today_cents(id)
 
-    cond do
-      limit == 0 ->
-        "Unlimited — #{dollars(spent)} spent today"
-
-      limit > 0 ->
-        pct = round(spent * 100 / limit)
-        "#{dollars(spent)} / #{dollars(limit)} (#{pct}%)"
+    if limit == 0 do
+      "Unlimited — $#{Budget.cents_to_dollars(spent)} spent today"
+    else
+      pct = round(spent * 100 / limit)
+      "$#{Budget.cents_to_dollars(spent)} / $#{Budget.cents_to_dollars(limit)} (#{pct}%)"
     end
   end
 
-  defp usage_bar_width(instance) do
+  defp usage_bar_width(instance, spent) do
     limit = instance[:daily_budget_cents] || 0
-    id = instance[:id] || instance.id
-    spent = Druzhok.Budget.spent_today_cents(id)
-
     if limit == 0, do: 0, else: min(round(spent * 100 / limit), 100)
   end
 
-  defp usage_bar_color(instance) do
+  defp usage_bar_color(instance, spent) do
     limit = instance[:daily_budget_cents] || 0
-    id = instance[:id] || instance.id
-    spent = Druzhok.Budget.spent_today_cents(id)
     pct = if limit == 0, do: 0, else: spent * 100 / limit
 
     cond do
@@ -609,9 +606,5 @@ defmodule DruzhokWebWeb.Live.Components.SettingsTab do
       pct >= 50 -> "bg-yellow-500"
       true -> "bg-green-500"
     end
-  end
-
-  defp dollars(cents) do
-    "$" <> (:io_lib.format("~.2f", [cents / 100]) |> IO.iodata_to_binary())
   end
 end

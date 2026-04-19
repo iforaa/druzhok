@@ -834,10 +834,7 @@ defmodule DruzhokWebWeb.LlmProxyController do
   end
 
   defp budget_exceeded_message(instance) do
-    limit_dollars =
-      :io_lib.format("~.2f", [(instance.daily_budget_cents || 0) / 100])
-      |> IO.iodata_to_binary()
-
+    limit_dollars = Budget.cents_to_dollars(instance.daily_budget_cents || 0)
     tz = instance.timezone || "UTC"
 
     reset_clock =
