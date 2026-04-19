@@ -14,7 +14,7 @@ defmodule DruzhokWebWeb.LlmProxyController do
 
     case Budget.check(instance.id) do
       {:error, :exceeded} ->
-        json_error(conn, 429, "Token budget exceeded", "insufficient_quota")
+        json_error(conn, 429, budget_exceeded_message(instance), "budget_exceeded")
 
       {:ok, _remaining} ->
         url = LlmFormat.request_url()
@@ -58,7 +58,8 @@ defmodule DruzhokWebWeb.LlmProxyController do
         response_id = decoded["id"] || "chatcmpl-fake"
 
         conn = emit_fake_stream(conn, response_id, model_id, content, tool_calls, finish_reason, usage, body["stream_options"])
-        meter(instance, usage, model, started_at, body, content)
+        cost_cents = LlmFormat.extract_cost_cents(decoded, model)
+        meter(instance, usage, model, started_at, body, content, cost_cents)
         conn
 
       {:ok, %Finch.Response{status: status, body: resp_body}} ->
@@ -133,7 +134,8 @@ defmodule DruzhokWebWeb.LlmProxyController do
         decoded = Jason.decode!(resp_body)
         usage = LlmFormat.extract_usage(decoded)
         response_preview = get_in(decoded, ["choices", Access.at(0), "message", "content"])
-        meter(instance, usage, model, started_at, body, response_preview)
+        cost_cents = LlmFormat.extract_cost_cents(decoded, model)
+        meter(instance, usage, model, started_at, body, response_preview, cost_cents)
 
         conn
         |> put_resp_content_type("application/json")
@@ -164,8 +166,9 @@ defmodule DruzhokWebWeb.LlmProxyController do
           json_str = String.trim_leading(line, "data: ")
           if json_str != "[DONE]" do
             case Jason.decode(json_str) do
-              {:ok, %{"usage" => usage}} when is_map(usage) ->
+              {:ok, %{"usage" => usage} = chunk} when is_map(usage) ->
                 Process.put(usage_ref, LlmFormat.extract_usage(%{"usage" => usage}))
+                Process.put({usage_ref, :cost}, LlmFormat.extract_cost_cents(chunk, model))
               _ -> :ok
             end
           end
@@ -178,7 +181,8 @@ defmodule DruzhokWebWeb.LlmProxyController do
     end, receive_timeout: 120_000)
 
     usage = Process.get(usage_ref, %{prompt_tokens: 0, completion_tokens: 0})
-    meter(instance, usage, model, started_at, body, nil)
+    cost_cents = Process.get({usage_ref, :cost}, 0)
+    meter(instance, usage, model, started_at, body, nil, cost_cents)
 
     case result do
       {:ok, conn} -> conn
@@ -186,11 +190,12 @@ defmodule DruzhokWebWeb.LlmProxyController do
     end
   end
 
-  defp meter(instance, usage, model, started_at, request_body, response_preview) do
+  defp meter(instance, usage, model, started_at, request_body, response_preview, cost_cents \\ 0) do
     total = usage.prompt_tokens + usage.completion_tokens
+
     if total > 0 do
       latency = System.monotonic_time(:millisecond) - started_at
-      Budget.deduct(instance.id, total)
+      Budget.deduct(instance.id, cost_cents)
 
       prompt_preview = case request_body["messages"] do
         [_ | _] = msgs ->
@@ -215,6 +220,7 @@ defmodule DruzhokWebWeb.LlmProxyController do
         prompt_tokens: usage.prompt_tokens,
         completion_tokens: usage.completion_tokens,
         total_tokens: total,
+        cost_cents: cost_cents,
         request_type: "chat",
         requested_model: model,
         resolved_model: model,
@@ -825,5 +831,29 @@ defmodule DruzhokWebWeb.LlmProxyController do
     conn
     |> put_resp_content_type("application/json")
     |> send_resp(status, Jason.encode!(%{error: %{message: message, type: type}}))
+  end
+
+  defp budget_exceeded_message(instance) do
+    limit_dollars =
+      :io_lib.format("~.2f", [(instance.daily_budget_cents || 0) / 100])
+      |> IO.iodata_to_binary()
+
+    tz = instance.timezone || "UTC"
+
+    reset_clock =
+      case DateTime.now(tz) do
+        {:ok, dt} ->
+          tomorrow = Date.add(DateTime.to_date(dt), 1)
+          reset_dt = DateTime.new!(tomorrow, ~T[00:00:00], tz)
+          diff_min = div(DateTime.diff(reset_dt, dt, :second), 60)
+          hours = div(diff_min, 60)
+          mins = rem(diff_min, 60)
+          "через #{hours}ч #{mins}м"
+
+        _ ->
+          "в 00:00 UTC"
+      end
+
+    "Бюджет на сегодня исчерпан. Лимит $#{limit_dollars}. Сбросится #{reset_clock}."
   end
 end
