@@ -40,6 +40,13 @@
     "No conversation to branch — send a message first.": "Нет разговора для ветвления — сначала напиши сообщение.",
     "Session database not available.": "База данных сессий недоступна.",
     "Approval expired (agent is no longer waiting). Ask the agent to try again.": "Одобрение истекло (агент больше не ждёт). Попроси агента повторить.",
-    "Unknown command": "Неизвестная команда"
+    "Unknown command": "Неизвестная команда",
+    "◆ Model:": "◆ Модель:",
+    "◆ Provider:": "◆ Провайдер:",
+    "◆ Context:": "◆ Контекст:",
+    "◆ Endpoint:": "◆ Эндпоинт:",
+    "✦ Tip:": "✦ Совет:",
+    "tokens (detected)": "токенов (определено)",
+    "tokens (default — set model.context_length in config to override)": "токенов (по умолчанию — задай model.context_length в конфиге)"
   }
 }
