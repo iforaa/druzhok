@@ -31,6 +31,7 @@ defmodule Druzhok.MixProject do
       {:ecto_sql, "~> 3.12"},
       {:ecto_sqlite3, "~> 0.17"},
       {:finch, "~> 0.18"},
+      {:tz, "~> 0.28"},
     ]
   end
 end

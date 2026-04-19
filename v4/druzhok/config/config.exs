@@ -51,6 +51,9 @@ config :logger, :console,
 # Use Jason for JSON parsing in Phoenix
 config :phoenix, :json_library, Jason
 
+# Timezone database (used by Druzhok.Budget to reset at midnight in each bot's timezone)
+config :elixir, :time_zone_database, Tz.TimeZoneDatabase
+
 config :druzhok, Druzhok.Repo,
   database: System.get_env("DATABASE_PATH") || Path.expand("../data/druzhok.db", __DIR__)
 
