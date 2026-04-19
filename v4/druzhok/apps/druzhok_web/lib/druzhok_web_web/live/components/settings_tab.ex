@@ -34,10 +34,14 @@ defmodule DruzhokWebWeb.Live.Components.SettingsTab do
             <form phx-change="settings_changed" phx-target={@myself} class="space-y-2">
               <div class="grid grid-cols-2 gap-2">
                 <div>
-                  <label class="block text-[10px] text-muted mb-0.5">Token limit</label>
-                  <input type="number" name="token_limit" min="0" step="100000" phx-debounce="blur"
-                         value={@instance[:daily_token_limit] || 0}
+                  <label class="block text-[10px] text-muted mb-0.5">Daily budget ($)</label>
+                  <input type="number" name="daily_budget_dollars" min="0" step="0.10" phx-debounce="blur"
+                         value={budget_dollars(@instance)}
                          class="w-full border border-line2 rounded px-2 py-1 text-xs font-mono" />
+                  <div class="text-[10px] text-muted mt-0.5 font-mono"><%= usage_line(@instance) %></div>
+                  <div class="h-1 bg-line2 rounded mt-1 overflow-hidden">
+                    <div class={"h-full #{usage_bar_color(@instance)}"} style={"width: #{usage_bar_width(@instance)}%"}></div>
+                  </div>
                 </div>
                 <div>
                   <label class="block text-[10px] text-muted mb-0.5">Language</label>
@@ -289,14 +293,14 @@ defmodule DruzhokWebWeb.Live.Components.SettingsTab do
 
   @impl true
   def handle_event("settings_changed", params, socket) do
-    token_limit =
-      case Integer.parse(params["token_limit"] || "0") do
-        {n, _} -> max(n, 0)
+    daily_budget_cents =
+      case Float.parse(params["daily_budget_dollars"] || "0") do
+        {value, _} -> max(round(value * 100), 0)
         :error -> 0
       end
 
     update_instance(socket.assigns.instance.name, %{
-      daily_token_limit: token_limit,
+      daily_budget_cents: daily_budget_cents,
       language: params["language"] || "ru"
     })
 
@@ -565,4 +569,49 @@ defmodule DruzhokWebWeb.Live.Components.SettingsTab do
   defp format_bytes(n) when n < 1024, do: "#{n} B"
   defp format_bytes(n) when n < 1024 * 1024, do: "#{Float.round(n / 1024, 1)} KB"
   defp format_bytes(n), do: "#{Float.round(n / (1024 * 1024), 1)} MB"
+
+  defp budget_dollars(instance) do
+    cents = instance[:daily_budget_cents] || 0
+    :io_lib.format("~.2f", [cents / 100]) |> IO.iodata_to_binary()
+  end
+
+  defp usage_line(instance) do
+    limit = instance[:daily_budget_cents] || 0
+    id = instance[:id] || instance.id
+    spent = Druzhok.Budget.spent_today_cents(id)
+
+    cond do
+      limit == 0 ->
+        "Unlimited — #{dollars(spent)} spent today"
+
+      limit > 0 ->
+        pct = round(spent * 100 / limit)
+        "#{dollars(spent)} / #{dollars(limit)} (#{pct}%)"
+    end
+  end
+
+  defp usage_bar_width(instance) do
+    limit = instance[:daily_budget_cents] || 0
+    id = instance[:id] || instance.id
+    spent = Druzhok.Budget.spent_today_cents(id)
+
+    if limit == 0, do: 0, else: min(round(spent * 100 / limit), 100)
+  end
+
+  defp usage_bar_color(instance) do
+    limit = instance[:daily_budget_cents] || 0
+    id = instance[:id] || instance.id
+    spent = Druzhok.Budget.spent_today_cents(id)
+    pct = if limit == 0, do: 0, else: spent * 100 / limit
+
+    cond do
+      pct >= 80 -> "bg-red-500"
+      pct >= 50 -> "bg-yellow-500"
+      true -> "bg-green-500"
+    end
+  end
+
+  defp dollars(cents) do
+    "$" <> (:io_lib.format("~.2f", [cents / 100]) |> IO.iodata_to_binary())
+  end
 end
