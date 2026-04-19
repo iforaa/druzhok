@@ -2,8 +2,10 @@ defmodule Druzhok.ManagerBot.Onboarding do
   @moduledoc """
   Pure-function state machine for the manager bot's onboarding flow.
 
-  Steps: :name → :personality → :language → :confirm → :done
+  Steps: :idle → :name → :personality → :language → :confirm → :done
   Each step returns {:ok, session, reply} or {:retry, session, reply}.
+  Reply types: {:text, text}, {:keyboard, text, rows}, {:edit, text, rows},
+               {:confirm, session}, {:edit_confirm, session}
   """
 
   @personalities [
@@ -29,81 +31,119 @@ defmodule Druzhok.ManagerBot.Onboarding do
 
   def new_session do
     %{
-      step: :name,
+      step: :idle,
       name: nil,
       personality: nil,
       language: nil,
+      username: nil,
+      message_id: nil,
       started_at: System.system_time(:second)
     }
   end
 
+  # --- Main menu ---
+
+  def main_menu_keyboard do
+    %{
+      keyboard: [[%{text: "🤖 Создать бота"}, %{text: "📋 Мои боты"}]],
+      resize_keyboard: true,
+      one_time_keyboard: false
+    }
+  end
+
+  def welcome_message do
+    "Привет! Я помогу создать персонального AI-бота."
+  end
+
   # --- Step handlers ---
 
+  # Main menu buttons (text from reply keyboard)
+  def handle_input(%{step: step} = session, %{text: "🤖 Создать бота"})
+      when step in [:idle, :done] do
+    session = %{session | step: :name, started_at: System.system_time(:second)}
+    {:ok, session, {:text, "Как назовём бота?"}}
+  end
+
+  def handle_input(_session, %{text: "📋 Мои боты"}) do
+    {:ok, new_session(), {:my_bots}}
+  end
+
+  # Name step
   def handle_input(%{step: :name} = session, %{text: text}) do
     name = String.trim(text || "")
-    if name == "" do
-      {:retry, session, {:text, "Имя не может быть пустым. Как назовём бота?"}}
-    else
-      session = %{session | step: :personality, name: name}
-      {:ok, session, personality_reply()}
+    cond do
+      name == "" ->
+        {:retry, session, {:text, "Имя не может быть пустым. Как назовём бота?"}}
+      name in ["🤖 Создать бота", "📋 Мои боты"] ->
+        # Re-dispatch menu buttons during name entry
+        handle_input(session, %{text: name})
+      true ->
+        username = generate_bot_username(name)
+        session = %{session | step: :personality, name: name, username: username}
+        {:ok, session, personality_reply()}
     end
   end
 
+  # Personality step
   def handle_input(%{step: :personality} = session, %{callback_data: "personality:" <> key}) do
     if key in @personality_keys do
       session = %{session | step: :language, personality: key}
-      {:ok, session, language_reply()}
+      {:ok, session, {:edit, "Язык:", language_buttons()}}
     else
-      {:retry, session, personality_reply()}
+      {:retry, session, {:edit, "Характер бота:", personality_buttons_page1()}}
     end
   end
 
   def handle_input(%{step: :personality} = session, %{callback_data: "more_personalities"}) do
-    {:ok, session, personality_reply_page2()}
+    {:ok, session, {:edit, "Характер бота:", personality_buttons_page2()}}
   end
 
   def handle_input(%{step: :personality} = session, %{callback_data: "back_personalities"}) do
-    {:ok, session, personality_reply()}
+    {:ok, session, {:edit, "Характер бота:", personality_buttons_page1()}}
   end
 
   def handle_input(%{step: :personality} = session, _input) do
-    {:retry, session, personality_reply()}
+    {:retry, session, {:edit, "Выбери характер:", personality_buttons_page1()}}
   end
 
+  # Language step
   def handle_input(%{step: :language} = session, %{callback_data: "lang:" <> lang})
       when lang in ["ru", "en"] do
     session = %{session | step: :confirm, language: lang}
-    {:ok, session, {:confirm, session}}
+    {:ok, session, {:edit_confirm, session}}
   end
 
   def handle_input(%{step: :language} = session, _input) do
-    {:retry, session, language_reply()}
+    {:retry, session, {:edit, "Язык:", language_buttons()}}
   end
 
+  # Confirm step
   def handle_input(%{step: :confirm} = session, _input) do
-    {:retry, session, {:confirm, session}}
+    {:retry, session, {:edit_confirm, session}}
   end
 
-  def handle_input(%{step: :done} = session, _input) do
-    {:retry, session, {:text, "Бот уже создан!"}}
+  # Done / idle
+  def handle_input(%{step: :done}, _input) do
+    {:ok, new_session(), {:text, "Бот уже создан! Используй меню внизу."}}
   end
 
   def handle_input(session, _input) do
-    {:retry, session, {:text, "Что-то пошло не так. Начни заново: /start"}}
+    {:retry, session, {:text, "Используй кнопки меню внизу."}}
   end
 
   # --- Message builders ---
 
-  def welcome_message do
-    "Привет! Я создам тебе персонального AI-бота.\n\nКак его назвать?"
-  end
-
   def confirm_message(session, manager_username) do
-    username = generate_bot_username(session.name)
+    username = session.username || generate_bot_username(session.name)
     encoded_name = URI.encode(session.name)
     link = "https://t.me/newbot/#{manager_username}/#{username}?name=#{encoded_name}"
 
-    text = "Создать бота «#{session.name}»? Нажми кнопку:"
+    personality_label = Enum.find_value(@personalities, session.personality, fn {k, l} ->
+      if k == session.personality, do: l
+    end)
+    lang_label = if session.language == "ru", do: "Русский", else: "English"
+
+    text = "📋 *#{session.name}*\nХарактер: #{personality_label}\nЯзык: #{lang_label}\n\nНажми кнопку чтобы создать:"
     keyboard = [[%{text: "🤖 Создать «#{session.name}»", url: link}]]
 
     {text, keyboard, link}
@@ -115,6 +155,24 @@ defmodule Druzhok.ManagerBot.Onboarding do
 
   def limit_message do
     "У тебя уже 2 бота — это максимум. Удали один из существующих чтобы создать новый."
+  end
+
+  def my_bots_message(bots) do
+    if bots == [] do
+      {"У тебя пока нет ботов. Нажми «🤖 Создать бота» чтобы начать!", []}
+    else
+      lines = Enum.map(bots, fn bot ->
+        status = if bot[:active], do: "🟢", else: "🔴"
+        "#{status} *#{bot.name}*"
+      end)
+      text = "Твои боты:\n\n" <> Enum.join(lines, "\n")
+
+      buttons = Enum.map(bots, fn bot ->
+        [%{text: "💬 @#{bot[:trigger_name] || bot.name}", url: "https://t.me/#{bot[:trigger_name] || bot.name}"}]
+      end)
+
+      {text, buttons}
+    end
   end
 
   # --- Username generation ---
@@ -137,29 +195,29 @@ defmodule Druzhok.ManagerBot.Onboarding do
   # --- Private ---
 
   defp personality_reply do
+    {:keyboard, "Характер бота:", personality_buttons_page1()}
+  end
+
+  defp personality_buttons_page1 do
     page1 = Enum.take(@personalities, 8)
     buttons = Enum.map(page1, fn {key, label} ->
       %{text: label, callback_data: "personality:#{key}"}
     end)
     rows = Enum.chunk_every(buttons, 4)
-    rows = rows ++ [[%{text: "Ещё...", callback_data: "more_personalities"}]]
-    {:keyboard, "Характер бота:", rows}
+    rows ++ [[%{text: "Ещё →", callback_data: "more_personalities"}]]
   end
 
-  defp personality_reply_page2 do
+  defp personality_buttons_page2 do
     page2 = Enum.drop(@personalities, 8)
     buttons = Enum.map(page2, fn {key, label} ->
       %{text: label, callback_data: "personality:#{key}"}
     end)
     rows = Enum.chunk_every(buttons, 4)
-    rows = rows ++ [[%{text: "← Назад", callback_data: "back_personalities"}]]
-    {:keyboard, "Характер бота:", rows}
+    rows ++ [[%{text: "← Назад", callback_data: "back_personalities"}]]
   end
 
-  defp language_reply do
-    {:keyboard, "Язык:", [
-      [%{text: "Русский", callback_data: "lang:ru"}, %{text: "English", callback_data: "lang:en"}]
-    ]}
+  defp language_buttons do
+    [[%{text: "🇷🇺 Русский", callback_data: "lang:ru"}, %{text: "🇬🇧 English", callback_data: "lang:en"}]]
   end
 
   @transliteration %{

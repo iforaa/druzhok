@@ -3,8 +3,9 @@ defmodule Druzhok.ManagerBot do
   Telegram manager bot GenServer.
 
   Long-polls the Telegram Bot API for a dedicated manager bot token.
-  Handles onboarding conversations via inline keyboards, then provisions
-  hermes instances when users create managed bots.
+  Handles onboarding conversations via inline keyboards (edited in place),
+  a persistent reply keyboard for navigation, and provisions hermes
+  instances when users create managed bots.
   """
   use GenServer
   require Logger
@@ -84,20 +85,35 @@ defmodule Druzhok.ManagerBot do
     text = msg["text"] || ""
 
     cond do
-      text == "/start" or not Map.has_key?(state.sessions, user_id) ->
-        start_onboarding(state, user_id, chat_id)
+      text == "/start" ->
+        show_main_menu(state, user_id, chat_id)
+
+      text in ["🤖 Создать бота", "📋 Мои боты"] ->
+        dispatch_input(state, user_id, chat_id, %{text: text})
+
+      Map.has_key?(state.sessions, user_id) and
+          state.sessions[user_id].step == :name ->
+        dispatch_input(state, user_id, chat_id, %{text: text})
 
       true ->
-        dispatch_input(state, user_id, chat_id, %{text: text})
+        show_main_menu(state, user_id, chat_id)
     end
   end
 
   defp process_update(%{"callback_query" => cb}, state) do
     user_id = cb["from"]["id"]
     chat_id = cb["message"]["chat"]["id"]
+    message_id = cb["message"]["message_id"]
     data = cb["data"]
 
     API.answer_callback_query(state.token, cb["id"])
+
+    # Store message_id in session for editing
+    state = update_in(state, [:sessions, user_id], fn
+      nil -> %{Onboarding.new_session() | message_id: message_id}
+      session -> %{session | message_id: message_id}
+    end)
+
     dispatch_input(state, user_id, chat_id, %{callback_data: data})
   end
 
@@ -107,35 +123,91 @@ defmodule Druzhok.ManagerBot do
 
   defp process_update(_update, state), do: state
 
-  # --- Onboarding ---
+  # --- Main menu ---
 
-  defp start_onboarding(state, user_id, chat_id) do
-    if user_bot_count(user_id) >= @max_bots_per_user do
-      API.send_message(state.token, chat_id, Onboarding.limit_message())
-      state
-    else
-      session = Onboarding.new_session()
-      API.send_message(state.token, chat_id, Onboarding.welcome_message())
-      put_in(state, [:sessions, user_id], session)
-    end
+  defp show_main_menu(state, user_id, chat_id) do
+    menu = Onboarding.main_menu_keyboard()
+    API.send_message(state.token, chat_id, Onboarding.welcome_message(),
+      %{reply_markup: Jason.encode!(menu)})
+    put_in(state, [:sessions, user_id], Onboarding.new_session())
   end
+
+  # --- Onboarding dispatch ---
 
   defp dispatch_input(state, user_id, chat_id, input) do
     session = state.sessions[user_id] || Onboarding.new_session()
 
-    case Onboarding.handle_input(session, input) do
-      {_status, session, {:confirm, session}} ->
-        {text, keyboard, _link} = Onboarding.confirm_message(session, state.bot_username)
-        send_with_inline_keyboard(state.token, chat_id, text, keyboard)
-        put_in(state, [:sessions, user_id], session)
+    # Check bot limit before starting creation
+    if input == %{text: "🤖 Создать бота"} and user_bot_count(user_id) >= @max_bots_per_user do
+      API.send_message(state.token, chat_id, Onboarding.limit_message())
+      state
+    else
+      case Onboarding.handle_input(session, input) do
+        {_status, session, {:my_bots}} ->
+          send_my_bots(state, user_id, chat_id)
+          put_in(state, [:sessions, user_id], session)
 
-      {_status, session, {:keyboard, text, rows}} ->
-        send_with_callback_keyboard(state.token, chat_id, text, rows)
-        put_in(state, [:sessions, user_id], session)
+        {_status, session, {:text, text}} ->
+          API.send_message(state.token, chat_id, text)
+          put_in(state, [:sessions, user_id], session)
 
-      {_status, session, {:text, text}} ->
-        API.send_message(state.token, chat_id, text)
-        put_in(state, [:sessions, user_id], session)
+        {_status, session, {:keyboard, text, rows}} ->
+          # First inline keyboard — send new message, store its ID
+          case send_inline(state.token, chat_id, text, rows) do
+            {:ok, %{"message_id" => mid}} ->
+              session = %{session | message_id: mid}
+              put_in(state, [:sessions, user_id], session)
+            _ ->
+              put_in(state, [:sessions, user_id], session)
+          end
+
+        {_status, session, {:edit, text, rows}} ->
+          # Edit existing inline message
+          if session.message_id do
+            edit_inline(state.token, chat_id, session.message_id, text, rows)
+          else
+            case send_inline(state.token, chat_id, text, rows) do
+              {:ok, %{"message_id" => mid}} ->
+                session = %{session | message_id: mid}
+              _ -> :ok
+            end
+          end
+          put_in(state, [:sessions, user_id], session)
+
+        {_status, session, {:confirm, session}} ->
+          {text, keyboard, _link} = Onboarding.confirm_message(session, state.bot_username)
+          send_url_keyboard(state.token, chat_id, text, keyboard)
+          put_in(state, [:sessions, user_id], session)
+
+        {_status, session, {:edit_confirm, session}} ->
+          {text, keyboard, _link} = Onboarding.confirm_message(session, state.bot_username)
+          if session.message_id do
+            edit_url_keyboard(state.token, chat_id, session.message_id, text, keyboard)
+          else
+            send_url_keyboard(state.token, chat_id, text, keyboard)
+          end
+          put_in(state, [:sessions, user_id], session)
+      end
+    end
+  end
+
+  # --- My Bots ---
+
+  defp send_my_bots(state, user_id, chat_id) do
+    import Ecto.Query
+    bots = Druzhok.Repo.all(
+      from(i in Druzhok.Instance,
+        where: i.owner_telegram_id == ^user_id,
+        order_by: [desc: i.active, asc: i.name])
+    )
+    |> Enum.map(&Map.from_struct/1)
+
+    {text, buttons} = Onboarding.my_bots_message(bots)
+
+    if buttons == [] do
+      API.send_message(state.token, chat_id, text)
+    else
+      send_url_keyboard(state.token, chat_id, text, buttons)
     end
   end
 
@@ -187,29 +259,48 @@ defmodule Druzhok.ManagerBot do
     %{state | sessions: sessions}
   end
 
-  defp send_with_callback_keyboard(token, chat_id, text, rows) do
-    keyboard = %{
-      inline_keyboard: Enum.map(rows, fn row ->
-        Enum.map(row, fn btn ->
-          %{text: btn.text, callback_data: btn.callback_data}
-        end)
-      end)
-    }
+  # --- Telegram message helpers ---
+
+  defp send_inline(token, chat_id, text, rows) do
+    keyboard = build_callback_keyboard(rows)
     API.send_message(token, chat_id, text, %{reply_markup: Jason.encode!(keyboard)})
   end
 
-  defp send_with_inline_keyboard(token, chat_id, text, rows) do
-    keyboard = %{
-      inline_keyboard: Enum.map(rows, fn row ->
-        Enum.map(row, fn btn ->
-          if btn[:url] do
-            %{text: btn.text, url: btn.url}
-          else
-            %{text: btn.text, callback_data: btn[:callback_data] || "noop"}
-          end
-        end)
+  defp edit_inline(token, chat_id, message_id, text, rows) do
+    keyboard = build_callback_keyboard(rows)
+    API.edit_message_text(token, chat_id, message_id, text,
+      %{reply_markup: Jason.encode!(keyboard)})
+  end
+
+  defp send_url_keyboard(token, chat_id, text, rows) do
+    keyboard = build_url_keyboard(rows)
+    API.send_message(token, chat_id, text,
+      %{reply_markup: Jason.encode!(keyboard), parse_mode: "Markdown"})
+  end
+
+  defp edit_url_keyboard(token, chat_id, message_id, text, rows) do
+    keyboard = build_url_keyboard(rows)
+    API.edit_message_text(token, chat_id, message_id, text,
+      %{reply_markup: Jason.encode!(keyboard), parse_mode: "Markdown"})
+  end
+
+  defp build_callback_keyboard(rows) do
+    %{inline_keyboard: Enum.map(rows, fn row ->
+      Enum.map(row, fn btn ->
+        %{text: btn.text, callback_data: btn.callback_data}
       end)
-    }
-    API.send_message(token, chat_id, text, %{reply_markup: Jason.encode!(keyboard)})
+    end)}
+  end
+
+  defp build_url_keyboard(rows) do
+    %{inline_keyboard: Enum.map(rows, fn row ->
+      Enum.map(row, fn btn ->
+        if btn[:url] do
+          %{text: btn.text, url: btn.url}
+        else
+          %{text: btn.text, callback_data: btn[:callback_data] || "noop"}
+        end
+      end)
+    end)}
   end
 end
