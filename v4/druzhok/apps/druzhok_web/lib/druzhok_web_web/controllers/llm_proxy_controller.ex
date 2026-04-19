@@ -244,7 +244,7 @@ defmodule DruzhokWebWeb.LlmProxyController do
       if instance do
         case Budget.check(instance.id) do
           {:error, :exceeded} ->
-            json_error(conn, 429, "Token budget exceeded", "insufficient_quota")
+            json_error(conn, 429, budget_exceeded_message(instance), "budget_exceeded")
           {:ok, _} ->
             do_audio_transcription(conn, openai_key, instance)
         end
@@ -297,7 +297,7 @@ defmodule DruzhokWebWeb.LlmProxyController do
 
       case instance && Budget.check(instance.id) do
         {:error, :exceeded} ->
-          json_error(conn, 429, "Token budget exceeded", "insufficient_quota")
+          json_error(conn, 429, budget_exceeded_message(instance), "budget_exceeded")
 
         _ ->
           do_audio_speech(conn, openai_key, instance)
@@ -349,8 +349,9 @@ defmodule DruzhokWebWeb.LlmProxyController do
   defp meter_tts(instance, body, latency) do
     input = body["input"] || ""
     chars = String.length(input)
-    # OpenAI gpt-4o-mini-tts is per-character priced; record chars as proxy.
-    if chars > 0, do: Budget.deduct(instance.id, chars)
+    # OpenAI gpt-4o-mini-tts: $0.60 / 1M input characters → 0.00006 cents/char.
+    cost_cents = round(chars * 0.00006)
+    Budget.deduct(instance.id, cost_cents)
 
     Usage.log(%{
       instance_id: instance.id,
@@ -358,6 +359,7 @@ defmodule DruzhokWebWeb.LlmProxyController do
       prompt_tokens: chars,
       completion_tokens: 0,
       total_tokens: chars,
+      cost_cents: cost_cents,
       request_type: "tts",
       requested_model: body["model"],
       resolved_model: body["model"] || "gpt-4o-mini-tts",
@@ -542,20 +544,20 @@ defmodule DruzhokWebWeb.LlmProxyController do
       _ -> nil
     end
 
-    tokens_per_second = case get_setting("audio_tokens_per_second") do
-      nil -> 10
-      val -> String.to_integer(val)
-    end
+    # OpenAI whisper-1: $0.006 per minute → 0.01 cents per second.
+    # round/1 gives 0¢ for sub-100s clips, 1¢ for ~100–200s, etc.
+    cost_cents =
+      if duration_ms, do: round(duration_ms / 1000 * 0.01), else: 0
 
-    equivalent_tokens = if duration_ms, do: div(duration_ms, 1000) * tokens_per_second, else: 0
-    if equivalent_tokens > 0, do: Budget.deduct(instance.id, equivalent_tokens)
+    Budget.deduct(instance.id, cost_cents)
 
     Usage.log(%{
       instance_id: instance.id,
       model: requested_model || "whisper-1",
       prompt_tokens: 0,
       completion_tokens: 0,
-      total_tokens: equivalent_tokens,
+      total_tokens: 0,
+      cost_cents: cost_cents,
       request_type: "audio",
       audio_duration_ms: duration_ms,
       requested_model: requested_model || "whisper-1",

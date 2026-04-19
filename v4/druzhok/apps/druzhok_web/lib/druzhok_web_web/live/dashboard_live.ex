@@ -175,11 +175,11 @@ defmodule DruzhokWebWeb.DashboardLive do
   defp load_tab_assigns(:usage, _name, nil), do: %{}
 
   defp load_tab_assigns(:usage, _name, instance) do
-    {reqs, summary, has_more} = load_usage_data(instance, 0)
+    {reqs, has_more} = load_usage_page(instance, 0)
 
     %{
       usage_requests: reqs,
-      usage_summary: summary,
+      usage_summary: Druzhok.Usage.daily_usage(instance[:id]),
       usage_has_more: has_more,
       expanded_request: nil,
       expanded_request_body: nil
@@ -281,7 +281,7 @@ defmodule DruzhokWebWeb.DashboardLive do
 
       instance ->
         offset = length(socket.assigns.usage_requests)
-        {more, _summary, has_more} = load_usage_data(instance, offset)
+        {more, has_more} = load_usage_page(instance, offset)
 
         {:noreply,
          assign(socket,
@@ -771,13 +771,12 @@ defmodule DruzhokWebWeb.DashboardLive do
 
   @usage_page_size 20
 
-  defp load_usage_data(instance, offset) do
+  defp load_usage_page(instance, offset) do
     # Fetch page_size + 1 to cheaply detect if there's a next page.
     raw = Druzhok.Usage.recent(instance[:id], @usage_page_size + 1, offset)
     has_more = length(raw) > @usage_page_size
     requests = raw |> Enum.take(@usage_page_size) |> Enum.map(&usage_row/1)
-    summary = Druzhok.Usage.daily_usage(instance[:id])
-    {requests, summary, has_more}
+    {requests, has_more}
   end
 
   defp usage_row(r) do
