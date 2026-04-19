@@ -63,7 +63,7 @@ defmodule DruzhokWebWeb.LlmFormat do
 
   defp apply_reasoning_override(body, model) do
     if String.starts_with?(model, "xiaomi/mimo") do
-      Map.put_new(body, "reasoning", %{"exclude" => true})
+      Map.put_new(body, "reasoning", %{"enabled" => false})
     else
       body
     end
