@@ -52,6 +52,7 @@ defmodule DruzhokWebWeb.LlmFormat do
     body =
       body
       |> Map.put_new("max_tokens", @default_max_tokens)
+      |> Map.put_new("usage", %{"include" => true})
       |> apply_reasoning_override(model)
 
     if model in @non_vision_models do
@@ -83,5 +84,39 @@ defmodule DruzhokWebWeb.LlmFormat do
           msg
       end
     end)
+  end
+
+  @doc """
+  Extracts cost in cents from an OpenRouter response body (parsed map).
+
+  Primary path: OpenRouter returns `usage.cost` (USD float) when
+  `usage.include=true` was set in the request. Secondary path: compute
+  from prompt/completion tokens using `Druzhok.ModelCatalog.price_per_million/1`
+  as a fallback. Returns 0 if neither is available.
+
+  `model` is passed separately because the response body's "model" field
+  can be a resolved variant (e.g. provider-specific suffix) that misses
+  the price table.
+  """
+  def extract_cost_cents(decoded, model) when is_map(decoded) do
+    case get_in(decoded, ["usage", "cost"]) do
+      nil -> fallback_cost_cents(decoded, model)
+      cost when is_number(cost) -> round(cost * 100)
+      _ -> fallback_cost_cents(decoded, model)
+    end
+  end
+
+  def extract_cost_cents(_, _), do: 0
+
+  defp fallback_cost_cents(decoded, model) do
+    prompt = get_in(decoded, ["usage", "prompt_tokens"]) || 0
+    completion = get_in(decoded, ["usage", "completion_tokens"]) || 0
+
+    if prompt + completion == 0 do
+      0
+    else
+      %{input: in_price, output: out_price} = Druzhok.ModelCatalog.price_per_million(model)
+      round(prompt * in_price / 1_000_000 + completion * out_price / 1_000_000)
+    end
   end
 end
