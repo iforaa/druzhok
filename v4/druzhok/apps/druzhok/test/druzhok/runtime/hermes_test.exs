@@ -155,7 +155,7 @@ defmodule Druzhok.Runtime.HermesTest do
     test "appends the key when absent", %{tmp_dir: tmp_dir} do
       File.write!(Path.join(tmp_dir, "config.yaml"), "model:\n  default: \"x\"\n")
 
-      inst = Map.put(@instance, :group_sessions_per_user, false)
+      inst = Map.put(@instance, :group_shared_memory, true)
       assert :ok = Hermes.sync_config(inst, tmp_dir)
 
       yaml = File.read!(Path.join(tmp_dir, "config.yaml"))
@@ -171,7 +171,7 @@ defmodule Druzhok.Runtime.HermesTest do
       group_sessions_per_user: true
       """)
 
-      inst = Map.put(@instance, :group_sessions_per_user, false)
+      inst = Map.put(@instance, :group_shared_memory, true)
       assert :ok = Hermes.sync_config(inst, tmp_dir)
 
       yaml = File.read!(Path.join(tmp_dir, "config.yaml"))
@@ -182,20 +182,20 @@ defmodule Druzhok.Runtime.HermesTest do
   end
 
   describe "build_config_yaml/1" do
-    test "emits group_sessions_per_user: true when set" do
-      inst = Map.put(@instance, :group_sessions_per_user, true)
-      yaml = Hermes.build_config_yaml(inst)
-      assert yaml =~ ~r/^group_sessions_per_user: true$/m
-    end
-
-    test "emits group_sessions_per_user: false when set" do
-      inst = Map.put(@instance, :group_sessions_per_user, false)
+    test "emits group_sessions_per_user: false when group_shared_memory is on" do
+      inst = Map.put(@instance, :group_shared_memory, true)
       yaml = Hermes.build_config_yaml(inst)
       assert yaml =~ ~r/^group_sessions_per_user: false$/m
     end
 
+    test "emits group_sessions_per_user: true when group_shared_memory is off" do
+      inst = Map.put(@instance, :group_shared_memory, false)
+      yaml = Hermes.build_config_yaml(inst)
+      assert yaml =~ ~r/^group_sessions_per_user: true$/m
+    end
+
     test "defaults to true when key missing on the instance map" do
-      inst = Map.delete(@instance, :group_sessions_per_user)
+      inst = Map.delete(@instance, :group_shared_memory)
       yaml = Hermes.build_config_yaml(inst)
       assert yaml =~ ~r/^group_sessions_per_user: true$/m
     end
@@ -215,23 +215,6 @@ defmodule Druzhok.Runtime.HermesTest do
     test "defaults to empty string when key missing on instance map" do
       inst = Map.delete(@instance, :website_hosting_enabled)
       assert Hermes.env_vars(inst)["BOT_SITE_BASE_URL"] == ""
-    end
-  end
-
-  describe "env_vars/1 — TELEGRAM_GROUP_SHARED_MEMORY" do
-    test "emits \"true\" when flag is on" do
-      inst = Map.put(@instance, :group_shared_memory, true)
-      assert Hermes.env_vars(inst)["TELEGRAM_GROUP_SHARED_MEMORY"] == "true"
-    end
-
-    test "emits \"false\" when flag is off" do
-      inst = Map.put(@instance, :group_shared_memory, false)
-      assert Hermes.env_vars(inst)["TELEGRAM_GROUP_SHARED_MEMORY"] == "false"
-    end
-
-    test "defaults to \"false\" when key missing on the instance map" do
-      inst = Map.delete(@instance, :group_shared_memory)
-      assert Hermes.env_vars(inst)["TELEGRAM_GROUP_SHARED_MEMORY"] == "false"
     end
   end
 
