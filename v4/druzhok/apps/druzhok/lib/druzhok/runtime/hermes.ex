@@ -246,9 +246,7 @@ defmodule Druzhok.Runtime.Hermes do
       "baseUrl" => "http://127.0.0.1:8000",
       "workspace" => workspace,
       "peerName" => @default_peer_name,
-      # contextTokens caps the auto-injected memory block in the system
-      # prompt — without a cap it grows unbounded as the peer representation
-      # accumulates. 1200 is the doc's recommended default.
+      # 1200 = doc-recommended cap on auto-injected memory block.
       "contextTokens" => 1200,
       "hosts" => %{
         "hermes" => %{
@@ -258,8 +256,7 @@ defmodule Druzhok.Runtime.Hermes do
           "writeFrequency" => "async",
           "contextCadence" => 3,
           "dialecticCadence" => 5,
-          # depth=2 runs the audit+reconciliation cycle. doc explicitly notes
-          # depth=1 returns thin output on cold peers.
+          # depth=1 returns thin output on cold peers (per docs).
           "dialecticDepth" => 2,
           "dialecticReasoningLevel" => "low"
         }
@@ -311,7 +308,12 @@ defmodule Druzhok.Runtime.Hermes do
           |> upsert_indented_line("memory_enabled", to_string(legacy_enabled?))
           |> upsert_indented_line("user_profile_enabled", to_string(legacy_enabled?))
 
-        String.replace(content, body, new_body)
+        # Splice via offsets — String.replace would unsafely match the first
+        # occurrence of `body` anywhere in the file.
+        prefix = binary_part(content, 0, body_off)
+        suffix_off = body_off + body_len
+        suffix = binary_part(content, suffix_off, byte_size(content) - suffix_off)
+        prefix <> new_body <> suffix
 
       _ ->
         String.trim_trailing(content) <> "\n\n" <> default_memory_block(provider, legacy_enabled?) <> "\n"
@@ -417,7 +419,7 @@ defmodule Druzhok.Runtime.Hermes do
     |> String.trim_trailing()
   end
 
-  defp memory_section(_builtin) do
+  defp memory_section(_other) do
     """
     ## Память
 
