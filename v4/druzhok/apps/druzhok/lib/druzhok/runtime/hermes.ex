@@ -284,37 +284,50 @@ defmodule Druzhok.Runtime.Hermes do
     end
   end
 
-  # Hermes reads `memory.provider` (config.get("memory", {}).get("provider"))
-  # to pick the active memory plugin. We only touch the `provider:` sub-key —
-  # other fields (memory_char_limit etc.) are left alone so user edits survive.
+  # Druzhok manages three sub-keys of `memory:` based on memory_provider:
+  # provider, memory_enabled, user_profile_enabled. When provider == "honcho",
+  # we explicitly disable the legacy MEMORY.md/USER.md path (and the `memory`
+  # tool that depends on it) so the bot can only write through Honcho.
+  # Char-limit fields are left alone so user edits survive.
   defp sync_memory_block(content, instance) do
     provider = Map.get(instance, :memory_provider, "builtin")
+    legacy_enabled? = provider == "builtin"
+
     block_pattern = ~r/(?m)^(memory:[ \t]*\n)((?:[ \t]+\S[^\n]*\n)*)/
 
     case Regex.run(block_pattern, content, return: :index) do
       [_, _header_idx, {body_off, body_len}] when body_len > 0 ->
         body = binary_part(content, body_off, body_len)
-        String.replace(content, body, upsert_provider_line(body, provider))
+
+        new_body =
+          body
+          |> upsert_indented_line("provider", provider)
+          |> upsert_indented_line("memory_enabled", to_string(legacy_enabled?))
+          |> upsert_indented_line("user_profile_enabled", to_string(legacy_enabled?))
+
+        String.replace(content, body, new_body)
 
       _ ->
-        String.trim_trailing(content) <> "\n\n" <> default_memory_block(provider) <> "\n"
+        String.trim_trailing(content) <> "\n\n" <> default_memory_block(provider, legacy_enabled?) <> "\n"
     end
   end
 
-  defp upsert_provider_line(body, provider) do
-    if Regex.match?(~r/(?m)^[ \t]+provider:/, body) do
-      Regex.replace(~r/(?m)^([ \t]+)provider:[^\n]*$/, body, "\\1provider: #{provider}", global: false)
+  defp upsert_indented_line(body, key, value) do
+    pattern = ~r/(?m)^([ \t]+)#{Regex.escape(key)}:[^\n]*$/
+
+    if Regex.match?(pattern, body) do
+      Regex.replace(pattern, body, "\\1#{key}: #{value}", global: false)
     else
-      "  provider: #{provider}\n" <> body
+      "  #{key}: #{value}\n" <> body
     end
   end
 
-  defp default_memory_block(provider) do
+  defp default_memory_block(provider, legacy_enabled?) do
     """
     memory:
       provider: #{provider}
-      memory_enabled: true
-      user_profile_enabled: true
+      memory_enabled: #{legacy_enabled?}
+      user_profile_enabled: #{legacy_enabled?}
       memory_char_limit: 2200
       user_char_limit: 1375\
     """
@@ -331,22 +344,90 @@ defmodule Druzhok.Runtime.Hermes do
     end
   end
 
-  def sync_agents_md(_instance, data_root) do
+  def sync_agents_md(instance, data_root) do
     agents_path = Path.join([data_root, "workspace", "AGENTS.md"])
 
     case File.read(agents_path) do
       {:ok, content} ->
-        if String.contains?(content, "## Публикация сайтов") do
-          :ok
-        else
-          updated = String.trim_trailing(content) <> "\n\n" <> @agents_md_sites_section
-          File.write!(agents_path, updated)
-          :ok
-        end
+        updated =
+          content
+          |> sync_memory_section(instance)
+          |> ensure_sites_section()
+
+        if updated != content, do: File.write!(agents_path, updated)
+        :ok
 
       {:error, _} ->
         :ok
     end
+  end
+
+  # Replace the entire `## Память` section (header + body + trailing
+  # newlines, up to the next `## ` or EOF) with the content matching the
+  # bot's memory_provider. Druzhok owns this section because it's tightly
+  # coupled to which memory tools the bot has.
+  defp sync_memory_section(content, instance) do
+    provider = Map.get(instance, :memory_provider, "builtin")
+    new_section = memory_section(provider)
+    # Eat trailing newlines so we can re-emit a stable `\n\n` separator —
+    # makes the rewrite idempotent regardless of original blank-line count.
+    pattern = ~r/(?ms)^## Память[ \t]*\n.*?\n+(?=^## |\z)/
+
+    if Regex.match?(pattern, content) do
+      Regex.replace(pattern, content, new_section <> "\n\n", global: false)
+    else
+      String.trim_trailing(content) <> "\n\n" <> new_section <> "\n"
+    end
+  end
+
+  defp ensure_sites_section(content) do
+    if String.contains?(content, "## Публикация сайтов") do
+      content
+    else
+      String.trim_trailing(content) <> "\n\n" <> @agents_md_sites_section
+    end
+  end
+
+  defp memory_section("honcho") do
+    """
+    ## Память
+
+    Ты используешь Honcho — внешнюю систему памяти с автоматическим извлечением фактов, поиском и синтезом.
+
+    **Чтобы вспомнить факты о пользователе:**
+    - `honcho_search` — семантический поиск по наблюдениям
+    - `honcho_profile` — быстрая сводка ключевых фактов
+    - `honcho_reasoning` — синтез ответа на вопрос о пользователе
+
+    **Чтобы записать новый факт или исправить старый:** `honcho_conclude`. Просто опиши факт обычным текстом — Honcho сам разберётся как сохранить и связать с прошлыми наблюдениями.
+
+    **НЕ используй** инструмент `memory` (MEMORY.md) — он отключён в этом боте. Все долгосрочные записи идут через Honcho.
+
+    Файлы `memory/YYYY-MM-DD.md` — для рабочих заметок текущей сессии (логи, черновики). Долгосрочная память — только в Honcho.
+
+    Память подгружается автоматически в начале каждого хода. Если нужно проверить что ты знаешь — спроси `honcho_profile` или `honcho_search`, не лезь в файлы.
+
+    """
+    |> String.trim_trailing()
+  end
+
+  defp memory_section(_builtin) do
+    """
+    ## Память
+
+    Ты просыпаешься с чистого листа каждую сессию. Файлы — твоя преемственность:
+
+    - **Ежедневные заметки:** `memory/YYYY-MM-DD.md` — сырой лог событий (через memory tools)
+    - **Долгосрочная:** `MEMORY.md` — отобранные воспоминания (загружается автоматически)
+
+    ### Записывай — никаких мысленных заметок!
+
+    - Память ограничена — хочешь запомнить → **запиши в файл**
+    - "Запомни это" → обнови ежедневный файл или MEMORY.md
+    - Выучил урок → обнови AGENTS.md или TOOLS.md
+
+    """
+    |> String.trim_trailing()
   end
 
   @doc """

@@ -256,10 +256,8 @@ defmodule Druzhok.Runtime.HermesTest do
     end
 
     @tag :tmp_dir
-    test "updates only the provider line, preserves other memory fields",
+    test "switching to honcho disables legacy memory + preserves char limits",
          %{tmp_dir: tmp_dir} do
-      # User has customized memory_char_limit + user_profile_enabled. The
-      # surgical sync must NOT clobber those.
       File.write!(Path.join(tmp_dir, "config.yaml"), """
       model:
         default: "x"
@@ -267,7 +265,7 @@ defmodule Druzhok.Runtime.HermesTest do
       memory:
         provider: builtin
         memory_enabled: true
-        user_profile_enabled: false
+        user_profile_enabled: true
         memory_char_limit: 9999
         user_char_limit: 7777
 
@@ -287,25 +285,49 @@ defmodule Druzhok.Runtime.HermesTest do
       yaml = File.read!(Path.join(tmp_dir, "config.yaml"))
       memory_headers = Regex.scan(~r/^memory:/m, yaml)
       assert length(memory_headers) == 1
+      # Provider flipped + legacy MEMORY.md tool gated off.
       assert yaml =~ ~r/[ \t]+provider: honcho$/m
-      refute yaml =~ ~r/[ \t]+provider: builtin$/m
-      # User customizations preserved.
+      assert yaml =~ ~r/memory_enabled: false$/m
+      assert yaml =~ ~r/user_profile_enabled: false$/m
+      # User customizations of char limits preserved.
       assert yaml =~ ~r/memory_char_limit: 9999/
       assert yaml =~ ~r/user_char_limit: 7777/
-      assert yaml =~ ~r/user_profile_enabled: false/
       # Subsequent blocks are untouched.
       assert yaml =~ ~r/quick_commands:/
     end
 
     @tag :tmp_dir
-    test "inserts provider line when memory block exists without one",
+    test "switching back to builtin re-enables legacy memory",
          %{tmp_dir: tmp_dir} do
       File.write!(Path.join(tmp_dir, "config.yaml"), """
       model:
         default: "x"
 
       memory:
-        memory_enabled: true
+        provider: honcho
+        memory_enabled: false
+        user_profile_enabled: false
+        memory_char_limit: 2200
+        user_char_limit: 1375
+      """)
+
+      inst = Map.put(@instance, :memory_provider, "builtin")
+      assert :ok = Hermes.sync_config(inst, tmp_dir)
+
+      yaml = File.read!(Path.join(tmp_dir, "config.yaml"))
+      assert yaml =~ ~r/[ \t]+provider: builtin$/m
+      assert yaml =~ ~r/memory_enabled: true$/m
+      assert yaml =~ ~r/user_profile_enabled: true$/m
+    end
+
+    @tag :tmp_dir
+    test "inserts provider + legacy flags when memory block exists without them",
+         %{tmp_dir: tmp_dir} do
+      File.write!(Path.join(tmp_dir, "config.yaml"), """
+      model:
+        default: "x"
+
+      memory:
         memory_char_limit: 2200
       """)
 
@@ -317,8 +339,9 @@ defmodule Druzhok.Runtime.HermesTest do
       assert :ok = Hermes.sync_config(inst, tmp_dir)
 
       yaml = File.read!(Path.join(tmp_dir, "config.yaml"))
-      assert yaml =~ ~r/^memory:[ \t]*\n[ \t]+provider: honcho$/m
-      assert yaml =~ ~r/memory_enabled: true/
+      assert yaml =~ ~r/[ \t]+provider: honcho$/m
+      assert yaml =~ ~r/memory_enabled: false$/m
+      assert yaml =~ ~r/user_profile_enabled: false$/m
       assert yaml =~ ~r/memory_char_limit: 2200/
     end
   end
@@ -428,6 +451,80 @@ defmodule Druzhok.Runtime.HermesTest do
       assert :ok = Hermes.sync_agents_md(@instance, tmp_dir)
 
       refute File.exists?(Path.join(workspace, "AGENTS.md"))
+    end
+
+    @tag :tmp_dir
+    test "memory section: honcho variant when memory_provider=honcho",
+         %{tmp_dir: tmp_dir} do
+      workspace = Path.join(tmp_dir, "workspace")
+      File.mkdir_p!(workspace)
+
+      File.write!(Path.join(workspace, "AGENTS.md"), """
+      # AGENTS.md
+
+      ## Память
+
+      Old builtin memory section.
+
+      ## Стиль
+
+      бла бла
+      """)
+
+      inst = Map.put(@instance, :memory_provider, "honcho")
+      assert :ok = Hermes.sync_agents_md(inst, tmp_dir)
+
+      content = File.read!(Path.join(workspace, "AGENTS.md"))
+      assert content =~ "honcho_search"
+      assert content =~ "honcho_conclude"
+      assert content =~ "НЕ используй"
+      refute content =~ "Old builtin memory section"
+      # Adjacent section preserved.
+      assert content =~ "## Стиль"
+      assert content =~ "бла бла"
+    end
+
+    @tag :tmp_dir
+    test "memory section: builtin variant when memory_provider=builtin",
+         %{tmp_dir: tmp_dir} do
+      workspace = Path.join(tmp_dir, "workspace")
+      File.mkdir_p!(workspace)
+
+      File.write!(Path.join(workspace, "AGENTS.md"), """
+      # AGENTS.md
+
+      ## Память
+
+      _to be replaced_
+
+      ## Other
+
+      keep
+      """)
+
+      inst = Map.put(@instance, :memory_provider, "builtin")
+      assert :ok = Hermes.sync_agents_md(inst, tmp_dir)
+
+      content = File.read!(Path.join(workspace, "AGENTS.md"))
+      assert content =~ "MEMORY.md"
+      assert content =~ "memory/YYYY-MM-DD.md"
+      refute content =~ "honcho_conclude"
+      assert content =~ "## Other"
+    end
+
+    @tag :tmp_dir
+    test "memory section: appends if missing entirely",
+         %{tmp_dir: tmp_dir} do
+      workspace = Path.join(tmp_dir, "workspace")
+      File.mkdir_p!(workspace)
+      File.write!(Path.join(workspace, "AGENTS.md"), "# AGENTS.md\n\nNo memory section yet.\n")
+
+      inst = Map.put(@instance, :memory_provider, "honcho")
+      assert :ok = Hermes.sync_agents_md(inst, tmp_dir)
+
+      content = File.read!(Path.join(workspace, "AGENTS.md"))
+      assert content =~ "## Память"
+      assert content =~ "honcho_conclude"
     end
   end
 
