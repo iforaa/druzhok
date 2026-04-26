@@ -150,6 +150,125 @@ defmodule Druzhok.Runtime.HermesTest do
     end
   end
 
+  describe "sync_config/2 — honcho.json" do
+    setup do
+      prev = System.get_env("HONCHO_JWT_SECRET")
+      System.put_env("HONCHO_JWT_SECRET", "test-secret-32-bytes-long-enough")
+
+      on_exit(fn ->
+        case prev do
+          nil -> System.delete_env("HONCHO_JWT_SECRET")
+          v -> System.put_env("HONCHO_JWT_SECRET", v)
+        end
+      end)
+
+      :ok
+    end
+
+    @tag :tmp_dir
+    test "writes honcho.json with workspace + JWT when memory_provider=honcho",
+         %{tmp_dir: tmp_dir} do
+      File.write!(Path.join(tmp_dir, "config.yaml"), "model:\n  default: \"x\"\n")
+
+      inst =
+        @instance
+        |> Map.put(:memory_provider, "honcho")
+        |> Map.put(:honcho_token, "pre-existing-token")
+
+      assert :ok = Hermes.sync_config(inst, tmp_dir)
+
+      json = File.read!(Path.join(tmp_dir, "honcho.json")) |> Jason.decode!()
+      assert json["baseUrl"] == "http://127.0.0.1:8000"
+      assert json["workspace"] == "alice"
+      assert json["aiPeer"] == "alice"
+      assert json["apiKey"] == "pre-existing-token"
+      assert json["recallMode"] == "hybrid"
+    end
+
+    @tag :tmp_dir
+    test "removes honcho.json when memory_provider=builtin", %{tmp_dir: tmp_dir} do
+      File.write!(Path.join(tmp_dir, "config.yaml"), "model:\n  default: \"x\"\n")
+      File.write!(Path.join(tmp_dir, "honcho.json"), ~s({"stale": true}))
+
+      inst = Map.put(@instance, :memory_provider, "builtin")
+      assert :ok = Hermes.sync_config(inst, tmp_dir)
+
+      refute File.exists?(Path.join(tmp_dir, "honcho.json"))
+    end
+
+    @tag :tmp_dir
+    test "defaults workspace to instance.name when honcho_workspace blank",
+         %{tmp_dir: tmp_dir} do
+      File.write!(Path.join(tmp_dir, "config.yaml"), "model:\n  default: \"x\"\n")
+
+      inst =
+        @instance
+        |> Map.put(:memory_provider, "honcho")
+        |> Map.put(:honcho_workspace, nil)
+        |> Map.put(:honcho_token, "tok")
+
+      assert :ok = Hermes.sync_config(inst, tmp_dir)
+
+      json = File.read!(Path.join(tmp_dir, "honcho.json")) |> Jason.decode!()
+      assert json["workspace"] == "alice"
+    end
+
+    @tag :tmp_dir
+    test "honors explicit honcho_workspace override", %{tmp_dir: tmp_dir} do
+      File.write!(Path.join(tmp_dir, "config.yaml"), "model:\n  default: \"x\"\n")
+
+      inst =
+        @instance
+        |> Map.put(:memory_provider, "honcho")
+        |> Map.put(:honcho_workspace, "shared-ws")
+        |> Map.put(:honcho_token, "tok")
+
+      assert :ok = Hermes.sync_config(inst, tmp_dir)
+
+      json = File.read!(Path.join(tmp_dir, "honcho.json")) |> Jason.decode!()
+      assert json["workspace"] == "shared-ws"
+      assert json["aiPeer"] == "alice"
+    end
+
+    @tag :tmp_dir
+    test "patches memory_provider line in config.yaml", %{tmp_dir: tmp_dir} do
+      File.write!(Path.join(tmp_dir, "config.yaml"), "model:\n  default: \"x\"\n")
+
+      inst =
+        @instance
+        |> Map.put(:memory_provider, "honcho")
+        |> Map.put(:honcho_token, "tok")
+
+      assert :ok = Hermes.sync_config(inst, tmp_dir)
+
+      yaml = File.read!(Path.join(tmp_dir, "config.yaml"))
+      assert yaml =~ ~r/^memory_provider: honcho$/m
+    end
+
+    @tag :tmp_dir
+    test "memory_provider line overwrites rather than duplicating",
+         %{tmp_dir: tmp_dir} do
+      File.write!(Path.join(tmp_dir, "config.yaml"), """
+      model:
+        default: "x"
+
+      memory_provider: builtin
+      """)
+
+      inst =
+        @instance
+        |> Map.put(:memory_provider, "honcho")
+        |> Map.put(:honcho_token, "tok")
+
+      assert :ok = Hermes.sync_config(inst, tmp_dir)
+
+      yaml = File.read!(Path.join(tmp_dir, "config.yaml"))
+      matches = Regex.scan(~r/^memory_provider:/m, yaml)
+      assert length(matches) == 1
+      assert yaml =~ ~r/^memory_provider: honcho$/m
+    end
+  end
+
   describe "sync_config/2 — group_sessions_per_user" do
     @tag :tmp_dir
     test "appends the key when absent", %{tmp_dir: tmp_dir} do

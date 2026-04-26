@@ -38,6 +38,9 @@ defmodule Druzhok.Instance do
     field :group_shared_memory, :boolean, default: false
     field :website_hosting_enabled, :boolean, default: false
     field :daily_budget_cents, :integer, default: 0
+    field :memory_provider, :string, default: "builtin"
+    field :honcho_workspace, :string
+    field :honcho_token, :string
 
     has_one :budget, Druzhok.Budget
 
@@ -46,7 +49,7 @@ defmodule Druzhok.Instance do
 
   def changeset(instance, attrs) do
     instance
-    |> cast(attrs, [:name, :telegram_token, :model, :workspace, :active, :heartbeat_interval, :owner_telegram_id, :sandbox, :timezone, :api_key, :daily_token_limit, :dream_hour, :language, :tenant_key, :bot_runtime, :on_demand_model, :mention_only, :reject_message, :welcome_message, :allowed_telegram_ids, :allowed_telegram_chats, :allow_all_telegram_users, :trigger_name, :image_model, :audio_model, :embedding_model, :heartbeat_active_start, :heartbeat_active_end, :heartbeat_target, :fallback_models, :dreaming, :group_sessions_per_user, :group_shared_memory, :website_hosting_enabled, :daily_budget_cents])
+    |> cast(attrs, [:name, :telegram_token, :model, :workspace, :active, :heartbeat_interval, :owner_telegram_id, :sandbox, :timezone, :api_key, :daily_token_limit, :dream_hour, :language, :tenant_key, :bot_runtime, :on_demand_model, :mention_only, :reject_message, :welcome_message, :allowed_telegram_ids, :allowed_telegram_chats, :allow_all_telegram_users, :trigger_name, :image_model, :audio_model, :embedding_model, :heartbeat_active_start, :heartbeat_active_end, :heartbeat_target, :fallback_models, :dreaming, :group_sessions_per_user, :group_shared_memory, :website_hosting_enabled, :daily_budget_cents, :memory_provider, :honcho_workspace, :honcho_token])
     |> validate_required([:name, :model, :workspace])
     |> unique_constraint(:name)
   end

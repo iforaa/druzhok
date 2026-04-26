@@ -38,7 +38,14 @@ defmodule Druzhok.InstanceManager do
 
   def list do
     import Ecto.Query
-    Repo.all(from i in Instance, order_by: [desc: i.active, asc: i.name])
+    # Synthetic system instances (e.g., honcho-system used to authenticate
+    # Honcho's own LLM calls through the proxy) are excluded — the dashboard
+    # bot sidebar and BotManager restart loops should not see them.
+    Repo.all(
+      from i in Instance,
+        where: i.bot_runtime != "system",
+        order_by: [desc: i.active, asc: i.name]
+    )
   end
 
   def delete(name) do

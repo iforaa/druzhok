@@ -131,6 +131,7 @@ defmodule Druzhok.Runtime.Hermes do
   def sync_config(instance, data_root) do
     sync_agents_md(instance, data_root)
     sync_translations_file(data_root)
+    sync_honcho_config(instance, data_root)
 
     # Patch dashboard-owned fields in config.yaml on every start so the
     # dashboard stays the source of truth without clobbering hermes's
@@ -148,6 +149,7 @@ defmodule Druzhok.Runtime.Hermes do
           |> sync_auxiliary_vision(vision_model, tenant_key)
           |> sync_group_sessions_per_user(instance)
           |> sync_memory_enabled()
+          |> sync_memory_provider(instance)
 
         if updated != content, do: File.write!(config_path, updated)
         :ok
@@ -199,13 +201,81 @@ defmodule Druzhok.Runtime.Hermes do
     # participants share one session (memory). The silent observer in our
     # telegram patch reads the same flag.
     shared = Map.get(instance, :group_shared_memory, false)
-    value = not shared
-    line = "group_sessions_per_user: #{value}"
+    upsert_yaml_line(content, "group_sessions_per_user", not shared)
+  end
 
-    if Regex.match?(~r/^group_sessions_per_user:.*$/m, content) do
-      Regex.replace(~r/^group_sessions_per_user:.*$/m, content, line)
+  defp sync_memory_provider(content, instance) do
+    provider = Map.get(instance, :memory_provider, "builtin")
+    upsert_yaml_line(content, "memory_provider", provider)
+  end
+
+  defp upsert_yaml_line(content, key, value) do
+    line = "#{key}: #{value}"
+    pattern = ~r/^#{Regex.escape(key)}:.*$/m
+
+    if Regex.match?(pattern, content) do
+      Regex.replace(pattern, content, line)
     else
       String.trim_trailing(content) <> "\n\n" <> line <> "\n"
+    end
+  end
+
+  @honcho_filename "honcho.json"
+  # TODO: derive from `instance.owner_telegram_id` (or a future per-instance
+  # `peer_name` field) once druzhok supports multiple operators. Hardcoded
+  # for the single-operator deployment.
+  @default_peer_name "igor"
+
+  defp sync_honcho_config(instance, data_root) do
+    case Map.get(instance, :memory_provider, "builtin") do
+      "honcho" ->
+        workspace = honcho_workspace(instance)
+        token = ensure_honcho_token!(instance, workspace)
+        json = Jason.encode!(honcho_config(instance.name, workspace, token), pretty: true)
+        File.write!(Path.join(data_root, @honcho_filename), json)
+
+      _ ->
+        _ = File.rm(Path.join(data_root, @honcho_filename))
+        :ok
+    end
+  end
+
+  defp honcho_config(ai_peer, workspace, token) do
+    %{
+      "baseUrl" => "http://127.0.0.1:8000",
+      "apiKey" => token,
+      "workspace" => workspace,
+      "peerName" => @default_peer_name,
+      "aiPeer" => ai_peer,
+      "recallMode" => "hybrid",
+      "writeFrequency" => "async",
+      "contextCadence" => 3,
+      "dialecticCadence" => 5,
+      "dialecticDepth" => 1,
+      "dialecticReasoningLevel" => "low"
+    }
+  end
+
+  defp honcho_workspace(instance) do
+    case Map.get(instance, :honcho_workspace) do
+      blank when blank in [nil, ""] -> instance.name
+      ws -> ws
+    end
+  end
+
+  defp ensure_honcho_token!(instance, workspace) do
+    case Map.get(instance, :honcho_token) do
+      blank when blank in [nil, ""] ->
+        {:ok, token} = Druzhok.HonchoJwt.mint_workspace_token(workspace)
+
+        instance
+        |> Instance.changeset(%{honcho_token: token})
+        |> Druzhok.Repo.update!()
+
+        token
+
+      token ->
+        token
     end
   end
 
