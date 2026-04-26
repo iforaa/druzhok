@@ -236,19 +236,28 @@ defmodule Druzhok.Runtime.Hermes do
     end
   end
 
+  # The hermes honcho plugin special-cases 127.0.0.1 baseUrls: it ignores
+  # the root-level apiKey and substitutes "local" UNLESS apiKey is inside a
+  # hosts.<host> block (signals "user explicitly wants auth on local").
+  # We nest under "hosts.hermes" because the default hermes profile resolves
+  # to that host key.
   defp honcho_config(ai_peer, workspace, token) do
     %{
       "baseUrl" => "http://127.0.0.1:8000",
-      "apiKey" => token,
       "workspace" => workspace,
       "peerName" => @default_peer_name,
-      "aiPeer" => ai_peer,
-      "recallMode" => "hybrid",
-      "writeFrequency" => "async",
-      "contextCadence" => 3,
-      "dialecticCadence" => 5,
-      "dialecticDepth" => 1,
-      "dialecticReasoningLevel" => "low"
+      "hosts" => %{
+        "hermes" => %{
+          "apiKey" => token,
+          "aiPeer" => ai_peer,
+          "recallMode" => "hybrid",
+          "writeFrequency" => "async",
+          "contextCadence" => 3,
+          "dialecticCadence" => 5,
+          "dialecticDepth" => 1,
+          "dialecticReasoningLevel" => "low"
+        }
+      }
     }
   end
 

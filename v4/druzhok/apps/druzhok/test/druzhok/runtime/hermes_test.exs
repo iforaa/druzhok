@@ -166,7 +166,7 @@ defmodule Druzhok.Runtime.HermesTest do
     end
 
     @tag :tmp_dir
-    test "writes honcho.json with workspace + JWT when memory_provider=honcho",
+    test "writes honcho.json with apiKey nested under hosts.hermes",
          %{tmp_dir: tmp_dir} do
       File.write!(Path.join(tmp_dir, "config.yaml"), "model:\n  default: \"x\"\n")
 
@@ -178,11 +178,17 @@ defmodule Druzhok.Runtime.HermesTest do
       assert :ok = Hermes.sync_config(inst, tmp_dir)
 
       json = File.read!(Path.join(tmp_dir, "honcho.json")) |> Jason.decode!()
+      # Top-level identity.
       assert json["baseUrl"] == "http://127.0.0.1:8000"
       assert json["workspace"] == "alice"
-      assert json["aiPeer"] == "alice"
-      assert json["apiKey"] == "pre-existing-token"
-      assert json["recallMode"] == "hybrid"
+      # Per-host config — must be under "hosts.hermes" so the plugin's
+      # local-auth bypass treats this as "user explicitly enabled auth".
+      host = json["hosts"]["hermes"]
+      assert host["apiKey"] == "pre-existing-token"
+      assert host["aiPeer"] == "alice"
+      assert host["recallMode"] == "hybrid"
+      # apiKey must NOT be at the top level (plugin would substitute "local").
+      refute Map.has_key?(json, "apiKey")
     end
 
     @tag :tmp_dir
@@ -227,7 +233,7 @@ defmodule Druzhok.Runtime.HermesTest do
 
       json = File.read!(Path.join(tmp_dir, "honcho.json")) |> Jason.decode!()
       assert json["workspace"] == "shared-ws"
-      assert json["aiPeer"] == "alice"
+      assert json["hosts"]["hermes"]["aiPeer"] == "alice"
     end
 
     @tag :tmp_dir
