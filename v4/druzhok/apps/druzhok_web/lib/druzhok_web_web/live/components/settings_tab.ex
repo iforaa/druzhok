@@ -244,15 +244,14 @@ defmodule DruzhokWebWeb.Live.Components.SettingsTab do
           <%!-- Card: Memory --%>
           <div class="bg-raised/50 border border-line rounded-lg p-3 space-y-2.5">
             <h3 class="label">Memory</h3>
-            <div>
+            <form phx-change="set_memory_provider" phx-target={@myself}>
               <label class="block text-[10px] text-muted mb-0.5">Provider</label>
               <select name="memory_provider"
-                      phx-change="set_memory_provider" phx-target={@myself}
                       class="w-full border border-line2 rounded px-2 py-1 text-xs">
                 <option value="builtin" selected={@instance[:memory_provider] in [nil, "builtin"]}>Built-in (MEMORY.md / USER.md)</option>
                 <option value="honcho" selected={@instance[:memory_provider] == "honcho"}>Honcho (self-hosted)</option>
               </select>
-            </div>
+            </form>
             <%= if @instance[:memory_provider] == "honcho" do %>
               <div>
                 <label class="block text-[10px] text-muted mb-0.5">Workspace</label>
@@ -417,21 +416,12 @@ defmodule DruzhokWebWeb.Live.Components.SettingsTab do
     {:noreply, socket}
   end
 
-  # phx-change on a standalone <select> emits form-style params keyed by
-  # the element's `name`, not %{"value" => ...}.
   def handle_event("set_memory_provider", %{"memory_provider" => provider}, socket)
       when provider in ["builtin", "honcho"] do
     name = socket.assigns.instance.name
     update_instance(name, %{memory_provider: provider})
     restart_bot(name)
     notify_parent(socket)
-    {:noreply, socket}
-  end
-
-  # TEMP debug clause: catch unexpected params shapes so we can fix the match.
-  def handle_event("set_memory_provider", params, socket) do
-    require Logger
-    Logger.warning("set_memory_provider got unexpected params: #{inspect(params)}")
     {:noreply, socket}
   end
 
