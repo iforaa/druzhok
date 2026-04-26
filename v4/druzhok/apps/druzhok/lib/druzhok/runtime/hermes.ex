@@ -246,6 +246,10 @@ defmodule Druzhok.Runtime.Hermes do
       "baseUrl" => "http://127.0.0.1:8000",
       "workspace" => workspace,
       "peerName" => @default_peer_name,
+      # contextTokens caps the auto-injected memory block in the system
+      # prompt — without a cap it grows unbounded as the peer representation
+      # accumulates. 1200 is the doc's recommended default.
+      "contextTokens" => 1200,
       "hosts" => %{
         "hermes" => %{
           "apiKey" => token,
@@ -254,7 +258,9 @@ defmodule Druzhok.Runtime.Hermes do
           "writeFrequency" => "async",
           "contextCadence" => 3,
           "dialecticCadence" => 5,
-          "dialecticDepth" => 1,
+          # depth=2 runs the audit+reconciliation cycle. doc explicitly notes
+          # depth=1 returns thin output on cold peers.
+          "dialecticDepth" => 2,
           "dialecticReasoningLevel" => "low"
         }
       }
