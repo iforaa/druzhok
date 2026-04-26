@@ -250,8 +250,10 @@ defmodule Druzhok.Runtime.HermesTest do
     end
 
     @tag :tmp_dir
-    test "memory.provider overwrites existing block rather than duplicating",
+    test "updates only the provider line, preserves other memory fields",
          %{tmp_dir: tmp_dir} do
+      # User has customized memory_char_limit + user_profile_enabled. The
+      # surgical sync must NOT clobber those.
       File.write!(Path.join(tmp_dir, "config.yaml"), """
       model:
         default: "x"
@@ -259,9 +261,14 @@ defmodule Druzhok.Runtime.HermesTest do
       memory:
         provider: builtin
         memory_enabled: true
-        user_profile_enabled: true
-        memory_char_limit: 2200
-        user_char_limit: 1375
+        user_profile_enabled: false
+        memory_char_limit: 9999
+        user_char_limit: 7777
+
+      quick_commands:
+        start:
+          type: alias
+          target: new
       """)
 
       inst =
@@ -276,6 +283,37 @@ defmodule Druzhok.Runtime.HermesTest do
       assert length(memory_headers) == 1
       assert yaml =~ ~r/[ \t]+provider: honcho$/m
       refute yaml =~ ~r/[ \t]+provider: builtin$/m
+      # User customizations preserved.
+      assert yaml =~ ~r/memory_char_limit: 9999/
+      assert yaml =~ ~r/user_char_limit: 7777/
+      assert yaml =~ ~r/user_profile_enabled: false/
+      # Subsequent blocks are untouched.
+      assert yaml =~ ~r/quick_commands:/
+    end
+
+    @tag :tmp_dir
+    test "inserts provider line when memory block exists without one",
+         %{tmp_dir: tmp_dir} do
+      File.write!(Path.join(tmp_dir, "config.yaml"), """
+      model:
+        default: "x"
+
+      memory:
+        memory_enabled: true
+        memory_char_limit: 2200
+      """)
+
+      inst =
+        @instance
+        |> Map.put(:memory_provider, "honcho")
+        |> Map.put(:honcho_token, "tok")
+
+      assert :ok = Hermes.sync_config(inst, tmp_dir)
+
+      yaml = File.read!(Path.join(tmp_dir, "config.yaml"))
+      assert yaml =~ ~r/^memory:[ \t]*\n[ \t]+provider: honcho$/m
+      assert yaml =~ ~r/memory_enabled: true/
+      assert yaml =~ ~r/memory_char_limit: 2200/
     end
   end
 
