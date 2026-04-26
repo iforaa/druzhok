@@ -148,8 +148,8 @@ defmodule Druzhok.Runtime.Hermes do
           |> sync_model_default(model)
           |> sync_auxiliary_vision(vision_model, tenant_key)
           |> sync_group_sessions_per_user(instance)
-          |> sync_memory_enabled()
-          |> sync_memory_provider(instance)
+          |> sync_memory_block(instance)
+          |> sync_quick_commands()
 
         if updated != content, do: File.write!(config_path, updated)
         :ok
@@ -204,10 +204,6 @@ defmodule Druzhok.Runtime.Hermes do
     upsert_yaml_line(content, "group_sessions_per_user", not shared)
   end
 
-  defp sync_memory_provider(content, instance) do
-    provider = Map.get(instance, :memory_provider, "builtin")
-    upsert_yaml_line(content, "memory_provider", provider)
-  end
 
   defp upsert_yaml_line(content, key, value) do
     line = "#{key}: #{value}"
@@ -279,18 +275,35 @@ defmodule Druzhok.Runtime.Hermes do
     end
   end
 
-  # Ensure memory + quick_commands are present in config.yaml.
-  # Memory: hermes defaults to disabled when section absent.
-  # Quick commands: /start alias to /new so Telegram's first-interaction
-  # command doesn't show "Unknown command".
-  defp sync_memory_enabled(content) do
-    content = if content =~ ~r/^\s*memory_enabled:/m do
-      content
+  # Druzhok owns the entire `memory:` block — provider + char-limits.
+  # Replaces an existing block in place (regex-matched header + indented body)
+  # or appends a fresh one when missing. Hermes reads `memory.provider`
+  # to pick the active memory plugin (see plugins/memory/__init__.py).
+  defp sync_memory_block(content, instance) do
+    provider = Map.get(instance, :memory_provider, "builtin")
+
+    block =
+      """
+      memory:
+        provider: #{provider}
+        memory_enabled: true
+        user_profile_enabled: true
+        memory_char_limit: 2200
+        user_char_limit: 1375\
+      """
+
+    pattern = ~r/(?ms)^memory:[ \t]*\n(?:[ \t]+\S.*\n)+/
+
+    if Regex.match?(pattern, content) do
+      Regex.replace(pattern, content, block <> "\n", global: false)
     else
-      block = "memory:\n  memory_enabled: true\n  user_profile_enabled: true\n  memory_char_limit: 2200\n  user_char_limit: 1375"
       String.trim_trailing(content) <> "\n\n" <> block <> "\n"
     end
+  end
 
+  # /start alias to /new so Telegram's first-interaction command doesn't
+  # show "Unknown command".
+  defp sync_quick_commands(content) do
     if content =~ ~r/^\s*quick_commands:/m do
       content
     else
@@ -493,6 +506,7 @@ defmodule Druzhok.Runtime.Hermes do
         model: "#{vision_model}"
 
     memory:
+      provider: builtin
       memory_enabled: true
       user_profile_enabled: true
       memory_char_limit: 2200

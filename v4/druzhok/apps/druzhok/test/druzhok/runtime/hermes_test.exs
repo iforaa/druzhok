@@ -231,7 +231,8 @@ defmodule Druzhok.Runtime.HermesTest do
     end
 
     @tag :tmp_dir
-    test "patches memory_provider line in config.yaml", %{tmp_dir: tmp_dir} do
+    test "writes memory.provider into the memory block (nested, not top-level)",
+         %{tmp_dir: tmp_dir} do
       File.write!(Path.join(tmp_dir, "config.yaml"), "model:\n  default: \"x\"\n")
 
       inst =
@@ -242,17 +243,25 @@ defmodule Druzhok.Runtime.HermesTest do
       assert :ok = Hermes.sync_config(inst, tmp_dir)
 
       yaml = File.read!(Path.join(tmp_dir, "config.yaml"))
-      assert yaml =~ ~r/^memory_provider: honcho$/m
+      # Hermes reads config.get("memory", {}).get("provider") —
+      # provider MUST be a sub-key of the `memory:` block, not top-level.
+      assert yaml =~ ~r/^memory:[ \t]*\n(?:[ \t]+\S.*\n)*[ \t]+provider: honcho$/m
+      refute yaml =~ ~r/^memory_provider:/m
     end
 
     @tag :tmp_dir
-    test "memory_provider line overwrites rather than duplicating",
+    test "memory.provider overwrites existing block rather than duplicating",
          %{tmp_dir: tmp_dir} do
       File.write!(Path.join(tmp_dir, "config.yaml"), """
       model:
         default: "x"
 
-      memory_provider: builtin
+      memory:
+        provider: builtin
+        memory_enabled: true
+        user_profile_enabled: true
+        memory_char_limit: 2200
+        user_char_limit: 1375
       """)
 
       inst =
@@ -263,9 +272,10 @@ defmodule Druzhok.Runtime.HermesTest do
       assert :ok = Hermes.sync_config(inst, tmp_dir)
 
       yaml = File.read!(Path.join(tmp_dir, "config.yaml"))
-      matches = Regex.scan(~r/^memory_provider:/m, yaml)
-      assert length(matches) == 1
-      assert yaml =~ ~r/^memory_provider: honcho$/m
+      memory_headers = Regex.scan(~r/^memory:/m, yaml)
+      assert length(memory_headers) == 1
+      assert yaml =~ ~r/[ \t]+provider: honcho$/m
+      refute yaml =~ ~r/[ \t]+provider: builtin$/m
     end
   end
 
