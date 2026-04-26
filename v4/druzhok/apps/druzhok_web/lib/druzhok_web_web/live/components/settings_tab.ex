@@ -417,16 +417,23 @@ defmodule DruzhokWebWeb.Live.Components.SettingsTab do
     {:noreply, socket}
   end
 
-  def handle_event("set_memory_provider", %{"value" => provider}, socket)
-      when provider in ["builtin", "honcho"] do
-    name = socket.assigns.instance.name
-    update_instance(name, %{memory_provider: provider})
-    restart_bot(name)
-    notify_parent(socket)
+  def handle_event("set_memory_provider", params, socket) do
+    # phx-change on a standalone <select> emits form-style params keyed
+    # by the element's `name` attribute, NOT %{"value" => ...}.
+    provider = params["memory_provider"]
+
+    if provider in ["builtin", "honcho"] do
+      name = socket.assigns.instance.name
+      update_instance(name, %{memory_provider: provider})
+      restart_bot(name)
+      notify_parent(socket)
+    end
+
     {:noreply, socket}
   end
 
-  def handle_event("update_honcho_workspace", %{"value" => value}, socket) do
+  def handle_event("update_honcho_workspace", params, socket) do
+    value = params["value"] || params["honcho_workspace"]
     update_instance(socket.assigns.instance.name, %{honcho_workspace: non_empty_string(value)})
     notify_parent(socket)
     {:noreply, socket}
