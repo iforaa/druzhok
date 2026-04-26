@@ -428,6 +428,13 @@ defmodule DruzhokWebWeb.Live.Components.SettingsTab do
     {:noreply, socket}
   end
 
+  # TEMP debug clause: catch unexpected params shapes so we can fix the match.
+  def handle_event("set_memory_provider", params, socket) do
+    require Logger
+    Logger.warning("set_memory_provider got unexpected params: #{inspect(params)}")
+    {:noreply, socket}
+  end
+
   def handle_event("update_honcho_workspace", %{"value" => value}, socket) do
     update_instance(socket.assigns.instance.name, %{honcho_workspace: non_empty_string(value)})
     notify_parent(socket)
