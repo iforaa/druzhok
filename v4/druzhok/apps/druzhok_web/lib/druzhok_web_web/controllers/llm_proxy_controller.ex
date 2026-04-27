@@ -649,7 +649,7 @@ defmodule DruzhokWebWeb.LlmProxyController do
 
     upstream_body = %{
       "model" => model,
-      "modalities" => ["image", "text"],
+      "modalities" => image_modalities(model),
       "messages" => [%{"role" => "user", "content" => prompt}],
       "usage" => %{"include" => true}
     }
@@ -688,6 +688,12 @@ defmodule DruzhokWebWeb.LlmProxyController do
         json_error(conn, 502, "Image generation provider unavailable", "server_error")
     end
   end
+
+  # OpenRouter splits image-gen models by output modality:
+  #   text+image (Gemini) → ["image", "text"]
+  #   image-only (FLUX, Seedream, Sourceful) → ["image"]
+  defp image_modalities("google/" <> _), do: ["image", "text"]
+  defp image_modalities(_), do: ["image"]
 
   # OpenRouter image-gen response shape:
   #   choices[0].message.images = [%{"type" => "image_url",
