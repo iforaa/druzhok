@@ -624,6 +624,109 @@ defmodule DruzhokWebWeb.LlmProxyController do
     end
   end
 
+  @default_image_gen_model "black-forest-labs/flux.2-klein-4b"
+
+  # Source of truth for the upstream model is `instance.image_gen_model`,
+  # not the request body — clients (e.g. hermes' OpenAI plugin) hardcode
+  # OpenAI model IDs that OpenRouter doesn't recognize.
+  def images_generations(conn, _params) do
+    instance = conn.assigns.instance
+    body = conn.body_params
+    prompt = body["prompt"] || ""
+    model = instance.image_gen_model || @default_image_gen_model
+
+    case Budget.check(instance.id) do
+      {:error, :exceeded} ->
+        json_error(conn, 429, budget_exceeded_message(instance), "budget_exceeded")
+
+      {:ok, _} ->
+        do_images_generations(conn, instance, prompt, model)
+    end
+  end
+
+  defp do_images_generations(conn, instance, prompt, model) do
+    started_at = System.monotonic_time(:millisecond)
+
+    upstream_body = %{
+      "model" => model,
+      "modalities" => ["image", "text"],
+      "messages" => [%{"role" => "user", "content" => prompt}],
+      "usage" => %{"include" => true}
+    }
+
+    url = LlmFormat.request_url()
+    headers = LlmFormat.request_headers(conn.req_headers)
+    request = Finch.build(:post, url, headers, Jason.encode!(upstream_body))
+
+    case Finch.request(request, Druzhok.Finch, receive_timeout: 180_000) do
+      {:ok, %Finch.Response{status: 200, body: resp_body}} ->
+        decoded = Jason.decode!(String.trim(resp_body))
+        b64_images = extract_images(decoded)
+        cost_cents = LlmFormat.extract_cost_cents(decoded, model)
+        latency = System.monotonic_time(:millisecond) - started_at
+
+        meter_image_gen(instance, model, cost_cents, latency)
+
+        payload = %{
+          "created" => System.os_time(:second),
+          "data" => Enum.map(b64_images, fn b64 -> %{"b64_json" => b64} end)
+        }
+
+        conn
+        |> put_resp_content_type("application/json")
+        |> send_resp(200, Jason.encode!(payload))
+
+      {:ok, %Finch.Response{status: status, body: resp_body}} ->
+        Logger.warning("images_generations upstream #{status}: #{String.slice(resp_body, 0, 200)}")
+
+        conn
+        |> put_resp_content_type("application/json")
+        |> send_resp(status, resp_body)
+
+      {:error, reason} ->
+        Logger.error("images_generations error: #{inspect(reason)}")
+        json_error(conn, 502, "Image generation provider unavailable", "server_error")
+    end
+  end
+
+  # OpenRouter image-gen response shape:
+  #   choices[0].message.images = [%{"type" => "image_url",
+  #                                   "image_url" => %{"url" => "data:image/png;base64,..."}}]
+  defp extract_images(decoded) do
+    case get_in(decoded, ["choices", Access.at(0), "message", "images"]) do
+      images when is_list(images) ->
+        Enum.flat_map(images, fn img ->
+          case get_in(img, ["image_url", "url"]) do
+            "data:" <> _ = data_url ->
+              [data_url |> String.split(",", parts: 2) |> List.last()]
+            _ ->
+              []
+          end
+        end)
+
+      _ ->
+        []
+    end
+  end
+
+  defp meter_image_gen(instance, model, cost_cents, latency) do
+    Budget.deduct(instance.id, cost_cents)
+
+    Usage.log(%{
+      instance_id: instance.id,
+      model: model,
+      prompt_tokens: 0,
+      completion_tokens: 0,
+      total_tokens: 0,
+      cost_cents: cost_cents,
+      request_type: "image_gen",
+      requested_model: model,
+      resolved_model: model,
+      provider: "openrouter",
+      latency_ms: latency
+    })
+  end
+
   def responses_proxy(conn, _params) do
     # OpenAI Responses API → convert to chat/completions format for OpenRouter
     body = conn.body_params

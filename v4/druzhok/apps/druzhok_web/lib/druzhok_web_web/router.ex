@@ -25,6 +25,7 @@ defmodule DruzhokWebWeb.Router do
 
     post "/chat/completions", LlmProxyController, :chat_completions
     post "/embeddings", LlmProxyController, :embeddings
+    post "/images/generations", LlmProxyController, :images_generations
   end
 
   # Media proxy — no tenant auth (called from bot containers on localhost).

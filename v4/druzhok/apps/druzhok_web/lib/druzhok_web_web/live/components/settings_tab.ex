@@ -265,6 +265,29 @@ defmodule DruzhokWebWeb.Live.Components.SettingsTab do
             <% end %>
           </div>
 
+          <%!-- Card: Image Generation --%>
+          <div class="bg-raised/50 border border-line rounded-lg p-3 space-y-2.5">
+            <h3 class="label">Image Generation</h3>
+            <label class="flex items-center gap-2 cursor-pointer select-none">
+              <input type="checkbox" phx-click="toggle_image_gen" phx-target={@myself}
+                     phx-throttle="1000" checked={@instance[:image_gen_enabled]}
+                     class="w-3 h-3 border border-line2 bg-panel accent-accent focus:ring-0 focus:ring-offset-0 rounded-sm" />
+              <span class="text-[11px] text-fg">Enable <code class="text-accent text-[10px]">image_generate</code> tool</span>
+            </label>
+            <%= if @instance[:image_gen_enabled] do %>
+              <form phx-change="set_image_gen_model" phx-target={@myself}>
+                <label class="block text-[10px] text-muted mb-0.5">Model</label>
+                <select name="image_gen_model"
+                        class="w-full border border-line2 rounded px-2 py-1 text-xs">
+                  <option value="black-forest-labs/flux.2-klein-4b" selected={@instance[:image_gen_model] in [nil, "", "black-forest-labs/flux.2-klein-4b"]}>FLUX 2 Klein 4B (~$0.014/image)</option>
+                  <option value="sourceful/riverflow-v2-fast" selected={@instance[:image_gen_model] == "sourceful/riverflow-v2-fast"}>Riverflow V2 Fast (~$0.02/image)</option>
+                  <option value="black-forest-labs/flux.2-pro" selected={@instance[:image_gen_model] == "black-forest-labs/flux.2-pro"}>FLUX 2 Pro (~$0.03/image)</option>
+                  <option value="bytedance-seed/seedream-4.5" selected={@instance[:image_gen_model] == "bytedance-seed/seedream-4.5"}>Seedream 4.5 ($0.04/image)</option>
+                </select>
+              </form>
+            <% end %>
+          </div>
+
           <%!-- Card: Website Hosting --%>
           <div class="bg-raised/50 border border-line rounded-lg p-3 space-y-2.5">
             <h3 class="label">Website Hosting</h3>
@@ -427,6 +450,24 @@ defmodule DruzhokWebWeb.Live.Components.SettingsTab do
 
   def handle_event("update_honcho_workspace", %{"value" => value}, socket) do
     update_instance(socket.assigns.instance.name, %{honcho_workspace: non_empty_string(value)})
+    notify_parent(socket)
+    {:noreply, socket}
+  end
+
+  def handle_event("toggle_image_gen", _params, socket) do
+    name = socket.assigns.instance.name
+    current = socket.assigns.instance[:image_gen_enabled]
+    update_instance(name, %{image_gen_enabled: !current})
+    restart_bot(name)
+    notify_parent(socket)
+    {:noreply, socket}
+  end
+
+  def handle_event("set_image_gen_model", %{"image_gen_model" => model}, socket)
+      when is_binary(model) and model != "" do
+    name = socket.assigns.instance.name
+    update_instance(name, %{image_gen_model: model})
+    restart_bot(name)
     notify_parent(socket)
     {:noreply, socket}
   end

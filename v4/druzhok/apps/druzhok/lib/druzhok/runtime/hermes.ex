@@ -149,6 +149,7 @@ defmodule Druzhok.Runtime.Hermes do
           |> sync_auxiliary_vision(vision_model, tenant_key)
           |> sync_group_sessions_per_user(instance)
           |> sync_memory_block(instance)
+          |> sync_image_gen_block(instance)
           |> sync_quick_commands()
 
         if updated != content, do: File.write!(config_path, updated)
@@ -339,6 +340,36 @@ defmodule Druzhok.Runtime.Hermes do
       memory_char_limit: 2200
       user_char_limit: 1375\
     """
+  end
+
+  # When image_gen is enabled, point hermes at the OpenAI plugin (which the
+  # `openai>=2.x` SDK auto-routes through `OPENAI_BASE_URL` → druzhok proxy).
+  # When disabled, blank the provider so hermes falls back to its built-in
+  # FAL path (which short-circuits without `FAL_KEY` and just returns an
+  # error to the agent).
+  defp sync_image_gen_block(content, instance) do
+    enabled? = Map.get(instance, :image_gen_enabled, false) == true
+    provider = if enabled?, do: "openai", else: ""
+
+    block_pattern = ~r/(?m)^(image_gen:[ \t]*\n)((?:[ \t]+\S[^\n]*\n)*)/
+
+    case Regex.run(block_pattern, content, return: :index) do
+      [_, _header_idx, {body_off, body_len}] when body_len > 0 ->
+        body = binary_part(content, body_off, body_len)
+        new_body = upsert_indented_line(body, "provider", provider)
+
+        prefix = binary_part(content, 0, body_off)
+        suffix_off = body_off + body_len
+        suffix = binary_part(content, suffix_off, byte_size(content) - suffix_off)
+        prefix <> new_body <> suffix
+
+      _ ->
+        if enabled? do
+          String.trim_trailing(content) <> "\n\nimage_gen:\n  provider: #{provider}\n"
+        else
+          content
+        end
+    end
   end
 
   # /start alias to /new so Telegram's first-interaction command doesn't
