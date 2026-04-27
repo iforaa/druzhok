@@ -46,13 +46,22 @@ defmodule Druzhok.ModelCatalog do
     %{id: "openai/text-embedding-3-small", name: "Text Embedding 3 Small"},
   ]
 
+  @image_gen_models [
+    %{id: "black-forest-labs/flux.2-klein-4b", name: "FLUX 2 Klein 4B (~$0.014/image)"},
+    %{id: "sourceful/riverflow-v2-fast", name: "Riverflow V2 Fast (~$0.02/image)"},
+    %{id: "black-forest-labs/flux.2-pro", name: "FLUX 2 Pro (~$0.03/image)"},
+    %{id: "bytedance-seed/seedream-4.5", name: "Seedream 4.5 ($0.04/image)"},
+  ]
+
   def image_models, do: @image_models
   def audio_models, do: @audio_models
   def embedding_models, do: @embedding_models
+  def image_gen_models, do: @image_gen_models
 
   def default_image_model, do: "google/gemini-2.5-flash-lite"
   def default_audio_model, do: "gpt-4o-mini-transcribe"
   def default_embedding_model, do: "openai/text-embedding-3-small"
+  def default_image_gen_model, do: "black-forest-labs/flux.2-klein-4b"
 
   # Fallback prices used only when OpenRouter's usage.cost is missing from
   # the response. Values are cents per 1,000,000 tokens. Check

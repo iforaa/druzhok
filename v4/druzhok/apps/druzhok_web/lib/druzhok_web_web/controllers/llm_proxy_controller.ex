@@ -1,10 +1,11 @@
 defmodule DruzhokWebWeb.LlmProxyController do
   use DruzhokWebWeb, :controller
   alias DruzhokWebWeb.LlmFormat
-  alias Druzhok.{Budget, Usage}
+  alias Druzhok.{Budget, Usage, ModelCatalog}
   require Logger
 
-  @default_image_model Druzhok.ModelCatalog.default_image_model()
+  @default_image_model ModelCatalog.default_image_model()
+  @default_image_gen_model ModelCatalog.default_image_gen_model()
 
   def chat_completions(conn, _params) do
     instance = conn.assigns.instance
@@ -624,68 +625,59 @@ defmodule DruzhokWebWeb.LlmProxyController do
     end
   end
 
-  @default_image_gen_model "black-forest-labs/flux.2-klein-4b"
-
-  # Source of truth for the upstream model is `instance.image_gen_model`,
-  # not the request body — clients (e.g. hermes' OpenAI plugin) hardcode
-  # OpenAI model IDs that OpenRouter doesn't recognize.
+  # The request body's `model` is ignored — clients (e.g. hermes' OpenAI
+  # plugin) hardcode OpenAI model IDs that OpenRouter doesn't recognize.
+  # Per-bot model lives in `instance.image_gen_model`.
   def images_generations(conn, _params) do
     instance = conn.assigns.instance
-    body = conn.body_params
-    prompt = body["prompt"] || ""
+    prompt = conn.body_params["prompt"] || ""
     model = instance.image_gen_model || @default_image_gen_model
 
-    case Budget.check(instance.id) do
+    with {:ok, _} <- Budget.check(instance.id) do
+      started_at = System.monotonic_time(:millisecond)
+
+      upstream_body =
+        Jason.encode!(%{
+          "model" => model,
+          "modalities" => image_modalities(model),
+          "messages" => [%{"role" => "user", "content" => prompt}],
+          "usage" => %{"include" => true}
+        })
+
+      request =
+        Finch.build(
+          :post,
+          LlmFormat.request_url(),
+          LlmFormat.request_headers(conn.req_headers),
+          upstream_body
+        )
+
+      case Finch.request(request, Druzhok.Finch, receive_timeout: 180_000) do
+        {:ok, %Finch.Response{status: 200, body: resp_body}} ->
+          decoded = Jason.decode!(String.trim(resp_body))
+          cost_cents = LlmFormat.extract_cost_cents(decoded, model)
+          latency = System.monotonic_time(:millisecond) - started_at
+          meter_image_gen(instance, model, cost_cents, latency)
+
+          payload =
+            Jason.encode!(%{
+              "created" => System.os_time(:second),
+              "data" => Enum.map(extract_images(decoded), &%{"b64_json" => &1})
+            })
+
+          conn |> put_resp_content_type("application/json") |> send_resp(200, payload)
+
+        {:ok, %Finch.Response{status: status, body: resp_body}} ->
+          Logger.warning("images_generations upstream #{status}: #{String.slice(resp_body, 0, 200)}")
+          conn |> put_resp_content_type("application/json") |> send_resp(status, resp_body)
+
+        {:error, reason} ->
+          Logger.error("images_generations error: #{inspect(reason)}")
+          json_error(conn, 502, "Image generation provider unavailable", "server_error")
+      end
+    else
       {:error, :exceeded} ->
         json_error(conn, 429, budget_exceeded_message(instance), "budget_exceeded")
-
-      {:ok, _} ->
-        do_images_generations(conn, instance, prompt, model)
-    end
-  end
-
-  defp do_images_generations(conn, instance, prompt, model) do
-    started_at = System.monotonic_time(:millisecond)
-
-    upstream_body = %{
-      "model" => model,
-      "modalities" => image_modalities(model),
-      "messages" => [%{"role" => "user", "content" => prompt}],
-      "usage" => %{"include" => true}
-    }
-
-    url = LlmFormat.request_url()
-    headers = LlmFormat.request_headers(conn.req_headers)
-    request = Finch.build(:post, url, headers, Jason.encode!(upstream_body))
-
-    case Finch.request(request, Druzhok.Finch, receive_timeout: 180_000) do
-      {:ok, %Finch.Response{status: 200, body: resp_body}} ->
-        decoded = Jason.decode!(String.trim(resp_body))
-        b64_images = extract_images(decoded)
-        cost_cents = LlmFormat.extract_cost_cents(decoded, model)
-        latency = System.monotonic_time(:millisecond) - started_at
-
-        meter_image_gen(instance, model, cost_cents, latency)
-
-        payload = %{
-          "created" => System.os_time(:second),
-          "data" => Enum.map(b64_images, fn b64 -> %{"b64_json" => b64} end)
-        }
-
-        conn
-        |> put_resp_content_type("application/json")
-        |> send_resp(200, Jason.encode!(payload))
-
-      {:ok, %Finch.Response{status: status, body: resp_body}} ->
-        Logger.warning("images_generations upstream #{status}: #{String.slice(resp_body, 0, 200)}")
-
-        conn
-        |> put_resp_content_type("application/json")
-        |> send_resp(status, resp_body)
-
-      {:error, reason} ->
-        Logger.error("images_generations error: #{inspect(reason)}")
-        json_error(conn, 502, "Image generation provider unavailable", "server_error")
     end
   end
 

@@ -297,27 +297,56 @@ defmodule Druzhok.Runtime.Hermes do
     provider = Map.get(instance, :memory_provider, "builtin")
     legacy_enabled? = provider == "builtin"
 
-    block_pattern = ~r/(?m)^(memory:[ \t]*\n)((?:[ \t]+\S[^\n]*\n)*)/
+    sync_yaml_block(content, "memory",
+      upsert: fn body ->
+        body
+        |> upsert_indented_line("provider", provider)
+        |> upsert_indented_line("memory_enabled", to_string(legacy_enabled?))
+        |> upsert_indented_line("user_profile_enabled", to_string(legacy_enabled?))
+      end,
+      default: default_memory_block(provider, legacy_enabled?)
+    )
+  end
+
+  # When image_gen is enabled, point hermes at the OpenAI plugin (which the
+  # `openai>=2.x` SDK auto-routes through `OPENAI_BASE_URL` → druzhok proxy).
+  # When disabled, blank the provider so hermes falls back to its built-in
+  # FAL path (which short-circuits without `FAL_KEY` and just returns an
+  # error to the agent).
+  defp sync_image_gen_block(content, instance) do
+    enabled? = Map.get(instance, :image_gen_enabled, false) == true
+    provider = if enabled?, do: "openai", else: ""
+
+    sync_yaml_block(content, "image_gen",
+      upsert: &upsert_indented_line(&1, "provider", provider),
+      default: if(enabled?, do: "image_gen:\n  provider: #{provider}", else: nil)
+    )
+  end
+
+  # Splice an indented YAML block (`<name>:` + indented children) through
+  # `upsert`. If the block is missing and `default` is non-nil, append it;
+  # otherwise leave content untouched. Splices via offsets so `upsert`
+  # returning the same body as input is a guaranteed no-op (and so the
+  # `if updated != content` write-guard in sync_config/2 does the right
+  # thing on every restart).
+  defp sync_yaml_block(content, name, opts) do
+    upsert = Keyword.fetch!(opts, :upsert)
+    default = Keyword.get(opts, :default)
+    block_pattern = ~r/(?m)^(#{Regex.escape(name)}:[ \t]*\n)((?:[ \t]+\S[^\n]*\n)*)/
 
     case Regex.run(block_pattern, content, return: :index) do
-      [_, _header_idx, {body_off, body_len}] when body_len > 0 ->
+      [_, _header, {body_off, body_len}] when body_len > 0 ->
         body = binary_part(content, body_off, body_len)
-
-        new_body =
-          body
-          |> upsert_indented_line("provider", provider)
-          |> upsert_indented_line("memory_enabled", to_string(legacy_enabled?))
-          |> upsert_indented_line("user_profile_enabled", to_string(legacy_enabled?))
-
-        # Splice via offsets — String.replace would unsafely match the first
-        # occurrence of `body` anywhere in the file.
         prefix = binary_part(content, 0, body_off)
         suffix_off = body_off + body_len
         suffix = binary_part(content, suffix_off, byte_size(content) - suffix_off)
-        prefix <> new_body <> suffix
+        prefix <> upsert.(body) <> suffix
+
+      _ when is_binary(default) ->
+        String.trim_trailing(content) <> "\n\n" <> default <> "\n"
 
       _ ->
-        String.trim_trailing(content) <> "\n\n" <> default_memory_block(provider, legacy_enabled?) <> "\n"
+        content
     end
   end
 
@@ -340,36 +369,6 @@ defmodule Druzhok.Runtime.Hermes do
       memory_char_limit: 2200
       user_char_limit: 1375\
     """
-  end
-
-  # When image_gen is enabled, point hermes at the OpenAI plugin (which the
-  # `openai>=2.x` SDK auto-routes through `OPENAI_BASE_URL` → druzhok proxy).
-  # When disabled, blank the provider so hermes falls back to its built-in
-  # FAL path (which short-circuits without `FAL_KEY` and just returns an
-  # error to the agent).
-  defp sync_image_gen_block(content, instance) do
-    enabled? = Map.get(instance, :image_gen_enabled, false) == true
-    provider = if enabled?, do: "openai", else: ""
-
-    block_pattern = ~r/(?m)^(image_gen:[ \t]*\n)((?:[ \t]+\S[^\n]*\n)*)/
-
-    case Regex.run(block_pattern, content, return: :index) do
-      [_, _header_idx, {body_off, body_len}] when body_len > 0 ->
-        body = binary_part(content, body_off, body_len)
-        new_body = upsert_indented_line(body, "provider", provider)
-
-        prefix = binary_part(content, 0, body_off)
-        suffix_off = body_off + body_len
-        suffix = binary_part(content, suffix_off, byte_size(content) - suffix_off)
-        prefix <> new_body <> suffix
-
-      _ ->
-        if enabled? do
-          String.trim_trailing(content) <> "\n\nimage_gen:\n  provider: #{provider}\n"
-        else
-          content
-        end
-    end
   end
 
   # /start alias to /new so Telegram's first-interaction command doesn't

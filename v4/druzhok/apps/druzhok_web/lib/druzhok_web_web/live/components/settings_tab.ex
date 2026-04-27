@@ -279,10 +279,9 @@ defmodule DruzhokWebWeb.Live.Components.SettingsTab do
                 <label class="block text-[10px] text-muted mb-0.5">Model</label>
                 <select name="image_gen_model"
                         class="w-full border border-line2 rounded px-2 py-1 text-xs">
-                  <option value="black-forest-labs/flux.2-klein-4b" selected={@instance[:image_gen_model] in [nil, "", "black-forest-labs/flux.2-klein-4b"]}>FLUX 2 Klein 4B (~$0.014/image)</option>
-                  <option value="sourceful/riverflow-v2-fast" selected={@instance[:image_gen_model] == "sourceful/riverflow-v2-fast"}>Riverflow V2 Fast (~$0.02/image)</option>
-                  <option value="black-forest-labs/flux.2-pro" selected={@instance[:image_gen_model] == "black-forest-labs/flux.2-pro"}>FLUX 2 Pro (~$0.03/image)</option>
-                  <option value="bytedance-seed/seedream-4.5" selected={@instance[:image_gen_model] == "bytedance-seed/seedream-4.5"}>Seedream 4.5 ($0.04/image)</option>
+                  <%= for m <- ModelCatalog.image_gen_models() do %>
+                    <option value={m.id} selected={m.id == (@instance[:image_gen_model] || ModelCatalog.default_image_gen_model())}><%= m.name %></option>
+                  <% end %>
                 </select>
               </form>
             <% end %>
