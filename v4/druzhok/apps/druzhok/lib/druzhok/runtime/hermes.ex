@@ -25,6 +25,33 @@ defmodule Druzhok.Runtime.Hermes do
   @default_vision_model "google/gemini-2.5-flash-lite"
   @translations_filename "translations.json"
 
+  @agents_md_session_section """
+  ## Каждая сессия
+
+  _Эта секция перезаписывается druzhok при каждом старте бота. Не правь руками._
+
+  Перед любыми действиями:
+  1. SOUL.md уже загружен в системный промпт — не читай заново
+  2. Память пользователя уже подгружена в контекст — не лезь в файлы без нужды
+  3. Читай файлы только если нужно обновить
+
+  Не спрашивай разрешения. Просто делай.
+  """
+
+  @agents_md_style_section """
+  ## Стиль
+
+  _Эта секция перезаписывается druzhok при каждом старте бота. Не правь руками._
+
+  - Простой вопрос → простой ответ. Один точный поиск лучше десяти.
+  - Глубже только когда человек явно просит или цена ошибки реально высокая.
+  - Получил достойный ответ — отвечай и останавливайся, не перепроверяй сам себя.
+  - Один и тот же запрос дважды — никогда. Не нашёл — меняй стратегию или скажи "не знаю".
+  - Человек добавил фото или контекст — отвечай на исходный вопрос, а не на новый.
+  - Инструмент не сработал → не повторяй. Максимум 2 попытки, потом другой подход.
+  - Кратко когда нужно, подробно когда важно.
+  """
+
   @agents_md_sites_section """
   ## Публикация сайтов
 
@@ -389,7 +416,9 @@ defmodule Druzhok.Runtime.Hermes do
       {:ok, content} ->
         updated =
           content
+          |> sync_session_section()
           |> sync_memory_section(instance)
+          |> sync_style_section()
           |> ensure_sites_section()
 
         if updated != content, do: File.write!(agents_path, updated)
@@ -415,6 +444,38 @@ defmodule Druzhok.Runtime.Hermes do
       Regex.replace(pattern, content, new_section <> "\n\n", global: false)
     else
       String.trim_trailing(content) <> "\n\n" <> new_section <> "\n"
+    end
+  end
+
+  # Replace the entire `## Каждая сессия` section. Druzhok owns it because
+  # the original wording lied that IDENTITY.md and USER.md were auto-loaded
+  # into the system prompt — hermes only loads SOUL.md and memories/*.md;
+  # workspace/IDENTITY.md and workspace/USER.md are never injected. Bots
+  # acted on the lie by trying to read those files, finding empty templates,
+  # and triggering investigation loops on cold start.
+  defp sync_session_section(content) do
+    body = String.trim_trailing(@agents_md_session_section)
+    pattern = ~r/(?ms)^## Каждая сессия[ \t]*\n.*?\n+(?=^## |\z)/
+
+    if Regex.match?(pattern, content) do
+      Regex.replace(pattern, content, body <> "\n\n", global: false)
+    else
+      String.trim_trailing(content) <> "\n\n" <> body <> "\n"
+    end
+  end
+
+  # Replace the entire `## Стиль` section. Druzhok owns it because we tune
+  # research-depth / loop-prevention guidance from observed bot pathology
+  # (sequential web_search storms, verification compulsion, query-truncation
+  # loops) and want every restart to pick up the latest wording.
+  defp sync_style_section(content) do
+    body = String.trim_trailing(@agents_md_style_section)
+    pattern = ~r/(?ms)^## Стиль[ \t]*\n.*?\n+(?=^## |\z)/
+
+    if Regex.match?(pattern, content) do
+      Regex.replace(pattern, content, body <> "\n\n", global: false)
+    else
+      String.trim_trailing(content) <> "\n\n" <> body <> "\n"
     end
   end
 

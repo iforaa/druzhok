@@ -466,7 +466,7 @@ defmodule Druzhok.Runtime.HermesTest do
 
       Old builtin memory section.
 
-      ## Стиль
+      ## Прочее
 
       бла бла
       """)
@@ -479,8 +479,8 @@ defmodule Druzhok.Runtime.HermesTest do
       assert content =~ "honcho_conclude"
       assert content =~ "НЕ используй"
       refute content =~ "Old builtin memory section"
-      # Adjacent section preserved.
-      assert content =~ "## Стиль"
+      # Adjacent (non-druzhok-owned) section preserved.
+      assert content =~ "## Прочее"
       assert content =~ "бла бла"
     end
 
@@ -525,6 +525,108 @@ defmodule Druzhok.Runtime.HermesTest do
       content = File.read!(Path.join(workspace, "AGENTS.md"))
       assert content =~ "## Память"
       assert content =~ "honcho_conclude"
+    end
+
+    @tag :tmp_dir
+    test "style section: replaces stale wording on existing bots",
+         %{tmp_dir: tmp_dir} do
+      workspace = Path.join(tmp_dir, "workspace")
+      File.mkdir_p!(workspace)
+
+      File.write!(Path.join(workspace, "AGENTS.md"), """
+      # AGENTS.md
+
+      ## Стиль
+
+      - Кратко когда нужно, подробно когда важно
+      - Не используй инструменты для простых ответов
+      - Инструмент не сработал → не повторяй. Максимум 2 попытки.
+
+      ## Other
+
+      keep
+      """)
+
+      assert :ok = Hermes.sync_agents_md(@instance, tmp_dir)
+
+      content = File.read!(Path.join(workspace, "AGENTS.md"))
+      assert content =~ "Один точный поиск лучше десяти"
+      assert content =~ "Один и тот же запрос дважды — никогда"
+      refute content =~ "Не используй инструменты для простых ответов"
+      assert content =~ "## Other"
+      assert content =~ "keep"
+    end
+
+    @tag :tmp_dir
+    test "style section: appends when missing entirely", %{tmp_dir: tmp_dir} do
+      workspace = Path.join(tmp_dir, "workspace")
+      File.mkdir_p!(workspace)
+      File.write!(Path.join(workspace, "AGENTS.md"), "# AGENTS.md\n\nNo style section yet.\n")
+
+      assert :ok = Hermes.sync_agents_md(@instance, tmp_dir)
+
+      content = File.read!(Path.join(workspace, "AGENTS.md"))
+      assert content =~ "## Стиль"
+      assert content =~ "Один точный поиск лучше десяти"
+    end
+
+    @tag :tmp_dir
+    test "session section: replaces stale 'IDENTITY.md, USER.md уже загружены' lie",
+         %{tmp_dir: tmp_dir} do
+      workspace = Path.join(tmp_dir, "workspace")
+      File.mkdir_p!(workspace)
+
+      File.write!(Path.join(workspace, "AGENTS.md"), """
+      # AGENTS.md
+
+      ## Каждая сессия
+
+      Перед любыми действиями:
+      1. SOUL.md, IDENTITY.md, USER.md уже загружены — **не читай их заново**
+      2. `MEMORY.md` уже в контексте — используй `memory_recall` для поиска по памяти
+      3. Читай файлы только если нужно обновить
+
+      ## Прочее
+
+      keep
+      """)
+
+      assert :ok = Hermes.sync_agents_md(@instance, tmp_dir)
+
+      content = File.read!(Path.join(workspace, "AGENTS.md"))
+      assert content =~ "SOUL.md уже загружен в системный промпт"
+      refute content =~ "IDENTITY.md, USER.md уже загружены"
+      refute content =~ "memory_recall"
+      assert content =~ "## Прочее"
+      assert content =~ "keep"
+    end
+
+    @tag :tmp_dir
+    test "session section: appends when missing entirely", %{tmp_dir: tmp_dir} do
+      workspace = Path.join(tmp_dir, "workspace")
+      File.mkdir_p!(workspace)
+      File.write!(Path.join(workspace, "AGENTS.md"), "# AGENTS.md\n\nNo session section yet.\n")
+
+      assert :ok = Hermes.sync_agents_md(@instance, tmp_dir)
+
+      content = File.read!(Path.join(workspace, "AGENTS.md"))
+      assert content =~ "## Каждая сессия"
+      assert content =~ "SOUL.md уже загружен"
+    end
+
+    @tag :tmp_dir
+    test "style section: idempotent across two syncs", %{tmp_dir: tmp_dir} do
+      workspace = Path.join(tmp_dir, "workspace")
+      File.mkdir_p!(workspace)
+      File.write!(Path.join(workspace, "AGENTS.md"), "# AGENTS.md\n\nbody\n")
+
+      assert :ok = Hermes.sync_agents_md(@instance, tmp_dir)
+      first = File.read!(Path.join(workspace, "AGENTS.md"))
+
+      assert :ok = Hermes.sync_agents_md(@instance, tmp_dir)
+      second = File.read!(Path.join(workspace, "AGENTS.md"))
+
+      assert first == second
     end
   end
 
