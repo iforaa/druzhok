@@ -23,7 +23,6 @@ defmodule Druzhok.Runtime.Hermes do
   @data_mount "/opt/data"
   @default_model "anthropic/claude-opus-4.6"
   @default_vision_model "google/gemini-2.5-flash-lite"
-  @translations_filename "translations.json"
 
   @agents_md_session_section """
   ## Каждая сессия
@@ -121,8 +120,15 @@ defmodule Druzhok.Runtime.Hermes do
       # Auto-set home channel to the owner's DM so hermes doesn't nag
       # on first message. In Telegram, DM chat_id == user_id.
       "TELEGRAM_HOME_CHANNEL" => to_string(Map.get(instance, :owner_telegram_id, "") || ""),
-      # Language for system message translation (druzhok downstream patch).
+      # Hermes native i18n (since 2026-05, commit c39168453). Catalogs
+      # at locales/<lang>.yaml. Russian is supported.
       "HERMES_LANGUAGE" => Map.get(instance, :language, "ru") || "ru",
+      # Native silent observer for shared-memory group bots (since 2026-05,
+      # commits a9db0e2c7 + 4a91e3649). Env var takes priority over
+      # platforms.telegram.observe_unmentioned_group_messages in config.yaml,
+      # so this works for both fresh and existing data roots.
+      "TELEGRAM_OBSERVE_UNMENTIONED_GROUP_MESSAGES" =>
+        to_string(Map.get(instance, :group_shared_memory, false)),
       "TELEGRAM_REQUIRE_MENTION" => to_string(Map.get(instance, :mention_only, false)),
       "TELEGRAM_MENTION_PATTERNS" => build_mention_patterns(instance),
       "TELEGRAM_FREE_RESPONSE_CHATS" => build_free_response_chats(instance),
@@ -157,7 +163,6 @@ defmodule Druzhok.Runtime.Hermes do
   @impl true
   def sync_config(instance, data_root) do
     sync_agents_md(instance, data_root)
-    sync_translations_file(data_root)
     sync_honcho_config(instance, data_root)
 
     # Patch dashboard-owned fields in config.yaml on every start so the
@@ -226,8 +231,7 @@ defmodule Druzhok.Runtime.Hermes do
   defp sync_group_sessions_per_user(content, instance) do
     # User-facing toggle is `group_shared_memory`. Hermes's native config
     # uses the inverse — `group_sessions_per_user: false` means group
-    # participants share one session (memory). The silent observer in our
-    # telegram patch reads the same flag.
+    # participants share one session (memory).
     shared = Map.get(instance, :group_shared_memory, false)
     upsert_yaml_line(content, "group_sessions_per_user", not shared)
   end
@@ -529,28 +533,6 @@ defmodule Druzhok.Runtime.Hermes do
     |> String.trim_trailing()
   end
 
-  @doc """
-  Write priv/translations.json into data_root so hermes's patched
-  gateway/translations.py can load it at import time.
-
-  Called from sync_config/2 on every bot start — overwriting with the
-  same content is harmless and keeps edits in druzhok's priv/ propagating
-  to all bots on restart without an image rebuild.
-  """
-  def sync_translations_file(data_root) do
-    priv_path = Path.join(:code.priv_dir(:druzhok), @translations_filename)
-    dest = Path.join(data_root, @translations_filename)
-
-    case File.cp(priv_path, dest) do
-      :ok ->
-        :ok
-
-      {:error, reason} ->
-        Logger.warning("sync_translations_file: cannot copy #{priv_path}: #{inspect(reason)}")
-        :ok
-    end
-  end
-
   @impl true
   def post_start(_instance), do: :ok
 
@@ -665,6 +647,7 @@ defmodule Druzhok.Runtime.Hermes do
     tenant_key = Map.get(instance, :tenant_key, "") || ""
     url = proxy_url()
     group_sessions_per_user = not Map.get(instance, :group_shared_memory, false)
+    observe_unmentioned = Map.get(instance, :group_shared_memory, false)
     memory_provider = Map.get(instance, :memory_provider, "builtin")
 
     """
@@ -679,6 +662,7 @@ defmodule Druzhok.Runtime.Hermes do
     platforms:
       telegram:
         enabled: true
+        observe_unmentioned_group_messages: #{observe_unmentioned}
 
     messaging:
       enabled_platforms:
