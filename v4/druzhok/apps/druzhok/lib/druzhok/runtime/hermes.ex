@@ -206,21 +206,34 @@ defmodule Druzhok.Runtime.Hermes do
   # a `provider: custom` block pointing at our local proxy no longer auto-picks
   # up OPENROUTER_API_KEY. Explicitly set api_key with a ${VAR} template so
   # load_config()'s _expand_env_vars resolves it per-instance.
+  #
+  # Match only api_key WITHIN the top-level model: block (other blocks like
+  # auxiliary.vision and custom_providers also have api_key lines).
   defp sync_model_api_key(content) do
-    cond do
-      String.match?(content, ~r/^\s*api_key:\s*/m) ->
+    model_block_re = ~r/^model:\n((?:[ \t]+.*\n)+)/m
+
+    case Regex.run(model_block_re, content, return: :index) do
+      nil ->
         content
 
-      String.match?(content, ~r/^\s*base_url:\s*.*\n/m) ->
-        Regex.replace(
-          ~r/^(\s*base_url:\s*.*\n)/m,
-          content,
-          "\\1  api_key: \"${OPENROUTER_API_KEY}\"\n",
-          global: false
-        )
+      [{_, _}, {body_start, body_len}] ->
+        body = binary_part(content, body_start, body_len)
 
-      true ->
-        content
+        if String.match?(body, ~r/^\s+api_key:\s/m) do
+          content
+        else
+          new_body =
+            Regex.replace(
+              ~r/^(\s+base_url:[ \t]*.*\n)/m,
+              body,
+              "\\1  api_key: \"${OPENROUTER_API_KEY}\"\n",
+              global: false
+            )
+
+          binary_part(content, 0, body_start) <>
+            new_body <>
+            binary_part(content, body_start + body_len, byte_size(content) - body_start - body_len)
+        end
     end
   end
 
