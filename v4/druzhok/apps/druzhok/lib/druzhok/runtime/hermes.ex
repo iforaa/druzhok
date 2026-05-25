@@ -178,6 +178,7 @@ defmodule Druzhok.Runtime.Hermes do
         updated =
           content
           |> sync_model_default(model)
+          |> sync_model_api_key()
           |> sync_auxiliary_vision(vision_model, tenant_key)
           |> sync_group_sessions_per_user(instance)
           |> sync_memory_block(instance)
@@ -199,6 +200,28 @@ defmodule Druzhok.Runtime.Hermes do
       ~s(\\1"#{model}"),
       global: false
     )
+  end
+
+  # Hermes 0.14 (#28660) gates env-var key fallbacks on authoritative hosts —
+  # a `provider: custom` block pointing at our local proxy no longer auto-picks
+  # up OPENROUTER_API_KEY. Explicitly set api_key with a ${VAR} template so
+  # load_config()'s _expand_env_vars resolves it per-instance.
+  defp sync_model_api_key(content) do
+    cond do
+      String.match?(content, ~r/^\s*api_key:\s*/m) ->
+        content
+
+      String.match?(content, ~r/^\s*base_url:\s*.*\n/m) ->
+        Regex.replace(
+          ~r/^(\s*base_url:\s*.*\n)/m,
+          content,
+          "\\1  api_key: \"${OPENROUTER_API_KEY}\"\n",
+          global: false
+        )
+
+      true ->
+        content
+    end
   end
 
   # Since hermes 2026-04 (commit 976bad5b), config.yaml takes priority
@@ -658,6 +681,9 @@ defmodule Druzhok.Runtime.Hermes do
       default: "#{model}"
       provider: "custom"
       base_url: "#{url}"
+      # Hermes 0.14 gates env-var fallbacks on authoritative hosts; localhost
+      # proxy needs an explicit api_key. ${...} is expanded by load_config().
+      api_key: "${OPENROUTER_API_KEY}"
 
     platforms:
       telegram:
