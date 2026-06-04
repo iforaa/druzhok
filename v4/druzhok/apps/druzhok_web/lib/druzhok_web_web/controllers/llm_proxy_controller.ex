@@ -36,7 +36,9 @@ defmodule DruzhokWebWeb.LlmProxyController do
     end
   end
 
-  defp broken_streaming?(model), do: String.starts_with?(model || "", "xiaomi/mimo")
+  # Only the original mimo-v2-pro emitted malformed streaming SSE; v2.5-pro and
+  # later stream cleanly with reasoning disabled (LlmFormat.apply_reasoning_override).
+  defp broken_streaming?(model), do: String.starts_with?(model || "", "xiaomi/mimo-v2-pro")
 
   defp fake_stream_proxy(conn, instance, url, headers, body, model, started_at) do
     sync_body = body |> Map.put("stream", false) |> Map.delete("stream_options")

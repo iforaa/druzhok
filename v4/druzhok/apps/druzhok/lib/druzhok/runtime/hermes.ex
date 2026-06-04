@@ -184,12 +184,25 @@ defmodule Druzhok.Runtime.Hermes do
           |> sync_memory_block(instance)
           |> sync_image_gen_block(instance)
           |> sync_quick_commands()
+          |> sync_streaming_block()
 
         if updated != content, do: File.write!(config_path, updated)
         :ok
 
       {:error, _} ->
         :ok
+    end
+  end
+
+  # Enable gateway streaming (progressive Telegram message edits). Existing bots
+  # were seeded before the streaming block existed, so append it when absent.
+  # New bots already get enabled: true from build_config_yaml/1.
+  defp sync_streaming_block(content) do
+    if Regex.match?(~r/^streaming:/m, content) do
+      content
+    else
+      content <>
+        "\nstreaming:\n  enabled: true\n  transport: edit\n  edit_interval: 0.6\n  buffer_threshold: 60\n"
     end
   end
 
@@ -702,6 +715,12 @@ defmodule Druzhok.Runtime.Hermes do
       telegram:
         enabled: true
         observe_unmentioned_group_messages: #{observe_unmentioned}
+
+    streaming:
+      enabled: true
+      transport: edit
+      edit_interval: 0.6
+      buffer_threshold: 60
 
     messaging:
       enabled_platforms:
