@@ -24,7 +24,7 @@ defmodule Druzhok.ModelCatalog do
     # Reasoning tier — models that expose step-by-step thinking via OpenRouter
     # `reasoning` + `reasoning_details`. Druzhok proxy passes the format
     # through transparently.
-    %{id: "xiaomi/mimo-v2-pro", name: "MiMo V2 Pro (reasoning)", price: "$1.50/M", tier: :reasoning},
+    %{id: "xiaomi/mimo-v2.5-pro", name: "MiMo V2.5 Pro (reasoning)", price: "$1.50/M", tier: :reasoning},
   ]
 
   def all, do: @models
@@ -67,7 +67,7 @@ defmodule Druzhok.ModelCatalog do
   # the response. Values are cents per 1,000,000 tokens. Check
   # https://openrouter.ai/models for current published prices.
   @prices %{
-    "xiaomi/mimo-v2-pro" => %{input: 10, output: 150},
+    "xiaomi/mimo-v2.5-pro" => %{input: 10, output: 150},
     "google/gemini-2.5-flash-lite" => %{input: 10, output: 40},
     "google/gemini-3-flash-preview" => %{input: 30, output: 120},
     "anthropic/claude-sonnet-4-6" => %{input: 300, output: 1500},
