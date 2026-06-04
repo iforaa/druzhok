@@ -11,7 +11,7 @@ defmodule Druzhok.ManagerBot.Provisioner do
   alias Druzhok.{BotManager, Instance, Repo}
   alias Druzhok.Telegram.API
 
-  @default_model "xiaomi/mimo-v2-pro"
+  @default_model "xiaomi/mimo-v2.5-pro"
 
   @hermes_personalities ~w(helpful kawaii pirate noir philosopher shakespeare surfer hype concise technical creative teacher catgirl uwu)
 
