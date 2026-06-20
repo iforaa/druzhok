@@ -185,6 +185,7 @@ defmodule Druzhok.Runtime.Hermes do
           |> sync_image_gen_block(instance)
           |> sync_quick_commands()
           |> sync_streaming_block()
+          |> sync_plugins_enabled()
 
         if updated != content, do: File.write!(config_path, updated)
         :ok
@@ -203,6 +204,45 @@ defmodule Druzhok.Runtime.Hermes do
     else
       content <>
         "\nstreaming:\n  enabled: true\n  transport: edit\n  edit_interval: 0.6\n  buffer_threshold: 60\n"
+    end
+  end
+
+  # Web search: hermes 0.17 moved web search into a bundled-but-disabled plugin
+  # (`web/firecrawl`). The 0.16->0.17 config migration leaves `plugins.enabled: []`,
+  # so web_search silently falls back to the browser. We ship FIRECRAWL_API_URL +
+  # FIRECRAWL_API_KEY (env_vars/1) pointing at druzhok's /v2/search (perplexity),
+  # so enabling the plugin is all that's needed. Idempotent; covers existing bots
+  # (here) and new bots (build_config_yaml/1 seeds the same block).
+  @web_search_plugin "web/firecrawl"
+  defp sync_plugins_enabled(content) do
+    cond do
+      # Already enabled — no-op.
+      Regex.match?(~r/^[ \t]*-[ \t]*#{Regex.escape(@web_search_plugin)}[ \t]*$/m, content) ->
+        content
+
+      # `plugins:` block with an empty inline list: `enabled: []` -> expand to a list.
+      Regex.match?(~r/^[ \t]+enabled:[ \t]*\[\][ \t]*$/m, content) and
+          Regex.match?(~r/^plugins:/m, content) ->
+        Regex.replace(
+          ~r/^([ \t]+)enabled:[ \t]*\[\][ \t]*$/m,
+          content,
+          "\\1enabled:\n\\1- #{@web_search_plugin}",
+          global: false
+        )
+
+      # `plugins:` block with a populated `enabled:` list -> insert as first item.
+      Regex.match?(~r/^plugins:/m, content) and
+          Regex.match?(~r/^[ \t]+enabled:[ \t]*$/m, content) ->
+        Regex.replace(
+          ~r/^([ \t]+)enabled:[ \t]*\n/m,
+          content,
+          "\\1enabled:\n\\1- #{@web_search_plugin}\n",
+          global: false
+        )
+
+      # No `plugins:` block at all -> append one.
+      true ->
+        content <> "\nplugins:\n  enabled:\n  - #{@web_search_plugin}\n"
     end
   end
 
@@ -758,6 +798,13 @@ defmodule Druzhok.Runtime.Hermes do
       start:
         type: alias
         target: new
+
+    # Web search via druzhok /v2/search (perplexity/sonar). Hermes 0.17 gates
+    # web search behind this bundled plugin; FIRECRAWL_API_URL/KEY are set in
+    # env_vars/1. sync_plugins_enabled/1 keeps existing bots in sync.
+    plugins:
+      enabled:
+      - web/firecrawl
 
     group_sessions_per_user: #{group_sessions_per_user}
     """
