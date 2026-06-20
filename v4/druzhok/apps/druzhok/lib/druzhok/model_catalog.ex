@@ -25,6 +25,7 @@ defmodule Druzhok.ModelCatalog do
     # `reasoning` + `reasoning_details`. Druzhok proxy passes the format
     # through transparently.
     %{id: "xiaomi/mimo-v2.5-pro", name: "MiMo V2.5 Pro (reasoning)", price: "$1.50/M", tier: :reasoning},
+    %{id: "z-ai/glm-5.2", name: "GLM-5.2 (reasoning)", price: "$4.10/M", tier: :reasoning},
   ]
 
   def all, do: @models
@@ -68,6 +69,7 @@ defmodule Druzhok.ModelCatalog do
   # https://openrouter.ai/models for current published prices.
   @prices %{
     "xiaomi/mimo-v2.5-pro" => %{input: 10, output: 150},
+    "z-ai/glm-5.2" => %{input: 120, output: 410},
     "google/gemini-2.5-flash-lite" => %{input: 10, output: 40},
     "google/gemini-3-flash-preview" => %{input: 30, output: 120},
     "anthropic/claude-sonnet-4-6" => %{input: 300, output: 1500},
