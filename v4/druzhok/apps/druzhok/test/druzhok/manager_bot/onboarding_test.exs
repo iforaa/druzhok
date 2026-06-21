@@ -107,15 +107,17 @@ defmodule Druzhok.ManagerBot.OnboardingTest do
     end
 
     test "button URL appends _bot to the handle" do
-      bots = [%{name: "fedya_b318", active: true, trigger_name: nil}]
-      {_text, [[btn]]} = Onboarding.my_bots_message(bots)
+      bots = [%{id: 7, name: "fedya_b318", active: true, trigger_name: nil}]
+      {_text, [[btn, del]]} = Onboarding.my_bots_message(bots)
       assert btn.text == "💬 @fedya_b318_bot"
       assert btn.url == "https://t.me/fedya_b318_bot"
+      assert del.text == "🗑"
+      assert del.callback_data == "del:7"
     end
 
     test "button URL does not double-append _bot" do
-      bots = [%{name: "already_bot", active: true, trigger_name: nil}]
-      {_text, [[btn]]} = Onboarding.my_bots_message(bots)
+      bots = [%{id: 8, name: "already_bot", active: true, trigger_name: nil}]
+      {_text, [[btn, _del]]} = Onboarding.my_bots_message(bots)
       assert btn.url == "https://t.me/already_bot"
     end
 
@@ -130,6 +132,16 @@ defmodule Druzhok.ManagerBot.OnboardingTest do
       bots = [%{name: "vasya", active: true, trigger_name: nil, daily_budget_cents: 0, spent_today_cents: 17}]
       {text, _buttons} = Onboarding.my_bots_message(bots)
       assert text =~ "без лимита, $0.17"
+    end
+  end
+
+  describe "delete_confirm/2" do
+    test "builds a yes/no keyboard carrying the bot id" do
+      {text, [[yes, no]]} = Onboarding.delete_confirm(42, "vasya_bot")
+      assert text =~ "@vasya_bot"
+      assert text =~ "навсегда"
+      assert yes.callback_data == "delyes:42"
+      assert no.callback_data == "delno"
     end
   end
 

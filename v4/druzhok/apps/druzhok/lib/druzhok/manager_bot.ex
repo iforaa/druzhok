@@ -12,6 +12,7 @@ defmodule Druzhok.ManagerBot do
 
   alias Druzhok.Telegram.API
   alias Druzhok.ManagerBot.{Onboarding, Provisioner}
+  alias Druzhok.{BotManager, Repo, Instance}
 
   @session_ttl_seconds 600
   @poll_timeout 30
@@ -118,13 +119,26 @@ defmodule Druzhok.ManagerBot do
 
         API.answer_callback_query(state.token, cb["id"])
 
-        # Store message_id in session for editing
-        state = update_in(state, [:sessions, user_id], fn
-          nil -> %{Onboarding.new_session() | message_id: message_id}
-          session -> %{session | message_id: message_id}
-        end)
+        cond do
+          String.starts_with?(data, "del:") ->
+            handle_delete_request(state, user_id, chat_id, message_id, data)
 
-        dispatch_input(state, user_id, chat_id, %{callback_data: data})
+          String.starts_with?(data, "delyes:") ->
+            handle_delete_confirm(state, user_id, chat_id, message_id, data)
+
+          data == "delno" ->
+            edit_plain(state.token, chat_id, message_id, Onboarding.delete_cancelled())
+            state
+
+          true ->
+            # Store message_id in session for editing
+            state = update_in(state, [:sessions, user_id], fn
+              nil -> %{Onboarding.new_session() | message_id: message_id}
+              session -> %{session | message_id: message_id}
+            end)
+
+            dispatch_input(state, user_id, chat_id, %{callback_data: data})
+        end
     end
   end
 
@@ -224,6 +238,78 @@ defmodule Druzhok.ManagerBot do
     else
       send_url_keyboard(state.token, chat_id, text, buttons)
     end
+  end
+
+  # --- Bot deletion (two-step confirm, owner-only) ---
+
+  defp handle_delete_request(state, user_id, chat_id, message_id, "del:" <> id_str) do
+    case owned_instance(user_id, id_str) do
+      {:ok, instance} ->
+        {text, rows} = Onboarding.delete_confirm(instance.id, bot_display_handle(instance))
+        edit_inline(state.token, chat_id, message_id, text, rows)
+
+      {:error, :not_owner} ->
+        API.send_message(state.token, chat_id, "Это не твой бот.")
+
+      {:error, :not_found} ->
+        API.send_message(state.token, chat_id, "Бот не найден.")
+    end
+
+    state
+  end
+
+  defp handle_delete_confirm(state, user_id, chat_id, message_id, "delyes:" <> id_str) do
+    case owned_instance(user_id, id_str) do
+      {:ok, instance} ->
+        handle = bot_display_handle(instance)
+        name = instance.name
+        token = state.token
+
+        # Run the wipe async — docker rm -f can take a couple seconds and must
+        # not block the poll loop.
+        Task.start(fn ->
+          try do
+            case BotManager.delete(name) do
+              :ok -> edit_plain(token, chat_id, message_id, Onboarding.delete_done(handle))
+              _ -> edit_plain(token, chat_id, message_id, "Ошибка удаления, попробуй ещё раз.")
+            end
+          rescue
+            e ->
+              Logger.error("Delete crashed for #{name}: #{Exception.message(e)}")
+              edit_plain(token, chat_id, message_id, "Ошибка удаления, попробуй ещё раз.")
+          end
+        end)
+
+      {:error, :not_owner} ->
+        API.send_message(state.token, chat_id, "Это не твой бот.")
+
+      {:error, :not_found} ->
+        edit_plain(state.token, chat_id, message_id, "Бот не найден.")
+    end
+
+    state
+  end
+
+  # Look up an instance by id and confirm it belongs to the requesting user.
+  # Ownership is verified here (never trust the callback_data alone).
+  defp owned_instance(user_id, id_str) do
+    with {id, ""} <- Integer.parse(id_str),
+         %Instance{} = inst <- Repo.get(Instance, id) do
+      if inst.owner_telegram_id == user_id, do: {:ok, inst}, else: {:error, :not_owner}
+    else
+      _ -> {:error, :not_found}
+    end
+  end
+
+  defp bot_display_handle(instance) do
+    case instance.trigger_name do
+      h when is_binary(h) and h != "" -> h
+      _ -> instance.name
+    end
+  end
+
+  defp edit_plain(token, chat_id, message_id, text) do
+    API.edit_message_text(token, chat_id, message_id, text, %{})
   end
 
   # --- Managed bot creation ---

@@ -130,15 +130,55 @@ defmodule Druzhok.BotManager do
     end
   end
 
+  @doc """
+  Fully delete a bot: stop+remove its container, wipe its on-disk data dir
+  (config, SOUL, memory, history, logs), release its Telegram token back to
+  the pool, and delete the DB row. Irreversible.
+  """
   def delete(name) do
     stop(name)
     case Repo.get_by(Instance, name: name) do
       nil -> :ok
       instance ->
+        wipe_data_dir(instance)
         TokenPool.release(instance.id)
         Repo.delete(instance)
     end
     :ok
+  end
+
+  defp wipe_data_dir(instance) do
+    data_root = case instance.workspace do
+      ws when is_binary(ws) and ws != "" -> Path.dirname(ws)
+      _ -> nil
+    end
+
+    if safe_to_wipe?(data_root) do
+      case File.rm_rf(data_root) do
+        {:ok, _} -> Logger.info("Wiped data dir for #{instance.name}: #{data_root}")
+        {:error, reason, file} ->
+          Logger.error("Failed to wipe #{data_root} (#{file}): #{inspect(reason)}")
+      end
+    else
+      Logger.warning("Refusing to wipe unsafe data dir for #{instance.name}: #{inspect(data_root)}")
+    end
+  end
+
+  # Only ever remove a path that sits strictly *under* the configured data
+  # root — never the root itself, "/", a blank, or anything outside it. Guards
+  # against a malformed instance.workspace nuking something unexpected.
+  def safe_to_wipe?(nil), do: false
+  def safe_to_wipe?(""), do: false
+  def safe_to_wipe?(path) when is_binary(path) do
+    root = data_root_base()
+    abs = Path.expand(path)
+    abs not in ["/", root] and String.starts_with?(abs <> "/", root <> "/")
+  end
+  def safe_to_wipe?(_), do: false
+
+  defp data_root_base do
+    (System.get_env("DRUZHOK_DATA_ROOT") || Path.expand("../../../data/tenants", __DIR__))
+    |> Path.expand()
   end
 
   def status(name), do: status_for_container(container_name(name))

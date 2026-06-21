@@ -119,12 +119,28 @@ defmodule Druzhok.ManagerBot.Onboarding do
 
       buttons = Enum.map(bots, fn bot ->
         handle = bot_handle(bot)
-        [%{text: "💬 @#{handle}", url: "https://t.me/#{handle}"}]
+        [
+          %{text: "💬 @#{handle}", url: "https://t.me/#{handle}"},
+          %{text: "🗑", callback_data: "del:#{bot[:id]}"}
+        ]
       end)
 
       {text, buttons}
     end
   end
+
+  @doc "Confirm prompt + Yes/No keyboard for deleting a bot."
+  def delete_confirm(id, handle) do
+    text = "⚠️ Точно удалить @#{handle}? Это навсегда — память и история пропадут."
+    rows = [[
+      %{text: "✅ Да, удалить", callback_data: "delyes:#{id}"},
+      %{text: "❌ Отмена", callback_data: "delno"}
+    ]]
+    {text, rows}
+  end
+
+  def delete_done(handle), do: "✅ Бот @#{handle} удалён."
+  def delete_cancelled, do: "Отменено."
 
   defp bot_line(bot) do
     status = if bot[:active], do: "🟢", else: "🔴"
