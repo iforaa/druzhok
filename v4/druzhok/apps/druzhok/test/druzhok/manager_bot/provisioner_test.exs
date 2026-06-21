@@ -17,16 +17,6 @@ defmodule Druzhok.ManagerBot.ProvisionerTest do
     end
   end
 
-  describe "personality_to_soul/1" do
-    test "returns hermes built-in personality names as-is" do
-      assert Provisioner.personality_to_soul("kawaii") == {:builtin, "kawaii"}
-    end
-
-    test "returns nil for unknown personality" do
-      assert Provisioner.personality_to_soul("nonexistent") == nil
-    end
-  end
-
   describe "build_create_opts/1" do
     test "assembles the options map for BotManager.create" do
       opts = Provisioner.build_create_opts(%{
@@ -43,6 +33,11 @@ defmodule Druzhok.ManagerBot.ProvisionerTest do
       assert opts[:language] == "ru"
       assert opts[:bot_runtime] == "hermes"
       assert opts[:mention_only] == true
+    end
+
+    test "defaults model to z-ai/glm-5.2 when none is given" do
+      opts = Provisioner.build_create_opts(%{token: "123:ABC", owner_id: 1})
+      assert opts[:model] == "z-ai/glm-5.2"
     end
   end
 end

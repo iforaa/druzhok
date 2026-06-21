@@ -8,7 +8,6 @@ defmodule Druzhok.ManagerBot.OnboardingTest do
       session = Onboarding.new_session()
       assert session.step == :idle
       assert session.name == nil
-      assert session.personality == nil
       assert session.language == nil
       assert session.username == nil
       assert session.message_id == nil
@@ -29,10 +28,10 @@ defmodule Druzhok.ManagerBot.OnboardingTest do
   end
 
   describe "handle_input/2 at :name step" do
-    test "accepts a name, generates username, moves to :personality" do
+    test "accepts a name, generates username, moves to :language" do
       session = %{Onboarding.new_session() | step: :name}
       {:ok, session, {:keyboard, _, _}} = Onboarding.handle_input(session, %{text: "Вася"})
-      assert session.step == :personality
+      assert session.step == :language
       assert session.name == "Вася"
       assert session.username =~ ~r/^vasya_[a-f0-9]{4}_bot$/
     end
@@ -43,31 +42,9 @@ defmodule Druzhok.ManagerBot.OnboardingTest do
     end
   end
 
-  describe "handle_input/2 at :personality step" do
-    test "accepts a valid personality, returns :edit reply" do
-      session = %{Onboarding.new_session() | step: :personality, name: "Вася", username: "vasya_1234_bot"}
-      {:ok, session, {:edit, _, _}} = Onboarding.handle_input(session, %{callback_data: "personality:kawaii"})
-      assert session.step == :language
-      assert session.personality == "kawaii"
-    end
-
-    test "rejects unknown personality" do
-      session = %{Onboarding.new_session() | step: :personality, name: "Вася"}
-      {:retry, _session, {:edit, _, _}} = Onboarding.handle_input(session, %{callback_data: "personality:nonexistent"})
-    end
-
-    test "more button returns page 2" do
-      session = %{Onboarding.new_session() | step: :personality, name: "Вася"}
-      {:ok, session, {:edit, _, rows}} = Onboarding.handle_input(session, %{callback_data: "more_personalities"})
-      assert session.step == :personality
-      last_row = List.last(rows)
-      assert hd(last_row).callback_data == "back_personalities"
-    end
-  end
-
   describe "handle_input/2 at :language step" do
     test "accepts language, returns :edit_confirm" do
-      session = %{Onboarding.new_session() | step: :language, name: "Вася", personality: "kawaii", username: "vasya_1234_bot"}
+      session = %{Onboarding.new_session() | step: :language, name: "Вася", username: "vasya_1234_bot"}
       {:ok, session, {:edit_confirm, _}} = Onboarding.handle_input(session, %{callback_data: "lang:ru"})
       assert session.step == :confirm
       assert session.language == "ru"
@@ -89,23 +66,28 @@ defmodule Druzhok.ManagerBot.OnboardingTest do
       username = Onboarding.generate_bot_username(String.duplicate("a", 50))
       assert String.length(username) <= 32
     end
+
+    test "prefixes a letter when the name starts with a digit" do
+      username = Onboarding.generate_bot_username("3000")
+      assert username =~ ~r/^b3000_[a-f0-9]{4}_bot$/
+    end
   end
 
   describe "confirm_message/2" do
     test "uses stored username, not regenerated" do
       session = %{Onboarding.new_session() |
-        step: :confirm, name: "Вася", personality: "kawaii",
+        step: :confirm, name: "Вася",
         language: "ru", username: "vasya_abcd_bot"}
       {_text, _keyboard, link} = Onboarding.confirm_message(session, "DruzhokBot")
       assert link =~ "vasya_abcd_bot"
     end
 
-    test "includes personality and language in text" do
+    test "includes name and language in text" do
       session = %{Onboarding.new_session() |
-        step: :confirm, name: "Тест", personality: "pirate",
+        step: :confirm, name: "Тест",
         language: "en", username: "test_1234_bot"}
       {text, _keyboard, _link} = Onboarding.confirm_message(session, "DruzhokBot")
-      assert text =~ "Пират"
+      assert text =~ "Тест"
       assert text =~ "English"
     end
   end
@@ -148,14 +130,6 @@ defmodule Druzhok.ManagerBot.OnboardingTest do
       bots = [%{name: "vasya", active: true, trigger_name: nil, daily_budget_cents: 0, spent_today_cents: 17}]
       {text, _buttons} = Onboarding.my_bots_message(bots)
       assert text =~ "без лимита, $0.17"
-    end
-  end
-
-  describe "personalities/0" do
-    test "returns a non-empty list" do
-      list = Onboarding.personalities()
-      assert length(list) > 10
-      assert {"kawaii", "Кавай"} in list
     end
   end
 

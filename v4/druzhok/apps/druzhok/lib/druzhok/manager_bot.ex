@@ -92,7 +92,9 @@ defmodule Druzhok.ManagerBot do
         dispatch_input(state, user_id, chat_id, %{text: text})
 
       Map.has_key?(state.sessions, user_id) and
-          state.sessions[user_id].step == :name ->
+          state.sessions[user_id].step in [:name, :language, :confirm] ->
+        # Mid-onboarding: route stray text through the state machine (which
+        # re-prompts) instead of resetting the session to the main menu.
         dispatch_input(state, user_id, chat_id, %{text: text})
 
       true ->
@@ -101,20 +103,29 @@ defmodule Druzhok.ManagerBot do
   end
 
   defp process_update(%{"callback_query" => cb}, state) do
-    user_id = cb["from"]["id"]
-    chat_id = cb["message"]["chat"]["id"]
-    message_id = cb["message"]["message_id"]
-    data = cb["data"]
+    # Telegram can send a callback whose `message` is inaccessible (too old) —
+    # `cb["message"]` is then nil. Acknowledge and ignore rather than crash.
+    case cb["message"] do
+      nil ->
+        API.answer_callback_query(state.token, cb["id"])
+        state
 
-    API.answer_callback_query(state.token, cb["id"])
+      message ->
+        user_id = cb["from"]["id"]
+        chat_id = message["chat"]["id"]
+        message_id = message["message_id"]
+        data = cb["data"]
 
-    # Store message_id in session for editing
-    state = update_in(state, [:sessions, user_id], fn
-      nil -> %{Onboarding.new_session() | message_id: message_id}
-      session -> %{session | message_id: message_id}
-    end)
+        API.answer_callback_query(state.token, cb["id"])
 
-    dispatch_input(state, user_id, chat_id, %{callback_data: data})
+        # Store message_id in session for editing
+        state = update_in(state, [:sessions, user_id], fn
+          nil -> %{Onboarding.new_session() | message_id: message_id}
+          session -> %{session | message_id: message_id}
+        end)
+
+        dispatch_input(state, user_id, chat_id, %{callback_data: data})
+    end
   end
 
   defp process_update(%{"managed_bot" => managed_bot}, state) do
@@ -228,14 +239,21 @@ defmodule Druzhok.ManagerBot do
     token = state.token
 
     Task.start(fn ->
-      case Provisioner.provision(token, bot_id, bot_username, session) do
-        {:ok, _name, username} ->
-          msg = Onboarding.completion_message(username)
-          API.send_message(token, creator_id, msg)
+      try do
+        case Provisioner.provision(token, bot_id, bot_username, session) do
+          {:ok, _name, username} ->
+            msg = Onboarding.completion_message(username)
+            API.send_message(token, creator_id, msg)
 
-        {:error, reason} ->
+          {:error, reason} ->
+            API.send_message(token, creator_id,
+              "Ошибка создания бота: #{inspect(reason)}\nПопробуй ещё раз.")
+        end
+      rescue
+        e ->
+          Logger.error("Provisioning crashed for @#{bot_username}: #{Exception.message(e)}")
           API.send_message(token, creator_id,
-            "Ошибка создания бота: #{inspect(reason)}\nПопробуй ещё раз.")
+            "Ошибка создания бота. Попробуй ещё раз.")
       end
     end)
 

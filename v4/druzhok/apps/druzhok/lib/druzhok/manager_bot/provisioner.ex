@@ -3,7 +3,7 @@ defmodule Druzhok.ManagerBot.Provisioner do
   Provisioning pipeline for managed bots.
 
   Called by ManagerBot GenServer when a `managed_bot` update arrives.
-  Handles: token retrieval → instance creation → personality application → auto-pairing.
+  Handles: token retrieval → instance creation → SOUL.md (identity) write.
   """
 
   require Logger
@@ -11,9 +11,7 @@ defmodule Druzhok.ManagerBot.Provisioner do
   alias Druzhok.{BotManager, Instance, Repo}
   alias Druzhok.Telegram.API
 
-  @default_model "xiaomi/mimo-v2.5-pro"
-
-  @hermes_personalities ~w(helpful kawaii pirate noir philosopher shakespeare surfer hype concise technical creative teacher catgirl uwu)
+  @default_model "z-ai/glm-5.2"
 
   @doc """
   Run the full provisioning pipeline.
@@ -31,13 +29,12 @@ defmodule Druzhok.ManagerBot.Provisioner do
            bot_runtime: "hermes"
          }),
          {:ok, _result} <- BotManager.create(instance_name, opts) do
-      apply_personality(instance_name, session[:personality])
+      # The owner is already in the allowlist via owner_telegram_id (see
+      # runtime/hermes.ex build_allowlist/1), so no auto-pair + restart is
+      # needed. SOUL.md is read fresh per prompt-build, so writing it now —
+      # seconds after create, minutes before the bot finishes booting — is
+      # picked up on the owner's first message.
       write_soul(instance_name, session[:name])
-      auto_pair_owner(instance_name, session[:owner_id])
-      # Restart so the container picks up the updated allowlist env var
-      # (BotManager.create already started it, but owner wasn't in the
-      # allowlist at that point because save_to_db runs before auto_pair).
-      BotManager.restart(instance_name)
       {:ok, instance_name, bot_username}
     else
       {:error, reason} ->
@@ -51,9 +48,6 @@ defmodule Druzhok.ManagerBot.Provisioner do
     |> String.replace_suffix("_bot", "")
     |> String.replace_suffix("Bot", "")
   end
-
-  def personality_to_soul(key) when key in @hermes_personalities, do: {:builtin, key}
-  def personality_to_soul(_), do: nil
 
   def build_create_opts(params) do
     %{
@@ -77,30 +71,6 @@ defmodule Druzhok.ManagerBot.Provisioner do
     end
   end
 
-  defp apply_personality(instance_name, personality) do
-    case personality_to_soul(personality) do
-      {:builtin, key} ->
-        case Repo.get_by(Instance, name: instance_name) do
-          nil -> :ok
-          instance ->
-            data_root = Path.dirname(instance.workspace || "")
-            config_path = Path.join(data_root, "config.yaml")
-            case File.read(config_path) do
-              {:ok, content} ->
-                line = "  personality: #{key}"
-                updated = if content =~ ~r/^\s*personality:/m do
-                  Regex.replace(~r/^\s*personality:.*$/m, content, line)
-                else
-                  content <> "\ndisplay:\n#{line}\n"
-                end
-                File.write!(config_path, updated)
-              {:error, _} -> :ok
-            end
-        end
-      nil -> :ok
-    end
-  end
-
   defp write_soul(instance_name, display_name) do
     case Repo.get_by(Instance, name: instance_name) do
       nil -> :ok
@@ -115,12 +85,4 @@ defmodule Druzhok.ManagerBot.Provisioner do
         File.write!(soul_path, String.trim(soul))
     end
   end
-
-  defp auto_pair_owner(instance_name, owner_id) when is_integer(owner_id) do
-    case Repo.get_by(Instance, name: instance_name) do
-      nil -> :ok
-      instance -> Instance.add_allowed_id(instance, to_string(owner_id))
-    end
-  end
-  defp auto_pair_owner(_, _), do: :ok
 end

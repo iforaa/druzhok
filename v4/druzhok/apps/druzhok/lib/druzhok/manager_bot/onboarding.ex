@@ -2,38 +2,16 @@ defmodule Druzhok.ManagerBot.Onboarding do
   @moduledoc """
   Pure-function state machine for the manager bot's onboarding flow.
 
-  Steps: :idle → :name → :personality → :language → :confirm → :done
+  Steps: :idle → :name → :language → :confirm → :done
   Each step returns {:ok, session, reply} or {:retry, session, reply}.
   Reply types: {:text, text}, {:keyboard, text, rows}, {:edit, text, rows},
                {:confirm, session}, {:edit_confirm, session}
   """
 
-  @personalities [
-    {"helpful", "Помощник"},
-    {"kawaii", "Кавай"},
-    {"pirate", "Пират"},
-    {"noir", "Нуар"},
-    {"philosopher", "Философ"},
-    {"shakespeare", "Шекспир"},
-    {"surfer", "Сёрфер"},
-    {"hype", "Хайп"},
-    {"concise", "Краткий"},
-    {"technical", "Технарь"},
-    {"creative", "Креативный"},
-    {"teacher", "Учитель"},
-    {"catgirl", "Кошкодевочка"},
-    {"uwu", "UwU"},
-  ]
-
-  @personality_keys Enum.map(@personalities, fn {k, _} -> k end)
-
-  def personalities, do: @personalities
-
   def new_session do
     %{
       step: :idle,
       name: nil,
-      personality: nil,
       language: nil,
       username: nil,
       message_id: nil,
@@ -79,31 +57,9 @@ defmodule Druzhok.ManagerBot.Onboarding do
         handle_input(session, %{text: name})
       true ->
         username = generate_bot_username(name)
-        session = %{session | step: :personality, name: name, username: username}
-        {:ok, session, personality_reply()}
+        session = %{session | step: :language, name: name, username: username}
+        {:ok, session, {:keyboard, "Язык:", language_buttons()}}
     end
-  end
-
-  # Personality step
-  def handle_input(%{step: :personality} = session, %{callback_data: "personality:" <> key}) do
-    if key in @personality_keys do
-      session = %{session | step: :language, personality: key}
-      {:ok, session, {:edit, "Язык:", language_buttons()}}
-    else
-      {:retry, session, {:edit, "Характер бота:", personality_buttons_page1()}}
-    end
-  end
-
-  def handle_input(%{step: :personality} = session, %{callback_data: "more_personalities"}) do
-    {:ok, session, {:edit, "Характер бота:", personality_buttons_page2()}}
-  end
-
-  def handle_input(%{step: :personality} = session, %{callback_data: "back_personalities"}) do
-    {:ok, session, {:edit, "Характер бота:", personality_buttons_page1()}}
-  end
-
-  def handle_input(%{step: :personality} = session, _input) do
-    {:retry, session, {:edit, "Выбери характер:", personality_buttons_page1()}}
   end
 
   # Language step
@@ -138,12 +94,9 @@ defmodule Druzhok.ManagerBot.Onboarding do
     encoded_name = URI.encode(session.name)
     link = "https://t.me/newbot/#{manager_username}/#{username}?name=#{encoded_name}"
 
-    personality_label = Enum.find_value(@personalities, session.personality, fn {k, l} ->
-      if k == session.personality, do: l
-    end)
     lang_label = if session.language == "ru", do: "Русский", else: "English"
 
-    text = "📋 *#{session.name}*\nХарактер: #{personality_label}\nЯзык: #{lang_label}\n\nНажми кнопку чтобы создать:"
+    text = "📋 *#{session.name}*\nЯзык: #{lang_label}\n\nНажми кнопку чтобы создать:"
     keyboard = [[%{text: "🤖 Создать «#{session.name}»", url: link}]]
 
     {text, keyboard, link}
@@ -210,33 +163,14 @@ defmodule Druzhok.ManagerBot.Onboarding do
       |> String.slice(0, 20)
 
     slug = if slug == "", do: "bot", else: slug
+    # Telegram usernames must start with a letter — prefix if the slug
+    # begins with a digit (e.g. a name like "3000" → "b3000_…_bot").
+    slug = if String.match?(slug, ~r/^[a-z]/), do: slug, else: "b#{slug}"
     suffix = :crypto.strong_rand_bytes(2) |> Base.encode16(case: :lower)
     "#{slug}_#{suffix}_bot"
   end
 
   # --- Private ---
-
-  defp personality_reply do
-    {:keyboard, "Характер бота:", personality_buttons_page1()}
-  end
-
-  defp personality_buttons_page1 do
-    page1 = Enum.take(@personalities, 8)
-    buttons = Enum.map(page1, fn {key, label} ->
-      %{text: label, callback_data: "personality:#{key}"}
-    end)
-    rows = Enum.chunk_every(buttons, 4)
-    rows ++ [[%{text: "Ещё →", callback_data: "more_personalities"}]]
-  end
-
-  defp personality_buttons_page2 do
-    page2 = Enum.drop(@personalities, 8)
-    buttons = Enum.map(page2, fn {key, label} ->
-      %{text: label, callback_data: "personality:#{key}"}
-    end)
-    rows = Enum.chunk_every(buttons, 4)
-    rows ++ [[%{text: "← Назад", callback_data: "back_personalities"}]]
-  end
 
   defp language_buttons do
     [[%{text: "🇷🇺 Русский", callback_data: "lang:ru"}, %{text: "🇬🇧 English", callback_data: "lang:en"}]]
