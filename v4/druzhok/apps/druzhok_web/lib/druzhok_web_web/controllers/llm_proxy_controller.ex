@@ -236,10 +236,23 @@ defmodule DruzhokWebWeb.LlmProxyController do
     end
   end
 
-  def audio_transcriptions(conn, _params) do
-    openai_key = get_setting("openai_api_key")
+  # Default model for OpenRouter-backed transcription. Gemini Flash accepts
+  # audio input (wav/mp3/ogg/opus) and transcribes it cheaply; this is what
+  # lets us bill voice notes against the OpenRouter account instead of needing
+  # a separately-funded OpenAI Whisper account.
+  @transcription_default_model "google/gemini-2.5-flash"
 
-    if is_nil(openai_key) do
+  @transcribe_prompt """
+  You are a speech-to-text engine. Transcribe the audio VERBATIM in its \
+  original spoken language. Output ONLY the transcript text — no commentary, \
+  no labels, no quotation marks, no translation. If there is no intelligible \
+  speech, output an empty string.\
+  """
+
+  def audio_transcriptions(conn, _params) do
+    or_key = LlmFormat.provider_key() || get_setting("openrouter_api_key")
+
+    if is_nil(or_key) do
       json_error(conn, 503, "Audio transcription not configured", "server_error")
     else
       instance = resolve_instance(conn)
@@ -249,44 +262,137 @@ defmodule DruzhokWebWeb.LlmProxyController do
           {:error, :exceeded} ->
             json_error(conn, 429, budget_exceeded_message(instance), "budget_exceeded")
           {:ok, _} ->
-            do_audio_transcription(conn, openai_key, instance)
+            do_audio_transcription(conn, or_key, instance)
         end
       else
-        do_audio_transcription(conn, openai_key, nil)
+        do_audio_transcription(conn, or_key, nil)
       end
     end
   end
 
-  defp do_audio_transcription(conn, openai_key, instance) do
+  # Transcribe via OpenRouter: feed the uploaded audio to a multimodal chat
+  # model as an `input_audio` part and return the reply reshaped into the
+  # Whisper response the caller (hermes) expects. hermes is none the wiser.
+  defp do_audio_transcription(conn, or_key, instance) do
     started_at = System.monotonic_time(:millisecond)
+    params = conn.body_params
 
-    # Plug.Parsers already consumed the multipart body — rebuild it
-    {multipart_body, content_type} = build_multipart(conn.body_params)
+    case params["file"] do
+      %Plug.Upload{path: path, filename: filename} ->
+        audio_b64 = path |> File.read!() |> Base.encode64()
+        format = audio_format(filename)
+        model = get_setting("transcription_model") || @transcription_default_model
 
-    url = "https://api.openai.com/v1/audio/transcriptions"
-    headers = [
-      {"authorization", "Bearer #{openai_key}"},
-      {"content-type", content_type}
-    ]
+        payload = %{
+          "model" => model,
+          "messages" => [
+            %{
+              "role" => "user",
+              "content" => [
+                %{"type" => "text", "text" => @transcribe_prompt},
+                %{"type" => "input_audio", "input_audio" => %{"data" => audio_b64, "format" => format}}
+              ]
+            }
+          ]
+        }
 
-    request = Finch.build(:post, url, headers, multipart_body)
+        url = LlmFormat.provider_url() <> "/chat/completions"
+        headers = [
+          {"authorization", "Bearer #{or_key}"},
+          {"content-type", "application/json"}
+        ]
+        request = Finch.build(:post, url, headers, Jason.encode!(payload))
 
-    case Finch.request(request, Druzhok.Finch, receive_timeout: 120_000) do
-      {:ok, %Finch.Response{status: status, body: resp_body}} ->
-        latency = System.monotonic_time(:millisecond) - started_at
+        case Finch.request(request, Druzhok.Finch, receive_timeout: 120_000) do
+          {:ok, %Finch.Response{status: 200, body: resp_body}} ->
+            latency = System.monotonic_time(:millisecond) - started_at
+            transcript = extract_chat_transcript(resp_body)
+            Logger.info("[audio] transcription via #{model} #{latency}ms (#{String.length(transcript)} chars)")
+            meter_transcription(instance, resp_body, latency, model)
+            send_transcription(conn, transcript, params["response_format"])
 
-        if status == 200 do
-          Logger.info("[audio] transcription #{latency}ms")
-          meter_audio(instance, resp_body, latency, conn.body_params["model"])
+          {:ok, %Finch.Response{status: status, body: resp_body}} ->
+            Logger.error("Audio transcription OpenRouter error #{status}: #{String.slice(resp_body, 0, 300)}")
+            conn |> put_resp_content_type("application/json") |> send_resp(status, resp_body)
+
+          {:error, reason} ->
+            Logger.error("Audio transcription proxy error: #{inspect(reason)}")
+            json_error(conn, 502, "Transcription provider unavailable", "server_error")
         end
 
-        conn
-        |> put_resp_content_type("application/json")
-        |> send_resp(status, resp_body)
+      _ ->
+        json_error(conn, 400, "No audio file provided", "invalid_request")
+    end
+  end
 
-      {:error, reason} ->
-        Logger.error("Audio transcription proxy error: #{inspect(reason)}")
-        json_error(conn, 502, "Transcription provider unavailable", "server_error")
+  # Map an uploaded filename's extension to an OpenRouter `input_audio` format.
+  # Telegram voice notes arrive as ogg/opus (.oga/.ogg); Gemini accepts them.
+  defp audio_format(filename) do
+    case filename |> to_string() |> Path.extname() |> String.downcase() |> String.trim_leading(".") do
+      ext when ext in ["ogg", "oga", "opus"] -> "ogg"
+      ext when ext in ["mp3", "mpga", "mpeg"] -> "mp3"
+      "m4a" -> "m4a"
+      "mp4" -> "mp4"
+      "wav" -> "wav"
+      "webm" -> "webm"
+      "flac" -> "flac"
+      "" -> "mp3"
+      other -> other
+    end
+  end
+
+  defp extract_chat_transcript(resp_body) do
+    case Jason.decode(resp_body) do
+      {:ok, decoded} ->
+        (get_in(decoded, ["choices", Access.at(0), "message", "content"]) || "")
+        |> to_string()
+        |> String.trim()
+
+      _ ->
+        ""
+    end
+  end
+
+  # hermes asks Whisper for response_format="text" (plain string) for whisper-1
+  # and "json" ({"text": ...}) otherwise. Honor whichever it sent.
+  defp send_transcription(conn, transcript, response_format)
+       when response_format in ["text", "srt", "vtt"] do
+    conn
+    |> put_resp_content_type("text/plain")
+    |> send_resp(200, transcript)
+  end
+
+  defp send_transcription(conn, transcript, _response_format) do
+    conn
+    |> put_resp_content_type("application/json")
+    |> send_resp(200, Jason.encode!(%{text: transcript}))
+  end
+
+  defp meter_transcription(nil, _resp_body, _latency, _model), do: :ok
+  defp meter_transcription(instance, resp_body, latency, model) do
+    case Jason.decode(resp_body) do
+      {:ok, decoded} ->
+        usage = LlmFormat.extract_usage(decoded)
+        total = usage.prompt_tokens + usage.completion_tokens
+        cost_cents = LlmFormat.extract_cost_cents(decoded, model)
+        Budget.deduct(instance.id, cost_cents)
+
+        Usage.log(%{
+          instance_id: instance.id,
+          model: model,
+          prompt_tokens: usage.prompt_tokens,
+          completion_tokens: usage.completion_tokens,
+          total_tokens: total,
+          cost_cents: cost_cents,
+          request_type: "audio",
+          requested_model: model,
+          resolved_model: model,
+          provider: "openrouter",
+          latency_ms: latency
+        })
+
+      _ ->
+        :ok
     end
   end
 
@@ -542,50 +648,6 @@ defmodule DruzhokWebWeb.LlmProxyController do
         latency_ms: latency
       })
     end
-  end
-
-  defp meter_audio(nil, _resp_body, _latency, _model), do: :ok
-  defp meter_audio(instance, resp_body, latency, requested_model) do
-    duration_ms = case Jason.decode(resp_body) do
-      {:ok, %{"duration" => d}} when is_number(d) -> round(d * 1000)
-      _ -> nil
-    end
-
-    # OpenAI whisper-1: $0.006 per minute → 0.01 cents per second.
-    # round/1 gives 0¢ for sub-100s clips, 1¢ for ~100–200s, etc.
-    cost_cents =
-      if duration_ms, do: round(duration_ms / 1000 * 0.01), else: 0
-
-    Budget.deduct(instance.id, cost_cents)
-
-    Usage.log(%{
-      instance_id: instance.id,
-      model: requested_model || "whisper-1",
-      prompt_tokens: 0,
-      completion_tokens: 0,
-      total_tokens: 0,
-      cost_cents: cost_cents,
-      request_type: "audio",
-      audio_duration_ms: duration_ms,
-      requested_model: requested_model || "whisper-1",
-      resolved_model: "whisper-1",
-      provider: "openai",
-      latency_ms: latency
-    })
-  end
-
-  defp build_multipart(params) do
-    boundary = "----ElixirMultipart#{:rand.uniform(999_999_999)}"
-    parts = Enum.map(params, fn
-      {"file", %Plug.Upload{path: path, filename: filename, content_type: ct}} ->
-        data = File.read!(path)
-        "--#{boundary}\r\nContent-Disposition: form-data; name=\"file\"; filename=\"#{filename}\"\r\nContent-Type: #{ct}\r\n\r\n#{data}\r\n"
-      {key, value} when is_binary(value) ->
-        "--#{boundary}\r\nContent-Disposition: form-data; name=\"#{key}\"\r\n\r\n#{value}\r\n"
-      _ -> ""
-    end)
-    body = Enum.join(parts) <> "--#{boundary}--\r\n"
-    {body, "multipart/form-data; boundary=#{boundary}"}
   end
 
   def embeddings(conn, _params) do
