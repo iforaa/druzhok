@@ -15,6 +15,20 @@ defmodule Druzhok.SiteLister do
   def list(%{name: bot_name, workspace: workspace}) do
     sites_dir = Path.join(workspace, "sites")
 
+    do_list(sites_dir, bot_name)
+  end
+
+  @doc """
+  Absolute host path to a bot's published-sites directory:
+  `<data_root_base>/<bot_name>/workspace/sites`. Single source of truth shared
+  with the web layer that serves the sites.
+  """
+  def sites_dir(bot_name) when is_binary(bot_name) do
+    Path.join([Druzhok.BotManager.data_root_base(), bot_name, "workspace", "sites"])
+  end
+
+  defp do_list(sites_dir, bot_name) do
+
     case File.ls(sites_dir) do
       {:ok, entries} ->
         entries

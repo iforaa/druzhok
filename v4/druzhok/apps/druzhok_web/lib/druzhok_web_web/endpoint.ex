@@ -51,5 +51,12 @@ defmodule DruzhokWebWeb.Endpoint do
   plug Plug.MethodOverride
   plug Plug.Head
   plug Plug.Session, @session_options
+
+  # Bot-published static sites for `<bot>.oldey.dev`. Runs before the Router and
+  # halts on bot subdomains, so they can only ever reach files under the bot's
+  # sites dir — never the dashboard or `/v1/*` proxy routes. Non-bot hosts
+  # (incl. the bare dashboard host) pass through untouched.
+  plug DruzhokWebWeb.Plugs.BotSite
+
   plug DruzhokWebWeb.Router
 end

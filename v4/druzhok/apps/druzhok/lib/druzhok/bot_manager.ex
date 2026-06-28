@@ -176,7 +176,12 @@ defmodule Druzhok.BotManager do
   end
   def safe_to_wipe?(_), do: false
 
-  defp data_root_base do
+  @doc """
+  Canonical host path under which every bot's data dir lives
+  (`<data_root_base>/<bot>/workspace/...`). Public so the web layer can resolve
+  the same root when serving published sites.
+  """
+  def data_root_base do
     (System.get_env("DRUZHOK_DATA_ROOT") || Path.expand("../../../data/tenants", __DIR__))
     |> Path.expand()
   end

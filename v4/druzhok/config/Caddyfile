@@ -28,12 +28,15 @@ oldey.dev {
         dns cloudflare {env.CLOUDFLARE_API_TOKEN}
     }
 
+    # Bot sites are served BY the Phoenix app, not by Caddy's file_server.
+    # Caddy (user `caddy`) cannot read a bot's data dir — the hermes runtime
+    # chmod 0700s HERMES_HOME on every auth write — so we reverse-proxy bot
+    # subdomains to Phoenix, which runs as the data-dir owner and reads the
+    # files fine. The DruzhokWebWeb.Plugs.BotSite plug confines each subdomain
+    # to `<data_root>/<bot>/workspace/sites/` and serves the branded 404.
     @botsite header_regexp bot Host ^([a-z0-9][a-z0-9-]+)\.oldey\.dev$
     handle @botsite {
-        root * /home/igor/druzhok-data/v4-instances/{re.bot.1}/workspace/sites
-        file_server {
-            hide .* _*
-        }
+        reverse_proxy 127.0.0.1:4000
     }
 
     # Fallback: no subdomain pattern matched — show default page.
