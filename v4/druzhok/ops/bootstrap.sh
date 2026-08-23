@@ -51,9 +51,10 @@ printf '[Service]\nEnvironmentFile=/etc/caddy/env\n' > /etc/systemd/system/caddy
 systemctl disable --now caddy >/dev/null 2>&1 || true   # enabled later, once the CF token is in place
 
 step "hermes → /opt/hermes"
-if [ ! -d "$HERMES_DIR/.git" ]; then git clone -q "$HERMES_REPO" "$HERMES_DIR"; fi
-( cd "$HERMES_DIR" && git fetch -q origin && git reset -q --hard origin/main \
-  && UV_CACHE_DIR=/data/opt/uv-cache uv sync --frozen --extra all --extra messaging --extra firecrawl 2>&1 | tail -2 )
+# The tree is normally rsynced from the operator's machine (update-hermes skill);
+# fall back to a clone only when nothing is there yet.
+if [ ! -f "$HERMES_DIR/pyproject.toml" ]; then git clone -q --depth 1 "$HERMES_REPO" "$HERMES_DIR"; fi
+( cd "$HERMES_DIR" && UV_CACHE_DIR=/data/opt/uv-cache uv sync --frozen --extra all --extra messaging --extra firecrawl 2>&1 | tail -2 )
 chown -R root:root "$HERMES_DIR"; chmod -R a+rX "$HERMES_DIR"
 
 step "druzhok-ctl + units + sudoers + nftables"
