@@ -54,7 +54,7 @@ step "hermes → /opt/hermes"
 # The tree is normally rsynced from the operator's machine (update-hermes skill);
 # fall back to a clone only when nothing is there yet.
 if [ ! -f "$HERMES_DIR/pyproject.toml" ]; then git clone -q --depth 1 "$HERMES_REPO" "$HERMES_DIR"; fi
-( cd "$HERMES_DIR" && UV_CACHE_DIR=/data/opt/uv-cache uv sync --frozen --extra all --extra messaging --extra firecrawl 2>&1 | tail -2 )
+( cd "$HERMES_DIR" && UV_CACHE_DIR=/data/opt/uv-cache UV_PYTHON_INSTALL_DIR=/data/opt/uv-python uv sync --frozen --python /usr/bin/python3 --extra all --extra messaging --extra firecrawl 2>&1 | tail -2 )
 chown -R root:root "$HERMES_DIR"; chmod -R a+rX "$HERMES_DIR"
 
 step "druzhok-ctl + units + sudoers + nftables"
