@@ -198,6 +198,25 @@ defmodule Druzhok.Runtime.HermesTest do
     end
   end
 
+  describe "sync_config/2 — gateway systemd watchdog" do
+    @tag :tmp_dir
+    test "adds gateway.systemd_watchdog_seconds when missing", %{tmp_dir: tmp_dir} do
+      File.write!(Path.join(tmp_dir, "config.yaml"), "model:\n  default: \"x\"\n")
+      assert :ok = Hermes.sync_config(%{name: "b", model: "x", tenant_key: "k"}, tmp_dir)
+      content = File.read!(Path.join(tmp_dir, "config.yaml"))
+      assert content =~ ~r/^gateway:\n  systemd_watchdog_seconds: 60$/m
+    end
+
+    @tag :tmp_dir
+    test "overwrites an existing value", %{tmp_dir: tmp_dir} do
+      File.write!(Path.join(tmp_dir, "config.yaml"), "gateway:\n  systemd_watchdog_seconds: 0\n  other: 1\n")
+      assert :ok = Hermes.sync_config(%{name: "b", model: "x", tenant_key: "k"}, tmp_dir)
+      content = File.read!(Path.join(tmp_dir, "config.yaml"))
+      assert content =~ ~r/^  systemd_watchdog_seconds: 60$/m
+      assert content =~ ~r/^  other: 1$/m
+    end
+  end
+
   describe "sync_config/2 — group_sessions_per_user" do
     @tag :tmp_dir
     test "appends the key when absent", %{tmp_dir: tmp_dir} do

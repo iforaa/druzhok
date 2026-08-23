@@ -166,6 +166,7 @@ defmodule Druzhok.Runtime.Hermes do
           |> sync_quick_commands()
           |> sync_streaming_block()
           |> sync_plugins_enabled()
+          |> sync_gateway_block()
 
         if updated != content, do: File.write!(config_path, updated)
         :ok
@@ -173,6 +174,18 @@ defmodule Druzhok.Runtime.Hermes do
       {:error, _} ->
         :ok
     end
+  end
+
+  # systemd Type=notify + WatchdogSec in ops/hermes@.service only work when
+  # hermes opts in here; 0 (the default) means it never sends READY=1 and the
+  # unit times out on start. 60s heartbeats vs WatchdogSec=120.
+  @systemd_watchdog_seconds 60
+
+  defp sync_gateway_block(content) do
+    sync_yaml_block(content, "gateway",
+      upsert: &upsert_indented_line(&1, "systemd_watchdog_seconds", to_string(@systemd_watchdog_seconds)),
+      default: "gateway:\n  systemd_watchdog_seconds: #{@systemd_watchdog_seconds}"
+    )
   end
 
   # Enable gateway streaming (progressive Telegram message edits). Existing bots
@@ -681,6 +694,9 @@ defmodule Druzhok.Runtime.Hermes do
       - web/firecrawl
 
     group_sessions_per_user: #{group_sessions_per_user}
+
+    gateway:
+      systemd_watchdog_seconds: #{@systemd_watchdog_seconds}
     """
   end
 
