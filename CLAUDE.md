@@ -1,108 +1,74 @@
 # Druzhok
 
-Personal AI assistant platform. v4 is the multi-bot orchestrator ("Claw Hub") managing OpenClaw pool containers.
+Multi-tenant Hermes bot hosting. Elixir/Phoenix orchestrator (`v4/druzhok`) runs
+one **systemd unit + Linux user per bot** on the KZ server; all LLM traffic goes
+through Druzhok's OpenAI-compatible proxy (budgets, metering). No Docker.
 
 ## Commits
 
-Always use `/my-commit` skill for committing changes.
+Always use `/my-commit` for committing changes.
 
 ## Critical Rules
 
-- **Never wipe workspace** — contains bot memory/identity. Only wipe if user explicitly asks.
-- **Never set HTTP_PROXY/HTTPS_PROXY in pool containers** — host iptables routes through xray automatically. Proxy env vars corrupt multipart FormData (breaks audio/file uploads).
-- **OpenClaw cold-start: ~2.5 min** on 2-CPU VM. Health timeout is 180s. Don't reduce.
-- **Sandbox containers can steal Telegram polling** — always `docker update --restart no && docker rm -f` to kill them permanently.
+- **Never wipe a bot's data dir** (`/data/tenants/<name>`) — it holds memory/identity. Only `BotManager.delete/1` may, and only on explicit user request.
+- **Never set HTTP_PROXY/HTTPS_PROXY for bots** — breaks multipart uploads.
+- **One Telegram poller per token.** Stop a bot on the old host before starting it elsewhere.
+- Hermes source is the fork `github.com/iforaa/druzhok-hermes` (local clone `v4/hermes-agent`, remote `origin`; nousresearch is remote `upstream`). Updates go through the `update-hermes` skill.
+- `v4/hermes-agent`, `v4/openclaw`, `v4/*claw` are untracked upstream clones — never `git add -A` from the repo root.
 
-## OpenClaw Config Rules
-
-- `gateway.bind: "loopback"` + `auth.mode: "none"` — must match; refuses `bind: "lan"` without auth.
-- `allowFrom` at account level, NOT nested under `"dm"`.
-- `requireMention` on per-group config, NOT account level.
-- Plugins activate via env vars (`OPENAI_API_KEY`, `OPENROUTER_API_KEY`). Pass dummy values to enable without exposing real keys.
-- `OPENCLAW_EXTENSIONS="telegram openai"` in Docker build — without `openai`, audio transcription silently fails.
-
-## Sandbox Tool Allowlist
-
-**After OpenClaw upgrades, always verify tools are available.** Since 2026.4.5, `sandbox.mode: "all"` restricts tools to only `read/write/edit` by default. PoolConfig must explicitly allow tool groups via `tools.sandbox.tools.allow`:
+## Layout
 
 ```
-group:fs, group:runtime, group:sessions, group:memory,
-group:web, group:media, group:messaging, group:automation, group:ui
+v4/druzhok/apps/druzhok/      core: BotManager, Host (Systemd|Process), Runtime.Hermes, HealthMonitor(+Probe), ManagerBot, Budget
+v4/druzhok/apps/druzhok_web/  Phoenix dashboard + LLM proxy (LlmProxyController) + BotSite plug
+v4/druzhok/ops/               druzhok-ctl, hermes@.service, nftables, Caddyfile, bootstrap.sh, smoke.sh
+workspace-template/           Hermes workspace seed (AGENTS.md, SOUL.md, …)
+docs/superpowers/specs|plans  design docs (see 2026-08-23-systemd-host-*)
 ```
 
-If the bot suddenly loses tools (exec, web_search, image, etc.) after an upgrade, check:
-1. The generated OpenClaw JSON has `tools.sandbox.tools.allow` with all groups
-2. Send `/new` to the bot to reload tool definitions in the session
-3. Verify with proxy logs: `grep -o '"name" => "[^"]*"' | sort -u` should show 15+ tools
+`Druzhok.Host` is the process backend: `Host.Systemd` in prod (shells out to `sudo druzhok-ctl`), `Host.Process` in dev/test (spawns `hermes gateway run` as a port; `HERMES_BIN` env or `config :druzhok, :hermes_bin`). Selected by `DRUZHOK_HOST=systemd`.
 
-## Proxy Endpoints
+## Proxy endpoints (all require `Authorization: Bearer <tenant_key>`)
 
-All API calls from pool containers route through the Elixir proxy (localhost:4000):
+| Endpoint | Upstream |
+|---|---|
+| `POST /v1/chat/completions`, `/v1/embeddings`, `/v1/images/generations`, `/v1/responses` | OpenRouter |
+| `POST /v1/audio/transcriptions` | OpenRouter (Gemini Flash `input_audio`) |
+| `POST /v1/audio/speech` | OpenAI TTS |
+| `POST /v2/search` | OpenRouter perplexity/sonar (Firecrawl-compatible shape) |
 
-| Endpoint | Auth | Upstream | Notes |
-|----------|------|----------|-------|
-| `POST /v1/chat/completions` | tenant_key | OpenRouter | Main LLM calls |
-| `POST /v1/embeddings` | tenant_key | OpenRouter | Memory search vectors |
-| `POST /v1/audio/transcriptions` | tenant_key (optional) | OpenAI Whisper | Multipart rebuild (Plug.Parsers consumes body) |
-| `POST /v1/responses` | tenant_key (optional) | OpenRouter | Responses API → chat/completions conversion + SSE streaming |
+OpenRouter responses have leading whitespace — `String.trim()` before `Jason.decode()`.
 
-Image/audio/embedding models are configurable per instance (fields on `instances` table). Responses proxy resolves image model from `Authorization: Bearer <tenant_key>` header, falls back to `ModelCatalog.default_image_model()`. OpenRouter response has leading whitespace — always `String.trim()` before `Jason.decode()`.
-
-## Project Structure
-
-```
-v4/druzhok/apps/druzhok/     # Core: BotManager, PoolManager, PoolConfig, PoolObserver
-v4/druzhok/apps/druzhok_web/ # Phoenix dashboard + LLM proxy controller
-workspace-template/           # OpenClaw workspace templates (AGENTS.md, SOUL.md, etc.)
-```
-
-## Development
+## Development (macOS, no Docker)
 
 ```bash
 cd v4/druzhok
 mix deps.get && mix compile && mix test
-DATABASE_PATH=data/druzhok.db mix phx.server
+# run with a real local hermes venv for Host.Process:
+HERMES_BIN=/path/to/druzhok-hermes/.venv/bin/hermes DATABASE_PATH=data/druzhok.db mix phx.server
 ```
 
-## Deploying
+## Server (KZ, PS Cloud Almaty)
 
 ```bash
-ssh -l igor 158.160.78.230
+ssh ubuntu@195.49.213.8
 cd ~/druzhok && git pull
-source ~/.bashrc; . ~/.asdf/asdf.sh
-cd v4/druzhok && mix compile
-DATABASE_PATH=/home/igor/druzhok-data/v4-druzhok.db mix ecto.migrate
+cd v4/druzhok && . ~/.asdf/asdf.sh && MIX_ENV=prod mix compile
+DATABASE_PATH=/data/druzhok/druzhok.db MIX_ENV=prod mix ecto.migrate
 sudo systemctl restart druzhok
 ```
 
-## Building Docker Image
+Bots: `sudo druzhok-ctl status|logs|restart <name>`; `journalctl -u hermes@<name> -f`.
+Hermes install: `/opt/hermes` (`git pull && uv sync --extra all --extra messaging --extra firecrawl`), then restart bots one at a time — operator's bot first, `ops/smoke.sh`.
 
-```bash
-cd v4/openclaw
-docker buildx build --platform linux/amd64 \
-  --build-arg OPENCLAW_VARIANT=slim \
-  --build-arg "OPENCLAW_EXTENSIONS=telegram openai" \
-  --build-arg OPENCLAW_INSTALL_DOCKER_CLI=1 \
-  --build-arg "OPENCLAW_DOCKER_APT_PACKAGES=python3 wkhtmltopdf ffmpeg" \
-  -t openclaw:latest --load .
-
-# Compress + transfer (3GB → ~1GB):
-docker save openclaw:latest | gzip > /tmp/openclaw.tar.gz
-rsync --partial --progress -e ssh /tmp/openclaw.tar.gz igor@158.160.78.230:/tmp/
-ssh igor@158.160.78.230 "gunzip -c /tmp/openclaw.tar.gz | docker load && rm /tmp/openclaw.tar.gz"
-```
-
-Also rebuild sandbox image with python3: `echo 'FROM debian:bookworm-slim\nRUN apt-get update && apt-get install -y python3 && rm -rf /var/lib/apt/lists/*' | docker build -t openclaw-sandbox:bookworm-slim -`
+Legacy Yandex VM (`ssh -l igor 10.129.0.19`, Docker-based) is kept only as a fallback during migration.
 
 ## Debugging
 
 ```bash
-# Service logs:
 journalctl -u druzhok --since '5 min ago' | grep -i error | tail -20
-# Container logs:
-docker logs druzhok-pool-1 2>&1 | tail -20
-# Verbose mode (stops pool, runs manually):
-docker run --rm --network host ... openclaw:latest node openclaw.mjs gateway --allow-unconfigured --verbose
-# Health check:
-curl -s http://127.0.0.1:18800/healthz
+sudo druzhok-ctl logs <name> 100
+sudo nft list table inet druzhok      # per-bot egress counters
+curl -s -H "Authorization: Bearer <tenant_key>" http://127.0.0.1:4000/v1/chat/completions \
+  -d '{"model":"x","messages":[{"role":"user","content":"ping"}],"max_tokens":1}'
 ```
