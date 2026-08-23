@@ -44,8 +44,12 @@ defmodule Druzhok.Runtime.HermesTest do
       assert env["OPENROUTER_API_KEY"] == "dk-alice-token"
     end
 
-    test "sets HERMES_HOME to /opt/data" do
-      assert Hermes.env_vars(@instance)["HERMES_HOME"] == "/opt/data"
+    test "HERMES_HOME and MESSAGING_CWD derive from instance.workspace" do
+      env = Hermes.env_vars(%{workspace: "/data/tenants/b/workspace", tenant_key: "k"})
+      assert env["HERMES_HOME"] == "/data/tenants/b"
+      assert env["MESSAGING_CWD"] == "/data/tenants/b/workspace"
+      refute Map.has_key?(env, "HERMES_UID")
+      refute Map.has_key?(env, "HERMES_GID")
     end
 
     test "TELEGRAM_REQUIRE_MENTION reflects mention_only flag" do
@@ -93,16 +97,15 @@ defmodule Druzhok.Runtime.HermesTest do
     end
   end
 
-  describe "data_mount_path/0 and file_browser_root/1" do
-    test "mount path is /opt/data" do
-      assert Hermes.data_mount_path() == "/opt/data"
+  describe "data_root/1 and file_browser_root/1" do
+    test "both are the parent of instance.workspace" do
+      inst = %{workspace: "/data/tenants/b/workspace"}
+      assert Hermes.data_root(inst) == "/data/tenants/b"
+      assert Hermes.file_browser_root(inst) == "/data/tenants/b"
     end
 
-    test "file_browser_root is the parent of instance.workspace" do
-      assert Hermes.file_browser_root(@instance) == "/tmp/druzhok-hermes-test/alice"
-    end
-
-    test "file_browser_root handles missing workspace gracefully" do
+    test "handle missing workspace gracefully" do
+      assert Hermes.data_root(%{}) == ""
       assert Hermes.file_browser_root(%{}) == ""
     end
   end

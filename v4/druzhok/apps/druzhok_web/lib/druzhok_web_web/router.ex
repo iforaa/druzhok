@@ -14,7 +14,7 @@ defmodule DruzhokWebWeb.Router do
     plug DruzhokWebWeb.Auth
   end
 
-  # LLM Proxy API (used by bot containers)
+  # LLM Proxy API (used by bots)
   pipeline :llm_api do
     plug :accepts, ["json"]
     plug DruzhokWebWeb.Plugs.LlmAuth

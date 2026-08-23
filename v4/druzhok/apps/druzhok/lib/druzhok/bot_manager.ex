@@ -1,15 +1,14 @@
 defmodule Druzhok.BotManager do
   @moduledoc """
-  Top-level API for bot container lifecycle.
-  Creates, starts, stops, restarts Docker containers running bot runtimes.
+  Top-level API for bot lifecycle. Generates env + config for the runtime,
+  keeps DB state, and delegates process control to `Druzhok.Host`.
   """
 
   alias Druzhok.{Instance, InstanceManager, TokenPool, Repo}
   require Logger
 
   def create(name, opts) do
-    data_root = System.get_env("DRUZHOK_DATA_ROOT") || Path.expand("../../../data/tenants", __DIR__)
-    workspace = Path.join([data_root, name, "workspace"])
+    workspace = Path.join([data_root_base(), name, "workspace"])
 
     token_result = if opts[:telegram_token] do
       {:ok, %{token: opts[:telegram_token], id: nil}}
@@ -24,8 +23,7 @@ defmodule Druzhok.BotManager do
         config = Map.merge(Map.new(opts), %{
           workspace: workspace,
           telegram_token: token_record.token,
-          tenant_key: tenant_key,
-          sandbox: "docker",
+          tenant_key: tenant_key
         })
 
         case InstanceManager.create(name, config) do
@@ -49,44 +47,26 @@ defmodule Druzhok.BotManager do
       instance ->
         runtime = Druzhok.Runtime.get(instance.bot_runtime || "hermes", Druzhok.Runtime.Hermes)
         env = Druzhok.Runtime.base_env(instance) |> Map.merge(runtime.env_vars(instance))
-        image = runtime.docker_image()
-        command = runtime.gateway_command()
-        data_root = Path.dirname(instance.workspace)
+        data_root = runtime.data_root(instance)
 
+        File.mkdir_p!(Path.join(data_root, "home"))
         write_workspace_files(data_root, runtime.workspace_files(instance))
         sync_runtime_config(runtime, instance, data_root)
 
-        case start_container(name, image, env, data_root, runtime.data_mount_path(), command) do
-          {:ok, container_id} ->
-            Logger.info("Started bot container #{name}: #{container_id}")
+        case Druzhok.Host.start(name, env, data_root) do
+          :ok ->
+            Logger.info("Started bot #{name}")
 
             Task.start(fn ->
               case runtime.post_start(instance) do
-                :ok ->
-                  :ok
-
-                {:error, reason} ->
-                  Logger.error("Post-start config for #{name} failed: #{inspect(reason)}")
-              end
-
-              case Druzhok.LogWatcher.start_link(
-                     name: name,
-                     runtime: runtime,
-                     bot_token: instance.telegram_token,
-                     language: instance.language || "ru",
-                     reject_message: instance.reject_message
-                   ) do
-                {:ok, pid} ->
-                  Logger.info("LogWatcher started for #{name}: #{inspect(pid)}")
-
-                {:error, reason} ->
-                  Logger.error("LogWatcher failed for #{name}: #{inspect(reason)}")
+                :ok -> :ok
+                {:error, reason} -> Logger.error("Post-start for #{name} failed: #{inspect(reason)}")
               end
             end)
 
-            Druzhok.HealthMonitor.register(name, container_id, instance.bot_runtime || "zeroclaw")
+            Druzhok.HealthMonitor.register(name)
             Repo.update(Instance.changeset(instance, %{active: true}))
-            {:ok, container_id}
+            {:ok, name}
 
           {:error, reason} ->
             Logger.error("Failed to start bot #{name}: #{inspect(reason)}")
@@ -96,14 +76,12 @@ defmodule Druzhok.BotManager do
   end
 
   def stop(name) do
-    Druzhok.LogWatcher.stop(name)
-
     case Repo.get_by(Instance, name: name) do
       nil ->
         :ok
 
       instance ->
-        stop_container(name)
+        Druzhok.Host.stop(name)
         Druzhok.HealthMonitor.unregister(name)
         instance |> Ecto.Changeset.change(%{active: false}) |> Repo.update!()
     end
@@ -112,13 +90,12 @@ defmodule Druzhok.BotManager do
   end
 
   def restart(name) do
-    # Serialize per-bot: rapid UI clicks race on `docker run --name`. Losers
+    # Serialize per-bot: rapid UI clicks race on unit start. Losers
     # no-op; the winner's start/1 re-reads DB state so no change is lost.
     case :global.set_lock({{:bot_restart, name}, self()}, [node()], 0) do
       true ->
         try do
           stop(name)
-          Process.sleep(1_000)
           start(name)
         after
           :global.del_lock({{:bot_restart, name}, self()}, [node()])
@@ -131,7 +108,7 @@ defmodule Druzhok.BotManager do
   end
 
   @doc """
-  Fully delete a bot: stop+remove its container, wipe its on-disk data dir
+  Fully delete a bot: stop+remove its unit and user, wipe its on-disk data dir
   (config, SOUL, memory, history, logs), release its Telegram token back to
   the pool, and delete the DB row. Irreversible.
   """
@@ -140,6 +117,7 @@ defmodule Druzhok.BotManager do
     case Repo.get_by(Instance, name: name) do
       nil -> :ok
       instance ->
+        Druzhok.Host.destroy(name)
         wipe_data_dir(instance)
         TokenPool.release(instance.id)
         Repo.delete(instance)
@@ -182,56 +160,33 @@ defmodule Druzhok.BotManager do
   the same root when serving published sites.
   """
   def data_root_base do
-    (System.get_env("DRUZHOK_DATA_ROOT") || Path.expand("../../../data/tenants", __DIR__))
+    (System.get_env("DRUZHOK_DATA_ROOT") || Application.get_env(:druzhok, :data_root_default))
     |> Path.expand()
   end
 
-  def status(name), do: status_for_container(container_name(name))
+  @doc "Unit/process state as a string: active | activating | inactive | failed | unknown"
+  def status(name), do: name |> Druzhok.Host.status() |> Atom.to_string()
 
-  def stats(name), do: stats_for_container(container_name(name))
+  @doc "Resource usage in the shape the dashboard renders, or nil."
+  def stats(name) do
+    case Druzhok.Host.stats(name) do
+      %{mem_bytes: mem, cpu_usec: cpu} ->
+        %{mem: human_bytes(mem), mem_bytes: mem, cpu: "#{Float.round(cpu / 1_000_000, 1)}s", net: ""}
 
-  def status_for_container(container) do
-    {output, exit_code} = System.cmd("docker", ["inspect", "--format", "{{.State.Status}}", container], stderr_to_stdout: true)
-    if exit_code == 0, do: String.trim(output), else: "not_found"
-  end
-
-  def stats_for_container(container) do
-    {output, exit_code} = System.cmd("docker", [
-      "stats", "--no-stream", "--format",
-      "{{.MemUsage}}|{{.CPUPerc}}|{{.NetIO}}",
-      container
-    ], stderr_to_stdout: true)
-
-    if exit_code == 0 do
-      case String.trim(output) |> String.split("|") do
-        [mem, cpu, net] ->
-          # docker .MemUsage is "31.02MiB / 1.921GiB" — the denominator is host
-          # RAM (no --memory cap set), useful only as a reference.
-          mem_used = mem |> String.split("/") |> List.first() |> String.trim()
-          %{mem: mem_used, mem_bytes: parse_mem_bytes(mem_used), cpu: cpu, net: net}
-
-        _ ->
-          nil
-      end
-    else
-      nil
+      nil ->
+        nil
     end
   end
 
-  @mem_regex ~r/^\s*([\d.]+)\s*(KiB|MiB|GiB|TiB|B)?/
-  @unit_factors %{"B" => 1, "KiB" => 1024, "MiB" => 1024 * 1024,
-                  "GiB" => 1024 * 1024 * 1024, "TiB" => 1024 * 1024 * 1024 * 1024}
+  @doc "Run a command inside the bot's environment. Returns `{output, exit_code}`."
+  def exec(name, args) when is_list(args), do: Druzhok.Host.exec(name, args)
 
-  defp parse_mem_bytes(mem_string) when is_binary(mem_string) do
-    with [_, n, unit] <- Regex.run(@mem_regex, mem_string),
-         {value, _} <- Float.parse(n) do
-      round(value * Map.get(@unit_factors, unit, 1))
-    else
-      _ -> 0
-    end
-  end
+  def logs(name, lines \\ 200), do: Druzhok.Host.logs(name, lines)
 
-  defp parse_mem_bytes(_), do: 0
+  defp human_bytes(b) when b >= 1024 * 1024 * 1024, do: "#{Float.round(b / (1024 * 1024 * 1024), 2)}GiB"
+  defp human_bytes(b) when b >= 1024 * 1024, do: "#{Float.round(b / (1024 * 1024), 1)}MiB"
+  defp human_bytes(b) when b >= 1024, do: "#{div(b, 1024)}KiB"
+  defp human_bytes(b), do: "#{b}B"
 
   defp sync_runtime_config(runtime, instance, data_root) do
     if function_exported?(runtime, :sync_config, 2) do
@@ -262,107 +217,5 @@ defmodule Druzhok.BotManager do
     end
 
     :ok
-  end
-
-  defp start_container(name, image, env, data_root, mount_path, command) do
-    env_args = Enum.flat_map(env, fn {k, v} -> ["-e", "#{k}=#{v}"] end)
-
-    # If the adapter sets HERMES_UID, it handles privilege dropping itself
-    # via gosu in the entrypoint — don't pass --user or it bypasses gosu.
-    # Other runtimes (zeroclaw, picoclaw, etc.) need --user explicitly.
-    user_flag =
-      if Map.has_key?(env, "HERMES_UID") do
-        []
-      else
-        case host_user_gid() do
-          nil -> []
-          ids -> ["--user", ids]
-        end
-      end
-
-    args =
-      [
-        "run",
-        "-d",
-        "--name",
-        container_name(name),
-        "--network",
-        "host",
-        "--restart",
-        "unless-stopped",
-        "--shm-size",
-        "2g",
-        "-v",
-        "#{data_root}:#{mount_path}"
-      ] ++ user_flag ++ env_args ++ [image | List.wrap(command)]
-
-    case System.cmd("docker", args, stderr_to_stdout: true) do
-      {container_id, 0} -> {:ok, String.trim(container_id)}
-      {error, _} -> {:error, String.trim(error)}
-    end
-  end
-
-  defp stop_container(name) do
-    container = container_name(name)
-    # Clear the restart policy first so docker doesn't race to resurrect
-    # a container that's crashing in a restart loop. See CLAUDE.md.
-    System.cmd("docker", ["update", "--restart=no", container], stderr_to_stdout: true)
-    System.cmd("docker", ["rm", "-f", container], stderr_to_stdout: true)
-    :ok
-  end
-
-  @doc "Host user UID, cached for the BEAM lifetime. Returns nil on failure."
-  def host_uid, do: cached_id(:host_uid, "-u")
-
-  @doc "Host user GID, cached for the BEAM lifetime. Returns nil on failure."
-  def host_gid, do: cached_id(:host_gid, "-g")
-
-  defp cached_id(key, flag) do
-    case :persistent_term.get({__MODULE__, key}, :unset) do
-      :unset ->
-        value =
-          case System.cmd("id", [flag], stderr_to_stdout: true) do
-            {out, 0} -> String.trim(out)
-            _ -> nil
-          end
-
-        :persistent_term.put({__MODULE__, key}, value)
-        value
-
-      cached ->
-        cached
-    end
-  end
-
-  defp host_user_gid do
-    case {host_uid(), host_gid()} do
-      {uid, gid} when is_binary(uid) and is_binary(gid) -> "#{uid}:#{gid}"
-      _ -> nil
-    end
-  end
-
-  def container_name(name), do: "druzhok-bot-#{name}"
-
-  @doc """
-  Run a command inside a bot container. Returns `{output, exit_code}`.
-
-  Used by runtime-specific flows that need to invoke a tool inside the
-  container (e.g. hermes's pairing-code approve).
-
-  ## Options
-
-    * `:user` — run as a specific user inside the container (string passed
-      to `docker exec -u`). Defaults to the container default, which is
-      **root** for most images — this is usually wrong for hermes, whose
-      gateway runs as uid 1000, so callers should pass e.g. `user: "hermes"`
-      when exec'ing tools that touch files the server will later read.
-  """
-  def exec(name, args, opts \\ []) when is_list(args) do
-    user_flag = case Keyword.get(opts, :user) do
-      nil -> []
-      user -> ["-u", to_string(user)]
-    end
-
-    System.cmd("docker", ["exec"] ++ user_flag ++ [container_name(name) | args], stderr_to_stdout: true)
   end
 end

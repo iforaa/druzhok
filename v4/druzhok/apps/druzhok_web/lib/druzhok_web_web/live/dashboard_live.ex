@@ -29,7 +29,7 @@ defmodule DruzhokWebWeb.DashboardLive do
       _ -> ""
     end
 
-    # Render immediately with lightweight instance list (no docker stats).
+    # Render immediately with lightweight instance list (no host stats).
     # Full stats load async via :load_instances message.
     {:ok, assign(socket,
       current_user: current_user,
@@ -153,9 +153,9 @@ defmodule DruzhokWebWeb.DashboardLive do
   end
 
   def handle_info(:settings_updated, socket) do
-    # Refresh only the selected instance from the DB. Container status/stats
-    # stay cached — the next :refresh tick (≤5s) picks up docker changes.
-    # Avoids an N*2 docker sweep on every settings keystroke.
+    # Refresh only the selected instance from the DB. Host status/stats
+    # stay cached — the next :refresh tick (≤5s) picks up host changes.
+    # Avoids an N*2 host sweep on every settings keystroke.
     case socket.assigns.selected do
       nil ->
         {:noreply, socket}
@@ -435,7 +435,7 @@ defmodule DruzhokWebWeb.DashboardLive do
             <span class={[
               "w-1.5 h-1.5 rounded-full flex-shrink-0",
               status_dot(inst),
-              (if inst[:container_status] in ["restarting", "starting"], do: "animate-dot-pulse")
+              (if inst[:container_status] in ["activating", "loading"], do: "animate-dot-pulse")
             ]}></span>
 
             <div class="flex-1 min-w-0">
@@ -511,7 +511,7 @@ defmodule DruzhokWebWeb.DashboardLive do
               <span class={[
                 "w-1.5 h-1.5 rounded-full",
                 status_dot_color(status),
-                (if status in ["restarting", "starting"], do: "animate-dot-pulse")
+                (if status in ["activating", "loading"], do: "animate-dot-pulse")
               ]}></span>
               <span class="font-display text-[10px] uppercase tracking-wider2 text-muted"><%= status %></span>
             </span>
@@ -685,17 +685,17 @@ defmodule DruzhokWebWeb.DashboardLive do
   defp status_dot(inst) do
     cond do
       !inst[:active] -> "bg-idle"
-      inst[:container_status] == "running" -> "bg-ok"
-      inst[:container_status] in ["exited", "dead"] -> "bg-err"
-      inst[:container_status] == "not_found" -> "bg-idle"
+      inst[:container_status] == "active" -> "bg-ok"
+      inst[:container_status] == "failed" -> "bg-err"
+      inst[:container_status] in ["inactive", "unknown"] -> "bg-idle"
       true -> "bg-warn"
     end
   end
 
-  defp status_dot_color("running"), do: "bg-ok"
-  defp status_dot_color("exited"), do: "bg-err"
-  defp status_dot_color("dead"), do: "bg-err"
-  defp status_dot_color("not_found"), do: "bg-idle"
+  defp status_dot_color("active"), do: "bg-ok"
+  defp status_dot_color("failed"), do: "bg-err"
+  defp status_dot_color("inactive"), do: "bg-idle"
+  defp status_dot_color("unknown"), do: "bg-idle"
   defp status_dot_color(_), do: "bg-warn"
 
   defp selected_field(instances, name, field) do
@@ -814,7 +814,7 @@ defmodule DruzhokWebWeb.DashboardLive do
     end)
   end
 
-  # Fast listing: DB only, no docker calls. Used for initial render so the
+  # Fast listing: DB only, no host calls. Used for initial render so the
   # page appears instantly. Full stats arrive via :load_instances async.
   defp list_instances_fast do
     Druzhok.InstanceManager.list()
@@ -830,13 +830,11 @@ defmodule DruzhokWebWeb.DashboardLive do
     Druzhok.InstanceManager.list()
     |> Task.async_stream(
       fn inst ->
-        container = Druzhok.BotManager.container_name(inst.name)
-
         [status_task, stats_task] =
           Enum.map(
             [
-              fn -> Druzhok.BotManager.status_for_container(container) end,
-              fn -> Druzhok.BotManager.stats_for_container(container) end
+              fn -> Druzhok.BotManager.status(inst.name) end,
+              fn -> Druzhok.BotManager.stats(inst.name) end
             ],
             &Task.async/1
           )

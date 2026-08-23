@@ -13,9 +13,7 @@ defmodule Druzhok.Runtime do
   @callback env_vars(instance) :: %{String.t() => String.t()}
   @callback workspace_files(instance) :: [workspace_file()]
   @callback sync_config(instance, data_root :: String.t()) :: :ok | {:error, term()}
-  @callback docker_image() :: String.t()
-  @callback gateway_command() :: String.t() | [String.t()]
-  @callback data_mount_path() :: String.t()
+  @callback data_root(instance) :: String.t()
   @callback file_browser_root(instance) :: String.t()
   @callback post_start(instance) :: :ok | {:error, term()}
   @callback supports_feature?(atom()) :: boolean()
@@ -23,7 +21,6 @@ defmodule Druzhok.Runtime do
   @callback add_allowed_user(data_root :: String.t(), user_id :: String.t()) :: :ok | {:error, term()}
   @callback remove_allowed_user(data_root :: String.t(), user_id :: String.t()) :: :ok | {:error, term()}
   @callback clear_sessions(data_root :: String.t()) :: :ok
-  @callback parse_log_rejection(line :: String.t()) :: {:rejected, user_id :: String.t()} | :ignore
 
   @optional_callbacks sync_config: 2
 
@@ -50,7 +47,7 @@ defmodule Druzhok.Runtime do
     end
   end
 
-  def proxy_host, do: System.get_env("LLM_PROXY_HOST") || "host.docker.internal"
+  def proxy_host, do: System.get_env("LLM_PROXY_HOST") || "127.0.0.1"
 
   def base_env(instance) do
     proxy_host = proxy_host()

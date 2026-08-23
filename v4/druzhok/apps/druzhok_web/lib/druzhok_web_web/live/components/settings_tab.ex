@@ -74,7 +74,7 @@ defmodule DruzhokWebWeb.Live.Components.SettingsTab do
           </div>
 
           <%!-- Card: Models --%>
-          <% is_running = @instance[:container_status] == "running" %>
+          <% is_running = @instance[:container_status] == "active" %>
           <div class="bg-raised/50 border border-line rounded-lg p-3 space-y-2.5">
             <h3 class="label">Models</h3>
             <div :if={is_running} class="text-[10px] text-warn bg-warn/10 border border-warn/20 rounded px-2 py-1">
@@ -525,14 +525,12 @@ defmodule DruzhokWebWeb.Live.Components.SettingsTab do
     {:noreply, socket}
   end
 
+  defp hermes_bin, do: Application.get_env(:druzhok, :hermes_bin, "hermes")
+
   defp approve_pairing_code(socket, code) do
     name = socket.assigns.instance.name
-    # Absolute venv path + uid 1000: docker exec skips the entrypoint that
-    # activates the venv and otherwise runs as root, which would leave
-    # approved.json unreadable by the gateway process.
     {output, exit_code} =
-      BotManager.exec(name, ["/opt/hermes/.venv/bin/hermes", "pairing", "approve", "telegram", code],
-                      user: "hermes")
+      BotManager.exec(name, [hermes_bin(), "pairing", "approve", "telegram", code])
 
     trimmed = String.trim(output)
     # Hermes exits 0 even when the code isn't found — sniff the text.

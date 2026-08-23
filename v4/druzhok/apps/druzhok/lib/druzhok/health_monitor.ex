@@ -1,7 +1,7 @@
 defmodule Druzhok.HealthMonitor do
   @moduledoc """
-  Periodically polls health of each running bot container.
-  Restarts containers that fail 3 consecutive health checks.
+  Periodically polls each running bot's unit state.
+  Restarts bots that fail 3 consecutive checks.
   """
   use GenServer
   require Logger
@@ -13,9 +13,7 @@ defmodule Druzhok.HealthMonitor do
     GenServer.start_link(__MODULE__, opts, name: __MODULE__)
   end
 
-  def register(name, container_id, bot_runtime \\ "zeroclaw") do
-    GenServer.cast(__MODULE__, {:register, name, container_id, bot_runtime})
-  end
+  def register(name), do: GenServer.cast(__MODULE__, {:register, name})
 
   def unregister(name) do
     GenServer.cast(__MODULE__, {:unregister, name})
@@ -32,8 +30,8 @@ defmodule Druzhok.HealthMonitor do
   end
 
   @impl true
-  def handle_cast({:register, name, container_id, bot_runtime}, state) do
-    bots = Map.put(state.bots, name, %{container_id: container_id, bot_runtime: bot_runtime, failures: 0, status: :healthy})
+  def handle_cast({:register, name}, state) do
+    bots = Map.put(state.bots, name, %{failures: 0, status: :healthy})
     {:noreply, %{state | bots: bots}}
   end
 
@@ -59,7 +57,7 @@ defmodule Druzhok.HealthMonitor do
   end
 
   defp check_one(name, info) do
-    case do_health_check(info.container_id) do
+    case do_health_check(name) do
       :ok ->
         if info.failures > 0, do: Logger.info("Bot #{name} recovered")
         %{info | failures: 0, status: :healthy}
@@ -79,11 +77,8 @@ defmodule Druzhok.HealthMonitor do
     end
   end
 
-  defp do_health_check(container) do
-    case System.cmd("docker", ["inspect", "--format", "{{.State.Running}}", container], stderr_to_stdout: true) do
-      {"true\n", 0} -> :ok
-      _ -> :error
-    end
+  defp do_health_check(name) do
+    if Druzhok.Host.status(name) == :active, do: :ok, else: :error
   end
 
   defp schedule_check do

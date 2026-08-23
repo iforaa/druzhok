@@ -265,7 +265,7 @@ defmodule Druzhok.ManagerBot do
         name = instance.name
         token = state.token
 
-        # Run the wipe async — docker rm -f can take a couple seconds and must
+        # Run the wipe async — stopping the unit can take a couple seconds and must
         # not block the poll loop.
         Task.start(fn ->
           try do

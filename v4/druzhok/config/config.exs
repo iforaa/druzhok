@@ -60,6 +60,7 @@ config :druzhok, Druzhok.Repo,
 config :druzhok,
   ecto_repos: [Druzhok.Repo],
   host: Druzhok.Host.Process,
+  data_root_default: Path.expand("../../data/tenants", __DIR__),
   hermes_bin: System.get_env("HERMES_BIN") || "hermes"
 
 # Import environment specific config. This must remain at the bottom

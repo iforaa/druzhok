@@ -2,14 +2,14 @@ defmodule Druzhok.Runtime.Hermes do
   @moduledoc """
   Runtime adapter for the Hermes agent (v4/hermes-agent).
 
-  One container per bot. `HERMES_HOME=/opt/data` points at the tenant's data
-  root on the host. All LLM traffic goes through druzhok's Elixir proxy via
+  One systemd unit (or dev process) per bot. `HERMES_HOME` is the tenant's
+  data root on disk (`/data/tenants/<name>` in prod). All LLM traffic goes through druzhok's Elixir proxy via
   `OPENAI_BASE_URL` + `OPENAI_API_KEY`; hermes flips its inference provider
   to `"custom"` automatically when `OPENAI_BASE_URL` is set
   (see hermes_cli/main.py:915).
 
   The allowlist is env-var driven: druzhok writes `TELEGRAM_ALLOWED_USERS`
-  at each container start from `instance.owner_telegram_id +
+  at each start from `instance.owner_telegram_id +
   instance.allowed_telegram_ids`. Hermes's own pairing store under
   `/opt/data/platforms/pairing/telegram-approved.json` is left for the bot
   to manage — we read it for the dashboard but don't write to it.
@@ -18,9 +18,8 @@ defmodule Druzhok.Runtime.Hermes do
   @behaviour Druzhok.Runtime
 
   require Logger
-  alias Druzhok.{BotManager, Instance}
+  alias Druzhok.Instance
 
-  @data_mount "/opt/data"
   @default_model "anthropic/claude-opus-4.6"
   @default_vision_model "google/gemini-2.5-flash-lite"
 
@@ -66,34 +65,20 @@ defmodule Druzhok.Runtime.Hermes do
   """
 
   @impl true
-  def docker_image, do: System.get_env("HERMES_IMAGE") || "hermes:latest"
-
-  @impl true
-  def gateway_command, do: ["gateway", "run"]
-
-  @impl true
-  def data_mount_path, do: @data_mount
-
-  @impl true
-  def file_browser_root(instance) do
-    # Hermes writes at the mount root (cron/, sessions/, memories/, workspace/, ...).
-    # Show the whole /opt/data equivalent to the operator, not just workspace/.
+  def data_root(instance) do
     case Map.get(instance, :workspace) do
-      nil -> ""
-      ws -> Path.dirname(ws)
+      ws when is_binary(ws) and ws != "" -> Path.dirname(ws)
+      _ -> ""
     end
   end
+
+  @impl true
+  def file_browser_root(instance), do: data_root(instance)
 
   @impl true
   def env_vars(instance) do
     # base_env/1 already provides OPENAI_BASE_URL, OPENAI_API_KEY, TZ —
     # only add hermes-specific keys here.
-    #
-    # HOME points at a writable directory on the mounted data root. Without
-    # it, hermes running as --user 1000:1000 hits `Path.home() == /` and
-    # fails to mkdir `/.local` on boot (no /etc/passwd entry for uid 1000).
-    # The hermes entrypoint creates `$HERMES_HOME/home` for exactly this
-    # purpose — per-profile HOME for subprocesses (git, ssh, npm, …).
     #
     # STT_OPENAI_BASE_URL routes voice transcription through the druzhok
     # proxy's /v1/audio/transcriptions endpoint instead of api.openai.com.
@@ -104,11 +89,11 @@ defmodule Druzhok.Runtime.Hermes do
     proxy_url = proxy_url()
 
     %{
-      "HERMES_HOME" => @data_mount,
+      "HERMES_HOME" => data_root(instance),
       "HERMES_QUIET" => "0",
       # Set MESSAGING_CWD so hermes's prompt_builder loads AGENTS.md
       # from the workspace, not from /root or /opt/hermes.
-      "MESSAGING_CWD" => @data_mount <> "/workspace",
+      "MESSAGING_CWD" => Path.join(data_root(instance), "workspace"),
       "TELEGRAM_BOT_TOKEN" => Map.get(instance, :telegram_token, "") || "",
       "TELEGRAM_ALLOWED_USERS" => build_allowlist(instance),
       "TELEGRAM_ALLOW_ALL_USERS" => to_string(Map.get(instance, :allow_all_telegram_users, false)),
@@ -142,12 +127,7 @@ defmodule Druzhok.Runtime.Hermes do
       "STT_OPENAI_BASE_URL" => proxy_url,
       # Web search: firecrawl backend → druzhok /v2/search → perplexity/sonar
       "FIRECRAWL_API_URL" => proxy_url |> String.replace_suffix("/v1", ""),
-      "FIRECRAWL_API_KEY" => tenant_key,
-      # Hermes now uses gosu for UID remapping (Dockerfile creates user
-      # hermes with UID 10000). Pass HERMES_UID/GID so the entrypoint
-      # remaps to the host user before dropping root.
-      "HERMES_UID" => BotManager.host_uid() || "1000",
-      "HERMES_GID" => BotManager.host_gid() || "1000"
+      "FIRECRAWL_API_KEY" => tenant_key
     }
   end
 
@@ -522,9 +502,6 @@ defmodule Druzhok.Runtime.Hermes do
 
   @impl true
   def post_start(_instance), do: :ok
-
-  @impl true
-  def parse_log_rejection(_line), do: :ignore
 
   @impl true
   def clear_sessions(data_root) do
