@@ -1,0 +1,11 @@
+{
+  email igor.n.kuz@gmail.com
+}
+
+oldey.dev, *.oldey.dev {
+  tls {
+    dns cloudflare {env.CLOUDFLARE_API_TOKEN}
+  }
+  encode zstd gzip
+  reverse_proxy 127.0.0.1:4000
+}

@@ -1,0 +1,132 @@
+#!/usr/bin/env bash
+# druzhok-ctl — the single privileged entry point Druzhok uses to manage
+# per-bot Linux users + systemd units. Invoked as root via sudo.
+#
+#   create <name>      (env file on stdin)   useradd + data dir + env + nft
+#   update-env <name>  (env file on stdin)   rewrite env file
+#   start|stop|restart|destroy <name>
+#   status <name>      → active|activating|inactive|failed|unknown
+#   stats <name>       → <mem_bytes>|<cpu_usec>
+#   logs <name> <n>
+#   exec <name> <cmd> [args…]                run as the bot user
+set -euo pipefail
+
+TENANTS=/data/tenants
+ENVDIR=/etc/druzhok
+NFT_FAMILY=inet
+NFT_TABLE=druzhok
+NFT_SET=bot_uids
+
+die() { echo "druzhok-ctl: $*" >&2; exit 1; }
+
+[ "$(id -u)" -eq 0 ] || die "must run as root"
+[ $# -ge 2 ] || die "usage: druzhok-ctl <cmd> <name> [args]"
+
+cmd=$1; name=$2; shift 2
+[[ "$name" =~ ^[a-z0-9][a-z0-9-]{0,30}$ ]] || die "invalid bot name: $name"
+
+user="bot-$name"
+unit="hermes@$name.service"
+root="$TENANTS/$name"
+envf="$ENVDIR/$name.env"
+
+user_exists() { id -u "$user" >/dev/null 2>&1; }
+uid_of()      { id -u "$user"; }
+
+write_env() {
+  # stdin → $envf, atomically, root-only. Reject anything that isn't KEY="…" lines.
+  local tmp
+  tmp=$(mktemp "$ENVDIR/.$name.XXXXXX")
+  cat > "$tmp"
+  if grep -vqE '^[A-Z_][A-Z0-9_]*=".*"$' "$tmp"; then
+    rm -f "$tmp"; die "env file must contain only KEY=\"value\" lines"
+  fi
+  chmod 0600 "$tmp"; chown root:root "$tmp"
+  mv -f "$tmp" "$envf"
+}
+
+nft_add() {
+  nft add element "$NFT_FAMILY" "$NFT_TABLE" "$NFT_SET" "{ $(uid_of) }" 2>/dev/null || true
+}
+nft_del() {
+  local uid
+  uid=$(uid_of) || return 0
+  nft delete element "$NFT_FAMILY" "$NFT_TABLE" "$NFT_SET" "{ $uid }" 2>/dev/null || true
+}
+
+case "$cmd" in
+  create)
+    if ! user_exists; then
+      useradd --system --no-create-home --shell /usr/sbin/nologin --home-dir "$root" "$user"
+    fi
+    install -d -m 0700 -o "$user" -g "$user" "$root" "$root/home" "$root/workspace"
+    # Data copied in from another host is root-owned; hand it to the bot.
+    chown -R "$user:$user" "$root"
+    mkdir -p "$ENVDIR"; chmod 0755 "$ENVDIR"
+    write_env
+    nft_add
+    ;;
+  update-env)
+    user_exists || die "no such bot: $name"
+    write_env
+    ;;
+  start|restart)
+    user_exists || die "no such bot: $name"
+    systemctl "$cmd" "$unit"
+    ;;
+  stop)
+    user_exists || die "no such bot: $name"
+    systemctl stop "$unit"
+    systemctl reset-failed "$unit" 2>/dev/null || true
+    ;;
+  status)
+    if ! user_exists; then echo unknown; exit 0; fi
+    st=$(systemctl is-active "$unit" 2>/dev/null || true)
+    case "$st" in
+      active|activating|inactive|failed) echo "$st";;
+      *) echo inactive;;
+    esac
+    ;;
+  stats)
+    user_exists || die "no such bot: $name"
+    cg="/sys/fs/cgroup/system.slice/$unit"
+    if [ -r "$cg/memory.current" ]; then
+      mem=$(cat "$cg/memory.current")
+      cpu=$(awk '/^usage_usec/ {print $2}' "$cg/cpu.stat")
+      echo "${mem:-0}|${cpu:-0}"
+    else
+      echo "0|0"
+    fi
+    ;;
+  logs)
+    n=${1:-200}
+    [[ "$n" =~ ^[0-9]+$ ]] || die "bad line count"
+    journalctl -u "$unit" -n "$n" --no-pager -o cat 2>/dev/null || true
+    ;;
+  exec)
+    user_exists || die "no such bot: $name"
+    [ $# -ge 1 ] || die "exec needs a command"
+    envargs=()
+    if [ -r "$envf" ]; then
+      while IFS= read -r line; do
+        [ -n "$line" ] || continue
+        key=${line%%=*}; val=${line#*=}; val=${val#\"}; val=${val%\"}
+        envargs+=("$key=$val")
+      done < "$envf"
+    fi
+    exec runuser -u "$user" -- env -i HOME="$root/home" HERMES_HOME="$root" \
+      PATH=/usr/local/bin:/usr/bin:/bin "${envargs[@]}" "$@" 2>&1
+    ;;
+  destroy)
+    if user_exists; then
+      systemctl stop "$unit" 2>/dev/null || true
+      systemctl reset-failed "$unit" 2>/dev/null || true
+      nft_del
+      userdel "$user"
+    fi
+    rm -f "$envf"
+    ;;
+  *)
+    die "unknown command: $cmd"
+    ;;
+esac

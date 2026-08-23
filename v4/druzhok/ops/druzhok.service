@@ -1,0 +1,19 @@
+[Unit]
+Description=Druzhok orchestrator (Phoenix)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=ubuntu
+Group=ubuntu
+WorkingDirectory=/home/ubuntu/druzhok/v4/druzhok
+EnvironmentFile=/etc/druzhok/druzhok.env
+Environment=MIX_ENV=prod PHX_SERVER=true PORT=4000 DRUZHOK_HOST=systemd
+Environment=DATABASE_PATH=/data/druzhok/druzhok.db DRUZHOK_DATA_ROOT=/data/tenants LLM_PROXY_HOST=127.0.0.1
+ExecStart=/bin/bash -lc '. /home/ubuntu/.asdf/asdf.sh && exec mix phx.server'
+Restart=always
+RestartSec=5
+KillMode=mixed
+
+[Install]
+WantedBy=multi-user.target

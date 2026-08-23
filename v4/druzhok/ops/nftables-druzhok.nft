@@ -1,0 +1,24 @@
+#!/usr/sbin/nft -f
+# Egress policy for bot users. druzhok-ctl adds each bot's uid to @bot_uids.
+table inet druzhok {
+  set bot_uids { type uid; }
+
+  chain output {
+    type filter hook output priority 0; policy accept;
+
+    meta skuid != @bot_uids accept
+
+    # Druzhok proxy
+    ip daddr 127.0.0.1 tcp dport 4000 accept
+    # DNS
+    udp dport 53 accept
+    tcp dport 53 accept
+    # cloud metadata + any other local service
+    ip daddr 169.254.0.0/16 drop
+    ip daddr 127.0.0.0/8 drop
+    ip6 daddr ::1 drop
+    # general web, counted per uid
+    tcp dport { 80, 443 } meter bot_web { meta skuid counter } accept
+    counter drop
+  }
+}

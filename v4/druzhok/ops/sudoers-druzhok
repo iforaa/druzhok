@@ -1,0 +1,2 @@
+ubuntu ALL=(root) NOPASSWD: /usr/local/sbin/druzhok-ctl
+Defaults!/usr/local/sbin/druzhok-ctl !requiretty

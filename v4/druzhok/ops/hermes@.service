@@ -1,0 +1,49 @@
+[Unit]
+Description=Hermes bot %i
+After=network-online.target druzhok.service
+Wants=network-online.target
+
+[Service]
+Type=notify
+NotifyAccess=all
+WatchdogSec=120
+User=bot-%i
+Group=bot-%i
+EnvironmentFile=/etc/druzhok/%i.env
+Environment=HERMES_HOME=/data/tenants/%i
+Environment=HOME=/data/tenants/%i/home
+Environment=PATH=/usr/local/bin:/usr/bin:/bin
+WorkingDirectory=/data/tenants/%i/workspace
+ExecStart=/opt/hermes/.venv/bin/hermes gateway run
+Restart=always
+RestartSec=5
+TimeoutStartSec=300
+KillMode=mixed
+
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+ReadWritePaths=/data/tenants/%i
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+RestrictSUIDSGID=yes
+RestrictRealtime=yes
+RestrictNamespaces=yes
+LockPersonality=yes
+SystemCallFilter=@system-service
+SystemCallErrorNumber=EPERM
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+CapabilityBoundingSet=
+
+MemoryMax=1G
+MemoryHigh=800M
+CPUQuota=100%
+TasksMax=256
+
+[Install]
+WantedBy=multi-user.target
