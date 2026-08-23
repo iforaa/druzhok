@@ -444,6 +444,10 @@ defmodule DruzhokWebWeb.DashboardLive do
                 <%= String.upcase(inst[:bot_runtime] || "hermes") %>
                 <span class="text-faint">·</span>
                 <%= model_short(inst.model) %><%= if !inst[:active], do: " · stopped" %>
+                <%= if h = inst[:health] do %>
+                  <span class="text-faint">·</span>
+                  <span class={health_color(h.status)} title={inspect(h.reasons)}><%= h.status %></span>
+                <% end %>
               </div>
             </div>
           </div>
@@ -692,6 +696,10 @@ defmodule DruzhokWebWeb.DashboardLive do
     end
   end
 
+  defp health_color(:healthy), do: "text-ok"
+  defp health_color(:degraded), do: "text-warn"
+  defp health_color(_), do: "text-err"
+
   defp status_dot_color("active"), do: "bg-ok"
   defp status_dot_color("failed"), do: "bg-err"
   defp status_dot_color("inactive"), do: "bg-idle"
@@ -810,7 +818,8 @@ defmodule DruzhokWebWeb.DashboardLive do
     Enum.zip(old, new)
     |> Enum.all?(fn {o, n} ->
       o[:name] == n[:name] and o[:container_status] == n[:container_status] and
-        o[:container_stats] == n[:container_stats] and o[:active] == n[:active]
+        o[:container_stats] == n[:container_stats] and o[:active] == n[:active] and
+        o[:health] == n[:health]
     end)
   end
 
@@ -827,6 +836,8 @@ defmodule DruzhokWebWeb.DashboardLive do
   end
 
   defp list_instances do
+    health = Druzhok.HealthMonitor.list()
+
     Druzhok.InstanceManager.list()
     |> Task.async_stream(
       fn inst ->
@@ -843,6 +854,7 @@ defmodule DruzhokWebWeb.DashboardLive do
         |> instance_to_map()
         |> Map.put(:container_status, Task.await(status_task, 4_000))
         |> Map.put(:container_stats, Task.await(stats_task, 4_000))
+        |> Map.put(:health, Map.get(health, inst.name))
       end,
       max_concurrency: 8,
       timeout: 6_000,

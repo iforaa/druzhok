@@ -1,87 +1,102 @@
 defmodule Druzhok.HealthMonitor do
   @moduledoc """
-  Periodically polls each running bot's unit state.
-  Restarts bots that fail 3 consecutive checks.
+  Runs `Druzhok.HealthMonitor.Probe` for every registered bot every 60 s.
+  Three consecutive `:down` results restart the bot. Every transition into
+  degraded/down is recorded in `crash_logs` so /errors is the alert feed.
   """
   use GenServer
   require Logger
 
-  @check_interval 30_000
+  @interval 60_000
   @max_failures 3
+  @probe_timeout 20_000
 
-  def start_link(opts \\ []) do
-    GenServer.start_link(__MODULE__, opts, name: __MODULE__)
-  end
-
+  def start_link(opts \\ []), do: GenServer.start_link(__MODULE__, opts, name: __MODULE__)
   def register(name), do: GenServer.cast(__MODULE__, {:register, name})
-
-  def unregister(name) do
-    GenServer.cast(__MODULE__, {:unregister, name})
-  end
-
-  def list do
-    GenServer.call(__MODULE__, :list)
-  end
+  def unregister(name), do: GenServer.cast(__MODULE__, {:unregister, name})
+  def list, do: GenServer.call(__MODULE__, :list)
 
   @impl true
-  def init(_opts) do
-    schedule_check()
+  def init(_) do
+    schedule()
     {:ok, %{bots: %{}}}
   end
 
   @impl true
-  def handle_cast({:register, name}, state) do
-    bots = Map.put(state.bots, name, %{failures: 0, status: :healthy})
-    {:noreply, %{state | bots: bots}}
+  def handle_cast({:register, name}, s) do
+    entry = %{status: :healthy, reasons: [], failures: 0, checked_at: nil}
+    {:noreply, put_in(s, [:bots, name], entry)}
   end
 
-  @impl true
-  def handle_cast({:unregister, name}, state) do
-    {:noreply, %{state | bots: Map.delete(state.bots, name)}}
-  end
+  def handle_cast({:unregister, name}, s), do: {:noreply, %{s | bots: Map.delete(s.bots, name)}}
 
   @impl true
-  def handle_call(:list, _from, state) do
-    {:reply, state.bots, state}
-  end
+  def handle_call(:list, _from, s), do: {:reply, s.bots, s}
 
   @impl true
-  def handle_info(:check_health, state) do
+  def handle_info(:check, s) do
+    instances = Druzhok.InstanceManager.list() |> Map.new(&{&1.name, &1})
+
+    results =
+      s.bots
+      |> Map.keys()
+      |> Task.async_stream(
+        fn name ->
+          case instances[name] do
+            nil -> {name, {:down, {:unit, :unknown}}}
+            inst -> {name, Druzhok.HealthMonitor.Probe.run(inst)}
+          end
+        end,
+        timeout: @probe_timeout,
+        on_timeout: :kill_task,
+        max_concurrency: 4
+      )
+      |> Enum.flat_map(fn
+        {:ok, {name, res}} -> [{name, res}]
+        {:exit, _} -> []
+      end)
+
     bots =
-      state.bots
-      |> Enum.map(fn {name, info} -> {name, check_one(name, info)} end)
-      |> Map.new()
+      Enum.reduce(results, s.bots, fn {name, res}, acc ->
+        Map.update!(acc, name, &apply_result(name, &1, res))
+      end)
 
-    schedule_check()
-    {:noreply, %{state | bots: bots}}
+    schedule()
+    {:noreply, %{s | bots: bots}}
   end
 
-  defp check_one(name, info) do
-    case do_health_check(name) do
-      :ok ->
-        if info.failures > 0, do: Logger.info("Bot #{name} recovered")
-        %{info | failures: 0, status: :healthy}
+  defp apply_result(name, info, {:healthy, []}) do
+    if info.status != :healthy, do: Logger.info("Bot #{name} healthy again")
+    %{info | status: :healthy, reasons: [], failures: 0, checked_at: DateTime.utc_now()}
+  end
 
-      :error ->
-        failures = info.failures + 1
-        Logger.warning("Bot #{name} health check failed (#{failures}/#{@max_failures})")
+  defp apply_result(name, info, {:degraded, reasons}) do
+    if info.status != :degraded or info.reasons != reasons, do: log(name, "degraded", reasons)
+    %{info | status: :degraded, reasons: reasons, failures: 0, checked_at: DateTime.utc_now()}
+  end
 
-        if failures >= @max_failures do
-          Logger.error("Bot #{name} unhealthy, attempting restart")
-          Druzhok.Events.broadcast(name, %{type: :health_restart})
-          Task.start(fn -> Druzhok.BotManager.restart(name) end)
-          %{info | failures: 0, status: :restarting}
-        else
-          %{info | failures: failures, status: :degraded}
-        end
+  defp apply_result(name, info, {:down, reason}) do
+    failures = info.failures + 1
+    if info.status != :down, do: log(name, "down", [reason])
+    Logger.warning("Bot #{name} down (#{failures}/#{@max_failures}): #{inspect(reason)}")
+
+    if failures >= @max_failures do
+      Druzhok.Events.broadcast(name, %{type: :health_restart})
+      Task.start(fn -> Druzhok.BotManager.restart(name) end)
+      %{info | status: :down, reasons: [reason], failures: 0, checked_at: DateTime.utc_now()}
+    else
+      %{info | status: :down, reasons: [reason], failures: failures, checked_at: DateTime.utc_now()}
     end
   end
 
-  defp do_health_check(name) do
-    if Druzhok.Host.status(name) == :active, do: :ok, else: :error
+  defp log(name, level_word, reasons) do
+    Druzhok.CrashLog.insert(%{
+      level: if(level_word == "down", do: "error", else: "warning"),
+      message: "Bot #{name} #{level_word}: #{inspect(reasons)}",
+      source: "Druzhok.HealthMonitor",
+      instance_name: name
+    })
   end
 
-  defp schedule_check do
-    Process.send_after(self(), :check_health, @check_interval)
-  end
+  defp schedule, do: Process.send_after(self(), :check, @interval)
 end
