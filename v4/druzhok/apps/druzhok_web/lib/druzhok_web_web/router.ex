@@ -1,6 +1,8 @@
 defmodule DruzhokWebWeb.Router do
   use DruzhokWebWeb, :router
 
+  import DruzhokWebWeb.Auth, only: [require_admin: 2]
+
   pipeline :browser do
     plug :accepts, ["html"]
     plug :fetch_session
@@ -14,9 +16,12 @@ defmodule DruzhokWebWeb.Router do
     plug DruzhokWebWeb.Auth
   end
 
-  # LLM Proxy API (used by bots)
+  pipeline :admin do
+    plug :require_admin
+  end
+
+  # LLM Proxy API (used by bots). Every route requires a tenant key.
   pipeline :llm_api do
-    plug :accepts, ["json"]
     plug DruzhokWebWeb.Plugs.LlmAuth
   end
 
@@ -26,19 +31,16 @@ defmodule DruzhokWebWeb.Router do
     post "/chat/completions", LlmProxyController, :chat_completions
     post "/embeddings", LlmProxyController, :embeddings
     post "/images/generations", LlmProxyController, :images_generations
-  end
-
-  # Media proxy — no tenant auth (called from bot containers on localhost).
-  scope "/v1", DruzhokWebWeb do
     post "/audio/transcriptions", LlmProxyController, :audio_transcriptions
     post "/audio/speech", LlmProxyController, :audio_speech
     post "/responses", LlmProxyController, :responses_proxy
   end
 
-  # Firecrawl-compatible v2 API (currently only /search — used by hermes
-  # web_search_tool via FIRECRAWL_API_URL env var). Forwards to OpenRouter
-  # perplexity/sonar under the hood and reuses tenant-keyed metering.
+  # Firecrawl-compatible v2 API (only /search — hermes web_search via
+  # FIRECRAWL_API_URL). Forwards to OpenRouter perplexity/sonar.
   scope "/v2", DruzhokWebWeb do
+    pipe_through :llm_api
+
     post "/search", LlmProxyController, :firecrawl_search
   end
 
@@ -58,6 +60,12 @@ defmodule DruzhokWebWeb.Router do
     live "/", DashboardLive
     live "/instances/:name", DashboardLive
     live "/instances/:name/:tab", DashboardLive
+  end
+
+  # Admin-only routes
+  scope "/", DruzhokWebWeb do
+    pipe_through [:browser, :auth, :admin]
+
     live "/settings", SettingsLive
     live "/models", ModelsLive
     live "/errors", ErrorsLive

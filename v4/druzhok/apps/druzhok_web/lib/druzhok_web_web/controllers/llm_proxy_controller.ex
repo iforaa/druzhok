@@ -255,17 +255,14 @@ defmodule DruzhokWebWeb.LlmProxyController do
     if is_nil(or_key) do
       json_error(conn, 503, "Audio transcription not configured", "server_error")
     else
-      instance = resolve_instance(conn)
+      instance = conn.assigns.instance
 
-      if instance do
-        case Budget.check(instance.id) do
-          {:error, :exceeded} ->
-            json_error(conn, 429, budget_exceeded_message(instance), "budget_exceeded")
-          {:ok, _} ->
-            do_audio_transcription(conn, or_key, instance)
-        end
-      else
-        do_audio_transcription(conn, or_key, nil)
+      case Budget.check(instance.id) do
+        {:error, :exceeded} ->
+          json_error(conn, 429, budget_exceeded_message(instance), "budget_exceeded")
+
+        {:ok, _} ->
+          do_audio_transcription(conn, or_key, instance)
       end
     end
   end
@@ -402,13 +399,13 @@ defmodule DruzhokWebWeb.LlmProxyController do
     if is_nil(openai_key) do
       json_error(conn, 503, "Text-to-speech not configured", "server_error")
     else
-      instance = resolve_instance(conn)
+      instance = conn.assigns.instance
 
-      case instance && Budget.check(instance.id) do
+      case Budget.check(instance.id) do
         {:error, :exceeded} ->
           json_error(conn, 429, budget_exceeded_message(instance), "budget_exceeded")
 
-        _ ->
+        {:ok, _} ->
           do_audio_speech(conn, openai_key, instance)
       end
     end
@@ -504,13 +501,13 @@ defmodule DruzhokWebWeb.LlmProxyController do
         send_resp(conn, 400, Jason.encode!(%{success: false, error: "query is required"}))
 
       true ->
-        instance = resolve_instance(conn)
+        instance = conn.assigns.instance
 
-        case instance && Budget.check(instance.id) do
+        case Budget.check(instance.id) do
           {:error, :exceeded} ->
             send_resp(conn, 429, Jason.encode!(%{success: false, error: "Token budget exceeded"}))
 
-          _ ->
+          {:ok, _} ->
             do_firecrawl_search(conn, instance, query, limit)
         end
     end
@@ -792,18 +789,15 @@ defmodule DruzhokWebWeb.LlmProxyController do
   def responses_proxy(conn, _params) do
     # OpenAI Responses API → convert to chat/completions format for OpenRouter
     body = conn.body_params
-    instance = resolve_instance(conn)
-    image_model = if instance, do: instance.image_model || @default_image_model, else: @default_image_model
+    instance = conn.assigns.instance
+    image_model = instance.image_model || @default_image_model
 
-    if instance do
-      case Budget.check(instance.id) do
-        {:error, :exceeded} ->
-          json_error(conn, 429, "Token budget exceeded", "insufficient_quota")
-        {:ok, _} ->
-          do_responses_proxy(conn, body, image_model, instance)
-      end
-    else
-      do_responses_proxy(conn, body, image_model, nil)
+    case Budget.check(instance.id) do
+      {:error, :exceeded} ->
+        json_error(conn, 429, "Token budget exceeded", "insufficient_quota")
+
+      {:ok, _} ->
+        do_responses_proxy(conn, body, image_model, instance)
     end
   end
 
@@ -835,13 +829,13 @@ defmodule DruzhokWebWeb.LlmProxyController do
           Logger.info("[responses] status=#{status} body=#{String.slice(trimmed, 0, 300)}")
           resp_body = convert_chat_to_responses(resp_body, body["model"])
 
-          if instance do
-            case Jason.decode(trimmed) do
-              {:ok, decoded} ->
-                cost_cents = LlmFormat.extract_cost_cents(decoded, image_model)
-                meter_image(instance, LlmFormat.extract_usage(decoded), image_model, started_at, cost_cents)
-              _ -> :ok
-            end
+          case Jason.decode(trimmed) do
+            {:ok, decoded} ->
+              cost_cents = LlmFormat.extract_cost_cents(decoded, image_model)
+              meter_image(instance, LlmFormat.extract_usage(decoded), image_model, started_at, cost_cents)
+
+            _ ->
+              :ok
           end
 
           conn
@@ -998,14 +992,6 @@ defmodule DruzhokWebWeb.LlmProxyController do
   defp get_setting(key) do
     import Ecto.Query
     Druzhok.Repo.one(from s in "settings", where: s.key == ^key, select: s.value)
-  end
-
-  defp resolve_instance(conn) do
-    case Plug.Conn.get_req_header(conn, "authorization") do
-      ["Bearer " <> token] ->
-        Druzhok.Repo.get_by(Druzhok.Instance, tenant_key: token)
-      _ -> nil
-    end
   end
 
   defp json_error(conn, status, message, type) do
