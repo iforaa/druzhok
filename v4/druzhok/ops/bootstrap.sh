@@ -91,6 +91,7 @@ if [ -f "$TV" ]; then
     . ~/.asdf/asdf.sh
     asdf plugin add erlang 2>/dev/null || true
     asdf plugin add elixir 2>/dev/null || true
+    mkdir -p /data/home-ubuntu/tmp && export TMPDIR=/data/home-ubuntu/tmp
     cd ~/druzhok/v4/druzhok && KERL_CONFIGURE_OPTIONS='--without-wx --without-javac --without-odbc --without-debugger --without-observer --without-et' KERL_BUILD_DOCS=no KERL_BUILD_DIR=/data/home-ubuntu/kerl-build asdf install
   "
 else
