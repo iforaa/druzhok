@@ -6,6 +6,9 @@ OPS=$(cd "$(dirname "$0")" && pwd)
 HERMES_REPO=https://github.com/iforaa/druzhok-hermes.git
 DATA_DEV=${DATA_DEV:-/dev/sdb}
 ASDF_VERSION=v0.14.1
+# The root disk is only 5 GB: big trees live on /data behind symlinks.
+HERMES_DIR=/data/opt/hermes          # /opt/hermes -> here
+ASDF_DIR=/data/home-ubuntu/.asdf     # /home/ubuntu/.asdf -> here
 
 step() { echo; echo "==> $*"; }
 
@@ -19,15 +22,19 @@ else
   echo "!! $DATA_DEV not found; using root filesystem for /data"
   mkdir -p /data
 fi
-install -d -m 0755 /data/tenants
+install -d -m 0755 /data/tenants /data/opt
 install -d -m 0750 -o ubuntu -g ubuntu /data/druzhok
+install -d -o ubuntu -g ubuntu /data/home-ubuntu "$ASDF_DIR"
+[ -L /opt/hermes ] || ln -sfn "$HERMES_DIR" /opt/hermes
+[ -L /home/ubuntu/.asdf ] || { rm -rf /home/ubuntu/.asdf; sudo -u ubuntu ln -sfn "$ASDF_DIR" /home/ubuntu/.asdf; }
 
 step "packages"
 export DEBIAN_FRONTEND=noninteractive
 apt-get update -q
-apt-get install -y -q git curl build-essential nftables unzip \
-  libssl-dev libncurses-dev autoconf m4 libpng-dev libssh-dev unixodbc-dev xsltproc fop libxml2-utils \
+apt-get install -y -q --no-install-recommends git curl build-essential nftables unzip \
+  libssl-dev libncurses-dev autoconf m4 \
   python3 python3-venv ffmpeg unattended-upgrades debian-keyring debian-archive-keyring apt-transport-https
+apt-get clean
 command -v uv >/dev/null || { curl -LsSf https://astral.sh/uv/install.sh | env UV_INSTALL_DIR=/usr/local/bin sh; }
 
 step "caddy (with cloudflare dns module)"
@@ -44,10 +51,10 @@ printf '[Service]\nEnvironmentFile=/etc/caddy/env\n' > /etc/systemd/system/caddy
 systemctl disable --now caddy >/dev/null 2>&1 || true   # enabled later, once the CF token is in place
 
 step "hermes → /opt/hermes"
-if [ ! -d /opt/hermes/.git ]; then git clone -q "$HERMES_REPO" /opt/hermes; fi
-( cd /opt/hermes && git fetch -q origin && git reset -q --hard origin/main \
-  && UV_PROJECT_ENVIRONMENT=/opt/hermes/.venv uv sync --frozen --extra all --extra messaging --extra firecrawl 2>&1 | tail -2 )
-chown -R root:root /opt/hermes; chmod -R a+rX /opt/hermes
+if [ ! -d "$HERMES_DIR/.git" ]; then git clone -q "$HERMES_REPO" "$HERMES_DIR"; fi
+( cd "$HERMES_DIR" && git fetch -q origin && git reset -q --hard origin/main \
+  && UV_CACHE_DIR=/data/opt/uv-cache uv sync --frozen --extra all --extra messaging --extra firecrawl 2>&1 | tail -2 )
+chown -R root:root "$HERMES_DIR"; chmod -R a+rX "$HERMES_DIR"
 
 step "druzhok-ctl + units + sudoers + nftables"
 install -m 0755 "$OPS/druzhok-ctl" /usr/local/sbin/druzhok-ctl
@@ -79,11 +86,11 @@ TV=/home/ubuntu/druzhok/v4/druzhok/.tool-versions
 if [ -f "$TV" ]; then
   sudo -u ubuntu -H bash -lc "
     set -e
-    [ -d ~/.asdf ] || git clone -q https://github.com/asdf-vm/asdf.git ~/.asdf --branch $ASDF_VERSION
+    [ -d ~/.asdf/.git ] || git clone -q https://github.com/asdf-vm/asdf.git ~/.asdf --branch $ASDF_VERSION
     . ~/.asdf/asdf.sh
     asdf plugin add erlang 2>/dev/null || true
     asdf plugin add elixir 2>/dev/null || true
-    cd ~/druzhok/v4/druzhok && KERL_CONFIGURE_OPTIONS='--without-wx --without-javac --without-odbc' asdf install
+    cd ~/druzhok/v4/druzhok && KERL_CONFIGURE_OPTIONS='--without-wx --without-javac --without-odbc --without-debugger --without-observer --without-et' KERL_BUILD_DOCS=no KERL_BUILD_DIR=/data/home-ubuntu/kerl-build asdf install
   "
 else
   echo "!! clone the druzhok repo to /home/ubuntu/druzhok first, then re-run for asdf"
