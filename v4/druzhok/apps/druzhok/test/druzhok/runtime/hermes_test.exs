@@ -150,199 +150,48 @@ defmodule Druzhok.Runtime.HermesTest do
     end
   end
 
-  describe "sync_config/2 — honcho.json" do
+  describe "sync_config/2 — memory block" do
     setup do
-      prev = System.get_env("HONCHO_JWT_SECRET")
-      System.put_env("HONCHO_JWT_SECRET", "test-secret-32-bytes-long-enough")
-
-      on_exit(fn ->
-        case prev do
-          nil -> System.delete_env("HONCHO_JWT_SECRET")
-          v -> System.put_env("HONCHO_JWT_SECRET", v)
-        end
-      end)
-
-      :ok
+      tmp_dir = Path.join(System.tmp_dir!(), "hermes-mem-#{System.unique_integer([:positive])}")
+      File.mkdir_p!(Path.join(tmp_dir, "workspace"))
+      on_exit(fn -> File.rm_rf!(tmp_dir) end)
+      %{tmp_dir: tmp_dir}
     end
 
-    @tag :tmp_dir
-    test "writes honcho.json with apiKey nested under hosts.hermes",
-         %{tmp_dir: tmp_dir} do
-      File.write!(Path.join(tmp_dir, "config.yaml"), "model:\n  default: \"x\"\n")
-
-      inst =
-        @instance
-        |> Map.put(:memory_provider, "honcho")
-        |> Map.put(:honcho_token, "pre-existing-token")
-
-      assert :ok = Hermes.sync_config(inst, tmp_dir)
-
-      json = File.read!(Path.join(tmp_dir, "honcho.json")) |> Jason.decode!()
-      # Top-level identity.
-      assert json["baseUrl"] == "http://127.0.0.1:8000"
-      assert json["workspace"] == "alice"
-      # Per-host config — must be under "hosts.hermes" so the plugin's
-      # local-auth bypass treats this as "user explicitly enabled auth".
-      host = json["hosts"]["hermes"]
-      assert host["apiKey"] == "pre-existing-token"
-      assert host["aiPeer"] == "alice"
-      assert host["recallMode"] == "hybrid"
-      # apiKey must NOT be at the top level (plugin would substitute "local").
-      refute Map.has_key?(json, "apiKey")
-    end
-
-    @tag :tmp_dir
-    test "removes honcho.json when memory_provider=builtin", %{tmp_dir: tmp_dir} do
-      File.write!(Path.join(tmp_dir, "config.yaml"), "model:\n  default: \"x\"\n")
-      File.write!(Path.join(tmp_dir, "honcho.json"), ~s({"stale": true}))
-
-      inst = Map.put(@instance, :memory_provider, "builtin")
-      assert :ok = Hermes.sync_config(inst, tmp_dir)
-
-      refute File.exists?(Path.join(tmp_dir, "honcho.json"))
-    end
-
-    @tag :tmp_dir
-    test "defaults workspace to instance.name when honcho_workspace blank",
-         %{tmp_dir: tmp_dir} do
-      File.write!(Path.join(tmp_dir, "config.yaml"), "model:\n  default: \"x\"\n")
-
-      inst =
-        @instance
-        |> Map.put(:memory_provider, "honcho")
-        |> Map.put(:honcho_workspace, nil)
-        |> Map.put(:honcho_token, "tok")
-
-      assert :ok = Hermes.sync_config(inst, tmp_dir)
-
-      json = File.read!(Path.join(tmp_dir, "honcho.json")) |> Jason.decode!()
-      assert json["workspace"] == "alice"
-    end
-
-    @tag :tmp_dir
-    test "honors explicit honcho_workspace override", %{tmp_dir: tmp_dir} do
-      File.write!(Path.join(tmp_dir, "config.yaml"), "model:\n  default: \"x\"\n")
-
-      inst =
-        @instance
-        |> Map.put(:memory_provider, "honcho")
-        |> Map.put(:honcho_workspace, "shared-ws")
-        |> Map.put(:honcho_token, "tok")
-
-      assert :ok = Hermes.sync_config(inst, tmp_dir)
-
-      json = File.read!(Path.join(tmp_dir, "honcho.json")) |> Jason.decode!()
-      assert json["workspace"] == "shared-ws"
-      assert json["hosts"]["hermes"]["aiPeer"] == "alice"
-    end
-
-    @tag :tmp_dir
-    test "writes memory.provider into the memory block (nested, not top-level)",
-         %{tmp_dir: tmp_dir} do
-      File.write!(Path.join(tmp_dir, "config.yaml"), "model:\n  default: \"x\"\n")
-
-      inst =
-        @instance
-        |> Map.put(:memory_provider, "honcho")
-        |> Map.put(:honcho_token, "tok")
-
-      assert :ok = Hermes.sync_config(inst, tmp_dir)
-
-      yaml = File.read!(Path.join(tmp_dir, "config.yaml"))
-      # Hermes reads config.get("memory", {}).get("provider") —
-      # provider MUST be a sub-key of the `memory:` block, not top-level.
-      assert yaml =~ ~r/^memory:[ \t]*\n(?:[ \t]+\S.*\n)*[ \t]+provider: honcho$/m
-      refute yaml =~ ~r/^memory_provider:/m
-    end
-
-    @tag :tmp_dir
-    test "switching to honcho disables legacy memory + preserves char limits",
-         %{tmp_dir: tmp_dir} do
+    test "forces builtin provider and legacy memory on, keeps char limits", %{tmp_dir: tmp_dir} do
       File.write!(Path.join(tmp_dir, "config.yaml"), """
       model:
         default: "x"
-
-      memory:
-        provider: builtin
-        memory_enabled: true
-        user_profile_enabled: true
-        memory_char_limit: 9999
-        user_char_limit: 7777
-
-      quick_commands:
-        start:
-          type: alias
-          target: new
-      """)
-
-      inst =
-        @instance
-        |> Map.put(:memory_provider, "honcho")
-        |> Map.put(:honcho_token, "tok")
-
-      assert :ok = Hermes.sync_config(inst, tmp_dir)
-
-      yaml = File.read!(Path.join(tmp_dir, "config.yaml"))
-      memory_headers = Regex.scan(~r/^memory:/m, yaml)
-      assert length(memory_headers) == 1
-      # Provider flipped + legacy MEMORY.md tool gated off.
-      assert yaml =~ ~r/[ \t]+provider: honcho$/m
-      assert yaml =~ ~r/memory_enabled: false$/m
-      assert yaml =~ ~r/user_profile_enabled: false$/m
-      # User customizations of char limits preserved.
-      assert yaml =~ ~r/memory_char_limit: 9999/
-      assert yaml =~ ~r/user_char_limit: 7777/
-      # Subsequent blocks are untouched.
-      assert yaml =~ ~r/quick_commands:/
-    end
-
-    @tag :tmp_dir
-    test "switching back to builtin re-enables legacy memory",
-         %{tmp_dir: tmp_dir} do
-      File.write!(Path.join(tmp_dir, "config.yaml"), """
-      model:
-        default: "x"
-
       memory:
         provider: honcho
         memory_enabled: false
         user_profile_enabled: false
-        memory_char_limit: 2200
-        user_char_limit: 1375
+        memory_char_limit: 999
       """)
 
-      inst = Map.put(@instance, :memory_provider, "builtin")
-      assert :ok = Hermes.sync_config(inst, tmp_dir)
-
-      yaml = File.read!(Path.join(tmp_dir, "config.yaml"))
-      assert yaml =~ ~r/[ \t]+provider: builtin$/m
-      assert yaml =~ ~r/memory_enabled: true$/m
-      assert yaml =~ ~r/user_profile_enabled: true$/m
+      assert :ok = Hermes.sync_config(%{name: "b", model: "x", tenant_key: "k"}, tmp_dir)
+      content = File.read!(Path.join(tmp_dir, "config.yaml"))
+      assert content =~ ~r/^  provider: builtin$/m
+      assert content =~ ~r/^  memory_enabled: true$/m
+      assert content =~ ~r/^  user_profile_enabled: true$/m
+      assert content =~ ~r/^  memory_char_limit: 999$/m
     end
 
-    @tag :tmp_dir
-    test "inserts provider + legacy flags when memory block exists without them",
-         %{tmp_dir: tmp_dir} do
-      File.write!(Path.join(tmp_dir, "config.yaml"), """
-      model:
-        default: "x"
+    test "removes a stale honcho.json", %{tmp_dir: tmp_dir} do
+      File.write!(Path.join(tmp_dir, "config.yaml"), "model:\n  default: \"x\"\n")
+      File.write!(Path.join(tmp_dir, "honcho.json"), "{}")
+      assert :ok = Hermes.sync_config(%{name: "b", model: "x", tenant_key: "k"}, tmp_dir)
+      refute File.exists?(Path.join(tmp_dir, "honcho.json"))
+    end
 
-      memory:
-        memory_char_limit: 2200
-      """)
-
-      inst =
-        @instance
-        |> Map.put(:memory_provider, "honcho")
-        |> Map.put(:honcho_token, "tok")
-
-      assert :ok = Hermes.sync_config(inst, tmp_dir)
-
-      yaml = File.read!(Path.join(tmp_dir, "config.yaml"))
-      assert yaml =~ ~r/[ \t]+provider: honcho$/m
-      assert yaml =~ ~r/memory_enabled: false$/m
-      assert yaml =~ ~r/user_profile_enabled: false$/m
-      assert yaml =~ ~r/memory_char_limit: 2200/
+    test "AGENTS.md memory section is the builtin text", %{tmp_dir: tmp_dir} do
+      File.write!(Path.join(tmp_dir, "config.yaml"), "model:\n  default: \"x\"\n")
+      File.write!(Path.join([tmp_dir, "workspace", "AGENTS.md"]), "# Agent\n\n## Память\n\nhoncho stuff\n\n## Other\n")
+      assert :ok = Hermes.sync_config(%{name: "b", model: "x", tenant_key: "k"}, tmp_dir)
+      agents = File.read!(Path.join([tmp_dir, "workspace", "AGENTS.md"]))
+      refute agents =~ "honcho"
+      assert agents =~ "## Память"
+      assert agents =~ "## Other"
     end
   end
 
@@ -454,37 +303,6 @@ defmodule Druzhok.Runtime.HermesTest do
     end
 
     @tag :tmp_dir
-    test "memory section: honcho variant when memory_provider=honcho",
-         %{tmp_dir: tmp_dir} do
-      workspace = Path.join(tmp_dir, "workspace")
-      File.mkdir_p!(workspace)
-
-      File.write!(Path.join(workspace, "AGENTS.md"), """
-      # AGENTS.md
-
-      ## Память
-
-      Old builtin memory section.
-
-      ## Прочее
-
-      бла бла
-      """)
-
-      inst = Map.put(@instance, :memory_provider, "honcho")
-      assert :ok = Hermes.sync_agents_md(inst, tmp_dir)
-
-      content = File.read!(Path.join(workspace, "AGENTS.md"))
-      assert content =~ "honcho_search"
-      assert content =~ "honcho_conclude"
-      assert content =~ "НЕ используй"
-      refute content =~ "Old builtin memory section"
-      # Adjacent (non-druzhok-owned) section preserved.
-      assert content =~ "## Прочее"
-      assert content =~ "бла бла"
-    end
-
-    @tag :tmp_dir
     test "memory section: builtin variant when memory_provider=builtin",
          %{tmp_dir: tmp_dir} do
       workspace = Path.join(tmp_dir, "workspace")
@@ -519,12 +337,11 @@ defmodule Druzhok.Runtime.HermesTest do
       File.mkdir_p!(workspace)
       File.write!(Path.join(workspace, "AGENTS.md"), "# AGENTS.md\n\nNo memory section yet.\n")
 
-      inst = Map.put(@instance, :memory_provider, "honcho")
-      assert :ok = Hermes.sync_agents_md(inst, tmp_dir)
+      assert :ok = Hermes.sync_agents_md(@instance, tmp_dir)
 
       content = File.read!(Path.join(workspace, "AGENTS.md"))
       assert content =~ "## Память"
-      assert content =~ "honcho_conclude"
+      assert content =~ "MEMORY.md"
     end
 
     @tag :tmp_dir

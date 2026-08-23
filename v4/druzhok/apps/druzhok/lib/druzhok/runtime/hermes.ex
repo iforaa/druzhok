@@ -163,7 +163,7 @@ defmodule Druzhok.Runtime.Hermes do
   @impl true
   def sync_config(instance, data_root) do
     sync_agents_md(instance, data_root)
-    sync_honcho_config(instance, data_root)
+    _ = File.rm(Path.join(data_root, "honcho.json"))
 
     # Patch dashboard-owned fields in config.yaml on every start so the
     # dashboard stays the source of truth without clobbering hermes's
@@ -337,94 +337,18 @@ defmodule Druzhok.Runtime.Hermes do
     end
   end
 
-  @honcho_filename "honcho.json"
-  # TODO: derive from `instance.owner_telegram_id` (or a future per-instance
-  # `peer_name` field) once druzhok supports multiple operators. Hardcoded
-  # for the single-operator deployment.
-  @default_peer_name "igor"
-
-  defp sync_honcho_config(instance, data_root) do
-    case Map.get(instance, :memory_provider, "builtin") do
-      "honcho" ->
-        workspace = honcho_workspace(instance)
-        token = ensure_honcho_token!(instance, workspace)
-        json = Jason.encode!(honcho_config(instance.name, workspace, token), pretty: true)
-        File.write!(Path.join(data_root, @honcho_filename), json)
-
-      _ ->
-        _ = File.rm(Path.join(data_root, @honcho_filename))
-        :ok
-    end
-  end
-
-  # The hermes honcho plugin special-cases 127.0.0.1 baseUrls: it ignores
-  # the root-level apiKey and substitutes "local" UNLESS apiKey is inside a
-  # hosts.<host> block (signals "user explicitly wants auth on local").
-  # We nest under "hosts.hermes" because the default hermes profile resolves
-  # to that host key.
-  defp honcho_config(ai_peer, workspace, token) do
-    %{
-      "baseUrl" => "http://127.0.0.1:8000",
-      "workspace" => workspace,
-      "peerName" => @default_peer_name,
-      # 1200 = doc-recommended cap on auto-injected memory block.
-      "contextTokens" => 1200,
-      "hosts" => %{
-        "hermes" => %{
-          "apiKey" => token,
-          "aiPeer" => ai_peer,
-          "recallMode" => "hybrid",
-          "writeFrequency" => "async",
-          "contextCadence" => 3,
-          "dialecticCadence" => 5,
-          # depth=1 returns thin output on cold peers (per docs).
-          "dialecticDepth" => 2,
-          "dialecticReasoningLevel" => "low"
-        }
-      }
-    }
-  end
-
-  defp honcho_workspace(instance) do
-    case Map.get(instance, :honcho_workspace) do
-      blank when blank in [nil, ""] -> instance.name
-      ws -> ws
-    end
-  end
-
-  defp ensure_honcho_token!(instance, workspace) do
-    case Map.get(instance, :honcho_token) do
-      blank when blank in [nil, ""] ->
-        {:ok, token} = Druzhok.HonchoJwt.mint_workspace_token(workspace)
-
-        instance
-        |> Instance.changeset(%{honcho_token: token})
-        |> Druzhok.Repo.update!()
-
-        token
-
-      token ->
-        token
-    end
-  end
-
-  # Druzhok manages three sub-keys of `memory:` based on memory_provider:
-  # provider, memory_enabled, user_profile_enabled. When provider == "honcho",
-  # we explicitly disable the legacy MEMORY.md/USER.md path (and the `memory`
-  # tool that depends on it) so the bot can only write through Honcho.
-  # Char-limit fields are left alone so user edits survive.
-  defp sync_memory_block(content, instance) do
-    provider = Map.get(instance, :memory_provider, "builtin")
-    legacy_enabled? = provider == "builtin"
-
+  # Druzhok pins the memory block to the builtin provider with legacy
+  # MEMORY.md/USER.md memory on. Char-limit fields are left alone so user
+  # edits survive.
+  defp sync_memory_block(content, _instance) do
     sync_yaml_block(content, "memory",
       upsert: fn body ->
         body
-        |> upsert_indented_line("provider", provider)
-        |> upsert_indented_line("memory_enabled", to_string(legacy_enabled?))
-        |> upsert_indented_line("user_profile_enabled", to_string(legacy_enabled?))
+        |> upsert_indented_line("provider", "builtin")
+        |> upsert_indented_line("memory_enabled", "true")
+        |> upsert_indented_line("user_profile_enabled", "true")
       end,
-      default: default_memory_block(provider, legacy_enabled?)
+      default: default_memory_block()
     )
   end
 
@@ -480,12 +404,12 @@ defmodule Druzhok.Runtime.Hermes do
     end
   end
 
-  defp default_memory_block(provider, legacy_enabled?) do
+  defp default_memory_block do
     """
     memory:
-      provider: #{provider}
-      memory_enabled: #{legacy_enabled?}
-      user_profile_enabled: #{legacy_enabled?}
+      provider: builtin
+      memory_enabled: true
+      user_profile_enabled: true
       memory_char_limit: 2200
       user_char_limit: 1375\
     """
@@ -523,12 +447,9 @@ defmodule Druzhok.Runtime.Hermes do
   end
 
   # Replace the entire `## Память` section (header + body + trailing
-  # newlines, up to the next `## ` or EOF) with the content matching the
-  # bot's memory_provider. Druzhok owns this section because it's tightly
-  # coupled to which memory tools the bot has.
-  defp sync_memory_section(content, instance) do
-    provider = Map.get(instance, :memory_provider, "builtin")
-    new_section = memory_section(provider)
+  # newlines, up to the next `## ` or EOF) with druzhok's builtin-memory text.
+  defp sync_memory_section(content, _instance) do
+    new_section = memory_section()
     # Eat trailing newlines so we can re-emit a stable `\n\n` separator —
     # makes the rewrite idempotent regardless of original blank-line count.
     pattern = ~r/(?ms)^## Память[ \t]*\n.*?\n+(?=^## |\z)/
@@ -580,30 +501,7 @@ defmodule Druzhok.Runtime.Hermes do
     end
   end
 
-  defp memory_section("honcho") do
-    """
-    ## Память
-
-    Ты используешь Honcho — внешнюю систему памяти с автоматическим извлечением фактов, поиском и синтезом.
-
-    **Чтобы вспомнить факты о пользователе:**
-    - `honcho_search` — семантический поиск по наблюдениям
-    - `honcho_profile` — быстрая сводка ключевых фактов
-    - `honcho_reasoning` — синтез ответа на вопрос о пользователе
-
-    **Чтобы записать новый факт или исправить старый:** `honcho_conclude`. Просто опиши факт обычным текстом — Honcho сам разберётся как сохранить и связать с прошлыми наблюдениями.
-
-    **НЕ используй** инструмент `memory` (MEMORY.md) — он отключён в этом боте. Все долгосрочные записи идут через Honcho.
-
-    Файлы `memory/YYYY-MM-DD.md` — для рабочих заметок текущей сессии (логи, черновики). Долгосрочная память — только в Honcho.
-
-    Память подгружается автоматически в начале каждого хода. Если нужно проверить что ты знаешь — спроси `honcho_profile` или `honcho_search`, не лезь в файлы.
-
-    """
-    |> String.trim_trailing()
-  end
-
-  defp memory_section(_other) do
+  defp memory_section do
     """
     ## Память
 
@@ -737,7 +635,6 @@ defmodule Druzhok.Runtime.Hermes do
     url = proxy_url()
     group_sessions_per_user = not Map.get(instance, :group_shared_memory, false)
     observe_unmentioned = Map.get(instance, :group_shared_memory, false)
-    memory_provider = Map.get(instance, :memory_provider, "builtin")
 
     """
     # Generated by druzhok on first boot. Feel free to edit — druzhok will
@@ -788,7 +685,7 @@ defmodule Druzhok.Runtime.Hermes do
         model: "#{vision_model}"
 
     memory:
-      provider: #{memory_provider}
+      provider: builtin
       memory_enabled: true
       user_profile_enabled: true
       memory_char_limit: 2200

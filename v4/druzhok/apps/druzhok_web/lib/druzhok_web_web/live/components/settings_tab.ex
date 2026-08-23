@@ -244,25 +244,6 @@ defmodule DruzhokWebWeb.Live.Components.SettingsTab do
           <%!-- Card: Memory --%>
           <div class="bg-raised/50 border border-line rounded-lg p-3 space-y-2.5">
             <h3 class="label">Memory</h3>
-            <form phx-change="set_memory_provider" phx-target={@myself}>
-              <label class="block text-[10px] text-muted mb-0.5">Provider</label>
-              <select name="memory_provider"
-                      class="w-full border border-line2 rounded px-2 py-1 text-xs">
-                <option value="builtin" selected={@instance[:memory_provider] in [nil, "builtin"]}>Built-in (MEMORY.md / USER.md)</option>
-                <option value="honcho" selected={@instance[:memory_provider] == "honcho"}>Honcho (self-hosted)</option>
-              </select>
-            </form>
-            <%= if @instance[:memory_provider] == "honcho" do %>
-              <div>
-                <label class="block text-[10px] text-muted mb-0.5">Workspace</label>
-                <input type="text" name="honcho_workspace"
-                       phx-blur="update_honcho_workspace" phx-target={@myself}
-                       value={@instance[:honcho_workspace] || @instance.name}
-                       placeholder={@instance.name}
-                       class="w-full border border-line2 rounded px-2 py-1 text-xs" />
-                <p class="text-[10px] text-subtle mt-0.5">Defaults to bot name. Don't change after first sync.</p>
-              </div>
-            <% end %>
           </div>
 
           <%!-- Card: Image Generation --%>
@@ -434,21 +415,6 @@ defmodule DruzhokWebWeb.Live.Components.SettingsTab do
     current = socket.assigns.instance[:website_hosting_enabled]
     update_instance(name, %{website_hosting_enabled: !current})
     restart_bot(name)
-    notify_parent(socket)
-    {:noreply, socket}
-  end
-
-  def handle_event("set_memory_provider", %{"memory_provider" => provider}, socket)
-      when provider in ["builtin", "honcho"] do
-    name = socket.assigns.instance.name
-    update_instance(name, %{memory_provider: provider})
-    restart_bot(name)
-    notify_parent(socket)
-    {:noreply, socket}
-  end
-
-  def handle_event("update_honcho_workspace", %{"value" => value}, socket) do
-    update_instance(socket.assigns.instance.name, %{honcho_workspace: non_empty_string(value)})
     notify_parent(socket)
     {:noreply, socket}
   end

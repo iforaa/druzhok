@@ -38,9 +38,7 @@ defmodule Druzhok.InstanceManager do
 
   def list do
     import Ecto.Query
-    # Synthetic system instances (e.g., honcho-system used to authenticate
-    # Honcho's own LLM calls through the proxy) are excluded — the dashboard
-    # bot sidebar and BotManager restart loops should not see them.
+    # Exclude legacy synthetic "system" rows.
     Repo.all(
       from i in Instance,
         where: i.bot_runtime != "system",
