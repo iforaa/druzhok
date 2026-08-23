@@ -75,10 +75,6 @@ defmodule Druzhok.I18n do
     # Runtime section
     runtime_model: %{"ru" => "Модель", "en" => "Model"},
     runtime_date: %{"ru" => "Дата", "en" => "Date"},
-    runtime_sandbox: %{"ru" => "Sandbox", "en" => "Sandbox"},
-    sandbox_docker: %{"ru" => "Docker (python3, node, bash)", "en" => "Docker (python3, node, bash)"},
-    sandbox_firecracker: %{"ru" => "Firecracker (isolated VM)", "en" => "Firecracker (isolated VM)"},
-    sandbox_local: %{"ru" => "Local (без песочницы)", "en" => "Local (no sandbox)"},
 
     # Access control
     reject_default: %{

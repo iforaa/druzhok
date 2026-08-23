@@ -64,14 +64,6 @@ defmodule Druzhok.InstanceManager do
     :ok
   end
 
-  def update_heartbeat(name, minutes) do
-    case Registry.lookup(Druzhok.Registry, {name, :scheduler}) do
-      [{pid, _}] -> Druzhok.Scheduler.set_heartbeat_interval(pid, minutes)
-      [] -> :ok
-    end
-    :ok
-  end
-
   def approve_pairing(instance_name) do
     case Druzhok.Pairing.approve(instance_name) do
       {:ok, pairing} ->

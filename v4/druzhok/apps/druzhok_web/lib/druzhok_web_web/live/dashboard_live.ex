@@ -752,7 +752,7 @@ defmodule DruzhokWebWeb.DashboardLive do
         []
 
       instance ->
-        runtime = Druzhok.Runtime.get(instance.bot_runtime, Druzhok.Runtime.ZeroClaw)
+        runtime = Druzhok.Runtime.get(instance.bot_runtime || "hermes", Druzhok.Runtime.Hermes)
         data_root = Path.dirname(instance.workspace || "")
 
         # Merge both sources: DB allowlist + runtime's pairing file.

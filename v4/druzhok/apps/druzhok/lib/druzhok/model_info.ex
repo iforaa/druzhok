@@ -29,19 +29,17 @@ defmodule Druzhok.ModelInfo do
     end
   end
 
-  defp lookup(model_name) do
-    stripped = strip_provider(model_name)
-    case Druzhok.Repo.get_by(Druzhok.Model, model_id: model_name) do
-      nil -> Druzhok.Repo.get_by(Druzhok.Model, model_id: stripped)
-      model -> model
-    end
+  # Try the full id first, then every provider-stripped suffix
+  # ("nebius/deepseek-ai/X" → "deepseek-ai/X" → "X").
+  defp lookup(model_name) when is_binary(model_name) do
+    model_name
+    |> candidates()
+    |> Enum.find_value(fn id -> Druzhok.Repo.get_by(Druzhok.Model, model_id: id) end)
   end
 
-  defp strip_provider(model_name) when is_binary(model_name) do
-    case String.split(model_name, "/", parts: 2) do
-      [_provider, model] -> model
-      [model] -> model
-    end
+  defp candidates(model_name) do
+    parts = String.split(model_name, "/")
+    for i <- 0..(length(parts) - 1), do: parts |> Enum.drop(i) |> Enum.join("/")
   end
 
   defp default_context_window do

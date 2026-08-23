@@ -10,7 +10,7 @@ defmodule DruzhokWebWeb.DashboardLiveTest do
   test "renders dashboard for authenticated user", %{conn: conn} do
     {:ok, _view, html} = live(conn, "/")
     assert html =~ "Druzhok"
-    assert html =~ "No instances yet"
+    assert html =~ "no instances yet"
   end
 
   test "unauthenticated user is redirected to login", %{} do
@@ -49,15 +49,15 @@ defmodule DruzhokWebWeb.DashboardLiveTest do
 
   test "toggle_create shows create form", %{conn: conn} do
     {:ok, view, html} = live(conn, "/")
-    refute html =~ "Instance name"
+    refute html =~ "instance name"
 
     html = render_click(view, "toggle_create")
-    assert html =~ "Instance name"
+    assert html =~ "instance name"
   end
 
   test "create with empty name shows error", %{conn: conn} do
     {:ok, view, _html} = live(conn, "/")
     html = render_submit(view, "create", %{"name" => "", "token" => "", "model" => ""})
-    assert html =~ "Name and token required"
+    assert html =~ "Name is required"
   end
 end

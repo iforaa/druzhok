@@ -40,7 +40,7 @@ defmodule DruzhokWebWeb.Live.Components.FilesTab do
     # The parent polls `list_instances/0` every 5s, rebuilding maps with
     # fresh container_stats — so we can't compare the whole map.
     switched? = socket.assigns[:instance][:name] != instance[:name]
-    runtime = Runtime.get(instance[:bot_runtime] || "zeroclaw", Runtime.ZeroClaw)
+    runtime = Runtime.get(instance[:bot_runtime] || "hermes", Runtime.Hermes)
 
     socket =
       if switched? do

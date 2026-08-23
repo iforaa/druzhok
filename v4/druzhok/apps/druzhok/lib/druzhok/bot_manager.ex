@@ -47,7 +47,7 @@ defmodule Druzhok.BotManager do
         {:error, :not_found}
 
       instance ->
-        runtime = Druzhok.Runtime.get(instance.bot_runtime, Druzhok.Runtime.ZeroClaw)
+        runtime = Druzhok.Runtime.get(instance.bot_runtime || "hermes", Druzhok.Runtime.Hermes)
         env = Druzhok.Runtime.base_env(instance) |> Map.merge(runtime.env_vars(instance))
         image = runtime.docker_image()
         command = runtime.gateway_command()

@@ -1,8 +1,8 @@
 defmodule Druzhok.Runtime do
   @moduledoc """
-  Behaviour for bot runtime adapters. Each supported runtime (Hermes, ZeroClaw,
-  PicoClaw, OpenClaw, NullClaw) implements this behaviour. Adding a new runtime
-  = one new module + one registry entry.
+  Behaviour for bot runtime adapters. Hermes is the only runtime; the
+  behaviour stays so config/workspace generation is cleanly separated
+  from process control (see `Druzhok.Host`).
   """
 
   @type instance :: map()
@@ -27,13 +27,7 @@ defmodule Druzhok.Runtime do
 
   @optional_callbacks sync_config: 2
 
-  @runtimes %{
-    "hermes" => Druzhok.Runtime.Hermes,
-    "zeroclaw" => Druzhok.Runtime.ZeroClaw,
-    "picoclaw" => Druzhok.Runtime.PicoClaw,
-    "openclaw" => Druzhok.Runtime.OpenClaw,
-    "nullclaw" => Druzhok.Runtime.NullClaw,
-  }
+  @runtimes %{"hermes" => Druzhok.Runtime.Hermes}
 
   def get(name) do
     Map.fetch!(@runtimes, to_string(name))

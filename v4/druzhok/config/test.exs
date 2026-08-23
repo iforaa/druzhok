@@ -21,3 +21,8 @@ config :phoenix, :plug_init_mode, :runtime
 # Enable helpful, but potentially expensive runtime checks
 config :phoenix_live_view,
   enable_expensive_runtime_checks: true
+
+config :druzhok,
+  nebius_api_url: "https://api.tokenfactory.us-central1.nebius.com/v1",
+  openrouter_api_url: "https://openrouter.ai/api/v1",
+  anthropic_api_url: "https://api.anthropic.com"

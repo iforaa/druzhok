@@ -4,7 +4,7 @@ defmodule DruzhokWebWeb.LlmFormatTest do
 
   describe "prepare_body/1" do
     test "injects usage.include=true when absent" do
-      body = LlmFormat.prepare_body(%{"model" => "xiaomi/mimo-v2-pro", "messages" => []})
+      body = LlmFormat.prepare_body(%{"model" => "xiaomi/mimo-v2.5-pro", "messages" => []})
       assert body["usage"] == %{"include" => true}
     end
 
@@ -32,7 +32,7 @@ defmodule DruzhokWebWeb.LlmFormatTest do
 
     test "falls back to ModelCatalog price when usage.cost is missing" do
       body = %{"usage" => %{"prompt_tokens" => 1_000_000, "completion_tokens" => 0}}
-      assert LlmFormat.extract_cost_cents(body, "xiaomi/mimo-v2-pro") == 10
+      assert LlmFormat.extract_cost_cents(body, "xiaomi/mimo-v2.5-pro") == 10
     end
 
     test "returns 0 when no usage at all" do

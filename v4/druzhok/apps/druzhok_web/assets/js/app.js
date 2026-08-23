@@ -85,9 +85,9 @@ Hooks.PaletteInput = {
 
 Hooks.FileEditor = {
   mounted() {
-    const target = this.el.dataset.target
+    const component = this.el.closest("[data-phx-component]")
     const push = (event, payload) =>
-      target ? this.pushEventTo(target, event, payload) : this.pushEvent(event, payload)
+      component ? this.pushEventTo(component, event, payload) : this.pushEvent(event, payload)
 
     this.handleEvent("request_file_content", () => {
       push("do_save_file", {content: this.el.value})

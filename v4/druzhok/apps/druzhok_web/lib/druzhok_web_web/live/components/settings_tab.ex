@@ -9,7 +9,7 @@ defmodule DruzhokWebWeb.Live.Components.SettingsTab do
 
   @impl true
   def update(%{instance: instance} = assigns, socket) do
-    runtime = Runtime.get(instance[:bot_runtime] || "zeroclaw", Runtime.ZeroClaw)
+    runtime = Runtime.get(instance[:bot_runtime] || "hermes", Runtime.Hermes)
 
     sites =
       case assigns[:instance] do
@@ -587,7 +587,7 @@ defmodule DruzhokWebWeb.Live.Components.SettingsTab do
         :ok
 
       instance ->
-        runtime = Runtime.get(instance.bot_runtime, Runtime.ZeroClaw)
+        runtime = Runtime.get(instance.bot_runtime || "hermes", Runtime.Hermes)
 
         if runtime.supports_feature?(:db_allowlist) do
           case op do
@@ -626,7 +626,7 @@ defmodule DruzhokWebWeb.Live.Components.SettingsTab do
   defp with_runtime(name, fun) do
     case Repo.get_by(Instance, name: name) do
       %{workspace: workspace, bot_runtime: bot_runtime} when workspace != nil ->
-        runtime = Runtime.get(bot_runtime || "zeroclaw", Runtime.ZeroClaw)
+        runtime = Runtime.get(bot_runtime || "hermes", Runtime.Hermes)
         fun.(runtime, Path.dirname(workspace))
 
       _ ->
