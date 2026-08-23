@@ -92,7 +92,7 @@ case "$cmd" in
     ;;
   stats)
     user_exists || die "no such bot: $name"
-    cg="/sys/fs/cgroup/system.slice/$unit"
+    cg="/sys/fs/cgroup$(systemctl show -p ControlGroup --value "$unit")"
     if [ -r "$cg/memory.current" ]; then
       mem=$(cat "$cg/memory.current")
       cpu=$(awk '/^usage_usec/ {print $2}' "$cg/cpu.stat")

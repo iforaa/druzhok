@@ -77,7 +77,6 @@ if [ ! -f /etc/druzhok/druzhok.env ]; then
   cat > /etc/druzhok/druzhok.env <<EOT
 SECRET_KEY_BASE=$(openssl rand -base64 48 | tr -d '\n')
 PHX_HOST=oldey.dev
-OPENROUTER_API_KEY=
 EOT
   chown ubuntu:ubuntu /etc/druzhok/druzhok.env; chmod 0600 /etc/druzhok/druzhok.env
 fi
