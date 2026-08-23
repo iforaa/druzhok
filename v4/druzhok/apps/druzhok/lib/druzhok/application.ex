@@ -11,6 +11,7 @@ defmodule Druzhok.Application do
     children = [
       Druzhok.Repo,
       {Registry, keys: :unique, name: Druzhok.Registry},
+      {DynamicSupervisor, name: Druzhok.Host.ProcessSup, strategy: :one_for_one},
       {Finch, name: Druzhok.Finch, pools: finch_pools()},
       {Finch, name: Druzhok.LocalFinch},
       Druzhok.HealthMonitor,

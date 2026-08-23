@@ -58,7 +58,9 @@ config :druzhok, Druzhok.Repo,
   database: System.get_env("DATABASE_PATH") || Path.expand("../data/druzhok.db", __DIR__)
 
 config :druzhok,
-  ecto_repos: [Druzhok.Repo]
+  ecto_repos: [Druzhok.Repo],
+  host: Druzhok.Host.Process,
+  hermes_bin: System.get_env("HERMES_BIN") || "hermes"
 
 # Import environment specific config. This must remain at the bottom
 # of this file so it overrides the configuration defined above.
