@@ -16,7 +16,7 @@
 - Run tests with `mix test` from `v4/druzhok` (umbrella root). Test DB is `data/druzhok_test.db`; if a migration is added run `MIX_ENV=test mix ecto.migrate` first.
 - Commit with the `/my-commit` skill (project rule). Commit messages in the steps are the intended content; the skill formats them.
 - Never run `git add -A` from the repo root — `v4/hermes-agent`, `v4/openclaw` etc. are untracked upstream clones. Add files explicitly.
-- Bot name regex everywhere: `^[a-z0-9][a-z0-9-]{0,30}$`.
+- Bot name regex everywhere: `^[a-z0-9][a-z0-9_-]{0,30}$`.
 - Only runtime left is `"hermes"`. `instance.bot_runtime` column stays; value is always `"hermes"`.
 - `Host` callbacks (exact): `start(name, env, data_root)`, `stop(name)`, `destroy(name)`, `status(name)`, `stats(name)`, `exec(name, args)`, `logs(name, lines)` — see Task 3.
 - Host implementation is chosen by `Application.get_env(:druzhok, :host)`; default `Druzhok.Host.Process`; prod (`config/runtime.exs`) sets `Druzhok.Host.Systemd` when `DRUZHOK_HOST=systemd`.

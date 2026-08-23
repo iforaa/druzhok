@@ -63,7 +63,9 @@ defmodule Druzhok.Host.ProcessTest do
     assert String.trim(out) == root
   end
 
-  test "rejects invalid names" do
+  test "rejects invalid names, accepts underscores" do
     assert {:error, :invalid_name} = HostProcess.start("Bad Name", %{}, "/tmp")
+    assert Druzhok.Host.valid_name?("vilya_fe6f")
+    refute Druzhok.Host.valid_name?("../etc")
   end
 end

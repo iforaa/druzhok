@@ -23,7 +23,7 @@ die() { echo "druzhok-ctl: $*" >&2; exit 1; }
 [ $# -ge 2 ] || die "usage: druzhok-ctl <cmd> <name> [args]"
 
 cmd=$1; name=$2; shift 2
-[[ "$name" =~ ^[a-z0-9][a-z0-9-]{0,30}$ ]] || die "invalid bot name: $name"
+[[ "$name" =~ ^[a-z0-9][a-z0-9_-]{0,30}$ ]] || die "invalid bot name: $name"
 
 user="bot-$name"
 unit="hermes@$name.service"

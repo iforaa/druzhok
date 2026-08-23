@@ -21,7 +21,7 @@ defmodule Druzhok.Host do
   @callback exec(name, args :: [String.t()]) :: {String.t(), integer()}
   @callback logs(name, lines :: pos_integer()) :: String.t()
 
-  @name_re ~r/^[a-z0-9][a-z0-9-]{0,30}$/
+  @name_re ~r/^[a-z0-9][a-z0-9_-]{0,30}$/
 
   def impl, do: Application.get_env(:druzhok, :host, Druzhok.Host.Process)
 

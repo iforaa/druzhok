@@ -14,7 +14,7 @@
 ## Global Constraints
 
 - Server: `ssh ubuntu@195.49.213.8` (passwordless sudo). Hostname `alpha-eridanus`. 2 vCPU / 7.8 GB / `/dev/sda2` 5 GB root / `/dev/sdb` 50 GB raw.
-- Bot name regex: `^[a-z0-9][a-z0-9-]{0,30}$`. Linux user `bot-<name>`, unit `hermes@<name>.service`, data `/data/tenants/<name>`, env `/etc/druzhok/<name>.env`.
+- Bot name regex: `^[a-z0-9][a-z0-9_-]{0,30}$`. Linux user `bot-<name>`, unit `hermes@<name>.service`, data `/data/tenants/<name>`, env `/etc/druzhok/<name>.env`.
 - `druzhok-ctl` contract (consumed by `Druzhok.Host.Systemd`): `create <name>` / `update-env <name>` read the env file body from **stdin**; `start|stop|restart|destroy <name>`; `status <name>` prints exactly one of `active|activating|inactive|failed|unknown`; `stats <name>` prints `<mem_bytes>|<cpu_usec>`; `logs <name> <n>`; `exec <name> <cmd> [args…]`. Non-zero exit + stderr message on any failure.
 - Hermes install: `/opt/hermes`, branch `main` of `git@github.com:iforaa/druzhok-hermes.git` (read via https), `uv sync --extra all --extra messaging --extra firecrawl`.
 - Never run anything destructive on the Yandex VM until Task 7; never start a bot on KZ while its Yandex container is running (Telegram single-poller).

@@ -115,7 +115,7 @@ every restriction above. bubblewrap is not used.
 
 Bash, ~150 lines, in the repo at `v4/druzhok/ops/druzhok-ctl`, installed
 to `/usr/local/sbin/`. Every subcommand validates `<name>` against
-`^[a-z0-9][a-z0-9-]{0,30}$` first and refuses otherwise.
+`^[a-z0-9][a-z0-9_-]{0,30}$` first and refuses otherwise.
 
 | Command | Effect |
 |---|---|
