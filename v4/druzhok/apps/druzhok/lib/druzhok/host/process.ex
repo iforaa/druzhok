@@ -35,8 +35,15 @@ defmodule Druzhok.Host.Process do
   @impl Druzhok.Host
   def stop(name) do
     case lookup(name) do
-      nil -> :ok
-      pid -> GenServer.stop(pid, :normal, 10_000)
+      nil ->
+        :ok
+
+      pid ->
+        try do
+          GenServer.stop(pid, :normal, 10_000)
+        catch
+          :exit, _ -> :ok
+        end
     end
 
     :ok
@@ -132,7 +139,15 @@ defmodule Druzhok.Host.Process do
     Logger.info("Host.Process started #{name} (pid #{os_pid})")
 
     {:ok,
-     %{name: name, env: env, data_root: root, port: port, os_pid: os_pid, status: :active, logs: []}}
+     %{
+       name: name,
+       env: env,
+       data_root: root,
+       port: port,
+       os_pid: os_pid,
+       status: :active,
+       logs: []
+     }}
   end
 
   @impl GenServer
