@@ -13,7 +13,6 @@ set -euo pipefail
 
 TENANTS=/data/tenants
 ENVDIR=/etc/druzhok
-ORCHESTRATOR_USER=ubuntu   # Druzhok runs as this user and needs rw on tenant dirs
 NFT_FAMILY=inet
 NFT_TABLE=druzhok
 NFT_SET=bot_uids
@@ -63,10 +62,6 @@ case "$cmd" in
     install -d -m 0700 -o "$user" -g "$user" "$root" "$root/home" "$root/workspace"
     # Data copied in from another host is root-owned; hand it to the bot.
     chown -R "$user:$user" "$root"
-    # Druzhok (not root) reads/writes config.yaml, AGENTS.md, sites/…: grant it
-    # via ACL, with a default ACL so files hermes creates later inherit it.
-    # Other bot users still have no access (mode stays 0700).
-    setfacl -R -m "u:$ORCHESTRATOR_USER:rwX" -m "d:u:$ORCHESTRATOR_USER:rwX" "$root"
     mkdir -p "$ENVDIR"; chmod 0755 "$ENVDIR"
     write_env
     nft_add
@@ -77,6 +72,9 @@ case "$cmd" in
     ;;
   start|restart)
     user_exists || die "no such bot: $name"
+    # Druzhok (CAP_DAC_OVERRIDE) may have created/rewritten files as its own
+    # user; hand the whole tree back to the bot before it runs.
+    chown -R "$user:$user" "$root"
     systemctl "$cmd" "$unit"
     ;;
   stop)

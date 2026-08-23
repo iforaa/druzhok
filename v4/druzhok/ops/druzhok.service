@@ -15,6 +15,12 @@ ExecStart=/bin/bash -lc '. /home/ubuntu/.asdf/asdf.sh && exec mix phx.server'
 Restart=always
 RestartSec=5
 KillMode=mixed
+# Tenant dirs are 0700 bot-<name> and hermes chmods its files 0600; Druzhok
+# must still read/write config.yaml, AGENTS.md and serve sites/. It already
+# holds root-equivalent power through sudo druzhok-ctl, so file caps add no
+# new trust. druzhok-ctl start chowns the tree back to the bot.
+AmbientCapabilities=CAP_DAC_OVERRIDE CAP_DAC_READ_SEARCH CAP_CHOWN CAP_FOWNER
+CapabilityBoundingSet=CAP_DAC_OVERRIDE CAP_DAC_READ_SEARCH CAP_CHOWN CAP_FOWNER
 
 [Install]
 WantedBy=multi-user.target
