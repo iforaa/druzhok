@@ -43,11 +43,9 @@ if config_env() == :prod do
   config :druzhok_web, DruzhokWebWeb.Endpoint,
     url: [host: host, port: 443, scheme: "https"],
     http: [
-      # Enable IPv6 and bind on all interfaces.
-      # Set it to  {0, 0, 0, 0, 0, 0, 0, 1} for local network only access.
-      # See the documentation on https://hexdocs.pm/bandit/Bandit.html#t:options/0
-      # for details about using IPv6 vs IPv4 and loopback vs public addresses.
-      ip: {0, 0, 0, 0, 0, 0, 0, 0},
+      # Loopback only: Caddy terminates TLS and proxies in; bots reach the
+      # LLM proxy at 127.0.0.1:4000. Override with PHX_BIND_ALL=1 if needed.
+      ip: (if System.get_env("PHX_BIND_ALL") == "1", do: {0, 0, 0, 0}, else: {127, 0, 0, 1}),
       port: port
     ],
     secret_key_base: secret_key_base
