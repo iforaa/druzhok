@@ -31,7 +31,7 @@ install -d -o ubuntu -g ubuntu /data/home-ubuntu "$ASDF_DIR"
 step "packages"
 export DEBIAN_FRONTEND=noninteractive
 apt-get update -q
-apt-get install -y -q --no-install-recommends git curl build-essential nftables unzip \
+apt-get install -y -q --no-install-recommends git curl build-essential nftables unzip acl sqlite3 \
   libssl-dev libncurses-dev autoconf m4 \
   python3 python3-venv ffmpeg unattended-upgrades debian-keyring debian-archive-keyring apt-transport-https
 apt-get clean
