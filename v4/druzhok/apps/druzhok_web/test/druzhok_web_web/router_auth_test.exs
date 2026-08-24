@@ -24,7 +24,7 @@ defmodule DruzhokWebWeb.RouterAuthTest do
     end
   end
 
-  for path <- ["/usage", "/errors", "/processes", "/settings", "/models"] do
+  for path <- ["/usage", "/errors", "/settings", "/models"] do
     test "GET #{path} as non-admin redirects to /", %{conn: conn} do
       %{conn: conn} = log_in_user(conn, %{email: "u#{System.unique_integer([:positive])}@x.test"})
       conn = get(conn, unquote(path))

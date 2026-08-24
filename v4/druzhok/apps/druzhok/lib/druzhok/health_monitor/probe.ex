@@ -13,7 +13,7 @@ defmodule Druzhok.HealthMonitor.Probe do
     unit_status = Keyword.get(opts, :unit_status, &Druzhok.Host.status/1)
     get_me = Keyword.get(opts, :telegram_get_me, &Druzhok.Telegram.API.get_me/1)
     llm_ping = Keyword.get(opts, :llm_ping, &llm_ping/1)
-    egress = Keyword.get(opts, :egress_check, &egress_check/1)
+    egress = Keyword.get(opts, :egress_check, &Druzhok.Host.egress_check/1)
 
     case unit_status.(instance.name) do
       :active ->
@@ -28,8 +28,8 @@ defmodule Druzhok.HealthMonitor.Probe do
               {:error, r} -> {:llm, r}
             end,
             case egress.(instance.name) do
-              :closed -> nil
               :open -> :egress_open
+              _ -> nil
             end
           ]
           |> Enum.reject(&is_nil/1)
@@ -43,8 +43,7 @@ defmodule Druzhok.HealthMonitor.Probe do
 
   @doc "One 1-token completion through the proxy with the bot's tenant key."
   def llm_ping(instance) do
-    port = System.get_env("LLM_PROXY_PORT") || "4000"
-    url = "http://127.0.0.1:#{port}/v1/chat/completions"
+    url = Druzhok.Runtime.proxy_url() <> "/chat/completions"
 
     body =
       Jason.encode!(%{
@@ -63,16 +62,6 @@ defmodule Druzhok.HealthMonitor.Probe do
       {:ok, %{status: 200}} -> :ok
       {:ok, %{status: s}} -> {:error, s}
       {:error, e} -> {:error, Exception.message(e)}
-    end
-  end
-
-  @doc "Must NOT be able to reach a non-proxy local port from inside the bot."
-  def egress_check(name, opts \\ []) do
-    exec = Keyword.get(opts, :exec, &Druzhok.Host.exec/2)
-
-    case exec.(name, ["curl", "-m", "3", "-sS", "-o", "/dev/null", "http://127.0.0.1:22"]) do
-      {_, 0} -> :open
-      _ -> :closed
     end
   end
 end

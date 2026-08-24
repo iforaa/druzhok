@@ -14,28 +14,14 @@ defmodule Druzhok.Runtime do
   @callback workspace_files(instance) :: [workspace_file()]
   @callback sync_config(instance, data_root :: String.t()) :: :ok | {:error, term()}
   @callback data_root(instance) :: String.t()
-  @callback file_browser_root(instance) :: String.t()
-  @callback post_start(instance) :: :ok | {:error, term()}
   @callback supports_feature?(atom()) :: boolean()
   @callback read_allowed_users(data_root :: String.t()) :: [String.t()]
   @callback add_allowed_user(data_root :: String.t(), user_id :: String.t()) :: :ok | {:error, term()}
   @callback remove_allowed_user(data_root :: String.t(), user_id :: String.t()) :: :ok | {:error, term()}
   @callback clear_sessions(data_root :: String.t()) :: :ok
 
-  @optional_callbacks sync_config: 2
-
-  @runtimes %{"hermes" => Druzhok.Runtime.Hermes}
-
-  def get(name) do
-    Map.fetch!(@runtimes, to_string(name))
-  end
-
-  def get(name, default) do
-    Map.get(@runtimes, to_string(name), default)
-  end
-
-  def list, do: @runtimes
-  def names, do: Map.keys(@runtimes)
+  @doc "Runtime adapter for an instance (map or struct). Hermes is the only one."
+  def for_instance(_instance), do: Druzhok.Runtime.Hermes
 
   def parse_user_input(input) do
     trimmed = String.trim(input)
@@ -47,19 +33,18 @@ defmodule Druzhok.Runtime do
     end
   end
 
-  def proxy_host, do: System.get_env("LLM_PROXY_HOST") || "127.0.0.1"
+  @doc "Base URL of Druzhok's OpenAI-compatible proxy, as seen by bots and probes."
+  def proxy_url do
+    host = System.get_env("LLM_PROXY_HOST") || "127.0.0.1"
+    port = System.get_env("LLM_PROXY_PORT") || "4000"
+    "http://#{host}:#{port}/v1"
+  end
 
   def base_env(instance) do
-    proxy_host = proxy_host()
-    proxy_port = System.get_env("LLM_PROXY_PORT") || "4000"
-
-    tenant_key = Map.get(instance, :tenant_key, "") || ""
     %{
-      "OPENAI_BASE_URL" => "http://#{proxy_host}:#{proxy_port}/v1",
-      "OPENAI_API_KEY" => tenant_key,
-      "ZEROCLAW_API_KEY" => tenant_key,
-      "API_KEY" => tenant_key,
-      "TZ" => Map.get(instance, :timezone, "UTC") || "UTC",
+      "OPENAI_BASE_URL" => proxy_url(),
+      "OPENAI_API_KEY" => Map.get(instance, :tenant_key, "") || "",
+      "TZ" => Map.get(instance, :timezone, "UTC") || "UTC"
     }
   end
 end

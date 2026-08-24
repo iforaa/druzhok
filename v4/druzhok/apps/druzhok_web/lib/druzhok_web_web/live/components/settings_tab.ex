@@ -9,7 +9,7 @@ defmodule DruzhokWebWeb.Live.Components.SettingsTab do
 
   @impl true
   def update(%{instance: instance} = assigns, socket) do
-    runtime = Runtime.get(instance[:bot_runtime] || "hermes", Runtime.Hermes)
+    runtime = Runtime.for_instance(instance)
 
     sites =
       case assigns[:instance] do
@@ -525,12 +525,10 @@ defmodule DruzhokWebWeb.Live.Components.SettingsTab do
     {:noreply, socket}
   end
 
-  defp hermes_bin, do: Application.get_env(:druzhok, :hermes_bin, "hermes")
-
   defp approve_pairing_code(socket, code) do
     name = socket.assigns.instance.name
     {output, exit_code} =
-      BotManager.exec(name, [hermes_bin(), "pairing", "approve", "telegram", code])
+      BotManager.exec(name, [Runtime.Hermes.bin(), "pairing", "approve", "telegram", code])
 
     trimmed = String.trim(output)
     # Hermes exits 0 even when the code isn't found — sniff the text.
@@ -551,7 +549,7 @@ defmodule DruzhokWebWeb.Live.Components.SettingsTab do
         :ok
 
       instance ->
-        runtime = Runtime.get(instance.bot_runtime || "hermes", Runtime.Hermes)
+        runtime = Runtime.for_instance(instance)
 
         if runtime.supports_feature?(:db_allowlist) do
           case op do
@@ -589,9 +587,9 @@ defmodule DruzhokWebWeb.Live.Components.SettingsTab do
 
   defp with_runtime(name, fun) do
     case Repo.get_by(Instance, name: name) do
-      %{workspace: workspace, bot_runtime: bot_runtime} when workspace != nil ->
-        runtime = Runtime.get(bot_runtime || "hermes", Runtime.Hermes)
-        fun.(runtime, Path.dirname(workspace))
+      %{workspace: workspace} = instance when workspace != nil ->
+        runtime = Runtime.for_instance(instance)
+        fun.(runtime, runtime.data_root(instance))
 
       _ ->
         nil

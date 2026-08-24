@@ -137,29 +137,7 @@ defmodule Druzhok.InstanceManager do
     end
   end
 
-  defp ensure_workspace(workspace) do
-    unless File.exists?(workspace) do
-      File.mkdir_p!(Path.dirname(workspace))
-      template = find_workspace_template()
-      if template do
-        File.cp_r!(template, workspace)
-      else
-        File.mkdir_p!(workspace)
-        File.mkdir_p!(Path.join(workspace, "memory"))
-      end
-    end
-  end
-
-  defp find_workspace_template do
-    candidates = [
-      System.get_env("WORKSPACE_TEMPLATE_PATH"),
-      Path.join(File.cwd!(), "workspace-template"),
-      Path.join([File.cwd!(), "..", "workspace-template"]) |> Path.expand()
-    ]
-
-    Enum.find(candidates, fn
-      nil -> false
-      path -> File.exists?(path)
-    end)
-  end
+  # Seed files (config.yaml, AGENTS.md) come from `Runtime.workspace_files/1`
+  # at start; here we only guarantee the directory exists.
+  defp ensure_workspace(workspace), do: File.mkdir_p!(workspace)
 end

@@ -28,5 +28,4 @@ config :druzhok,
   anthropic_api_url: "https://api.anthropic.com"
 
 config :druzhok,
-  host: Druzhok.Host.Process,
   hermes_bin: Path.expand("../apps/druzhok/test/support/fake_hermes.sh", __DIR__)

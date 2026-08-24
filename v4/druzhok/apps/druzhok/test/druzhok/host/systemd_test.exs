@@ -40,18 +40,17 @@ defmodule Druzhok.Host.SystemdTest do
              ~s(A="1"\nB="say \\"hi\\" \\\\ $X"\n)
   end
 
-  test "start creates (first time), then updates env; second start skips create", %{log: log} do
+  test "start runs create (env on stdin) then start, every time", %{log: log} do
     assert :ok = Systemd.start("bot-a", %{"K" => "v"}, "/data/tenants/bot-a")
+    assert [{"create", "bot-a", _, ~s(K="v")}, {"start", "bot-a", _, _}] = calls(log)
 
-    assert [{"status", "bot-a", _, _}, {"create", "bot-a", _, env}, {"start", "bot-a", _, _}] =
-             calls(log)
-
-    assert env == ~s(K="v")
     File.write!(log, "")
     assert :ok = Systemd.start("bot-a", %{"K" => "v2"}, "/data/tenants/bot-a")
+    assert [{"create", "bot-a", _, ~s(K="v2")}, {"start", "bot-a", _, _}] = calls(log)
+  end
 
-    assert [{"status", _, _, _}, {"update-env", "bot-a", _, ~s(K="v2")}, {"start", _, _, _}] =
-             calls(log)
+  test "egress_check maps curl exit code" do
+    assert Systemd.egress_check("bot-e") == :closed
   end
 
   test "status maps words to atoms" do

@@ -397,12 +397,6 @@ defmodule DruzhokWebWeb.DashboardLive do
                 <%= label %>
               </option>
             </.term_select>
-            <.term_select name="bot_runtime">
-              <option :for={name <- Druzhok.Runtime.names()} value={name}
-                      selected={name == (@create_form["bot_runtime"] || "hermes")}>
-                <%= String.upcase(name) %>
-              </option>
-            </.term_select>
             <button type="submit"
                     class="w-full bg-accent text-bg font-display uppercase tracking-wider2 text-xs py-2 hover:bg-fg hover:text-bg transition-colors">
               Create instance
@@ -467,7 +461,6 @@ defmodule DruzhokWebWeb.DashboardLive do
             </button>
           </div>
           <div class="mt-3 flex gap-4 text-[10px] font-display uppercase tracking-wider2">
-            <a href="/processes" class="text-muted hover:text-fg transition-colors">procs</a>
             <a href="/errors" class="text-muted hover:text-err transition-colors">errors</a>
             <a :if={@current_user.role == "admin"} href="/settings"
                class="text-muted hover:text-accent transition-colors">settings</a>
@@ -522,11 +515,11 @@ defmodule DruzhokWebWeb.DashboardLive do
 
             <%!-- mem this · all bots total · cpu --%>
             <span :if={stats} class="font-mono text-xs text-fg ml-auto flex items-center gap-2">
-              <span><span class="text-muted">bot</span> <%= stats.mem %></span>
+              <span><span class="text-muted">bot</span> <%= format_bytes(stats.mem_bytes) %></span>
               <span class="text-faint">·</span>
               <span><span class="text-muted">all</span> <%= total_mem_across_instances(@instances) %></span>
               <span class="text-faint">·</span>
-              <span><span class="text-muted">cpu</span> <%= stats.cpu %></span>
+              <span><span class="text-muted">cpu</span> <%= Float.round(stats.cpu_usec / 1_000_000, 1) %>s</span>
             </span>
 
             <button :if={!active?} phx-click="start_bot" phx-value-name={@selected}
@@ -686,15 +679,8 @@ defmodule DruzhokWebWeb.DashboardLive do
   defp model_short(model) when is_binary(model), do: model |> String.split("/") |> List.last()
   defp model_short(_), do: ""
 
-  defp status_dot(inst) do
-    cond do
-      !inst[:active] -> "bg-idle"
-      inst[:container_status] == "active" -> "bg-ok"
-      inst[:container_status] == "failed" -> "bg-err"
-      inst[:container_status] in ["inactive", "unknown"] -> "bg-idle"
-      true -> "bg-warn"
-    end
-  end
+  defp status_dot(inst),
+    do: if(inst[:active], do: status_dot_color(inst[:container_status]), else: "bg-idle")
 
   defp health_color(:healthy), do: "text-ok"
   defp health_color(:degraded), do: "text-warn"
@@ -760,8 +746,8 @@ defmodule DruzhokWebWeb.DashboardLive do
         []
 
       instance ->
-        runtime = Druzhok.Runtime.get(instance.bot_runtime || "hermes", Druzhok.Runtime.Hermes)
-        data_root = Path.dirname(instance.workspace || "")
+        runtime = Druzhok.Runtime.for_instance(instance)
+        data_root = runtime.data_root(instance)
 
         # Merge both sources: DB allowlist + runtime's pairing file.
         # Hermes uses its own telegram-approved.json for users who pair

@@ -79,21 +79,20 @@ defmodule Druzhok.Host.Process do
         {"no such bot", 1}
 
       pid ->
-        %{env: env, data_root: root} = GenServer.call(pid, :config)
+        %{env: env, cwd: cwd} = GenServer.call(pid, :config)
         [cmd | rest] = args
-        bin = System.find_executable(cmd) || cmd
 
         try do
-          System.cmd(bin, rest,
-            env: Map.to_list(Map.put(env, "HERMES_HOME", root)),
-            cd: root,
-            stderr_to_stdout: true
-          )
+          System.cmd(resolve_bin(cmd), rest, env: Map.to_list(env), cd: cwd, stderr_to_stdout: true)
         rescue
           e in ErlangError -> {Exception.message(e), 127}
         end
     end
   end
+
+  # No isolation in dev, so there is nothing to verify.
+  @impl Druzhok.Host
+  def egress_check(_name), do: :unenforced
 
   @impl Druzhok.Host
   def logs(name, lines) do
@@ -114,24 +113,25 @@ defmodule Druzhok.Host.Process do
   @impl GenServer
   def init(%{name: name, env: env, data_root: root}) do
     Process.flag(:trap_exit, true)
-    bin = Application.get_env(:druzhok, :hermes_bin, "hermes")
+    # Same cwd as the prod unit's WorkingDirectory; env (incl. HERMES_HOME)
+    # comes verbatim from Runtime.Hermes.env_vars/1.
+    cwd = Path.join(root, "workspace")
+    File.mkdir_p!(cwd)
 
-    full_env =
-      env
-      |> Map.put("HERMES_HOME", root)
-      |> Enum.map(fn {k, v} -> {String.to_charlist(k), String.to_charlist(to_string(v))} end)
+    port_env =
+      Enum.map(env, fn {k, v} -> {String.to_charlist(k), String.to_charlist(to_string(v))} end)
 
     port =
       Port.open(
-        {:spawn_executable, System.find_executable(bin) || bin},
+        {:spawn_executable, resolve_bin(Druzhok.Runtime.Hermes.bin())},
         [
           :binary,
           :exit_status,
           :stderr_to_stdout,
           {:line, 4096},
           {:args, ["gateway", "run"]},
-          {:cd, root},
-          {:env, full_env}
+          {:cd, cwd},
+          {:env, port_env}
         ]
       )
 
@@ -142,7 +142,7 @@ defmodule Druzhok.Host.Process do
      %{
        name: name,
        env: env,
-       data_root: root,
+       cwd: cwd,
        port: port,
        os_pid: os_pid,
        status: :active,
@@ -154,7 +154,7 @@ defmodule Druzhok.Host.Process do
   def handle_call(:status, _from, s), do: {:reply, s.status, s}
   def handle_call(:os_pid, _from, %{status: :active} = s), do: {:reply, {:ok, s.os_pid}, s}
   def handle_call(:os_pid, _from, s), do: {:reply, :error, s}
-  def handle_call(:config, _from, s), do: {:reply, %{env: s.env, data_root: s.data_root}, s}
+  def handle_call(:config, _from, s), do: {:reply, %{env: s.env, cwd: s.cwd}, s}
   def handle_call(:logs, _from, s), do: {:reply, Enum.reverse(s.logs), s}
 
   @impl GenServer
@@ -194,6 +194,8 @@ defmodule Druzhok.Host.Process do
   catch
     :exit, _ -> default
   end
+
+  defp resolve_bin(bin), do: System.find_executable(bin) || bin
 
   defp via(name), do: {:via, Registry, {Druzhok.Registry, {name, :host_process}}}
 

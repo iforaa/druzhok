@@ -12,10 +12,10 @@ defmodule Druzhok.Host.Systemd do
 
   @impl true
   def start(name, env, _data_root) do
+    # `create` is idempotent: ensures user + dirs + nft membership and
+    # (re)writes the env file, so it doubles as update-env on restarts.
     with :ok <- check_name(name) do
-      first_cmd = if status(name) == :unknown, do: "create", else: "update-env"
-
-      with {_, 0} <- ctl([first_cmd, name], input: env_file(env)),
+      with {_, 0} <- ctl(["create", name], input: env_file(env)),
            {_, 0} <- ctl(["start", name]) do
         :ok
       else
@@ -81,6 +81,15 @@ defmodule Druzhok.Host.Systemd do
       String.trim_trailing(out)
     else
       _ -> ""
+    end
+  end
+
+  @impl true
+  def egress_check(name) do
+    # nftables drops (not rejects), so a blocked connect only times out.
+    case exec(name, ["curl", "-m", "1", "-sS", "-o", "/dev/null", "http://127.0.0.1:22"]) do
+      {_, 0} -> :open
+      _ -> :closed
     end
   end
 

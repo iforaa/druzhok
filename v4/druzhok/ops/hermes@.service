@@ -9,10 +9,10 @@ NotifyAccess=all
 WatchdogSec=120
 User=bot-%i
 Group=bot-%i
+# HERMES_HOME and all bot-specific vars come from the env file (Druzhok owns it).
 EnvironmentFile=/etc/druzhok/%i.env
-Environment=HERMES_HOME=/data/tenants/%i
 Environment=HOME=/data/tenants/%i/home
-Environment=PATH=/usr/local/bin:/usr/bin:/bin
+Environment=PATH=/opt/hermes/.venv/bin:/usr/local/bin:/usr/bin:/bin
 WorkingDirectory=/data/tenants/%i/workspace
 ExecStart=/opt/hermes/.venv/bin/hermes gateway run
 Restart=always

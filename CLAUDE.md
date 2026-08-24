@@ -22,11 +22,13 @@ Always use `/my-commit` for committing changes.
 v4/druzhok/apps/druzhok/      core: BotManager, Host (Systemd|Process), Runtime.Hermes, HealthMonitor(+Probe), ManagerBot, Budget
 v4/druzhok/apps/druzhok_web/  Phoenix dashboard + LLM proxy (LlmProxyController) + BotSite plug
 v4/druzhok/ops/               druzhok-ctl, hermes@.service, nftables, Caddyfile, bootstrap.sh, smoke.sh
-workspace-template/           Hermes workspace seed (AGENTS.md, SOUL.md, …)
+(workspace seed: config.yaml + AGENTS.md come from Runtime.Hermes.workspace_files/1; SOUL.md from the provisioner)
 docs/superpowers/specs|plans  design docs (see 2026-08-23-systemd-host-*)
 ```
 
 `Druzhok.Host` is the process backend: `Host.Systemd` in prod (shells out to `sudo druzhok-ctl`), `Host.Process` in dev/test (spawns `hermes gateway run` as a port; `HERMES_BIN` env or `config :druzhok, :hermes_bin`). Selected by `DRUZHOK_HOST=systemd`.
+
+Prod env (MIX_ENV, DATABASE_PATH, DRUZHOK_HOST, HEX/MIX homes, SECRET_KEY_BASE, PHX_HOST) lives only in `/etc/druzhok/druzhok.env`; `druzhok.service`, `ops/druzhok-run.sh` and `ops/smoke.sh` all source it. One-off prod `mix run` must go through `sudo ops/druzhok-run.sh '<expr>'` (file caps for 0700 tenant dirs).
 
 ## Proxy endpoints (all require `Authorization: Bearer <tenant_key>`)
 

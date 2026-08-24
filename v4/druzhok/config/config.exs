@@ -61,7 +61,7 @@ config :druzhok,
   ecto_repos: [Druzhok.Repo],
   host: Druzhok.Host.Process,
   data_root_default: Path.expand("../../data/tenants", __DIR__),
-  hermes_bin: System.get_env("HERMES_BIN") || "hermes"
+  hermes_bin: "hermes"
 
 # Import environment specific config. This must remain at the bottom
 # of this file so it overrides the configuration defined above.

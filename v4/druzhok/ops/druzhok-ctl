@@ -2,8 +2,8 @@
 # druzhok-ctl — the single privileged entry point Druzhok uses to manage
 # per-bot Linux users + systemd units. Invoked as root via sudo.
 #
-#   create <name>      (env file on stdin)   useradd + data dir + env + nft
-#   update-env <name>  (env file on stdin)   rewrite env file
+#   create <name>      (env file on stdin)   useradd + data dir + env + nft; idempotent,
+#                                            re-run before every start to refresh env
 #   start|stop|restart|destroy <name>
 #   status <name>      → active|activating|inactive|failed|unknown
 #   stats <name>       → <mem_bytes>|<cpu_usec>
@@ -13,6 +13,7 @@ set -euo pipefail
 
 TENANTS=/data/tenants
 ENVDIR=/etc/druzhok
+HERMES_BIN_DIR=/opt/hermes/.venv/bin
 NFT_FAMILY=inet
 NFT_TABLE=druzhok
 NFT_SET=bot_uids
@@ -66,10 +67,6 @@ case "$cmd" in
     write_env
     nft_add
     ;;
-  update-env)
-    user_exists || die "no such bot: $name"
-    write_env
-    ;;
   start|restart)
     user_exists || die "no such bot: $name"
     # Druzhok (CAP_DAC_OVERRIDE) may have created/rewritten files as its own
@@ -109,16 +106,13 @@ case "$cmd" in
   exec)
     user_exists || die "no such bot: $name"
     [ $# -ge 1 ] || die "exec needs a command"
-    envargs=()
-    if [ -r "$envf" ]; then
-      while IFS= read -r line; do
-        [ -n "$line" ] || continue
-        key=${line%%=*}; val=${line#*=}; val=${val#\"}; val=${val%\"}
-        envargs+=("$key=$val")
-      done < "$envf"
-    fi
-    exec runuser -u "$user" -- env -i HOME="$root/home" HERMES_HOME="$root" \
-      PATH=/usr/local/bin:/usr/bin:/bin "${envargs[@]}" "$@" 2>&1
+    # Run as a transient unit so the env file is parsed by systemd exactly as
+    # hermes@.service sees it (no second parser here), with the same HOME/PATH.
+    exec systemd-run --quiet --wait --pipe --collect \
+      --uid="$user" --gid="$user" \
+      -p EnvironmentFile="$envf" -p WorkingDirectory="$root/workspace" \
+      -E HOME="$root/home" -E PATH="$HERMES_BIN_DIR:/usr/local/bin:/usr/bin:/bin" \
+      -- "$@" 2>&1
     ;;
   destroy)
     if user_exists; then

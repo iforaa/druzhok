@@ -45,25 +45,16 @@ defmodule Druzhok.BotManager do
         {:error, :not_found}
 
       instance ->
-        runtime = Druzhok.Runtime.get(instance.bot_runtime || "hermes", Druzhok.Runtime.Hermes)
+        runtime = Druzhok.Runtime.for_instance(instance)
         env = Druzhok.Runtime.base_env(instance) |> Map.merge(runtime.env_vars(instance))
         data_root = runtime.data_root(instance)
 
-        File.mkdir_p!(Path.join(data_root, "home"))
         write_workspace_files(data_root, runtime.workspace_files(instance))
-        sync_runtime_config(runtime, instance, data_root)
+        runtime.sync_config(instance, data_root)
 
         case Druzhok.Host.start(name, env, data_root) do
           :ok ->
             Logger.info("Started bot #{name}")
-
-            Task.start(fn ->
-              case runtime.post_start(instance) do
-                :ok -> :ok
-                {:error, reason} -> Logger.error("Post-start for #{name} failed: #{inspect(reason)}")
-              end
-            end)
-
             Druzhok.HealthMonitor.register(name)
             Repo.update(Instance.changeset(instance, %{active: true}))
             {:ok, name}
@@ -126,10 +117,7 @@ defmodule Druzhok.BotManager do
   end
 
   defp wipe_data_dir(instance) do
-    data_root = case instance.workspace do
-      ws when is_binary(ws) and ws != "" -> Path.dirname(ws)
-      _ -> nil
-    end
+    data_root = Druzhok.Runtime.for_instance(instance).data_root(instance)
 
     if safe_to_wipe?(data_root) do
       case File.rm_rf(data_root) do
@@ -167,34 +155,13 @@ defmodule Druzhok.BotManager do
   @doc "Unit/process state as a string: active | activating | inactive | failed | unknown"
   def status(name), do: name |> Druzhok.Host.status() |> Atom.to_string()
 
-  @doc "Resource usage in the shape the dashboard renders, or nil."
-  def stats(name) do
-    case Druzhok.Host.stats(name) do
-      %{mem_bytes: mem, cpu_usec: cpu} ->
-        %{mem: human_bytes(mem), mem_bytes: mem, cpu: "#{Float.round(cpu / 1_000_000, 1)}s", net: ""}
-
-      nil ->
-        nil
-    end
-  end
+  @doc "`%{mem_bytes, cpu_usec}` for a running bot, or nil."
+  def stats(name), do: Druzhok.Host.stats(name)
 
   @doc "Run a command inside the bot's environment. Returns `{output, exit_code}`."
   def exec(name, args) when is_list(args), do: Druzhok.Host.exec(name, args)
 
   def logs(name, lines \\ 200), do: Druzhok.Host.logs(name, lines)
-
-  defp human_bytes(b) when b >= 1024 * 1024 * 1024, do: "#{Float.round(b / (1024 * 1024 * 1024), 2)}GiB"
-  defp human_bytes(b) when b >= 1024 * 1024, do: "#{Float.round(b / (1024 * 1024), 1)}MiB"
-  defp human_bytes(b) when b >= 1024, do: "#{div(b, 1024)}KiB"
-  defp human_bytes(b), do: "#{b}B"
-
-  defp sync_runtime_config(runtime, instance, data_root) do
-    if function_exported?(runtime, :sync_config, 2) do
-      runtime.sync_config(instance, data_root)
-    else
-      :ok
-    end
-  end
 
   defp write_workspace_files(data_root, files) do
     for entry <- files do

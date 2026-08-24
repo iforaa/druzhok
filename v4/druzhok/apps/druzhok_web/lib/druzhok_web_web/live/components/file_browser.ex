@@ -22,7 +22,6 @@ defmodule DruzhokWebWeb.Live.Components.FileBrowser do
         <textarea
           id="file-editor"
           phx-hook="FileEditor"
-          data-target={@target}
           name="file_content"
           class="flex-1 bg-panel border border-line2 p-4 rounded-lg text-sm font-mono text-fg leading-relaxed resize-none focus:outline-none focus:ring-1 focus:ring-accent focus:border-accent"
           spellcheck="false"><%= @file_content.content %></textarea>

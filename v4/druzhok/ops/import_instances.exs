@@ -8,7 +8,7 @@ for attrs <- path |> File.read!() |> Jason.decode!() do
 
   attrs =
     attrs
-    |> Map.put("workspace", "/data/tenants/#{name}/workspace")
+    |> Map.put("workspace", Path.join([Druzhok.BotManager.data_root_base(), name, "workspace"]))
     |> Map.put("active", false)
 
   case Druzhok.Repo.get_by(Druzhok.Instance, name: name) do

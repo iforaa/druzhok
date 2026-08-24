@@ -102,7 +102,6 @@ defmodule DruzhokWebWeb.SettingsLive do
       <div class="border-b border-line px-6 py-3 flex items-center gap-4">
         <a href="/" class="font-display text-sm text-muted hover:text-accent transition">← Dashboard</a>
         <span class="text-faint">·</span>
-        <a href="/processes" class="font-display text-[10px] uppercase tracking-wider2 text-muted hover:text-fg transition">Processes</a>
         <a href="/errors" class="font-display text-[10px] uppercase tracking-wider2 text-muted hover:text-err transition">Errors</a>
         <span class="font-display text-[10px] uppercase tracking-wider2 text-accent border-b border-accent pb-0.5">Settings</span>
       </div>

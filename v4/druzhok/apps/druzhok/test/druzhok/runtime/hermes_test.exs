@@ -87,26 +87,29 @@ defmodule Druzhok.Runtime.HermesTest do
   end
 
   describe "workspace_files/1" do
-    test "returns a single create_only config.yaml entry" do
-      [{path, content, mode}] = Hermes.workspace_files(@instance)
-      assert path == "config.yaml"
-      assert mode == :create_only
-      assert content =~ "custom"
-      assert content =~ @instance.model
-      assert content =~ "platforms:\n    telegram:"
+    test "seeds config.yaml and workspace/AGENTS.md, both create_only" do
+      [{"config.yaml", config, :create_only}, {"workspace/AGENTS.md", agents, :create_only}] =
+        Hermes.workspace_files(@instance)
+
+      assert config =~ "custom"
+      assert config =~ @instance.model
+      assert config =~ "platforms:\n    telegram:"
+
+      for heading <- ["## Каждая сессия", "## Память", "## Стиль", "## Публикация сайтов"],
+          do: assert(agents =~ heading)
+
+      refute agents =~ "/opt/data"
     end
   end
 
-  describe "data_root/1 and file_browser_root/1" do
-    test "both are the parent of instance.workspace" do
+  describe "data_root/1" do
+    test "is the parent of instance.workspace" do
       inst = %{workspace: "/data/tenants/b/workspace"}
       assert Hermes.data_root(inst) == "/data/tenants/b"
-      assert Hermes.file_browser_root(inst) == "/data/tenants/b"
     end
 
     test "handle missing workspace gracefully" do
       assert Hermes.data_root(%{}) == ""
-      assert Hermes.file_browser_root(%{}) == ""
     end
   end
 
@@ -297,6 +300,23 @@ defmodule Druzhok.Runtime.HermesTest do
       content = File.read!(Path.join(workspace, "AGENTS.md"))
       assert content =~ "## Публикация сайтов"
       assert content =~ "BOT_SITE_BASE_URL"
+    end
+
+    @tag :tmp_dir
+    test "rewrites a stale sites section (old Docker path)", %{tmp_dir: tmp_dir} do
+      workspace = Path.join(tmp_dir, "workspace")
+      File.mkdir_p!(workspace)
+
+      File.write!(
+        Path.join(workspace, "AGENTS.md"),
+        "# AGENTS.md\n\n## Публикация сайтов\n\nПиши в `/opt/data/workspace/sites/`.\n\n## Своё\n\nне трогать\n"
+      )
+
+      assert :ok = Hermes.sync_agents_md(@instance, tmp_dir)
+      content = File.read!(Path.join(workspace, "AGENTS.md"))
+      refute content =~ "/opt/data"
+      assert content =~ "`sites/<имя>/`"
+      assert content =~ "## Своё\n\nне трогать"
     end
 
     @tag :tmp_dir

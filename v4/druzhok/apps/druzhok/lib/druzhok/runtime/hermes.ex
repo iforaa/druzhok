@@ -11,8 +11,13 @@ defmodule Druzhok.Runtime.Hermes do
   The allowlist is env-var driven: druzhok writes `TELEGRAM_ALLOWED_USERS`
   at each start from `instance.owner_telegram_id +
   instance.allowed_telegram_ids`. Hermes's own pairing store under
-  `/opt/data/platforms/pairing/telegram-approved.json` is left for the bot
+  `<data_root>/platforms/pairing/telegram-approved.json` is left for the bot
   to manage — we read it for the dashboard but don't write to it.
+
+  `workspace/AGENTS.md` is seeded on first start and the druzhok-owned
+  sections (`## Каждая сессия`, `## Память`, `## Стиль`, `## Публикация
+  сайтов`) are rewritten on every start; everything else in it belongs to
+  the bot.
   """
 
   @behaviour Druzhok.Runtime
@@ -57,9 +62,9 @@ defmodule Druzhok.Runtime.Hermes do
 
   1. Проверь переменную окружения `BOT_SITE_BASE_URL`. Если пусто — хостинг не включён; сообщи пользователю и не пиши файлы.
   2. Выбери короткое имя сайта (`^[a-z0-9][a-z0-9-]*$`, до 50 символов).
-  3. Запиши все файлы в `/opt/data/workspace/sites/<имя>/`. Входная точка — `index.html`. Всего до ~50 MB на сайт, до ~100 файлов.
+  3. Запиши все файлы в `sites/<имя>/` внутри рабочей директории (workspace). Входная точка — `index.html`. Всего до ~50 MB на сайт, до ~100 файлов.
   4. Ответь пользователю одной кликабельной ссылкой: `$BOT_SITE_BASE_URL/<имя>/`.
-  5. Удалить сайт: `rm -rf /opt/data/workspace/sites/<имя>/`.
+  5. Удалить сайт: `rm -rf sites/<имя>/`.
 
   Файлы в `sites/<имя>/` публичны. Не клади туда секреты, токены, файлы, начинающиеся с точки.
   """
@@ -72,8 +77,8 @@ defmodule Druzhok.Runtime.Hermes do
     end
   end
 
-  @impl true
-  def file_browser_root(instance), do: data_root(instance)
+  @doc "Hermes CLI binary (`HERMES_BIN`); bare `hermes` resolves via PATH."
+  def bin, do: Application.get_env(:druzhok, :hermes_bin, "hermes")
 
   @impl true
   def env_vars(instance) do
@@ -86,7 +91,7 @@ defmodule Druzhok.Runtime.Hermes do
     # config.yaml's `stt:` section — see build_config_yaml/1.
     tenant_key = Map.get(instance, :tenant_key, "") || ""
     model = Map.get(instance, :model) || @default_model
-    proxy_url = proxy_url()
+    proxy_url = Druzhok.Runtime.proxy_url()
 
     %{
       "HERMES_HOME" => data_root(instance),
@@ -137,7 +142,10 @@ defmodule Druzhok.Runtime.Hermes do
     # state (telegram thread IDs, etc.) back into config.yaml at runtime, so
     # we must never overwrite it on restart. sync_config/2 (below) handles
     # targeted updates on every start.
-    [{"config.yaml", build_config_yaml(instance), :create_only}]
+    [
+      {"config.yaml", build_config_yaml(instance), :create_only},
+      {"workspace/AGENTS.md", default_agents_md(), :create_only}
+    ]
   end
 
   @impl true
@@ -161,7 +169,7 @@ defmodule Druzhok.Runtime.Hermes do
           |> sync_model_api_key()
           |> sync_auxiliary_vision(vision_model, tenant_key)
           |> sync_group_sessions_per_user(instance)
-          |> sync_memory_block(instance)
+          |> sync_memory_block()
           |> sync_image_gen_block(instance)
           |> sync_quick_commands()
           |> sync_streaming_block()
@@ -292,7 +300,7 @@ defmodule Druzhok.Runtime.Hermes do
     auxiliary:
       vision:
         provider: custom
-        base_url: "#{proxy_url()}"
+        base_url: "#{Druzhok.Runtime.proxy_url()}"
         api_key: "#{tenant_key}"
         model: "#{vision_model}"
     """
@@ -333,7 +341,7 @@ defmodule Druzhok.Runtime.Hermes do
   # Druzhok pins the memory block to the builtin provider with legacy
   # MEMORY.md/USER.md memory on. Char-limit fields are left alone so user
   # edits survive.
-  defp sync_memory_block(content, _instance) do
+  defp sync_memory_block(content) do
     sync_yaml_block(content, "memory",
       upsert: fn body ->
         body
@@ -419,17 +427,17 @@ defmodule Druzhok.Runtime.Hermes do
     end
   end
 
-  def sync_agents_md(instance, data_root) do
+  def sync_agents_md(_instance, data_root) do
     agents_path = Path.join([data_root, "workspace", "AGENTS.md"])
 
     case File.read(agents_path) do
       {:ok, content} ->
         updated =
           content
-          |> sync_session_section()
-          |> sync_memory_section(instance)
-          |> sync_style_section()
-          |> ensure_sites_section()
+          |> sync_section("Каждая сессия", @agents_md_session_section)
+          |> sync_section("Память", memory_section())
+          |> sync_section("Стиль", @agents_md_style_section)
+          |> sync_section("Публикация сайтов", @agents_md_sites_section)
 
         if updated != content, do: File.write!(agents_path, updated)
         :ok
@@ -439,59 +447,53 @@ defmodule Druzhok.Runtime.Hermes do
     end
   end
 
-  # Replace the entire `## Память` section (header + body + trailing
-  # newlines, up to the next `## ` or EOF) with druzhok's builtin-memory text.
-  defp sync_memory_section(content, _instance) do
-    new_section = memory_section()
-    # Eat trailing newlines so we can re-emit a stable `\n\n` separator —
-    # makes the rewrite idempotent regardless of original blank-line count.
-    pattern = ~r/(?ms)^## Память[ \t]*\n.*?\n+(?=^## |\z)/
+  # Replace one druzhok-owned `## <heading>` section (header + body, up to
+  # the next `## ` or EOF) with `body`, appending it if absent. Druzhok owns
+  # these sections so every restart picks up the latest wording: the session
+  # section because the original lied that IDENTITY.md/USER.md were injected
+  # into the system prompt (hermes only loads SOUL.md and memories), the
+  # style section because it encodes loop-prevention tuned from observed bot
+  # pathology, the sites section because paths changed across hosts.
+  defp sync_section(content, heading, body) do
+    body = String.trim_trailing(body)
+    pattern = ~r/(?ms)^## #{Regex.escape(heading)}[ \t]*\n.*?\n+(?=^## |\z)/
 
-    if Regex.match?(pattern, content) do
-      Regex.replace(pattern, content, new_section <> "\n\n", global: false)
-    else
-      String.trim_trailing(content) <> "\n\n" <> new_section <> "\n"
-    end
+    updated =
+      if Regex.match?(pattern, content) do
+        # Eat trailing newlines and re-emit a stable `\n\n` separator so the
+        # rewrite is idempotent regardless of the original blank-line count.
+        Regex.replace(pattern, content, body <> "\n\n", global: false)
+      else
+        String.trim_trailing(content) <> "\n\n" <> body
+      end
+
+    String.trim_trailing(updated) <> "\n"
   end
 
-  # Replace the entire `## Каждая сессия` section. Druzhok owns it because
-  # the original wording lied that IDENTITY.md and USER.md were auto-loaded
-  # into the system prompt — hermes only loads SOUL.md and memories/*.md;
-  # workspace/IDENTITY.md and workspace/USER.md are never injected. Bots
-  # acted on the lie by trying to read those files, finding empty templates,
-  # and triggering investigation loops on cold start.
-  defp sync_session_section(content) do
-    body = String.trim_trailing(@agents_md_session_section)
-    pattern = ~r/(?ms)^## Каждая сессия[ \t]*\n.*?\n+(?=^## |\z)/
+  # Seed for a fresh workspace: the druzhok-owned sections plus a few
+  # starter rules the bot is free to edit.
+  defp default_agents_md do
+    [
+      "# AGENTS.md — Персональный ассистент",
+      @agents_md_session_section,
+      memory_section(),
+      """
+      ## Безопасность
 
-    if Regex.match?(pattern, content) do
-      Regex.replace(pattern, content, body <> "\n\n", global: false)
-    else
-      String.trim_trailing(content) <> "\n\n" <> body <> "\n"
-    end
-  end
+      - Приватные данные не утекают. Никогда.
+      - Деструктивные команды — только с разрешения.
+      - Сомневаешься — спроси.
 
-  # Replace the entire `## Стиль` section. Druzhok owns it because we tune
-  # research-depth / loop-prevention guidance from observed bot pathology
-  # (sequential web_search storms, verification compulsion, query-truncation
-  # loops) and want every restart to pick up the latest wording.
-  defp sync_style_section(content) do
-    body = String.trim_trailing(@agents_md_style_section)
-    pattern = ~r/(?ms)^## Стиль[ \t]*\n.*?\n+(?=^## |\z)/
+      ## Групповые чаты
 
-    if Regex.match?(pattern, content) do
-      Regex.replace(pattern, content, body <> "\n\n", global: false)
-    else
-      String.trim_trailing(content) <> "\n\n" <> body <> "\n"
-    end
-  end
-
-  defp ensure_sites_section(content) do
-    if String.contains?(content, "## Публикация сайтов") do
-      content
-    else
-      String.trim_trailing(content) <> "\n\n" <> @agents_md_sites_section
-    end
+      Участвуй, но не доминируй. Отвечай когда упомянут или когда реально полезен.
+      """,
+      @agents_md_style_section,
+      @agents_md_sites_section,
+      "---\n\n_Этот файл — стартовая точка. Добавляй свои правила._"
+    ]
+    |> Enum.map_join("\n\n", &String.trim_trailing/1)
+    |> Kernel.<>("\n")
   end
 
   defp memory_section do
@@ -512,9 +514,6 @@ defmodule Druzhok.Runtime.Hermes do
     """
     |> String.trim_trailing()
   end
-
-  @impl true
-  def post_start(_instance), do: :ok
 
   @impl true
   def clear_sessions(data_root) do
@@ -622,7 +621,7 @@ defmodule Druzhok.Runtime.Hermes do
     model = Map.get(instance, :model) || @default_model
     vision_model = Map.get(instance, :image_model) || @default_vision_model
     tenant_key = Map.get(instance, :tenant_key, "") || ""
-    url = proxy_url()
+    url = Druzhok.Runtime.proxy_url()
     group_sessions_per_user = not Map.get(instance, :group_shared_memory, false)
     observe_unmentioned = Map.get(instance, :group_shared_memory, false)
 
@@ -698,11 +697,5 @@ defmodule Druzhok.Runtime.Hermes do
     gateway:
       systemd_watchdog_seconds: #{@systemd_watchdog_seconds}
     """
-  end
-
-  defp proxy_url do
-    proxy_host = Druzhok.Runtime.proxy_host()
-    proxy_port = System.get_env("LLM_PROXY_PORT") || "4000"
-    "http://#{proxy_host}:#{proxy_port}/v1"
   end
 end

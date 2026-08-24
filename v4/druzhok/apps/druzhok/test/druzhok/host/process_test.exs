@@ -25,7 +25,8 @@ defmodule Druzhok.Host.ProcessTest do
   end
 
   test "start → active, logs show env, stop → inactive", %{name: name, data_root: root} do
-    assert :ok = HostProcess.start(name, %{"TELEGRAM_BOT_TOKEN" => "tok123"}, root)
+    env = %{"HERMES_HOME" => root, "TELEGRAM_BOT_TOKEN" => "tok123"}
+    assert :ok = HostProcess.start(name, env, root)
     assert HostProcess.status(name) == :active
     Process.sleep(300)
     logs = HostProcess.logs(name, 10)
@@ -57,10 +58,12 @@ defmodule Druzhok.Host.ProcessTest do
     assert HostProcess.stats("nope") == nil
   end
 
-  test "exec runs a command with HERMES_HOME set", %{name: name, data_root: root} do
-    assert :ok = HostProcess.start(name, %{}, root)
-    assert {out, 0} = HostProcess.exec(name, ["sh", "-c", "echo $HERMES_HOME"])
-    assert String.trim(out) == root
+  test "exec runs a command with the bot's env, in its workspace", %{name: name, data_root: root} do
+    assert :ok = HostProcess.start(name, %{"HERMES_HOME" => root}, root)
+    assert {out, 0} = HostProcess.exec(name, ["sh", "-c", "echo $HERMES_HOME; pwd"])
+    assert [^root, cwd] = String.split(String.trim(out), "\n")
+    # macOS reports /private/var for /var — compare the tail only.
+    assert String.ends_with?(cwd, Path.join(Path.basename(root), "workspace"))
   end
 
   test "rejects invalid names, accepts underscores" do

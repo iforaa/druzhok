@@ -106,5 +106,7 @@ config :druzhok,
   host:
     (if System.get_env("DRUZHOK_HOST") == "systemd",
        do: Druzhok.Host.Systemd,
-       else: Druzhok.Host.Process),
-  druzhok_ctl: ["sudo", "-n", "/usr/local/sbin/druzhok-ctl"]
+       else: Druzhok.Host.Process)
+
+# Dev: point at a local hermes venv. Tests keep the fake from config/test.exs.
+if bin = System.get_env("HERMES_BIN"), do: config(:druzhok, hermes_bin: bin)

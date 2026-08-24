@@ -47,8 +47,7 @@ defmodule Druzhok.HealthMonitor.ProbeTest do
     assert {:degraded, [:egress_open]} = Probe.run(@inst, opts(egress_check: fn _ -> :open end))
   end
 
-  test "egress_check interprets exec exit code" do
-    assert Probe.egress_check("b", exec: fn _, _ -> {"", 0} end) == :open
-    assert Probe.egress_check("b", exec: fn _, _ -> {"refused", 7} end) == :closed
+  test "unenforced egress (dev host) is not a reason" do
+    assert {:healthy, []} = Probe.run(@inst, opts(egress_check: fn _ -> :unenforced end))
   end
 end

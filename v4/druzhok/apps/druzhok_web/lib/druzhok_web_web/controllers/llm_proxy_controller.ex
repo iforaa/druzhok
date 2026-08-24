@@ -250,7 +250,7 @@ defmodule DruzhokWebWeb.LlmProxyController do
   """
 
   def audio_transcriptions(conn, _params) do
-    or_key = LlmFormat.provider_key() || get_setting("openrouter_api_key")
+    or_key = LlmFormat.provider_key()
 
     if is_nil(or_key) do
       json_error(conn, 503, "Audio transcription not configured", "server_error")
@@ -278,7 +278,7 @@ defmodule DruzhokWebWeb.LlmProxyController do
       %Plug.Upload{path: path, filename: filename} ->
         audio_b64 = path |> File.read!() |> Base.encode64()
         format = audio_format(filename)
-        model = get_setting("transcription_model") || @transcription_default_model
+        model = Druzhok.Settings.get("transcription_model") || @transcription_default_model
 
         payload = %{
           "model" => model,
@@ -394,7 +394,7 @@ defmodule DruzhokWebWeb.LlmProxyController do
   end
 
   def audio_speech(conn, _params) do
-    openai_key = get_setting("openai_api_key")
+    openai_key = Druzhok.Settings.get("openai_api_key")
 
     if is_nil(openai_key) do
       json_error(conn, 503, "Text-to-speech not configured", "server_error")
@@ -987,11 +987,6 @@ defmodule DruzhokWebWeb.LlmProxyController do
       _ ->
         resp_body
     end
-  end
-
-  defp get_setting(key) do
-    import Ecto.Query
-    Druzhok.Repo.one(from s in "settings", where: s.key == ^key, select: s.value)
   end
 
   defp json_error(conn, status, message, type) do

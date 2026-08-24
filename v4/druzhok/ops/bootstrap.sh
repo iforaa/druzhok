@@ -73,13 +73,20 @@ systemctl daemon-reload
 systemd-analyze verify /etc/systemd/system/hermes@.service /etc/systemd/system/druzhok.service || true
 
 step "druzhok env"
-if [ ! -f /etc/druzhok/druzhok.env ]; then
-  cat > /etc/druzhok/druzhok.env <<EOT
-SECRET_KEY_BASE=$(openssl rand -base64 48 | tr -d '\n')
-PHX_HOST=oldey.dev
+# Single source of prod env for druzhok.service, druzhok-run.sh and smoke.sh.
+# Secrets are generated once; the fixed keys are (re)asserted on every run.
+ENVF=/etc/druzhok/druzhok.env
+[ -f "$ENVF" ] || printf 'SECRET_KEY_BASE=%s\nPHX_HOST=oldey.dev\n' "$(openssl rand -base64 48 | tr -d '\n')" > "$ENVF"
+while IFS='=' read -r k v; do
+  grep -q "^$k=" "$ENVF" || echo "$k=$v" >> "$ENVF"
+done <<EOT
+MIX_ENV=prod
+DRUZHOK_HOST=systemd
+DATABASE_PATH=/data/druzhok/druzhok.db
+HEX_HOME=/data/home-ubuntu/.hex
+MIX_HOME=/data/home-ubuntu/.mix
 EOT
-  chown ubuntu:ubuntu /etc/druzhok/druzhok.env; chmod 0600 /etc/druzhok/druzhok.env
-fi
+chown ubuntu:ubuntu "$ENVF"; chmod 0600 "$ENVF"
 
 step "asdf + erlang/elixir for ubuntu (per .tool-versions)"
 TV=/home/ubuntu/druzhok/v4/druzhok/.tool-versions

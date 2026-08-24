@@ -16,10 +16,11 @@ defmodule Druzhok.Settings do
     |> unique_constraint(:key)
   end
 
+  @doc "Setting value, or nil when unset or blank."
   def get(key) do
     case Druzhok.Repo.get_by(__MODULE__, key: key) do
-      nil -> nil
-      s -> s.value
+      %{value: v} when is_binary(v) and v != "" -> v
+      _ -> nil
     end
   end
 

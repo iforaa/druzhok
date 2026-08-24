@@ -40,7 +40,7 @@ defmodule DruzhokWebWeb.Live.Components.FilesTab do
     # The parent polls `list_instances/0` every 5s, rebuilding maps with
     # fresh container_stats — so we can't compare the whole map.
     switched? = socket.assigns[:instance][:name] != instance[:name]
-    runtime = Runtime.get(instance[:bot_runtime] || "hermes", Runtime.Hermes)
+    runtime = Runtime.for_instance(instance)
 
     socket =
       if switched? do
@@ -102,7 +102,7 @@ defmodule DruzhokWebWeb.Live.Components.FilesTab do
   def handle_event("view_file", %{"path" => path}, socket) do
     runtime = socket.assigns.runtime
     instance = socket.assigns.instance
-    root = runtime.file_browser_root(instance)
+    root = runtime.data_root(instance)
     full_rel = join_path(socket.assigns.current_path, path)
     full_path = Path.join(root, full_rel)
 
@@ -153,7 +153,7 @@ defmodule DruzhokWebWeb.Live.Components.FilesTab do
   def handle_event("do_save_file", %{"content" => content}, socket) do
     runtime = socket.assigns.runtime
     instance = socket.assigns.instance
-    root = runtime.file_browser_root(instance)
+    root = runtime.data_root(instance)
 
     case socket.assigns.file_content do
       %{path: path} when is_binary(path) ->
@@ -396,7 +396,7 @@ defmodule DruzhokWebWeb.Live.Components.FilesTab do
   defp join_path(current, path), do: Path.join(current, path)
 
   defp list_workspace_files(runtime, instance, subpath) do
-    case runtime.file_browser_root(instance) do
+    case runtime.data_root(instance) do
       nil ->
         []
 

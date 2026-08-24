@@ -14,6 +14,4 @@ exec setpriv --reuid=ubuntu --regid=ubuntu --init-groups \
   env HOME=/home/ubuntu bash -lc '
     set -a; . /etc/druzhok/druzhok.env; set +a
     . ~/.asdf/asdf.sh
-    export MIX_ENV=prod HEX_HOME=/data/home-ubuntu/.hex MIX_HOME=/data/home-ubuntu/.mix \
-      DATABASE_PATH=/data/druzhok/druzhok.db DRUZHOK_HOST=systemd DRUZHOK_DATA_ROOT=/data/tenants LLM_PROXY_HOST=127.0.0.1
     exec mix run --no-start -e "Application.ensure_all_started(:druzhok); $0"' "$expr"
