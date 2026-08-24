@@ -108,10 +108,13 @@ case "$cmd" in
     [ $# -ge 1 ] || die "exec needs a command"
     # Run as a transient unit so the env file is parsed by systemd exactly as
     # hermes@.service sees it (no second parser here), with the same HOME/PATH.
+    # ExecSearchPath resolves the binary AND becomes $PATH (systemd ≥ 250).
     exec systemd-run --quiet --wait --pipe --collect \
       --uid="$user" --gid="$user" \
       -p EnvironmentFile="$envf" -p WorkingDirectory="$root/workspace" \
-      -E HOME="$root/home" -E PATH="$HERMES_BIN_DIR:/usr/local/bin:/usr/bin:/bin" \
+      -p ExecSearchPath="$HERMES_BIN_DIR" -p ExecSearchPath=/usr/local/bin \
+      -p ExecSearchPath=/usr/bin -p ExecSearchPath=/bin \
+      -E HOME="$root/home" \
       -- "$@" 2>&1
     ;;
   destroy)
