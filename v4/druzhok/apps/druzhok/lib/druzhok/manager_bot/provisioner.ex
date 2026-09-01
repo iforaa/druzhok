@@ -11,7 +11,7 @@ defmodule Druzhok.ManagerBot.Provisioner do
   alias Druzhok.{BotManager, Instance, Repo}
   alias Druzhok.Telegram.API
 
-  @default_model "z-ai/glm-5.2"
+  @default_model "z-ai/glm-5.3-flash"
 
   @doc """
   Run the full provisioning pipeline.
