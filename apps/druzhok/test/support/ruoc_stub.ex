@@ -56,7 +56,7 @@ defmodule Druzhok.RuocStub do
 
     Bypass.stub(bypass, "GET", "/v1/balance", fn conn ->
       conn = record(stub, "GET /v1/balance", conn)
-      reply(conn, 200, %{"balance_nanorub" => 12_500_000_000, "balance_rub" => "12.5", "grants" => [], "models" => []})
+      reply(conn, 200, %{"balance_nanorub" => 12_500_000_000, "balance_rub" => "12.5 RUB", "grants" => [], "models" => []})
     end)
 
     Bypass.stub(bypass, "GET", "/v1/models", fn conn ->

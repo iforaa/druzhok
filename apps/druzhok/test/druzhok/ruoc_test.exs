@@ -55,7 +55,19 @@ defmodule Druzhok.RuocTest do
   end
 
   test "balance/1 uses the bot key", %{stub: stub} do
-    assert {:ok, %{balance_rub: "12.5", balance_nanorub: 12_500_000_000}} = Ruoc.balance("ruoc_bot")
+    assert {:ok, %{balance_rub: "12.50", balance_nanorub: 12_500_000_000}} = Ruoc.balance("ruoc_bot")
+
+    Bypass.expect_once(stub.bypass, "GET", "/v1/balance", fn conn ->
+      RuocStub.reply(conn, 200, %{"balance_nanorub" => 48_998_806_000, "balance_rub" => "48.998806 RUB"})
+    end)
+
+    assert {:ok, %{balance_rub: "49.00"}} = Ruoc.balance("ruoc_bot")
+
+    Bypass.expect_once(stub.bypass, "GET", "/v1/balance", fn conn ->
+      RuocStub.reply(conn, 200, %{"balance_nanorub" => -1_234_000_000, "balance_rub" => "-1.234 RUB"})
+    end)
+
+    assert {:ok, %{balance_rub: "-1.23"}} = Ruoc.balance("ruoc_bot")
     [call] = RuocStub.calls(stub, "GET /v1/balance")
     assert {"authorization", "Bearer ruoc_bot"} in call.headers
 

@@ -83,13 +83,16 @@ defmodule Druzhok.Ruoc do
 
   # --- Bot-facing API --------------------------------------------------------
 
-  @doc "Balance for a bot key. `{:ok, %{balance_rub: \"12.5\", balance_nanorub: int}}`."
+  @doc """
+  Balance for a bot key. `{:ok, %{balance_rub: "12.50", balance_nanorub: int}}` —
+  `balance_rub` is a plain two-decimal string (the gateway sends "12.5 RUB").
+  """
   def balance(api_key) do
     case Client.get("/v1/balance", api_key) do
       {:ok, 200, _headers, body} ->
         case Jason.decode(body) do
-          {:ok, %{"balance_rub" => rub, "balance_nanorub" => nano}} ->
-            {:ok, %{balance_rub: rub, balance_nanorub: nano}}
+          {:ok, %{"balance_nanorub" => nano}} when is_integer(nano) ->
+            {:ok, %{balance_rub: format_rub(nano), balance_nanorub: nano}}
 
           _ ->
             {:error, "unexpected balance payload"}
@@ -101,6 +104,13 @@ defmodule Druzhok.Ruoc do
       {:error, reason} ->
         {:error, inspect(reason)}
     end
+  end
+
+  # Nanorubles to a two-decimal string, rounding half up, without floats.
+  defp format_rub(nano) do
+    kopecks = div(abs(nano) + 5_000_000, 10_000_000)
+    sign = if nano < 0, do: "-", else: ""
+    "#{sign}#{div(kopecks, 100)}.#{kopecks |> rem(100) |> Integer.to_string() |> String.pad_leading(2, "0")}"
   end
 
   @doc """
