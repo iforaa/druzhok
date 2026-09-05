@@ -171,6 +171,13 @@ defmodule Druzhok.BotManagerLifecycleTest do
       assert String.trim(out) == inst.tenant_key
     end
 
+    test "the ruoc label carries the owner's telegram id when known", %{name: name, stub: stub} do
+      assert {:ok, _} = BotManager.create(name, %{telegram_token: "1A", owner_telegram_id: 4242})
+      assert [%{params: %{"label" => label}}] = Druzhok.RuocStub.calls(stub, "POST /admin/accounts")
+      assert label == "druzhok:#{name} tg:4242"
+      assert BotManager.ruoc_label("x", nil) == "druzhok:x"
+    end
+
     test "create keeps a legacy model id out of a ruoc bot", %{name: name} do
       assert {:ok, %{model: "ruoc-standard"}} = BotManager.create(name, %{model: "z-ai/glm-5.3", telegram_token: "1A"})
       assert {:ok, %{model: "ruoc-flash"}} = BotManager.create(name <> "b", %{model: "anthropic/claude-sonnet-4-6", telegram_token: "1B"})

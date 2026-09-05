@@ -21,7 +21,7 @@ defmodule Druzhok.BotManager do
         {:ok, opts}
 
       Druzhok.Ruoc.configured?() ->
-        case Druzhok.Ruoc.create_account("druzhok:" <> name) do
+        case Druzhok.Ruoc.create_account(ruoc_label(name, opts[:owner_telegram_id])) do
           {:ok, %{account_id: id, api_key: key}} ->
             {:ok,
              opts
@@ -151,6 +151,11 @@ defmodule Druzhok.BotManager do
     :ok
   end
 
+  # What the ruoc console shows for the account: the bot name and, when
+  # known, the owner's Telegram id so a top-up request can be matched.
+  def ruoc_label(name, nil), do: "druzhok:" <> name
+  def ruoc_label(name, owner_id), do: "druzhok:#{name} tg:#{owner_id}"
+
   # The ruoc account is suspended, never deleted, so its usage keeps its
   # explanation. A failure here is logged and does not block the delete.
   defp suspend_ruoc(%Instance{ruoc_account_id: id, name: name}) when is_binary(id) and id != "" do
@@ -178,7 +183,8 @@ defmodule Druzhok.BotManager do
         {:already_migrated, name}
 
       instance ->
-        with {:ok, %{account_id: id, api_key: key}} <- Druzhok.Ruoc.create_account("druzhok:" <> name) do
+        with {:ok, %{account_id: id, api_key: key}} <-
+               Druzhok.Ruoc.create_account(ruoc_label(name, instance.owner_telegram_id)) do
           changes = %{
             ruoc_account_id: id,
             ruoc_api_key: key,
