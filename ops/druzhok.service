@@ -19,8 +19,9 @@ KillMode=mixed
 # must still read/write config.yaml, AGENTS.md and serve sites/. It already
 # holds root-equivalent power through sudo druzhok-ctl, so file caps add no
 # new trust. druzhok-ctl start chowns the tree back to the bot.
+# No CapabilityBoundingSet here: it would also cap what setuid sudo can gain,
+# and `sudo druzhok-ctl` then dies with "unable to change to root gid".
 AmbientCapabilities=CAP_DAC_OVERRIDE CAP_DAC_READ_SEARCH CAP_CHOWN CAP_FOWNER
-CapabilityBoundingSet=CAP_DAC_OVERRIDE CAP_DAC_READ_SEARCH CAP_CHOWN CAP_FOWNER
 
 [Install]
 WantedBy=multi-user.target
