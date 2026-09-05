@@ -79,7 +79,7 @@ sudo systemctl restart druzhok
 ```
 
 Bots: `sudo druzhok-ctl status|logs|restart <name>`; `journalctl -u hermes@<name> -f`.
-Hermes install: `/opt/hermes` (`git pull && uv sync --extra all --extra messaging --extra firecrawl`), then restart bots one at a time — operator's bot first, `ops/smoke.sh`.
+Hermes install: `/opt/hermes` → `/data/opt/hermes`, rsynced from `hermes-agent/` (not a git checkout; recipe in the `update-hermes` skill), then restart bots one at a time through druzhok (`BotManager.restart` via `druzhok-run.sh`, not `druzhok-ctl restart`, which skips config sync) — operator's bot first, `ops/smoke.sh`.
 
 Legacy Yandex VM (`ssh -l igor 10.129.0.19`, Docker-based) is kept only as a fallback during migration.
 
