@@ -228,9 +228,19 @@ defmodule Druzhok.ManagerBot do
         order_by: [desc: i.active, asc: i.name])
     )
     |> Enum.map(fn inst ->
-      inst
-      |> Map.from_struct()
-      |> Map.put(:spent_today_cents, Druzhok.Budget.spent_today_cents(inst.id))
+      bot = Map.from_struct(inst)
+
+      if inst.ruoc_api_key do
+        balance =
+          case Druzhok.Ruoc.balance(inst.ruoc_api_key) do
+            {:ok, %{balance_rub: rub}} -> rub
+            _ -> nil
+          end
+
+        Map.put(bot, :ruoc_balance_rub, balance)
+      else
+        Map.put(bot, :spent_today_cents, Druzhok.Budget.spent_today_cents(inst.id))
+      end
     end)
 
     {text, buttons} = Onboarding.my_bots_message(bots)

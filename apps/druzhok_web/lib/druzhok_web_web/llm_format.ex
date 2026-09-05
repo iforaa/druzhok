@@ -114,8 +114,8 @@ defmodule DruzhokWebWeb.LlmFormat do
 
   Primary path: OpenRouter returns `usage.cost` (USD float) when
   `usage.include=true` was set in the request. Secondary path: compute
-  from prompt/completion tokens using `Druzhok.ModelCatalog.price_per_million/1`
-  as a fallback. Returns 0 if neither is available.
+  from prompt/completion tokens using the OpenRouter price table below as a
+  fallback. Returns 0 if neither is available. Legacy path only.
 
   `model` is passed separately because the response body's "model" field
   can be a resolved variant (e.g. provider-specific suffix) that misses
@@ -131,6 +131,20 @@ defmodule DruzhokWebWeb.LlmFormat do
 
   def extract_cost_cents(_, _), do: 0
 
+  # Cents per million tokens, from OpenRouter's published prices.
+  @fallback_prices %{
+    "z-ai/glm-5.3-flash" => %{input: 8, output: 25},
+    "xiaomi/mimo-v2.5-pro" => %{input: 10, output: 150},
+    "z-ai/glm-5.2" => %{input: 120, output: 410},
+    "google/gemini-2.5-flash-lite" => %{input: 10, output: 40},
+    "google/gemini-3-flash-preview" => %{input: 30, output: 120},
+    "anthropic/claude-sonnet-4-6" => %{input: 300, output: 1500},
+    "openai/gpt-5.4-nano" => %{input: 5, output: 20},
+    "openai/gpt-5.4-mini" => %{input: 25, output: 100},
+    "qwen/qwen3.5-flash" => %{input: 7, output: 28},
+    "deepseek/deepseek-v3.2" => %{input: 30, output: 140}
+  }
+
   defp fallback_cost_cents(decoded, model) do
     prompt = get_in(decoded, ["usage", "prompt_tokens"]) || 0
     completion = get_in(decoded, ["usage", "completion_tokens"]) || 0
@@ -138,7 +152,7 @@ defmodule DruzhokWebWeb.LlmFormat do
     if prompt + completion == 0 do
       0
     else
-      %{input: in_price, output: out_price} = Druzhok.ModelCatalog.price_per_million(model)
+      %{input: in_price, output: out_price} = Map.get(@fallback_prices, model, %{input: 0, output: 0})
       round(prompt * in_price / 1_000_000 + completion * out_price / 1_000_000)
     end
   end

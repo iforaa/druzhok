@@ -23,7 +23,7 @@ defmodule DruzhokWebWeb.DashboardLive do
       id -> Druzhok.Repo.get(Druzhok.User, id)
     end
 
-    models = Druzhok.ModelCatalog.all()
+    models = Druzhok.Ruoc.models()
 
     # Render immediately with lightweight instance list (no host stats).
     # Full stats load async via :load_instances message.
@@ -31,7 +31,7 @@ defmodule DruzhokWebWeb.DashboardLive do
       current_user: current_user,
       instances: list_instances_fast(),
       models: models,
-      create_form: %{"name" => "", "token" => "", "model" => Druzhok.ModelCatalog.default_model()},
+      create_form: %{"name" => "", "token" => "", "model" => Druzhok.Ruoc.default_model()},
       selected: nil,
       tab: :settings,
       tab_loading: false,
@@ -382,7 +382,7 @@ defmodule DruzhokWebWeb.DashboardLive do
             <.term_input name="token" value={@create_form["token"]} placeholder="telegram token (optional)" />
             <.term_select name="model">
               <option :for={m <- @models} value={m.id} selected={m.id == @create_form["model"]}>
-                <%= m.name %> (<%= m.price %>)
+                <%= m.name %><%= if p = Druzhok.Ruoc.price_label(m), do: " (#{p})" %>
               </option>
             </.term_select>
             <button type="submit"

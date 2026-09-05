@@ -8,6 +8,37 @@ defmodule Druzhok.BotManager do
   require Logger
 
   def create(name, opts) do
+    with {:ok, opts} <- provision_ruoc(name, Map.new(opts)) do
+      do_create(name, opts)
+    end
+  end
+
+  # Once ruoc-gateway is configured every new bot gets its own account there
+  # before anything is written locally, so a failed provision leaves no row.
+  defp provision_ruoc(name, opts) do
+    cond do
+      opts[:ruoc_api_key] ->
+        {:ok, opts}
+
+      Druzhok.Ruoc.configured?() ->
+        case Druzhok.Ruoc.create_account("druzhok:" <> name) do
+          {:ok, %{account_id: id, api_key: key}} ->
+            {:ok,
+             opts
+             |> Map.merge(%{ruoc_account_id: id, ruoc_api_key: key})
+             |> Map.update(:model, Druzhok.Ruoc.default_model(), &Druzhok.Ruoc.remap_model/1)}
+
+          {:error, reason} ->
+            Logger.error("ruoc account for #{name} failed: #{reason}")
+            {:error, "ruoc-gateway account creation failed: #{reason}"}
+        end
+
+      true ->
+        {:ok, opts}
+    end
+  end
+
+  defp do_create(name, opts) do
     workspace = Path.join([data_root_base(), name, "workspace"])
 
     # A pooled token can only be claimed once the instance row exists
@@ -114,9 +145,53 @@ defmodule Druzhok.BotManager do
         Druzhok.Host.destroy(name)
         wipe_data_dir(instance)
         TokenPool.release(instance.id)
+        suspend_ruoc(instance)
         Repo.delete(instance)
     end
     :ok
+  end
+
+  # The ruoc account is suspended, never deleted, so its usage keeps its
+  # explanation. A failure here is logged and does not block the delete.
+  defp suspend_ruoc(%Instance{ruoc_account_id: id, name: name}) when is_binary(id) and id != "" do
+    case Druzhok.Ruoc.suspend(id) do
+      :ok -> :ok
+      {:error, reason} -> Logger.warning("could not suspend ruoc account #{id} for #{name}: #{reason}")
+    end
+  end
+
+  defp suspend_ruoc(_), do: :ok
+
+  @doc """
+  Move a legacy bot onto ruoc-gateway: create its account, store the key,
+  remap its models to ruoc ids and restart it so config.yaml is re-synced.
+  Idempotent — a bot that already has a key is left alone.
+
+  Funding is a separate operator action in the ruoc console.
+  """
+  def migrate_to_ruoc(name) do
+    case Repo.get_by(Instance, name: name) do
+      nil ->
+        {:error, :not_found}
+
+      %Instance{ruoc_api_key: key} when is_binary(key) and key != "" ->
+        {:already_migrated, name}
+
+      instance ->
+        with {:ok, %{account_id: id, api_key: key}} <- Druzhok.Ruoc.create_account("druzhok:" <> name) do
+          changes = %{
+            ruoc_account_id: id,
+            ruoc_api_key: key,
+            model: Druzhok.Ruoc.remap_model(instance.model),
+            image_model: Druzhok.Ruoc.remap_image_model(instance.image_model)
+          }
+
+          {:ok, updated} = instance |> Instance.changeset(changes) |> Repo.update()
+          if updated.active, do: restart(name)
+          Logger.info("Migrated #{name} to ruoc account #{id} (model #{updated.model})")
+          {:ok, %{account_id: id, model: updated.model}}
+        end
+    end
   end
 
   defp wipe_data_dir(instance) do

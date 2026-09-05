@@ -1,8 +1,9 @@
 defmodule DruzhokWebWeb.SettingsLive do
   use DruzhokWebWeb, :live_view
 
-  @keys ~w(openrouter_api_key openai_api_key manager_bot_token transcription_model)
-  @secret ~w(openrouter_api_key openai_api_key manager_bot_token)
+  @keys ~w(openrouter_api_key openai_api_key manager_bot_token transcription_model
+           ruoc_url ruoc_admin_host ruoc_admin_token ruoc_catalog_key)
+  @secret ~w(openrouter_api_key openai_api_key manager_bot_token ruoc_admin_token ruoc_catalog_key)
 
   @impl true
   def mount(_params, session, socket) do
@@ -33,7 +34,11 @@ defmodule DruzhokWebWeb.SettingsLive do
       openrouter_api_key: mask(Druzhok.Settings.get("openrouter_api_key")),
       openai_api_key: mask(Druzhok.Settings.get("openai_api_key")),
       manager_bot_token: mask(Druzhok.Settings.get("manager_bot_token")),
-      transcription_model: Druzhok.Settings.get("transcription_model") || "google/gemini-2.5-flash"
+      transcription_model: Druzhok.Settings.get("transcription_model") || "google/gemini-2.5-flash",
+      ruoc_url: Druzhok.Settings.get("ruoc_url") || "http://127.0.0.1:8787",
+      ruoc_admin_host: Druzhok.Settings.get("ruoc_admin_host") || "",
+      ruoc_admin_token: mask(Druzhok.Settings.get("ruoc_admin_token")),
+      ruoc_catalog_key: mask(Druzhok.Settings.get("ruoc_catalog_key"))
     )
   end
 
@@ -64,8 +69,16 @@ defmodule DruzhokWebWeb.SettingsLive do
             <p class="text-[10px] text-muted">Picked up within a minute, no restart needed.</p>
           </.card>
 
-          <.card title="Voice transcription">
+          <.card title="Voice transcription (legacy bots)">
             <.field name="transcription_model" label="OpenRouter model" value={@transcription_model} mono />
+          </.card>
+
+          <.card title="ruoc-gateway (chat, search, voice for migrated bots)">
+            <.field name="ruoc_url" label="Base URL" value={@ruoc_url} mono />
+            <.field name="ruoc_admin_host" label="Admin host (Host header + console link)" value={@ruoc_admin_host} placeholder="admin.example.com" mono />
+            <.field name="ruoc_admin_token" label="Admin token" value={@ruoc_admin_token} placeholder="Paste ADMIN_TOKEN" mono />
+            <.field name="ruoc_catalog_key" label="Catalog key (a never-funded bot key for GET /v1/models)" value={@ruoc_catalog_key} placeholder="ruoc_…" mono />
+            <p class="text-[10px] text-muted">With the admin token set, every new bot gets its own ruoc account. Existing bots migrate from their Settings tab.</p>
           </.card>
 
           <div class="flex items-center gap-3">

@@ -89,7 +89,7 @@ defmodule Druzhok.Runtime.Hermes do
     # The provider choice (openai vs local/faster-whisper) lives in
     # config.yaml's `stt:` section — see build_config_yaml/1.
     tenant_key = Map.get(instance, :tenant_key, "") || ""
-    model = Map.get(instance, :model) || Druzhok.ModelCatalog.default_model()
+    model = Map.get(instance, :model) || Druzhok.Ruoc.default_model()
     proxy_url = Druzhok.Runtime.proxy_url()
 
     %{
@@ -156,8 +156,8 @@ defmodule Druzhok.Runtime.Hermes do
     # dashboard stays the source of truth without clobbering hermes's
     # runtime writes (thread IDs etc).
     config_path = Path.join(data_root, "config.yaml")
-    model = Map.get(instance, :model) || Druzhok.ModelCatalog.default_model()
-    vision_model = Map.get(instance, :image_model) || @default_vision_model
+    model = Map.get(instance, :model) || Druzhok.Ruoc.default_model()
+    vision_model = vision_model_for(instance, model)
     tenant_key = Map.get(instance, :tenant_key, "") || ""
 
     case File.read(config_path) do
@@ -293,6 +293,17 @@ defmodule Druzhok.Runtime.Hermes do
   # Since hermes 2026-04 (commit 976bad5b), config.yaml takes priority
   # over env vars for auxiliary task settings. Write the vision config
   # block so hermes routes vision calls through the druzhok proxy.
+  # A migrated bot's images go through ruoc-gateway, where the default model
+  # reads them; the OpenRouter vision default only makes sense on the legacy
+  # path.
+  defp vision_model_for(instance, model) do
+    case Map.get(instance, :image_model) do
+      nil -> if Map.get(instance, :ruoc_api_key) in [nil, ""], do: @default_vision_model, else: model
+      "" -> if Map.get(instance, :ruoc_api_key) in [nil, ""], do: @default_vision_model, else: model
+      vision -> vision
+    end
+  end
+
   defp sync_auxiliary_vision(content, vision_model, tenant_key) do
     vision_block = """
 
@@ -612,8 +623,8 @@ defmodule Druzhok.Runtime.Hermes do
   end
 
   def build_config_yaml(instance) do
-    model = Map.get(instance, :model) || Druzhok.ModelCatalog.default_model()
-    vision_model = Map.get(instance, :image_model) || @default_vision_model
+    model = Map.get(instance, :model) || Druzhok.Ruoc.default_model()
+    vision_model = vision_model_for(instance, model)
     tenant_key = Map.get(instance, :tenant_key, "") || ""
     url = Druzhok.Runtime.proxy_url()
     group_sessions_per_user = not Map.get(instance, :group_shared_memory, false)

@@ -115,6 +115,100 @@ defmodule Druzhok.BotManagerLifecycleTest do
     end
   end
 
+  describe "ruoc" do
+    setup do
+      %{stub: Druzhok.RuocStub.start()}
+    end
+
+    test "migrate_to_ruoc creates the account, remaps models, restarts, and is idempotent",
+         %{name: name, data_root: root, stub: stub} do
+      {:ok, _} = BotManager.create(name, %{model: "z-ai/glm-5.3-flash", telegram_token: "1A", image_model: "google/gemini-2.5-flash-lite"})
+      # create/2 provisioned already (ruoc is configured); undo that to test a legacy bot.
+      Repo.get_by!(Instance, name: name)
+      |> Instance.changeset(%{ruoc_account_id: nil, ruoc_api_key: nil, model: "z-ai/glm-5.3-flash", image_model: "google/gemini-2.5-flash-lite"})
+      |> Repo.update!()
+
+      assert eventually(fn -> BotManager.status(name) == "active" end)
+
+      assert {:ok, %{account_id: "acct-" <> _ = id, model: "ruoc-flash"}} = BotManager.migrate_to_ruoc(name)
+
+      inst = Repo.get_by!(Instance, name: name)
+      assert inst.ruoc_account_id == id
+      assert inst.ruoc_api_key =~ "ruoc_key"
+      assert inst.model == "ruoc-flash"
+      assert inst.image_model == "ruoc-flash"
+      assert [call | _] = Druzhok.RuocStub.calls(stub, "POST /admin/accounts") |> Enum.reverse()
+      assert call.params["label"] == "druzhok:#{name}"
+
+      assert eventually(fn -> BotManager.status(name) == "active" end)
+      assert File.read!(Path.join([root, name, "config.yaml"])) =~ ~s(default: "ruoc-flash")
+
+      assert {:already_migrated, ^name} = BotManager.migrate_to_ruoc(name)
+      assert {:error, :not_found} = BotManager.migrate_to_ruoc("no-such-bot")
+    end
+
+    test "migrate_to_ruoc leaves the row alone when the gateway refuses", %{name: name, stub: stub} do
+      {:ok, _} = BotManager.create(name, %{model: "m", telegram_token: "1A"})
+      Repo.get_by!(Instance, name: name) |> Instance.changeset(%{ruoc_account_id: nil, ruoc_api_key: nil}) |> Repo.update!()
+
+      Bypass.expect_once(stub.bypass, "POST", "/admin/accounts", fn conn ->
+        Druzhok.RuocStub.reply(conn, 500, %{"error" => %{"type" => "api_error", "message" => "internal error"}})
+      end)
+
+      assert {:error, "HTTP 500: internal error"} = BotManager.migrate_to_ruoc(name)
+      assert Repo.get_by!(Instance, name: name).ruoc_api_key == nil
+    end
+
+    test "create provisions a ruoc account when the gateway is configured", %{name: name, stub: stub} do
+      assert {:ok, %{model: "ruoc-flash"}} = BotManager.create(name, %{telegram_token: "1A"})
+      inst = Repo.get_by!(Instance, name: name)
+      assert inst.ruoc_account_id =~ "acct-"
+      assert inst.ruoc_api_key =~ "ruoc_key"
+      assert [%{params: %{"label" => label}}] = Druzhok.RuocStub.calls(stub, "POST /admin/accounts")
+      assert label == "druzhok:#{name}"
+      assert {out, 0} = BotManager.exec(name, ["sh", "-c", "echo $OPENAI_API_KEY"])
+      # The bot still talks to druzhok with its tenant key; the ruoc key stays server-side.
+      assert String.trim(out) == inst.tenant_key
+    end
+
+    test "create keeps a legacy model id out of a ruoc bot", %{name: name} do
+      assert {:ok, %{model: "ruoc-standard"}} = BotManager.create(name, %{model: "z-ai/glm-5.3", telegram_token: "1A"})
+      assert {:ok, %{model: "ruoc-flash"}} = BotManager.create(name <> "b", %{model: "anthropic/claude-sonnet-4-6", telegram_token: "1B"})
+      cleanup_instance(name <> "b")
+    end
+
+    test "create leaves no row when account creation fails", %{name: name, stub: stub} do
+      Bypass.down(stub.bypass)
+      assert {:error, "ruoc-gateway account creation failed: " <> _} = BotManager.create(name, %{telegram_token: "1A"})
+      assert Repo.get_by(Instance, name: name) == nil
+    end
+
+    test "create skips provisioning when ruoc is not configured", %{name: name, stub: stub} do
+      Druzhok.RuocStub.unset(:ruoc_admin_token)
+      assert {:ok, _} = BotManager.create(name, %{model: "m", telegram_token: "1A"})
+      assert Repo.get_by!(Instance, name: name).ruoc_api_key == nil
+      assert Druzhok.RuocStub.calls(stub, "POST /admin/accounts") == []
+    end
+
+    test "delete suspends the ruoc account", %{name: name, stub: stub} do
+      {:ok, _} = BotManager.create(name, %{telegram_token: "1A"})
+      id = Repo.get_by!(Instance, name: name).ruoc_account_id
+
+      assert :ok = BotManager.delete(name)
+
+      assert [%{path: path}] = Druzhok.RuocStub.calls(stub, "POST /admin/accounts/:id/status")
+      assert path == "/admin/accounts/#{id}/status"
+      assert Repo.get_by(Instance, name: name) == nil
+    end
+
+    test "delete still succeeds when suspend fails", %{name: name, stub: stub} do
+      {:ok, _} = BotManager.create(name, %{telegram_token: "1A"})
+      Bypass.down(stub.bypass)
+      assert :ok = BotManager.delete(name)
+      assert Repo.get_by(Instance, name: name) == nil
+    end
+  end
+
   describe "delete/1" do
     test "wipes the data dir under the root, releases the token and drops the row", %{name: name, data_root: root} do
       pooled = pooled_token(name, "3POOLED")

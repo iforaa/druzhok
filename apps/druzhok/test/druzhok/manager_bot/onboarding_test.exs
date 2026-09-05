@@ -135,6 +135,16 @@ defmodule Druzhok.ManagerBot.OnboardingTest do
       assert text =~ "$0.23 / $0.50 (46%)"
     end
 
+    test "shows the ruoc balance for a migrated bot" do
+      bots = [%{name: "z", active: true, trigger_name: nil, ruoc_api_key: "ruoc_x", ruoc_balance_rub: "12.5"}]
+      {text, _} = Onboarding.my_bots_message(bots)
+      assert text =~ "*z* — баланс 12.5 ₽"
+
+      bots = [%{name: "z", active: true, trigger_name: nil, ruoc_api_key: "ruoc_x", ruoc_balance_rub: nil}]
+      {text, _} = Onboarding.my_bots_message(bots)
+      assert text =~ "*z* — баланс —"
+    end
+
     test "shows 'без лимита' for a bot with no budget" do
       bots = [%{name: "vasya", active: true, trigger_name: nil, daily_budget_cents: 0, spent_today_cents: 17}]
       {text, _buttons} = Onboarding.my_bots_message(bots)

@@ -1,7 +1,17 @@
 defmodule DruzhokWebWeb.Live.Components.SettingsTab do
   use DruzhokWebWeb, :live_component
 
-  alias Druzhok.{Instance, Repo, Runtime, Pairing, Telegram, I18n, BotManager, ModelCatalog, SiteLister, Budget}
+  alias Druzhok.{Instance, Repo, Runtime, Pairing, Telegram, I18n, BotManager, SiteLister, Budget, Ruoc}
+  alias DruzhokWebWeb.LlmProxyController, as: ImageGen
+
+  # Vision options for a bot still on the OpenRouter path; migrated bots pick
+  # from the ruoc catalog.
+  @legacy_vision_models [
+    %{id: "google/gemini-2.5-flash-lite", name: "Gemini 2.5 Flash Lite"},
+    %{id: "google/gemini-3-flash-preview", name: "Gemini 3 Flash"},
+    %{id: "openai/gpt-5.4-mini", name: "GPT-5.4 Mini"}
+  ]
+  @legacy_default_vision_model "google/gemini-2.5-flash-lite"
 
   # Hermes pairing code: 8 characters from the unambiguous alphabet
   # (A–Z minus IO, 2–9), per hermes-agent/gateway/pairing.py.
@@ -17,14 +27,27 @@ defmodule DruzhokWebWeb.Live.Components.SettingsTab do
         _ -> []
       end
 
-    spent_cents = Budget.spent_today_cents(instance[:id] || instance.id)
+    migrated = migrated?(instance)
+    spent_cents = if migrated, do: 0, else: Budget.spent_today_cents(instance[:id] || instance.id)
+
+    balance =
+      if migrated do
+        case Ruoc.balance(instance[:ruoc_api_key]) do
+          {:ok, %{balance_rub: rub}} -> rub
+          _ -> nil
+        end
+      end
 
     {:ok,
      socket
      |> assign(assigns)
      |> assign(:runtime, runtime)
      |> assign(:sites, sites)
-     |> assign(:spent_cents, spent_cents)}
+     |> assign(:spent_cents, spent_cents)
+     |> assign(:migrated, migrated)
+     |> assign(:balance, balance)
+     |> assign(:console_url, migrated && Ruoc.console_url(instance[:ruoc_account_id]))
+     |> assign(:can_migrate, !migrated && Ruoc.configured?())}
   end
 
   @impl true
@@ -40,7 +63,12 @@ defmodule DruzhokWebWeb.Live.Components.SettingsTab do
             <h3 class="label">General</h3>
             <form phx-change="settings_changed" phx-target={@myself} class="space-y-2">
               <div class="grid grid-cols-2 gap-2">
-                <div>
+                <div :if={@migrated}>
+                  <label class="block text-[10px] text-muted mb-0.5">Balance (ruoc)</label>
+                  <div class="text-xs font-mono"><%= if @balance, do: "#{@balance} ₽", else: "—" %></div>
+                  <a :if={@console_url} href={@console_url} target="_blank" class="text-[10px] text-accent hover:text-accent/80">open in ruoc console</a>
+                </div>
+                <div :if={!@migrated}>
                   <label class="block text-[10px] text-muted mb-0.5">Daily budget ($)</label>
                   <input type="number" name="daily_budget_dollars" min="0" step="0.10" phx-debounce="blur"
                          value={budget_dollars(@instance)}
@@ -59,6 +87,14 @@ defmodule DruzhokWebWeb.Live.Components.SettingsTab do
                 </div>
               </div>
             </form>
+            <div :if={@can_migrate} class="flex items-center gap-2">
+              <button phx-click="migrate_to_ruoc" phx-target={@myself}
+                      class="px-2 py-1 bg-accent/10 text-accent border border-accent/20 rounded text-[10px] hover:bg-accent/20 transition"
+                      data-confirm="Create a ruoc-gateway account for this bot, remap its model and restart it? Fund it in the ruoc console afterwards.">
+                Migrate to ruoc
+              </button>
+              <span class="text-[10px] text-subtle">Moves billing to ruoc-gateway</span>
+            </div>
             <div>
               <label class="block text-[10px] text-muted mb-0.5">Telegram token</label>
               <% token = @instance[:telegram_token] %>
@@ -84,16 +120,17 @@ defmodule DruzhokWebWeb.Live.Components.SettingsTab do
               <div>
                 <label class="block text-[10px] text-muted mb-0.5">Default</label>
                 <select name="default_model" disabled={is_running} class={"w-full border border-line2 rounded px-2 py-1 text-xs #{if is_running, do: "opacity-50 cursor-not-allowed"}"}>
-                  <%= for m <- ModelCatalog.default_options() do %>
-                    <option value={m.id} selected={m.id == @instance[:model]}><%= m.name %> (<%= m.price %>)</option>
+                  <%= for m <- Ruoc.models() do %>
+                    <option value={m.id} selected={m.id == @instance[:model]}><%= m.name %><%= if p = Ruoc.price_label(m), do: " (#{p})" %></option>
                   <% end %>
+                  <option :if={@instance[:model] && !Ruoc.find_model(@instance[:model])} value={@instance[:model]} selected><%= @instance[:model] %> (legacy)</option>
                 </select>
               </div>
               <div>
                 <label class="block text-[10px] text-muted mb-0.5">Vision / image</label>
                 <select name="image_model" disabled={is_running} class={"w-full border border-line2 rounded px-2 py-1 text-xs #{if is_running, do: "opacity-50 cursor-not-allowed"}"}>
-                  <%= for m <- ModelCatalog.image_models() do %>
-                    <option value={m.id} selected={m.id == (@instance[:image_model] || ModelCatalog.default_image_model())}><%= m.name %></option>
+                  <%= for m <- vision_options(@migrated) do %>
+                    <option value={m.id} selected={m.id == (@instance[:image_model] || default_vision_model(@migrated, @instance))}><%= m.name %></option>
                   <% end %>
                 </select>
               </div>
@@ -190,8 +227,8 @@ defmodule DruzhokWebWeb.Live.Components.SettingsTab do
                 <label class="block text-[10px] text-muted mb-0.5">Model</label>
                 <select name="image_gen_model"
                         class="w-full border border-line2 rounded px-2 py-1 text-xs">
-                  <%= for m <- ModelCatalog.image_gen_models() do %>
-                    <option value={m.id} selected={m.id == (@instance[:image_gen_model] || ModelCatalog.default_image_gen_model())}><%= m.name %></option>
+                  <%= for m <- ImageGen.image_gen_models() do %>
+                    <option value={m.id} selected={m.id == (@instance[:image_gen_model] || ImageGen.default_image_gen_model())}><%= m.name %></option>
                   <% end %>
                 </select>
               </form>
@@ -328,6 +365,23 @@ defmodule DruzhokWebWeb.Live.Components.SettingsTab do
     restart_bot(name)
     notify_parent(socket)
     {:noreply, socket}
+  end
+
+  def handle_event("migrate_to_ruoc", _params, socket) do
+    name = socket.assigns.instance.name
+
+    case BotManager.migrate_to_ruoc(name) do
+      {:ok, %{account_id: id, model: model}} ->
+        notify_parent(socket)
+        {:noreply, put_flash(socket, :info, "Migrated: account #{id}, model #{model}. Fund it in the ruoc console.")}
+
+      {:already_migrated, _} ->
+        notify_parent(socket)
+        {:noreply, socket}
+
+      {:error, reason} ->
+        {:noreply, put_flash(socket, :error, "Migration failed: #{inspect(reason)}")}
+    end
   end
 
   def handle_event("toggle_image_gen", _params, socket) do
@@ -525,6 +579,14 @@ defmodule DruzhokWebWeb.Live.Components.SettingsTab do
   defp format_bytes(n) when n < 1024, do: "#{n} B"
   defp format_bytes(n) when n < 1024 * 1024, do: "#{Float.round(n / 1024, 1)} KB"
   defp format_bytes(n), do: "#{Float.round(n / (1024 * 1024), 1)} MB"
+
+  defp migrated?(instance), do: instance[:ruoc_api_key] not in [nil, ""]
+
+  defp vision_options(true), do: Ruoc.vision_models()
+  defp vision_options(false), do: @legacy_vision_models
+
+  defp default_vision_model(true, instance), do: instance[:model]
+  defp default_vision_model(false, _instance), do: @legacy_default_vision_model
 
   defp budget_dollars(instance) do
     Budget.cents_to_dollars(instance[:daily_budget_cents] || 0)

@@ -145,9 +145,17 @@ defmodule Druzhok.ManagerBot.Onboarding do
 
   defp bot_line(bot) do
     status = if bot[:active], do: "🟢", else: "🔴"
-    budget = format_budget(bot[:daily_budget_cents] || 0, bot[:spent_today_cents] || 0)
-    "#{status} *#{bot.name}* — #{budget}"
+
+    money =
+      if bot[:ruoc_api_key],
+        do: format_balance(bot[:ruoc_balance_rub]),
+        else: format_budget(bot[:daily_budget_cents] || 0, bot[:spent_today_cents] || 0)
+
+    "#{status} *#{bot.name}* — #{money}"
   end
+
+  defp format_balance(nil), do: "баланс —"
+  defp format_balance(rub), do: "баланс #{rub} ₽"
 
   defp format_budget(0, spent) do
     "без лимита, $#{Druzhok.Budget.cents_to_dollars(spent)}"

@@ -122,10 +122,16 @@ defmodule Druzhok.Ruoc do
 
           {:error, reason} ->
             Logger.warning("ruoc models fetch failed: #{reason}")
-            case stale do
+            # Keep serving the last good list (or nothing) and do not retry
+            # before the TTL: every dashboard render would otherwise hit the
+            # gateway again.
+            list = case stale do
               {_, list} -> list
               nil -> []
             end
+
+            :persistent_term.put(@cache_key, {now, list})
+            list
         end
     end
   end
@@ -136,6 +142,33 @@ defmodule Druzhok.Ruoc do
 
   @doc "Models whose upstream reads images (`capabilities.attachment`)."
   def vision_models, do: Enum.filter(models(), &(&1.capabilities["attachment"] == true))
+
+  @doc """
+  The ruoc id a legacy OpenRouter model becomes at migration. Known ids pass
+  through; the two GLMs map to their ruoc entries; anything else falls to
+  the default.
+  """
+  def remap_model(nil), do: default_model()
+
+  def remap_model(id) do
+    cond do
+      find_model(id) -> id
+      id == "z-ai/glm-5.3-flash" -> "ruoc-flash"
+      id == "z-ai/glm-5.3" -> "ruoc-standard"
+      true -> default_model()
+    end
+  end
+
+  @doc "The vision model for a migrated bot: keep a ruoc id, else the first vision-capable entry."
+  def remap_image_model(id) do
+    case find_model(id) do
+      %{capabilities: %{"attachment" => true}} -> id
+      _ -> case vision_models() do
+        [%{id: first} | _] -> first
+        [] -> nil
+      end
+    end
+  end
 
   @doc "Label for a picker: `name (in/out RUB/M)`."
   def price_label(%{price: %{input: nil, output: nil}}), do: nil

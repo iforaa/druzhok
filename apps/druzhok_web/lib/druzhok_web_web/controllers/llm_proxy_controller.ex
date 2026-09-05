@@ -2,11 +2,23 @@ defmodule DruzhokWebWeb.LlmProxyController do
   use DruzhokWebWeb, :controller
   alias DruzhokWebWeb.LlmFormat
   alias DruzhokWebWeb.LlmProxy.Ruoc, as: RuocProxy
-  alias Druzhok.{Budget, Usage, ModelCatalog}
+  alias Druzhok.{Budget, Usage}
   require Logger
 
-  @default_image_model ModelCatalog.default_image_model()
-  @default_image_gen_model ModelCatalog.default_image_gen_model()
+  # Image generation still goes to OpenRouter directly; this list moves to
+  # the ruoc catalog once it sells images.
+  @image_gen_models [
+    %{id: "black-forest-labs/flux.2-klein-4b", name: "FLUX 2 Klein 4B (~$0.014/image)"},
+    %{id: "sourceful/riverflow-v2-fast", name: "Riverflow V2 Fast (~$0.02/image)"},
+    %{id: "black-forest-labs/flux.2-pro", name: "FLUX 2 Pro (~$0.03/image)"},
+    %{id: "bytedance-seed/seedream-4.5", name: "Seedream 4.5 ($0.04/image)"}
+  ]
+  @default_image_gen_model "black-forest-labs/flux.2-klein-4b"
+  # Legacy-path vision default for /v1/responses; migrated bots set image_model.
+  @default_image_model "google/gemini-2.5-flash-lite"
+
+  def image_gen_models, do: @image_gen_models
+  def default_image_gen_model, do: @default_image_gen_model
 
   # A bot with a ruoc key is served by ruoc-gateway; the rest of this module
   # is the legacy OpenRouter path, kept until every bot has migrated.

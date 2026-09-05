@@ -8,7 +8,7 @@ defmodule Druzhok.ManagerBot.Provisioner do
 
   require Logger
 
-  alias Druzhok.{BotManager, Instance, ModelCatalog, Repo}
+  alias Druzhok.{BotManager, Instance, Repo, Ruoc}
   alias Druzhok.Telegram.API
 
   @doc """
@@ -21,7 +21,7 @@ defmodule Druzhok.ManagerBot.Provisioner do
          instance_name = derive_instance_name(bot_username),
          opts = build_create_opts(%{
            token: token,
-           model: ModelCatalog.default_model(),
+           model: Ruoc.default_model(),
            owner_id: session[:owner_id],
            language: session[:language] || "ru"
          }),
@@ -49,7 +49,7 @@ defmodule Druzhok.ManagerBot.Provisioner do
   def build_create_opts(params) do
     %{
       telegram_token: params[:token],
-      model: params[:model] || ModelCatalog.default_model(),
+      model: params[:model] || Ruoc.default_model(),
       owner_telegram_id: params[:owner_id],
       language: params[:language] || "ru",
       mention_only: true,

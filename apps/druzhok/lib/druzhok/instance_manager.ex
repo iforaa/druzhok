@@ -16,6 +16,8 @@ defmodule Druzhok.InstanceManager do
       language: opts[:language] || "ru",
       mention_only: opts[:mention_only] || false,
       allow_all_telegram_users: opts[:allow_all_telegram_users] || false,
+      ruoc_account_id: opts[:ruoc_account_id],
+      ruoc_api_key: opts[:ruoc_api_key],
     }
 
     ensure_workspace(config.workspace)
@@ -115,6 +117,8 @@ defmodule Druzhok.InstanceManager do
           owner_telegram_id: config[:owner_telegram_id],
           mention_only: config[:mention_only] || false,
           allow_all_telegram_users: config[:allow_all_telegram_users] || false,
+          ruoc_account_id: config[:ruoc_account_id],
+          ruoc_api_key: config[:ruoc_api_key],
           active: true,
         })
         |> Repo.insert()

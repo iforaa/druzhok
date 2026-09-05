@@ -33,9 +33,9 @@ defmodule Druzhok.ManagerBot.ProvisionerTest do
       assert opts[:mention_only] == true
     end
 
-    test "defaults model to z-ai/glm-5.3-flash when none is given" do
+    test "defaults model to ruoc-flash when none is given" do
       opts = Provisioner.build_create_opts(%{token: "123:ABC", owner_id: 1})
-      assert opts[:model] == "z-ai/glm-5.3-flash"
+      assert opts[:model] == "ruoc-flash"
     end
   end
 end
