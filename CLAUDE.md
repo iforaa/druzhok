@@ -46,6 +46,8 @@ OpenRouter responses have leading whitespace — `String.trim()` before `Jason.d
 
 ```bash
 mix deps.get && mix compile && mix test
+mix test --cover        # enforces per-app thresholds set in each mix.exs; raise them when coverage grows
+MIX_ENV=test mix ecto.migrate   # after pulling new migrations (test DB is data/druzhok_test.db)
 # run with a real local hermes venv for Host.Process:
 HERMES_BIN=$PWD/hermes-agent/.venv/bin/hermes DATABASE_PATH=data/druzhok.db mix phx.server
 ```

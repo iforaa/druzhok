@@ -12,6 +12,8 @@ defmodule Druzhok.MixProject do
       elixir: "~> 1.18",
       elixirc_paths: elixirc_paths(Mix.env()),
       start_permanent: Mix.env() == :prod,
+      # Regression gate for `mix test --cover`; raise it as coverage grows.
+      test_coverage: [summary: [threshold: 65]],
       deps: deps()
     ]
   end
