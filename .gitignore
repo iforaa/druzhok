@@ -33,3 +33,4 @@ data/
 
 # Separate upstream clone of the hermes fork (github.com/iforaa/druzhok-hermes)
 /hermes-agent/
+.claude/settings.local.json
