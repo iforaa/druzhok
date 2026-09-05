@@ -9,12 +9,19 @@
 <meta property="og:description" content="Собственный ассистент с памятью, поиском и голосом. Живёт в Telegram, создаётся за минуту.">
 <meta property="og:image" content="https://triera.oldey.dev/assets/og.png">
 <meta property="og:url" content="https://triera.oldey.dev/">
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="Триера">
+<meta property="og:locale" content="ru_RU">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta name="twitter:card" content="summary_large_image">
+<link rel="canonical" href="https://triera.oldey.dev/">
 <meta name="theme-color" content="#0a0a0a">
 <link rel="icon" href="assets/favicon.png" type="image/png">
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Prata&family=Manrope:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="style.css?v=5">
+<link rel="apple-touch-icon" href="assets/apple-touch-icon.png">
+<link rel="preload" href="assets/fonts/prata-400-cyrillic.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="preload" href="assets/fonts/prata-400-latin.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="stylesheet" href="style.css?v=6">
 </head>
 <body>
 
@@ -38,7 +45,8 @@
   <svg class="hero-logo" viewBox="0 0 1254 1254" aria-hidden="true"><use href="#logo"/></svg>
   <div class="wrap hero-copy reveal">
     <p class="eyebrow">AI-агент · Telegram · 24/7</p>
-    <p class="typed" aria-live="polite"><span class="typed-prefix">›</span><span id="typed"></span><span class="caret" aria-hidden="true"></span></p>
+    <p class="typed" aria-hidden="true"><span class="typed-prefix">›</span><span id="typed"></span><span class="caret"></span></p>
+    <p class="sr-only">Примеры задач: напомнить о звонке, найти билеты, сделать выжимку статьи, присылать сводку новостей, нарисовать обложку, посчитать расходы.</p>
     <h1>Личный агент. Живёт в&nbsp;Telegram.</h1>
     <div class="cta-row">
       <a class="btn" href="https://t.me/druzhoksuperbot">Открыть в Telegram</a>
@@ -48,6 +56,8 @@
 
   <div class="ticker" aria-hidden="true">
     <div class="ticker-track">
+      <span>память</span><span>поиск</span><span>голос</span><span>картинки</span><span>расписание</span><span>код</span><span>группы</span>
+      <span>память</span><span>поиск</span><span>голос</span><span>картинки</span><span>расписание</span><span>код</span><span>группы</span>
       <span>память</span><span>поиск</span><span>голос</span><span>картинки</span><span>расписание</span><span>код</span><span>группы</span>
       <span>память</span><span>поиск</span><span>голос</span><span>картинки</span><span>расписание</span><span>код</span><span>группы</span>
     </div>
@@ -60,7 +70,7 @@
   <div class="wrap">
     <p class="eyebrow blue reveal">Как это работает</p>
     <h2 class="reveal">Три шага. Около минуты.</h2>
-    <ol class="steps">
+    <ol class="steps" role="list">
       <li class="reveal"><span class="num">01</span><h3>Откройте @druzhoksuperbot</h3><p>Нажмите «Создать бота». Никаких регистраций, карт и паролей — только ваш Telegram.</p></li>
       <li class="reveal"><span class="num">02</span><h3>Дайте имя и характер</h3><p>Пара вопросов: как зовут, каким тоном говорить, о чём помнить с самого начала. Бот появится в вашем списке чатов.</p></li>
       <li class="reveal"><span class="num">03</span><h3>Пишите как человеку</h3><p>Голосом или текстом. Он запомнит, что для вас важно, и с каждым днём будет понимать вас лучше.</p></li>
@@ -84,9 +94,8 @@
       <article class="cell reveal wide"><span class="idx">#7</span><h3>Работает в группах</h3><p>Добавьте в семейный или рабочий чат: отвечает по упоминанию, помнит общий контекст, не мешает, когда его не зовут.</p></article>
     </div>
   </div>
+  <svg class="wave wave-to-blue" viewBox="0 0 1440 80" preserveAspectRatio="none" aria-hidden="true"><use href="#wave"/></svg>
 </section>
-
-<svg class="wave wave-to-blue" viewBox="0 0 1440 80" preserveAspectRatio="none" aria-hidden="true"><use href="#wave"/></svg>
 
 <section class="band-blue limits">
   <div class="wrap">
@@ -100,6 +109,8 @@
     </ul>
   </div>
 </section>
+
+<svg class="wave wave-to-ink" viewBox="0 0 1440 80" preserveAspectRatio="none" aria-hidden="true"><use href="#wave"/></svg>
 
 <section class="ink inside" id="inside">
   <div class="wrap inside-grid">
@@ -155,17 +166,29 @@
 
   const tasks = [
     'Напомни завтра в 9 позвонить в банк',
-    'Найди билеты Москва — Стамбул на выходные',
-    'Сделай выжимку из этой статьи в пять пунктов',
-    'Каждое утро в 8 присылай сводку новостей',
-    'Переведи письмо на английский и сделай вежливее',
+    'Найди билеты Москва — Стамбул',
+    'Сделай выжимку статьи в пять пунктов',
+    'Каждое утро присылай сводку новостей',
+    'Переведи письмо и сделай вежливее',
     'Нарисуй обложку для поста про горы',
-    'Посчитай расходы за месяц по этим чекам',
-    'Расшифруй голосовое и составь список дел',
+    'Посчитай расходы по этим чекам',
+    'Расшифруй голосовое в список дел',
     'Составь план тренировок на неделю',
-    'Запомни: я летаю только прямыми рейсами',
+    'Запомни: летаю только прямыми',
   ];
+  const typed = document.querySelector('.typed');
   const out = document.getElementById('typed');
+  const longest = tasks.reduce((a, b) => (a.length >= b.length ? a : b));
+  const fit = () => {
+    const keep = out.textContent;
+    typed.style.minHeight = '0';
+    out.textContent = longest;
+    typed.style.minHeight = typed.offsetHeight + 'px';
+    out.textContent = keep;
+  };
+  fit();
+  addEventListener('resize', fit);
+  if (document.fonts && document.fonts.ready) document.fonts.ready.then(fit);
   const reduce = matchMedia('(prefers-reduced-motion: reduce)').matches;
   if (reduce) { out.textContent = tasks[0]; }
   else {
@@ -174,12 +197,12 @@
       const t = tasks[i];
       pos += del ? -1 : 1;
       out.textContent = t.slice(0, pos);
-      let wait = del ? 28 : 52 + Math.random() * 50;
-      if (!del && pos === t.length) { del = true; wait = 1900; }
-      if (del && pos === 0) { del = false; i = (i + 1) % tasks.length; wait = 380; }
+      let wait = del ? 24 : 40 + Math.random() * 30;
+      if (!del && pos === t.length) { del = true; wait = 2000; }
+      if (del && pos === 0) { del = false; i = (i + 1) % tasks.length; wait = 350; }
       setTimeout(tick, wait);
     };
-    setTimeout(tick, 600);
+    setTimeout(tick, 500);
   }
 </script>
 </body>
