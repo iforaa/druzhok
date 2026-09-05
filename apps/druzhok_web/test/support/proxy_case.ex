@@ -4,14 +4,16 @@ defmodule DruzhokWebWeb.ProxyCase do
 
   Starts a Bypass server and points both OpenRouter (`:openrouter_api_url`)
   and OpenAI (`:openai_api_url`) at it, sets a fake OpenRouter key in app
-  env, inserts one instance with a tenant key and returns a conn already
-  carrying `Authorization: Bearer <tenant_key>`.
+  env, inserts one instance with a tenant key (and a ruoc key, which LlmAuth
+  requires) and returns a conn already carrying
+  `Authorization: Bearer <tenant_key>`. For the ruoc-served endpoints use
+  `RuocProxyCase`.
 
   Tests are `async: false` because they mutate application env.
   """
   use ExUnit.CaseTemplate
 
-  alias Druzhok.{Instance, Repo, Usage, Budget}
+  alias Druzhok.{Instance, Repo, Usage}
 
   using do
     quote do
@@ -62,7 +64,7 @@ defmodule DruzhokWebWeb.ProxyCase do
       workspace: Path.join([System.tmp_dir!(), "druzhok-proxy-test", name, "workspace"]),
       tenant_key: Instance.generate_tenant_key(name),
       timezone: "UTC",
-      daily_budget_cents: 0
+      ruoc_api_key: "ruoc_test_#{name}"
     }
 
     %Instance{}
@@ -79,6 +81,4 @@ defmodule DruzhokWebWeb.ProxyCase do
     import Ecto.Query
     Repo.all(from(u in Usage, where: u.instance_id == ^id, order_by: u.id))
   end
-
-  def spent_today(%Instance{id: id}), do: Budget.spent_today_cents(id)
 end

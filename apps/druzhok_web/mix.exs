@@ -13,7 +13,7 @@ defmodule DruzhokWeb.MixProject do
       elixirc_paths: elixirc_paths(Mix.env()),
       start_permanent: Mix.env() == :prod,
       # Regression gate for `mix test --cover`; raise it as coverage grows.
-      test_coverage: [summary: [threshold: 35]],
+      test_coverage: [summary: [threshold: 40]],
       aliases: aliases(),
       deps: deps()
     ]

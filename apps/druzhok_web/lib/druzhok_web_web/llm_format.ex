@@ -1,16 +1,9 @@
 defmodule DruzhokWebWeb.LlmFormat do
   @moduledoc """
-  Routes all LLM requests through OpenRouter. Strips images from messages
-  when the target model doesn't support vision.
+  OpenRouter request shaping and usage/cost extraction for the paths that
+  still go there directly (embeddings, image generation, /v1/responses),
+  plus the message helpers the ruoc path shares.
   """
-
-  @non_vision_models [
-    "deepseek/deepseek-v3.2",
-    "deepseek/deepseek-chat",
-    "deepseek/deepseek-r1",
-    "minimax/minimax-m2.5",
-    "minimax/minimax-m2.7",
-  ]
 
   def provider_url do
     Application.get_env(:druzhok, :openrouter_api_url) || "https://openrouter.ai/api/v1"
@@ -43,32 +36,6 @@ defmodule DruzhokWebWeb.LlmFormat do
   def extract_usage(body) do
     usage = body["usage"] || %{}
     %{prompt_tokens: usage["prompt_tokens"] || 0, completion_tokens: usage["completion_tokens"] || 0}
-  end
-
-  @default_max_tokens 4096
-
-  def prepare_body(body) do
-    model = body["model"] || ""
-
-    body =
-      body
-      |> Map.put_new("max_tokens", @default_max_tokens)
-      |> Map.put_new("usage", %{"include" => true})
-      |> apply_reasoning_override(model)
-
-    if model in @non_vision_models do
-      Map.update(body, "messages", [], &strip_images/1)
-    else
-      body
-    end
-  end
-
-  defp apply_reasoning_override(body, model) do
-    if String.starts_with?(model, "xiaomi/mimo") do
-      Map.put_new(body, "reasoning", %{"enabled" => false})
-    else
-      body
-    end
   end
 
   @doc "Text of the last message, capped at 500 chars, for the dashboard's request list."

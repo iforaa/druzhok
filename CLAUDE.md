@@ -33,26 +33,25 @@ Prod env (MIX_ENV, DATABASE_PATH, DRUZHOK_HOST, HEX/MIX homes, SECRET_KEY_BASE, 
 
 ## Proxy endpoints (all require `Authorization: Bearer <tenant_key>`)
 
-A bot with `instances.ruoc_api_key` set is a **migrated** bot: chat, search and
-transcription go to ruoc-gateway (`Druzhok.Ruoc`, `LlmProxy.Ruoc`), which holds
-its balance; druzhok records tokens/previews only, `cost_cents` is 0. A bot
-without the key runs the legacy OpenRouter path below. Once every bot is
-migrated the legacy chat/search/STT code, `Budget` and `daily_budget_cents` go
-(spec `docs/superpowers/specs/2026-09-05-ruoc-gateway-migration-design.md` §7).
+Chat, search and transcription go to **ruoc-gateway** (`Druzhok.Ruoc`, `LlmProxy.Ruoc`),
+one ruoc account per bot (`instances.ruoc_account_id` / `ruoc_api_key`); the balance there is
+the only spending limit (402 when empty). Druzhok records tokens and previews only, `cost_cents`
+is 0 on those rows. A bot without a ruoc key gets 503 from `LlmAuth` until migrated.
+Spec: `docs/superpowers/specs/2026-09-05-ruoc-gateway-migration-design.md`.
 
-| Endpoint | Upstream (migrated bot) | Upstream (legacy bot) |
-|---|---|---|
-| `POST /v1/chat/completions` | ruoc-gateway `/v1/chat/completions` | OpenRouter |
-| `POST /v1/audio/transcriptions` | ruoc-gateway `/v1/transcribe` (base64 wav/mp3/ogg) | OpenRouter (Gemini Flash `input_audio`) |
-| `POST /v2/search` | ruoc-gateway `/v1/search` (Tavily), Firecrawl-shaped reply | OpenRouter perplexity/sonar |
-| `POST /v1/embeddings`, `/v1/images/generations`, `/v1/responses` | OpenRouter | OpenRouter |
-| `POST /v1/audio/speech` | OpenAI TTS | OpenAI TTS |
+| Endpoint | Upstream |
+|---|---|
+| `POST /v1/chat/completions` | ruoc-gateway `/v1/chat/completions` |
+| `POST /v1/audio/transcriptions` | ruoc-gateway `/v1/transcribe` (base64 wav/mp3/ogg) |
+| `POST /v2/search` | ruoc-gateway `/v1/search` (Tavily), Firecrawl-shaped reply |
+| `POST /v1/embeddings`, `/v1/images/generations`, `/v1/responses` | OpenRouter (unmetered for money) |
+| `POST /v1/audio/speech` | OpenAI TTS (unmetered for money) |
 
 ruoc-gateway settings (dashboard Settings page, or `RUOC_URL` / `RUOC_ADMIN_HOST` /
-`RUOC_ADMIN_TOKEN` / `RUOC_CATALOG_KEY` env): with the admin token set, `BotManager.create/2`
-provisions a ruoc account per bot; `BotManager.migrate_to_ruoc/1` (settings-tab button or
-`mix druzhok.migrate_ruoc <name>`) moves an existing bot. Funding is manual in the ruoc console.
-The model catalog is ruoc's `GET /v1/models` (`Druzhok.Ruoc.models/0`, default `ruoc-flash`).
+`RUOC_ADMIN_TOKEN` / `RUOC_CATALOG_KEY` env): `BotManager.create/2` provisions a ruoc account
+per bot; `BotManager.migrate_to_ruoc/1` (settings-tab button or `mix druzhok.migrate_ruoc <name>`)
+moves an old row. Funding is manual in the ruoc console. The model catalog is ruoc's
+`GET /v1/models` (`Druzhok.Ruoc.models/0`, default `ruoc-flash`).
 
 OpenRouter responses have leading whitespace — `String.trim()` before `Jason.decode()`.
 

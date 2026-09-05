@@ -157,19 +157,14 @@ defmodule Druzhok.Runtime.HermesTest do
   end
 
   describe "vision model" do
-    test "legacy bot falls back to the OpenRouter vision default" do
-      yaml = Hermes.build_config_yaml(@instance)
-      assert yaml =~ ~s(model: "google/gemini-2.5-flash-lite")
-    end
-
-    test "migrated bot without image_model uses its own model for vision" do
-      yaml = Hermes.build_config_yaml(Map.merge(@instance, %{model: "ruoc-flash", ruoc_api_key: "ruoc_x"}))
+    test "without image_model the bot's own model reads images" do
+      yaml = Hermes.build_config_yaml(Map.merge(@instance, %{model: "ruoc-flash"}))
       refute yaml =~ "gemini-2.5-flash-lite"
       assert yaml =~ "vision:\n    provider: custom\n    base_url: \"http://127.0.0.1:4000/v1\"\n    api_key: \"dk-alice-token\"\n    model: \"ruoc-flash\""
     end
 
-    test "an explicit image_model wins on both paths" do
-      yaml = Hermes.build_config_yaml(Map.merge(@instance, %{ruoc_api_key: "ruoc_x", image_model: "ruoc-vision"}))
+    test "an explicit image_model wins" do
+      yaml = Hermes.build_config_yaml(Map.merge(@instance, %{image_model: "ruoc-vision"}))
       assert yaml =~ ~s(model: "ruoc-vision")
     end
   end

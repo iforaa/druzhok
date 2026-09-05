@@ -2,19 +2,18 @@ defmodule DruzhokWebWeb.LlmFormatTest do
   use ExUnit.Case, async: true
   alias DruzhokWebWeb.LlmFormat
 
-  describe "prepare_body/1" do
-    test "injects usage.include=true when absent" do
-      body = LlmFormat.prepare_body(%{"model" => "xiaomi/mimo-v2.5-pro", "messages" => []})
-      assert body["usage"] == %{"include" => true}
+  describe "strip_images/1 and prompt_preview/1" do
+    test "flattens image parts to text" do
+      [msg] = LlmFormat.strip_images([%{"role" => "user", "content" => [%{"type" => "text", "text" => "look"}, %{"type" => "image_url", "image_url" => %{"url" => "data:x"}}]}])
+      assert msg["content"] == "look"
+      assert LlmFormat.strip_images("not a list") == "not a list"
     end
 
-    test "does not override an explicit usage option" do
-      body = LlmFormat.prepare_body(%{
-        "model" => "x",
-        "messages" => [],
-        "usage" => %{"include" => false, "extra" => "preserved"}
-      })
-      assert body["usage"] == %{"include" => false, "extra" => "preserved"}
+    test "previews the last message, text or parts, capped at 500" do
+      assert LlmFormat.prompt_preview(%{"messages" => [%{"role" => "user", "content" => String.duplicate("a", 600)}]}) == String.duplicate("a", 500)
+      assert LlmFormat.prompt_preview(%{"messages" => [%{"content" => [%{"type" => "text", "text" => "hi"}, %{"type" => "image_url"}]}]}) == "hi"
+      assert LlmFormat.prompt_preview(%{"messages" => []}) == nil
+      assert LlmFormat.prompt_preview(%{}) == nil
     end
   end
 
@@ -30,7 +29,7 @@ defmodule DruzhokWebWeb.LlmFormatTest do
       assert LlmFormat.extract_cost_cents(body, "any") == 12
     end
 
-    test "falls back to ModelCatalog price when usage.cost is missing" do
+    test "falls back to the OpenRouter price table when usage.cost is missing" do
       body = %{"usage" => %{"prompt_tokens" => 1_000_000, "completion_tokens" => 0}}
       assert LlmFormat.extract_cost_cents(body, "xiaomi/mimo-v2.5-pro") == 10
     end

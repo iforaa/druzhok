@@ -1,17 +1,9 @@
 defmodule DruzhokWebWeb.Live.Components.SettingsTab do
   use DruzhokWebWeb, :live_component
 
-  alias Druzhok.{Instance, Repo, Runtime, Pairing, Telegram, I18n, BotManager, SiteLister, Budget, Ruoc}
+  alias Druzhok.{Instance, Repo, Runtime, Pairing, Telegram, I18n, BotManager, SiteLister, Ruoc}
   alias DruzhokWebWeb.LlmProxyController, as: ImageGen
 
-  # Vision options for a bot still on the OpenRouter path; migrated bots pick
-  # from the ruoc catalog.
-  @legacy_vision_models [
-    %{id: "google/gemini-2.5-flash-lite", name: "Gemini 2.5 Flash Lite"},
-    %{id: "google/gemini-3-flash-preview", name: "Gemini 3 Flash"},
-    %{id: "openai/gpt-5.4-mini", name: "GPT-5.4 Mini"}
-  ]
-  @legacy_default_vision_model "google/gemini-2.5-flash-lite"
 
   # Hermes pairing code: 8 characters from the unambiguous alphabet
   # (A–Z minus IO, 2–9), per hermes-agent/gateway/pairing.py.
@@ -28,7 +20,6 @@ defmodule DruzhokWebWeb.Live.Components.SettingsTab do
       end
 
     migrated = migrated?(instance)
-    spent_cents = if migrated, do: 0, else: Budget.spent_today_cents(instance[:id] || instance.id)
 
     balance =
       if migrated do
@@ -43,7 +34,6 @@ defmodule DruzhokWebWeb.Live.Components.SettingsTab do
      |> assign(assigns)
      |> assign(:runtime, runtime)
      |> assign(:sites, sites)
-     |> assign(:spent_cents, spent_cents)
      |> assign(:migrated, migrated)
      |> assign(:balance, balance)
      |> assign(:console_url, migrated && Ruoc.console_url(instance[:ruoc_account_id]))
@@ -69,14 +59,8 @@ defmodule DruzhokWebWeb.Live.Components.SettingsTab do
                   <a :if={@console_url} href={@console_url} target="_blank" class="text-[10px] text-accent hover:text-accent/80">open in ruoc console</a>
                 </div>
                 <div :if={!@migrated}>
-                  <label class="block text-[10px] text-muted mb-0.5">Daily budget ($)</label>
-                  <input type="number" name="daily_budget_dollars" min="0" step="0.10" phx-debounce="blur"
-                         value={budget_dollars(@instance)}
-                         class="w-full border border-line2 rounded px-2 py-1 text-xs font-mono" />
-                  <div class="text-[10px] text-muted mt-0.5 font-mono"><%= usage_line(@instance, @spent_cents) %></div>
-                  <div class="h-1 bg-line2 rounded mt-1 overflow-hidden">
-                    <div class={"h-full #{usage_bar_color(@instance, @spent_cents)}"} style={"width: #{usage_bar_width(@instance, @spent_cents)}%"}></div>
-                  </div>
+                  <label class="block text-[10px] text-muted mb-0.5">Balance (ruoc)</label>
+                  <div class="text-[10px] text-warn">Not migrated — the proxy refuses this bot until it is.</div>
                 </div>
                 <div>
                   <label class="block text-[10px] text-muted mb-0.5">Language</label>
@@ -129,8 +113,8 @@ defmodule DruzhokWebWeb.Live.Components.SettingsTab do
               <div>
                 <label class="block text-[10px] text-muted mb-0.5">Vision / image</label>
                 <select name="image_model" disabled={is_running} class={"w-full border border-line2 rounded px-2 py-1 text-xs #{if is_running, do: "opacity-50 cursor-not-allowed"}"}>
-                  <%= for m <- vision_options(@migrated) do %>
-                    <option value={m.id} selected={m.id == (@instance[:image_model] || default_vision_model(@migrated, @instance))}><%= m.name %></option>
+                  <%= for m <- Ruoc.vision_models() do %>
+                    <option value={m.id} selected={m.id == (@instance[:image_model] || @instance[:model])}><%= m.name %></option>
                   <% end %>
                 </select>
               </div>
@@ -288,16 +272,7 @@ defmodule DruzhokWebWeb.Live.Components.SettingsTab do
 
   @impl true
   def handle_event("settings_changed", params, socket) do
-    daily_budget_cents =
-      case Float.parse(params["daily_budget_dollars"] || "0") do
-        {value, _} -> max(round(value * 100), 0)
-        :error -> 0
-      end
-
-    update_instance(socket.assigns.instance.name, %{
-      daily_budget_cents: daily_budget_cents,
-      language: params["language"] || "ru"
-    })
+    update_instance(socket.assigns.instance.name, %{language: params["language"] || "ru"})
 
     notify_parent(socket)
     {:noreply, socket}
@@ -582,40 +557,4 @@ defmodule DruzhokWebWeb.Live.Components.SettingsTab do
 
   defp migrated?(instance), do: instance[:ruoc_api_key] not in [nil, ""]
 
-  defp vision_options(true), do: Ruoc.vision_models()
-  defp vision_options(false), do: @legacy_vision_models
-
-  defp default_vision_model(true, instance), do: instance[:model]
-  defp default_vision_model(false, _instance), do: @legacy_default_vision_model
-
-  defp budget_dollars(instance) do
-    Budget.cents_to_dollars(instance[:daily_budget_cents] || 0)
-  end
-
-  defp usage_line(instance, spent) do
-    limit = instance[:daily_budget_cents] || 0
-
-    if limit == 0 do
-      "Unlimited — $#{Budget.cents_to_dollars(spent)} spent today"
-    else
-      pct = round(spent * 100 / limit)
-      "$#{Budget.cents_to_dollars(spent)} / $#{Budget.cents_to_dollars(limit)} (#{pct}%)"
-    end
-  end
-
-  defp usage_bar_width(instance, spent) do
-    limit = instance[:daily_budget_cents] || 0
-    if limit == 0, do: 0, else: min(round(spent * 100 / limit), 100)
-  end
-
-  defp usage_bar_color(instance, spent) do
-    limit = instance[:daily_budget_cents] || 0
-    pct = if limit == 0, do: 0, else: spent * 100 / limit
-
-    cond do
-      pct >= 80 -> "bg-red-500"
-      pct >= 50 -> "bg-yellow-500"
-      true -> "bg-green-500"
-    end
-  end
 end

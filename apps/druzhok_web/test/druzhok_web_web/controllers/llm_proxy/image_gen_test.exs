@@ -69,7 +69,6 @@ defmodule DruzhokWebWeb.LlmProxy.ImageGenTest do
     assert log.model == "black-forest-labs/flux.2-klein-4b"
     assert log.cost_cents == 3
     assert log.total_tokens == 0
-    assert spent_today(instance) == 3
   end
 
   test "tolerates leading whitespace in the upstream body", %{conn: conn, bypass: bypass} do
@@ -106,10 +105,4 @@ defmodule DruzhokWebWeb.LlmProxy.ImageGenTest do
     assert json_response(conn, 502)["error"]["message"] == "Image generation provider unavailable"
   end
 
-  test "429 on spent budget" do
-    instance = create_instance(%{daily_budget_cents: 1})
-    Druzhok.Budget.deduct(instance.id, 1)
-    conn = authed(Phoenix.ConnTest.build_conn(), instance)
-    assert json_response(post(conn, "/v1/images/generations", %{"prompt" => "x"}), 429)["error"]["type"] == "budget_exceeded"
-  end
 end

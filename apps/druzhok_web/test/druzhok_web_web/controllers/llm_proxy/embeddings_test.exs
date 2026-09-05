@@ -32,7 +32,6 @@ defmodule DruzhokWebWeb.LlmProxy.EmbeddingsTest do
     assert log.completion_tokens == 0
     assert log.total_tokens == 6
     assert log.cost_cents == 0
-    assert spent_today(instance) == 0
   end
 
   test "skips logging when usage is missing or zero", %{conn: conn, bypass: bypass, instance: instance} do

@@ -234,7 +234,7 @@ defmodule Druzhok.ManagerBotTest do
           tenant_key: "dk-#{n}",
           owner_telegram_id: @owner,
           trigger_name: "#{n}_bot",
-          daily_budget_cents: 100
+          ruoc_api_key: "ruoc_#{n}"
         })
         |> Repo.insert!()
       end
@@ -249,14 +249,21 @@ defmodule Druzhok.ManagerBotTest do
       refute "Как назовём бота?" in sent_texts(stub)
     end
 
-    test "Мои боты lists them with budget and a delete button each", %{stub: stub} do
-      Druzhok.Budget.deduct(Repo.get_by!(Instance, name: "own2").id, 25)
+    test "Мои боты lists them with balance and a delete button each", %{stub: stub} do
+      ruoc = Druzhok.RuocStub.start()
+
+      Bypass.stub(ruoc.bypass, "GET", "/v1/balance", fn conn ->
+        case Plug.Conn.get_req_header(conn, "authorization") do
+          ["Bearer ruoc_own2"] -> Druzhok.RuocStub.reply(conn, 200, %{"balance_nanorub" => 250_000_000, "balance_rub" => "0.25 RUB"})
+          _ -> Druzhok.RuocStub.reply(conn, 200, %{"balance_nanorub" => 1_000_000_000, "balance_rub" => "1 RUB"})
+        end
+      end)
 
       TelegramStub.push_update(stub, message("📋 Мои боты"))
       params = TelegramStub.await_call(stub, "sendMessage", &(&1["text"] =~ "Твои боты"))
       assert params["parse_mode"] == "Markdown"
-      assert params["text"] =~ "🟢 *own1* — $0.00 / $1.00 (0%)"
-      assert params["text"] =~ "🟢 *own2* — $0.25 / $1.00 (25%)"
+      assert params["text"] =~ "🟢 *own1* — баланс 1.00 ₽"
+      assert params["text"] =~ "🟢 *own2* — баланс 0.25 ₽"
       rows = Jason.decode!(params["reply_markup"])["inline_keyboard"]
       assert length(rows) == 2
       [[open, del]] = Enum.take(rows, 1)

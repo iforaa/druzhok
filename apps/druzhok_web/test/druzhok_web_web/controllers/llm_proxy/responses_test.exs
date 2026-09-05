@@ -97,7 +97,6 @@ defmodule DruzhokWebWeb.LlmProxy.ResponsesTest do
     assert log.model == "openai/gpt-5.4-mini"
     assert log.total_tokens == 12
     assert log.cost_cents == 2
-    assert spent_today(instance) == 2
   end
 
   test "streams the full text as a Responses SSE event sequence",
@@ -162,10 +161,4 @@ defmodule DruzhokWebWeb.LlmProxy.ResponsesTest do
     assert json_response(conn, 502)["error"]["message"] == "Provider unavailable"
   end
 
-  test "429 when the budget is spent" do
-    instance = create_instance(%{daily_budget_cents: 1})
-    Druzhok.Budget.deduct(instance.id, 1)
-    conn = authed(Phoenix.ConnTest.build_conn(), instance)
-    assert json_response(post(conn, "/v1/responses", %{"model" => "m", "input" => "hi"}), 429)["error"]["type"] == "insufficient_quota"
-  end
 end

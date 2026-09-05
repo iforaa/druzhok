@@ -2,7 +2,7 @@ defmodule DruzhokWebWeb.LlmProxyController do
   use DruzhokWebWeb, :controller
   alias DruzhokWebWeb.LlmFormat
   alias DruzhokWebWeb.LlmProxy.Ruoc, as: RuocProxy
-  alias Druzhok.{Budget, Usage}
+  alias Druzhok.Usage
   require Logger
 
   # Image generation still goes to OpenRouter directly; this list moves to
@@ -20,124 +20,11 @@ defmodule DruzhokWebWeb.LlmProxyController do
   def image_gen_models, do: @image_gen_models
   def default_image_gen_model, do: @default_image_gen_model
 
-  # A bot with a ruoc key is served by ruoc-gateway; the rest of this module
-  # is the legacy OpenRouter path, kept until every bot has migrated.
-  defp ruoc?(instance), do: is_binary(instance.ruoc_api_key) and instance.ruoc_api_key != ""
-
-  def chat_completions(%{assigns: %{instance: %{ruoc_api_key: key} = instance}} = conn, _params)
-      when is_binary(key) and key != "" do
-    RuocProxy.chat(conn, instance)
-  end
-
-  def chat_completions(conn, _params) do
-    instance = conn.assigns.instance
-    body = conn.body_params
-    model = body["model"] || "default"
-    stream = body["stream"] == true
-
-    case Budget.check(instance.id) do
-      {:error, :exceeded} ->
-        json_error(conn, 429, budget_exceeded_message(instance), "budget_exceeded")
-
-      {:ok, _remaining} ->
-        url = LlmFormat.request_url()
-        headers = LlmFormat.request_headers(conn.req_headers)
-        body = LlmFormat.prepare_body(body)
-        started_at = System.monotonic_time(:millisecond)
-
-        cond do
-          stream and broken_streaming?(model) ->
-            fake_stream_proxy(conn, instance, url, headers, body, model, started_at)
-
-          stream ->
-            stream_proxy(conn, instance, url, headers, body, model, started_at)
-
-          true ->
-            sync_proxy(conn, instance, url, headers, body, model, started_at)
-        end
-    end
-  end
-
-  # Only the original mimo-v2-pro emitted malformed streaming SSE; v2.5-pro and
-  # later stream cleanly with reasoning disabled (LlmFormat.apply_reasoning_override).
-  defp broken_streaming?(model), do: String.starts_with?(model || "", "xiaomi/mimo-v2-pro")
-
-  defp fake_stream_proxy(conn, instance, url, headers, body, model, started_at) do
-    sync_body = body |> Map.put("stream", false) |> Map.delete("stream_options")
-    request = Finch.build(:post, url, headers, Jason.encode!(sync_body))
-
-    conn =
-      conn
-      |> put_resp_content_type("text/event-stream")
-      |> put_resp_header("cache-control", "no-cache")
-      |> send_chunked(200)
-
-    case Finch.request(request, Druzhok.Finch, receive_timeout: 120_000) do
-      {:ok, %Finch.Response{status: 200, body: resp_body}} ->
-        decoded = Jason.decode!(resp_body)
-        usage = LlmFormat.extract_usage(decoded)
-        content = get_in(decoded, ["choices", Access.at(0), "message", "content"]) || ""
-        tool_calls = get_in(decoded, ["choices", Access.at(0), "message", "tool_calls"])
-        finish_reason = get_in(decoded, ["choices", Access.at(0), "finish_reason"]) || "stop"
-        model_id = decoded["model"] || model
-        response_id = decoded["id"] || "chatcmpl-fake"
-
-        conn = emit_fake_stream(conn, response_id, model_id, content, tool_calls, finish_reason, usage, body["stream_options"])
-        cost_cents = LlmFormat.extract_cost_cents(decoded, model)
-        meter(instance, usage, model, started_at, body, content, cost_cents)
-        conn
-
-      {:ok, %Finch.Response{status: status, body: resp_body}} ->
-        Logger.warning("fake_stream_proxy upstream #{status}")
-        conn |> chunk_raw("data: #{resp_body}\n\n") |> chunk_raw("data: [DONE]\n\n")
-
-      {:error, reason} ->
-        Logger.error("fake_stream_proxy error: #{inspect(reason)}")
-        conn |> chunk_raw(~s(data: {"error":"upstream failed"}\n\n)) |> chunk_raw("data: [DONE]\n\n")
-    end
-  end
-
-  defp emit_fake_stream(conn, id, model, content, tool_calls, finish_reason, usage, stream_options) do
-    delta = if tool_calls, do: %{"tool_calls" => tool_calls}, else: %{"role" => "assistant", "content" => content}
-
-    content_chunk = %{
-      "id" => id,
-      "object" => "chat.completion.chunk",
-      "model" => model,
-      "choices" => [%{"index" => 0, "delta" => delta, "finish_reason" => nil}]
-    }
-
-    final_chunk = %{
-      "id" => id,
-      "object" => "chat.completion.chunk",
-      "model" => model,
-      "choices" => [%{"index" => 0, "delta" => %{}, "finish_reason" => finish_reason}]
-    }
-
-    conn = chunk_sse(conn, content_chunk)
-    conn = chunk_sse(conn, final_chunk)
-
-    conn =
-      if is_map(stream_options) and stream_options["include_usage"] do
-        usage_chunk = %{
-          "id" => id,
-          "object" => "chat.completion.chunk",
-          "model" => model,
-          "choices" => [],
-          "usage" => %{
-            "prompt_tokens" => usage.prompt_tokens,
-            "completion_tokens" => usage.completion_tokens,
-            "total_tokens" => usage.prompt_tokens + usage.completion_tokens
-          }
-        }
-
-        chunk_sse(conn, usage_chunk)
-      else
-        conn
-      end
-
-    chunk_raw(conn, "data: [DONE]\n\n")
-  end
+  # Chat, search and transcription are served by ruoc-gateway with the bot's
+  # own account (`LlmProxy.Ruoc`). LlmAuth guarantees `ruoc_api_key` is set.
+  # Embeddings, image generation, TTS and /v1/responses still go to
+  # OpenRouter/OpenAI directly, unmetered for money, until ruoc sells them.
+  def chat_completions(conn, _params), do: RuocProxy.chat(conn, conn.assigns.instance)
 
   defp chunk_sse(conn, payload), do: chunk_raw(conn, "data: #{Jason.encode!(payload)}\n\n")
 
@@ -150,262 +37,7 @@ defmodule DruzhokWebWeb.LlmProxyController do
     end
   end
 
-  defp sync_proxy(conn, instance, url, headers, body, model, started_at) do
-    request = Finch.build(:post, url, headers, Jason.encode!(body))
-
-    case Finch.request(request, Druzhok.Finch, receive_timeout: 120_000) do
-      {:ok, %Finch.Response{status: status, body: resp_body}} ->
-        decoded = Jason.decode!(resp_body)
-        usage = LlmFormat.extract_usage(decoded)
-        response_preview = get_in(decoded, ["choices", Access.at(0), "message", "content"])
-        cost_cents = LlmFormat.extract_cost_cents(decoded, model)
-        meter(instance, usage, model, started_at, body, response_preview, cost_cents)
-
-        conn
-        |> put_resp_content_type("application/json")
-        |> send_resp(status, resp_body)
-
-      {:error, reason} ->
-        Logger.error("LLM proxy error: #{inspect(reason)}")
-        json_error(conn, 502, "Provider unavailable", "server_error")
-    end
-  end
-
-  defp stream_proxy(conn, instance, url, headers, body, model, started_at) do
-    request = Finch.build(:post, url, headers, Jason.encode!(body))
-
-    conn = conn
-    |> put_resp_content_type("text/event-stream")
-    |> put_resp_header("cache-control", "no-cache")
-    |> send_chunked(200)
-
-    usage_ref = make_ref()
-    Process.put(usage_ref, %{prompt_tokens: 0, completion_tokens: 0})
-
-    result = Finch.stream(request, Druzhok.Finch, conn, fn
-      {:status, _status}, conn -> conn
-      {:headers, _resp_headers}, conn -> conn
-      {:data, data}, conn ->
-        for line <- String.split(data, "\n"), String.starts_with?(line, "data: ") do
-          json_str = String.trim_leading(line, "data: ")
-          if json_str != "[DONE]" do
-            case Jason.decode(json_str) do
-              {:ok, %{"usage" => usage} = chunk} when is_map(usage) ->
-                Process.put(usage_ref, LlmFormat.extract_usage(%{"usage" => usage}))
-                Process.put({usage_ref, :cost}, LlmFormat.extract_cost_cents(chunk, model))
-              _ -> :ok
-            end
-          end
-        end
-
-        chunk_raw(conn, data)
-    end, receive_timeout: 120_000)
-
-    usage = Process.get(usage_ref, %{prompt_tokens: 0, completion_tokens: 0})
-    cost_cents = Process.get({usage_ref, :cost}, 0)
-    meter(instance, usage, model, started_at, body, nil, cost_cents)
-
-    # Finch.stream/5 returns the accumulator (our conn) alongside the error;
-    # the 200 is already committed, so relay whatever was streamed.
-    case result do
-      {:ok, conn} -> conn
-      {:error, reason, conn} ->
-        Logger.error("LLM stream proxy error: #{inspect(reason)}")
-        conn
-    end
-  end
-
-  defp meter(instance, usage, model, started_at, request_body, response_preview, cost_cents) do
-    total = usage.prompt_tokens + usage.completion_tokens
-
-    if total > 0 do
-      latency = System.monotonic_time(:millisecond) - started_at
-      Budget.deduct(instance.id, cost_cents)
-
-      prompt_preview = LlmFormat.prompt_preview(request_body)
-
-      resp_preview = if response_preview, do: String.slice(response_preview, 0, 500), else: nil
-
-      Usage.log(%{
-        instance_id: instance.id,
-        model: model,
-        prompt_tokens: usage.prompt_tokens,
-        completion_tokens: usage.completion_tokens,
-        total_tokens: total,
-        cost_cents: cost_cents,
-        request_type: "chat",
-        requested_model: model,
-        resolved_model: model,
-        provider: "openrouter",
-        latency_ms: latency,
-        prompt_preview: prompt_preview,
-        response_preview: resp_preview,
-        request_body: Jason.encode!(request_body),
-      })
-    end
-  end
-
-  # Default model for OpenRouter-backed transcription. Gemini Flash accepts
-  # audio input (wav/mp3/ogg/opus) and transcribes it cheaply; this is what
-  # lets us bill voice notes against the OpenRouter account instead of needing
-  # a separately-funded OpenAI Whisper account.
-  @transcription_default_model "google/gemini-2.5-flash"
-
-  @transcribe_prompt """
-  You are a speech-to-text engine. Transcribe the audio VERBATIM in its \
-  original spoken language. Output ONLY the transcript text — no commentary, \
-  no labels, no quotation marks, no translation. If there is no intelligible \
-  speech, output an empty string.\
-  """
-
-  def audio_transcriptions(%{assigns: %{instance: %{ruoc_api_key: key} = instance}} = conn, _params)
-      when is_binary(key) and key != "" do
-    RuocProxy.transcribe(conn, instance)
-  end
-
-  def audio_transcriptions(conn, _params) do
-    or_key = LlmFormat.provider_key()
-
-    if is_nil(or_key) do
-      json_error(conn, 503, "Audio transcription not configured", "server_error")
-    else
-      instance = conn.assigns.instance
-
-      case Budget.check(instance.id) do
-        {:error, :exceeded} ->
-          json_error(conn, 429, budget_exceeded_message(instance), "budget_exceeded")
-
-        {:ok, _} ->
-          do_audio_transcription(conn, or_key, instance)
-      end
-    end
-  end
-
-  # Transcribe via OpenRouter: feed the uploaded audio to a multimodal chat
-  # model as an `input_audio` part and return the reply reshaped into the
-  # Whisper response the caller (hermes) expects. hermes is none the wiser.
-  defp do_audio_transcription(conn, or_key, instance) do
-    started_at = System.monotonic_time(:millisecond)
-    params = conn.body_params
-
-    case params["file"] do
-      %Plug.Upload{path: path, filename: filename} ->
-        audio_b64 = path |> File.read!() |> Base.encode64()
-        format = audio_format(filename)
-        model = Druzhok.Settings.get("transcription_model") || @transcription_default_model
-
-        payload = %{
-          "model" => model,
-          "messages" => [
-            %{
-              "role" => "user",
-              "content" => [
-                %{"type" => "text", "text" => @transcribe_prompt},
-                %{"type" => "input_audio", "input_audio" => %{"data" => audio_b64, "format" => format}}
-              ]
-            }
-          ]
-        }
-
-        url = LlmFormat.provider_url() <> "/chat/completions"
-        headers = [
-          {"authorization", "Bearer #{or_key}"},
-          {"content-type", "application/json"}
-        ]
-        request = Finch.build(:post, url, headers, Jason.encode!(payload))
-
-        case Finch.request(request, Druzhok.Finch, receive_timeout: 120_000) do
-          {:ok, %Finch.Response{status: 200, body: resp_body}} ->
-            latency = System.monotonic_time(:millisecond) - started_at
-            transcript = extract_chat_transcript(resp_body)
-            Logger.info("[audio] transcription via #{model} #{latency}ms (#{String.length(transcript)} chars)")
-            meter_transcription(instance, resp_body, latency, model)
-            send_transcription(conn, transcript, params["response_format"])
-
-          {:ok, %Finch.Response{status: status, body: resp_body}} ->
-            Logger.error("Audio transcription OpenRouter error #{status}: #{String.slice(resp_body, 0, 300)}")
-            conn |> put_resp_content_type("application/json") |> send_resp(status, resp_body)
-
-          {:error, reason} ->
-            Logger.error("Audio transcription proxy error: #{inspect(reason)}")
-            json_error(conn, 502, "Transcription provider unavailable", "server_error")
-        end
-
-      _ ->
-        json_error(conn, 400, "No audio file provided", "invalid_request")
-    end
-  end
-
-  # Map an uploaded filename's extension to an OpenRouter `input_audio` format.
-  # Telegram voice notes arrive as ogg/opus (.oga/.ogg); Gemini accepts them.
-  defp audio_format(filename) do
-    case filename |> to_string() |> Path.extname() |> String.downcase() |> String.trim_leading(".") do
-      ext when ext in ["ogg", "oga", "opus"] -> "ogg"
-      ext when ext in ["mp3", "mpga", "mpeg"] -> "mp3"
-      "m4a" -> "m4a"
-      "mp4" -> "mp4"
-      "wav" -> "wav"
-      "webm" -> "webm"
-      "flac" -> "flac"
-      "" -> "mp3"
-      other -> other
-    end
-  end
-
-  defp extract_chat_transcript(resp_body) do
-    case Jason.decode(resp_body) do
-      {:ok, decoded} ->
-        (get_in(decoded, ["choices", Access.at(0), "message", "content"]) || "")
-        |> to_string()
-        |> String.trim()
-
-      _ ->
-        ""
-    end
-  end
-
-  # hermes asks Whisper for response_format="text" (plain string) for whisper-1
-  # and "json" ({"text": ...}) otherwise. Honor whichever it sent.
-  defp send_transcription(conn, transcript, response_format)
-       when response_format in ["text", "srt", "vtt"] do
-    conn
-    |> put_resp_content_type("text/plain")
-    |> send_resp(200, transcript)
-  end
-
-  defp send_transcription(conn, transcript, _response_format) do
-    conn
-    |> put_resp_content_type("application/json")
-    |> send_resp(200, Jason.encode!(%{text: transcript}))
-  end
-
-  defp meter_transcription(nil, _resp_body, _latency, _model), do: :ok
-  defp meter_transcription(instance, resp_body, latency, model) do
-    case Jason.decode(resp_body) do
-      {:ok, decoded} ->
-        usage = LlmFormat.extract_usage(decoded)
-        total = usage.prompt_tokens + usage.completion_tokens
-        cost_cents = LlmFormat.extract_cost_cents(decoded, model)
-        Budget.deduct(instance.id, cost_cents)
-
-        Usage.log(%{
-          instance_id: instance.id,
-          model: model,
-          prompt_tokens: usage.prompt_tokens,
-          completion_tokens: usage.completion_tokens,
-          total_tokens: total,
-          cost_cents: cost_cents,
-          request_type: "audio",
-          requested_model: model,
-          resolved_model: model,
-          provider: "openrouter",
-          latency_ms: latency
-        })
-
-      _ ->
-        :ok
-    end
-  end
+  def audio_transcriptions(conn, _params), do: RuocProxy.transcribe(conn, conn.assigns.instance)
 
   def audio_speech(conn, _params) do
     openai_key = Druzhok.Settings.get("openai_api_key")
@@ -413,15 +45,7 @@ defmodule DruzhokWebWeb.LlmProxyController do
     if is_nil(openai_key) do
       json_error(conn, 503, "Text-to-speech not configured", "server_error")
     else
-      instance = conn.assigns.instance
-
-      case Budget.check(instance.id) do
-        {:error, :exceeded} ->
-          json_error(conn, 429, budget_exceeded_message(instance), "budget_exceeded")
-
-        {:ok, _} ->
-          do_audio_speech(conn, openai_key, instance)
-      end
+      do_audio_speech(conn, openai_key, conn.assigns.instance)
     end
   end
 
@@ -471,7 +95,6 @@ defmodule DruzhokWebWeb.LlmProxyController do
     chars = String.length(input)
     # OpenAI gpt-4o-mini-tts: $0.60 / 1M input characters → 0.00006 cents/char.
     cost_cents = round(chars * 0.00006)
-    Budget.deduct(instance.id, cost_cents)
 
     Usage.log(%{
       instance_id: instance.id,
@@ -489,85 +112,15 @@ defmodule DruzhokWebWeb.LlmProxyController do
     })
   end
 
-  @search_model "perplexity/sonar"
-  @search_system_prompt ~s"""
-  You are a web search API. Given a user query, perform a web search and \
-  respond with ONLY a JSON array of results. No markdown, no commentary, \
-  no preamble, just a raw JSON array.
-
-  Each result must have exactly these fields:
-    - "title": the page title (string)
-    - "url": the page URL (string)
-    - "description": a 1-2 sentence summary of the page relevance to the \
-      query (string)
-
-  Return at most the number of results requested by the user. If there are \
-  no relevant results, return an empty array `[]`.
-  """
-
   def firecrawl_search(conn, _params) do
     body = conn.body_params
     query = body["query"] || ""
     limit = Map.get(body, "limit", 5) |> normalize_limit()
 
-    cond do
-      query == "" ->
-        send_resp(conn, 400, Jason.encode!(%{success: false, error: "query is required"}))
-
-      ruoc?(conn.assigns.instance) ->
-        RuocProxy.search(conn, conn.assigns.instance, query, limit)
-
-      true ->
-        instance = conn.assigns.instance
-
-        case Budget.check(instance.id) do
-          {:error, :exceeded} ->
-            send_resp(conn, 429, Jason.encode!(%{success: false, error: "Token budget exceeded"}))
-
-          {:ok, _} ->
-            do_firecrawl_search(conn, instance, query, limit)
-        end
-    end
-  end
-
-  defp do_firecrawl_search(conn, instance, query, limit) do
-    started_at = System.monotonic_time(:millisecond)
-
-    chat_body = %{
-      "model" => @search_model,
-      "messages" => [
-        %{"role" => "system", "content" => @search_system_prompt},
-        %{"role" => "user", "content" => "#{query}\n\nReturn up to #{limit} results as a JSON array."}
-      ],
-      "usage" => %{"include" => true}
-    }
-
-    url = LlmFormat.request_url()
-    headers = LlmFormat.request_headers(conn.req_headers)
-    request = Finch.build(:post, url, headers, Jason.encode!(chat_body))
-
-    case Finch.request(request, Druzhok.Finch, receive_timeout: 120_000) do
-      {:ok, %Finch.Response{status: 200, body: resp_body}} ->
-        case Jason.decode(String.trim(resp_body)) do
-          {:ok, decoded} ->
-            results = parse_search_results(decoded, limit)
-            meter_search(instance, decoded, query, started_at)
-
-            conn
-            |> put_resp_content_type("application/json")
-            |> send_resp(200, Jason.encode!(%{success: true, data: %{web: results}}))
-
-          _ ->
-            send_resp(conn, 502, Jason.encode!(%{success: false, error: "invalid upstream response"}))
-        end
-
-      {:ok, %Finch.Response{status: status, body: resp_body}} ->
-        Logger.error("Search proxy upstream #{status}: #{String.slice(resp_body, 0, 200)}")
-        send_resp(conn, status, Jason.encode!(%{success: false, error: "upstream error"}))
-
-      {:error, reason} ->
-        Logger.error("Search proxy network error: #{inspect(reason)}")
-        send_resp(conn, 502, Jason.encode!(%{success: false, error: "search provider unavailable"}))
+    if query == "" do
+      send_resp(conn, 400, Jason.encode!(%{success: false, error: "query is required"}))
+    else
+      RuocProxy.search(conn, conn.assigns.instance, query, limit)
     end
   end
 
@@ -580,74 +133,11 @@ defmodule DruzhokWebWeb.LlmProxyController do
   end
   defp normalize_limit(_), do: 5
 
-  defp parse_search_results(decoded, limit) do
-    content = get_in(decoded, ["choices", Access.at(0), "message", "content"]) || ""
-
-    parsed =
-      case Jason.decode(String.trim(content)) do
-        {:ok, list} when is_list(list) -> list
-        {:ok, %{"results" => list}} when is_list(list) -> list
-        {:ok, %{"web" => list}} when is_list(list) -> list
-        _ -> extract_json_array(content)
-      end
-
-    parsed
-    |> Enum.take(limit)
-    |> Enum.with_index(1)
-    |> Enum.map(fn {item, pos} ->
-      %{
-        "title" => Map.get(item, "title", ""),
-        "url" => Map.get(item, "url", ""),
-        "description" => Map.get(item, "description") || Map.get(item, "snippet") || "",
-        "position" => pos
-      }
-    end)
-  end
-
-  defp meter_search(nil, _decoded, _query, _started_at), do: :ok
-
-  defp meter_search(instance, decoded, query, started_at) do
-    usage = LlmFormat.extract_usage(decoded)
-    total = usage.prompt_tokens + usage.completion_tokens
-    cost_cents = LlmFormat.extract_cost_cents(decoded, @search_model)
-    Budget.deduct(instance.id, cost_cents)
-
-    Usage.log(%{
-      instance_id: instance.id,
-      model: @search_model,
-      prompt_tokens: usage.prompt_tokens,
-      completion_tokens: usage.completion_tokens,
-      total_tokens: total,
-      cost_cents: cost_cents,
-      request_type: "search",
-      requested_model: @search_model,
-      resolved_model: @search_model,
-      provider: "openrouter",
-      latency_ms: System.monotonic_time(:millisecond) - started_at,
-      prompt_preview: String.slice(query, 0, 500)
-    })
-  end
-
-  # Fallback when the LLM wraps the array in stray text.
-  defp extract_json_array(content) do
-    case Regex.run(~r/\[\s*\{.*\}\s*\]/s, content) do
-      [match] ->
-        case Jason.decode(match) do
-          {:ok, list} when is_list(list) -> list
-          _ -> []
-        end
-
-      _ ->
-        []
-    end
-  end
-
   defp meter_image(nil, _usage, _model, _started_at, _cost_cents), do: :ok
   defp meter_image(instance, usage, image_model, started_at, cost_cents) do
     total = usage.prompt_tokens + usage.completion_tokens
     if total > 0 do
       latency = System.monotonic_time(:millisecond) - started_at
-      Budget.deduct(instance.id, cost_cents)
       Usage.log(%{
         instance_id: instance.id,
         model: image_model,
@@ -711,51 +201,46 @@ defmodule DruzhokWebWeb.LlmProxyController do
     prompt = conn.body_params["prompt"] || ""
     model = instance.image_gen_model || @default_image_gen_model
 
-    with {:ok, _} <- Budget.check(instance.id) do
-      started_at = System.monotonic_time(:millisecond)
+    started_at = System.monotonic_time(:millisecond)
 
-      upstream_body =
-        Jason.encode!(%{
-          "model" => model,
-          "modalities" => image_modalities(model),
-          "messages" => [%{"role" => "user", "content" => prompt}],
-          "usage" => %{"include" => true}
-        })
+    upstream_body =
+      Jason.encode!(%{
+        "model" => model,
+        "modalities" => image_modalities(model),
+        "messages" => [%{"role" => "user", "content" => prompt}],
+        "usage" => %{"include" => true}
+      })
 
-      request =
-        Finch.build(
-          :post,
-          LlmFormat.request_url(),
-          LlmFormat.request_headers(conn.req_headers),
-          upstream_body
-        )
+    request =
+      Finch.build(
+        :post,
+        LlmFormat.request_url(),
+        LlmFormat.request_headers(conn.req_headers),
+        upstream_body
+      )
 
-      case Finch.request(request, Druzhok.Finch, receive_timeout: 180_000) do
-        {:ok, %Finch.Response{status: 200, body: resp_body}} ->
-          decoded = Jason.decode!(String.trim(resp_body))
-          cost_cents = LlmFormat.extract_cost_cents(decoded, model)
-          latency = System.monotonic_time(:millisecond) - started_at
-          meter_image_gen(instance, model, cost_cents, latency)
+    case Finch.request(request, Druzhok.Finch, receive_timeout: 180_000) do
+      {:ok, %Finch.Response{status: 200, body: resp_body}} ->
+        decoded = Jason.decode!(String.trim(resp_body))
+        cost_cents = LlmFormat.extract_cost_cents(decoded, model)
+        latency = System.monotonic_time(:millisecond) - started_at
+        meter_image_gen(instance, model, cost_cents, latency)
 
-          payload =
-            Jason.encode!(%{
-              "created" => System.os_time(:second),
-              "data" => Enum.map(extract_images(decoded), &%{"b64_json" => &1})
-            })
+        payload =
+          Jason.encode!(%{
+            "created" => System.os_time(:second),
+            "data" => Enum.map(extract_images(decoded), &%{"b64_json" => &1})
+          })
 
-          conn |> put_resp_content_type("application/json") |> send_resp(200, payload)
+        conn |> put_resp_content_type("application/json") |> send_resp(200, payload)
 
-        {:ok, %Finch.Response{status: status, body: resp_body}} ->
-          Logger.warning("images_generations upstream #{status}: #{String.slice(resp_body, 0, 200)}")
-          conn |> put_resp_content_type("application/json") |> send_resp(status, resp_body)
+      {:ok, %Finch.Response{status: status, body: resp_body}} ->
+        Logger.warning("images_generations upstream #{status}: #{String.slice(resp_body, 0, 200)}")
+        conn |> put_resp_content_type("application/json") |> send_resp(status, resp_body)
 
-        {:error, reason} ->
-          Logger.error("images_generations error: #{inspect(reason)}")
-          json_error(conn, 502, "Image generation provider unavailable", "server_error")
-      end
-    else
-      {:error, :exceeded} ->
-        json_error(conn, 429, budget_exceeded_message(instance), "budget_exceeded")
+      {:error, reason} ->
+        Logger.error("images_generations error: #{inspect(reason)}")
+        json_error(conn, 502, "Image generation provider unavailable", "server_error")
     end
   end
 
@@ -786,7 +271,6 @@ defmodule DruzhokWebWeb.LlmProxyController do
   end
 
   defp meter_image_gen(instance, model, cost_cents, latency) do
-    Budget.deduct(instance.id, cost_cents)
 
     Usage.log(%{
       instance_id: instance.id,
@@ -808,14 +292,7 @@ defmodule DruzhokWebWeb.LlmProxyController do
     body = conn.body_params
     instance = conn.assigns.instance
     image_model = instance.image_model || @default_image_model
-
-    case Budget.check(instance.id) do
-      {:error, :exceeded} ->
-        json_error(conn, 429, "Token budget exceeded", "insufficient_quota")
-
-      {:ok, _} ->
-        do_responses_proxy(conn, body, image_model, instance)
-    end
+    do_responses_proxy(conn, body, image_model, instance)
   end
 
   defp do_responses_proxy(conn, body, image_model, instance) do
@@ -1012,26 +489,5 @@ defmodule DruzhokWebWeb.LlmProxyController do
     conn
     |> put_resp_content_type("application/json")
     |> send_resp(status, Jason.encode!(%{error: %{message: message, type: type}}))
-  end
-
-  defp budget_exceeded_message(instance) do
-    limit_dollars = Budget.cents_to_dollars(instance.daily_budget_cents || 0)
-    tz = instance.timezone || "UTC"
-
-    reset_clock =
-      case DateTime.now(tz) do
-        {:ok, dt} ->
-          tomorrow = Date.add(DateTime.to_date(dt), 1)
-          reset_dt = DateTime.new!(tomorrow, ~T[00:00:00], tz)
-          diff_min = div(DateTime.diff(reset_dt, dt, :second), 60)
-          hours = div(diff_min, 60)
-          mins = rem(diff_min, 60)
-          "через #{hours}ч #{mins}м"
-
-        _ ->
-          "в 00:00 UTC"
-      end
-
-    "Бюджет на сегодня исчерпан. Лимит $#{limit_dollars}. Сбросится #{reset_clock}."
   end
 end

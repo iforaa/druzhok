@@ -42,16 +42,12 @@ defmodule DruzhokWebWeb.LlmProxy.Ruoc.ChatSyncTest do
     assert Jason.decode!(log.request_body)["messages"] == @body["messages"]
   end
 
-  test "does not consult the daily budget", %{bypass: bypass, instance: instance} do
-    Druzhok.Repo.update!(Druzhok.Instance.changeset(instance, %{daily_budget_cents: 1}))
-    Druzhok.Budget.deduct(instance.id, 500)
+  test "a bot without a ruoc key is refused with 503 before any upstream call", %{bypass: bypass} do
+    legacy = create_instance(%{ruoc_api_key: nil})
+    Bypass.stub(bypass, "POST", "/v1/chat/completions", fn req -> gateway_reply(req, 200, chat_completion("no")) end)
 
-    Bypass.expect_once(bypass, "POST", "/v1/chat/completions", fn req ->
-      gateway_reply(req, 200, chat_completion("ok"))
-    end)
-
-    conn = authed(build_conn(), Druzhok.Repo.reload!(instance))
-    assert post(conn, "/v1/chat/completions", @body).status == 200
+    conn = post(authed(build_conn(), legacy), "/v1/chat/completions", @body)
+    assert %{"error" => %{"type" => "api_error", "message" => "bot not migrated" <> _}} = json_response(conn, 503)
   end
 
   for {status, type} <- [{402, "insufficient_quota"}, {429, "rate_limit_error"}, {404, "invalid_request_error"}] do

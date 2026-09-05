@@ -45,7 +45,6 @@ defmodule DruzhokWebWeb.LlmProxy.TtsTest do
     assert log.total_tokens == 50_000
     assert log.cost_cents == 3
     assert log.prompt_preview == String.slice(long, 0, 500)
-    assert spent_today(instance) == 3
   end
 
   test "503 when no OpenAI key is configured", %{conn: conn} do
@@ -69,10 +68,4 @@ defmodule DruzhokWebWeb.LlmProxy.TtsTest do
     assert json_response(conn, 502)["error"]["message"] == "TTS provider unavailable"
   end
 
-  test "429 when the daily budget is spent" do
-    instance = create_instance(%{daily_budget_cents: 1})
-    Druzhok.Budget.deduct(instance.id, 1)
-    conn = authed(Phoenix.ConnTest.build_conn(), instance)
-    assert json_response(post(conn, "/v1/audio/speech", @body), 429)["error"]["type"] == "budget_exceeded"
-  end
 end

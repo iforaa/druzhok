@@ -25,7 +25,6 @@ defmodule Druzhok.Runtime.Hermes do
   require Logger
   alias Druzhok.Instance
 
-  @default_vision_model "google/gemini-2.5-flash-lite"
 
   @agents_md_session_section """
   ## Каждая сессия
@@ -293,13 +292,11 @@ defmodule Druzhok.Runtime.Hermes do
   # Since hermes 2026-04 (commit 976bad5b), config.yaml takes priority
   # over env vars for auxiliary task settings. Write the vision config
   # block so hermes routes vision calls through the druzhok proxy.
-  # A migrated bot's images go through ruoc-gateway, where the default model
-  # reads them; the OpenRouter vision default only makes sense on the legacy
-  # path.
+  # Images go through ruoc-gateway too; without an explicit vision model the
+  # bot's own model reads them (the ruoc default has the attachment capability).
   defp vision_model_for(instance, model) do
     case Map.get(instance, :image_model) do
-      nil -> if Map.get(instance, :ruoc_api_key) in [nil, ""], do: @default_vision_model, else: model
-      "" -> if Map.get(instance, :ruoc_api_key) in [nil, ""], do: @default_vision_model, else: model
+      v when v in [nil, ""] -> model
       vision -> vision
     end
   end

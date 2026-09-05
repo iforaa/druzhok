@@ -1,6 +1,6 @@
 # ruoc-gateway migration — design
 
-Date: 2026-09-05. Status: approved design, awaiting implementation plan.
+Date: 2026-09-05. Status: **implemented and deployed 2026-09-05**, sections 2–8 including the §7 cleanup.
 
 ## 1. What this is
 
