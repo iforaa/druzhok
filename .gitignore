@@ -35,3 +35,4 @@ data/
 /hermes-agent/
 .claude/settings.local.json
 /.fetch-venv/
+__pycache__/

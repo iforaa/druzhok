@@ -21,7 +21,7 @@ defmodule Druzhok.Fetch.HTTP do
     {"accept-encoding", "identity"}
   ]
 
-  @type page :: %{status: pos_integer, final_url: String.t(), content_type: String.t(), body: binary}
+  @type page :: %{status: pos_integer, final_url: String.t(), content_type: String.t(), charset: String.t() | nil, body: binary}
   @type error :: :bad_url | :unsafe_url | :unsupported_type | :too_large | :timeout | :unreachable
 
   @doc """
@@ -54,19 +54,28 @@ defmodule Druzhok.Fetch.HTTP do
           # No Content-Type at all is read as HTML: that is what such servers send.
           type = content_type(headers)
 
-          if type == "" or type in @readable do
-            case read_body(conn, ref, deadline, head.data, head.size, head.done) do
-              {:ok, body} -> {:ok, %{status: status, final_url: url, content_type: type, body: body}}
-              {:error, _} = error -> error
-            end
-          else
-            Mint.HTTP.close(conn)
-            {:error, :unsupported_type}
+          cond do
+            type != "" and type not in @readable ->
+              Mint.HTTP.close(conn)
+              {:error, :unsupported_type}
+
+            content_length(headers) > @max_body ->
+              Mint.HTTP.close(conn)
+              {:error, :too_large}
+
+            true ->
+              case read_body(conn, ref, deadline, head.data, head.size, head.done) do
+                {:ok, body} ->
+                  {:ok, %{status: status, final_url: url, content_type: type, charset: charset(headers), body: body}}
+
+                {:error, _} = error ->
+                  error
+              end
           end
 
         true ->
           Mint.HTTP.close(conn)
-          {:ok, %{status: status, final_url: url, content_type: content_type(headers), body: ""}}
+          {:ok, %{status: status, final_url: url, content_type: content_type(headers), charset: nil, body: ""}}
       end
     end
   end
@@ -97,8 +106,12 @@ defmodule Druzhok.Fetch.HTTP do
 
   defp request(conn, %{path: path}) do
     case Mint.HTTP.request(conn, "GET", path, @headers, nil) do
-      {:ok, conn, ref} -> {:ok, conn, ref}
-      {:error, _conn, _reason} -> {:error, :unreachable}
+      {:ok, conn, ref} ->
+        {:ok, conn, ref}
+
+      {:error, conn, _reason} ->
+        Mint.HTTP.close(conn)
+        {:error, :unreachable}
     end
   end
 
@@ -189,6 +202,26 @@ defmodule Druzhok.Fetch.HTTP do
     case List.keyfind(headers, "content-type", 0) do
       {_, value} -> value |> String.split(";") |> hd() |> String.trim() |> String.downcase()
       nil -> ""
+    end
+  end
+
+  # The charset parameter, if the server named one: `text/html; charset=windows-1251`.
+  defp charset(headers) do
+    with {_, value} <- List.keyfind(headers, "content-type", 0),
+         [_, cs] <- Regex.run(~r/charset\s*=\s*"?([\w.:-]+)/i, value) do
+      String.downcase(cs)
+    else
+      _ -> nil
+    end
+  end
+
+  # A declared size over the cap is refused before a byte of body is read.
+  defp content_length(headers) do
+    with {_, value} <- List.keyfind(headers, "content-length", 0),
+         {n, ""} <- Integer.parse(String.trim(value)) do
+      n
+    else
+      _ -> 0
     end
   end
 end

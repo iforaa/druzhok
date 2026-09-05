@@ -167,8 +167,8 @@ else 400 `{success: false, error}`), ignores `formats`, and calls
 `Client.post` timeout for this call: 50 s (ruoc's 45 s plus slack).
 
 Runtime.Hermes needs no change: `FIRECRAWL_API_URL` already points at druzhok
-and the plugin already posts `/v2/scrape`. The dashboard usage table gets
-`fetch` in its request-type filter.
+and the plugin already posts `/v2/scrape`. The dashboard usage table shows
+`fetch` rows with the usual columns; it has no request-type filter.
 
 ## Egress lockdown
 
@@ -201,7 +201,9 @@ Bot users keep Telegram (long polling and file downloads both go to
 not in `bot_uids`, so the fetcher and ruoc keep full egress. Hermes's
 models.dev refresh fails closed onto its disk cache or an empty registry,
 which it handles. Applied with `nft delete table inet druzhok; nft -f` as
-bootstrap does today; `druzhok-ctl` is unchanged.
+bootstrap does today, after which bootstrap re-adds every `bot-*` uid;
+`druzhok-ctl` adds the uid on create, start and restart, so a table reload
+followed by a bot restart heals itself.
 
 ## Tests
 
@@ -234,8 +236,8 @@ bootstrap does today; `druzhok-ctl` is unchanged.
    bot's key; ask the operator's bot to read a page.
 5. `sudo install ops/nftables-druzhok.nft /etc/nftables.d/druzhok.nft && sudo nft
    delete table inet druzhok && sudo nft -f /etc/nftables.d/druzhok.nft`; then
-   re-add the uids (`druzhok-ctl` does it on create only, so a one-off loop
-   over `getent passwd | grep ^bot-`). Watch `nft list table inet druzhok`
+   re-add the uids with a loop over `getent passwd | grep ^bot-` (or rerun
+   bootstrap, which does that). Watch `nft list table inet druzhok`
    drop counters and the operator bot for an hour.
 
 ## Out of scope

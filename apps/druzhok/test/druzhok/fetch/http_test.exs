@@ -70,6 +70,33 @@ defmodule Druzhok.Fetch.HTTPTest do
     assert {:error, :too_large} = get(base <> "/big")
   end
 
+  test "a declared size over the cap is refused before the body is read" do
+    {:ok, listener} = :gen_tcp.listen(0, [:binary, active: false, reuseaddr: true])
+    {:ok, port} = :inet.port(listener)
+
+    spawn_link(fn ->
+      {:ok, socket} = :gen_tcp.accept(listener)
+      :gen_tcp.recv(socket, 0, 1_000)
+      :gen_tcp.send(socket, "HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nContent-Length: 6000000\r\n\r\n<html>")
+      Process.sleep(2_000)
+      :gen_tcp.close(socket)
+    end)
+
+    started = System.monotonic_time(:millisecond)
+    assert {:error, :too_large} = get("http://localhost:#{port}/big")
+    assert System.monotonic_time(:millisecond) - started < 1_000
+  end
+
+  test "the charset parameter travels with the content type", %{bypass: bypass, base: base} do
+    Bypass.expect_once(bypass, "GET", "/legacy", fn conn ->
+      conn
+      |> Plug.Conn.put_resp_content_type("text/html", "windows-1251")
+      |> Plug.Conn.resp(200, "<p>x</p>")
+    end)
+
+    assert {:ok, %{content_type: "text/html", charset: "windows-1251"}} = get(base <> "/legacy")
+  end
+
   test "a non-2xx final status is returned, not an error", %{bypass: bypass, base: base} do
     Bypass.expect_once(bypass, "GET", "/gone", fn conn ->
       conn |> Plug.Conn.put_resp_content_type("text/html") |> Plug.Conn.resp(404, "<p>nope</p>")

@@ -24,6 +24,24 @@ defmodule Druzhok.Fetch.WorkerTest do
     refute md =~ "dataLayer"
   end
 
+  test "a windows-1251 page with a meta charset is read as text, not mojibake" do
+    html = File.read!(Path.join(@fixtures, "article-cp1251.html"))
+    assert {:ok, %{title: title, markdown: md}} = Worker.extract(:html, "https://koleso.example/hub", html)
+    assert title =~ "Ремонт втулки"
+    assert md =~ "сателлиты начинают подклинивать"
+    refute md =~ "\uFFFD"
+  end
+
+  test "the Content-Type charset decodes a page that declares none itself" do
+    html = File.read!(Path.join(@fixtures, "article-cp1251-nometa.html"))
+
+    assert {:ok, %{markdown: md}} =
+             Worker.extract(:html, "https://koleso.example/hub", html, charset: "windows-1251")
+
+    assert md =~ "тормозной барабан"
+    refute md =~ "\uFFFD"
+  end
+
   test "a PDF comes back page by page with its title" do
     pdf = File.read!(Path.join(@fixtures, "report.pdf"))
     assert {:ok, %{title: "Quarterly Report Q3", markdown: md}} = Worker.extract(:pdf, "https://x.example/report.pdf", pdf)
@@ -49,6 +67,33 @@ defmodule Druzhok.Fetch.WorkerTest do
     System.cmd("kill", ["-9", to_string(os_pid)])
     Process.sleep(200)
     assert {:ok, %{markdown: "again"}} = Worker.extract(:text, "u", "again")
+  end
+
+  test "a worker that overruns its budget is killed, not just cut off" do
+    hang = Path.join(@fixtures, "hang.sh")
+    {:ok, _} = Worker.start_link(bin: hang, name: :hang_worker)
+    %{port: port} = :sys.get_state(:hang_worker)
+    {:os_pid, os_pid} = Port.info(port, :os_pid)
+
+    assert {:error, :extract_failed} = Worker.extract(:text, "u", "x", server: :hang_worker, timeout: 200)
+    Process.sleep(100)
+    {_, status} = System.cmd("kill", ["-0", to_string(os_pid)], stderr_to_stdout: true)
+    assert status != 0, "worker os process #{os_pid} still alive after the timeout"
+  end
+
+  test "a request that spent its whole budget in the queue is dropped, not run" do
+    hang = Path.join(@fixtures, "hang.sh")
+    {:ok, _} = Worker.start_link(bin: hang, name: :queue_worker)
+    started = System.monotonic_time(:millisecond)
+
+    results =
+      1..2
+      |> Enum.map(fn _ -> Task.async(fn -> Worker.extract(:text, "u", "x", server: :queue_worker, timeout: 300) end) end)
+      |> Task.await_many(5_000)
+
+    assert Enum.all?(results, &match?({:error, _}, &1))
+    # The second call would have cost another 300 ms had it been run.
+    assert System.monotonic_time(:millisecond) - started < 550
   end
 end
 

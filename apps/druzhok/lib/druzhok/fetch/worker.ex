@@ -12,7 +12,7 @@ defmodule Druzhok.Fetch.Worker do
   use GenServer
   require Logger
 
-  @call_timeout 20_000
+  @default_timeout 20_000
   @max_chars 200_000
 
   @type kind :: :html | :pdf | :text
@@ -20,12 +20,22 @@ defmodule Druzhok.Fetch.Worker do
 
   def start_link(opts \\ []), do: GenServer.start_link(__MODULE__, opts, name: Keyword.get(opts, :name, __MODULE__))
 
-  @doc "Turn a fetched body into markdown."
-  @spec extract(kind, String.t(), binary, GenServer.server()) :: result
-  def extract(kind, url, body, server \\ __MODULE__) when kind in [:html, :pdf, :text] do
-    GenServer.call(server, {:extract, kind, url, body}, @call_timeout + 1_000)
+  @doc """
+  Turn a fetched body into markdown. Options: `charset` (the Content-Type's,
+  nil when absent), `timeout` in ms for the whole wait, queue included
+  (default #{@default_timeout}), `server`.
+  """
+  @spec extract(kind, String.t(), binary, keyword) :: result
+  def extract(kind, url, body, opts \\ []) when kind in [:html, :pdf, :text] do
+    server = Keyword.get(opts, :server, __MODULE__)
+    timeout = Keyword.get(opts, :timeout, @default_timeout)
+    deadline = System.monotonic_time(:millisecond) + timeout
+    request = %{kind: kind, url: url, body: body, charset: Keyword.get(opts, :charset)}
+    GenServer.call(server, {:extract, request, deadline}, timeout + 1_000)
   catch
-    :exit, _ -> {:error, :worker_down}
+    :exit, reason ->
+      Logger.warning("[fetch] worker call gave up: #{inspect(elem(reason, 0))}")
+      {:error, :worker_down}
   end
 
   @impl true
@@ -52,30 +62,55 @@ defmodule Druzhok.Fetch.Worker do
   end
 
   @impl true
-  def handle_call({:extract, kind, url, body}, from, %{port: nil} = state) do
+  def handle_call({:extract, request, deadline}, from, %{port: nil} = state) do
     case open(state) do
       %{port: nil} = state -> {:reply, {:error, :worker_down}, state}
-      state -> handle_call({:extract, kind, url, body}, from, state)
+      state -> handle_call({:extract, request, deadline}, from, state)
     end
   end
 
-  def handle_call({:extract, kind, url, body}, _from, %{port: port} = state) do
-    request = Jason.encode!(%{kind: kind, url: url, body_b64: Base.encode64(body)})
-    Port.command(port, request)
+  def handle_call({:extract, request, deadline}, _from, %{port: port} = state) do
+    # The deadline was set when the caller enqueued; a request that waited
+    # its whole budget in the mailbox is dropped, not run for nobody.
+    remaining = deadline - System.monotonic_time(:millisecond)
 
-    receive do
-      {^port, {:data, reply}} ->
-        {:reply, decode(reply), state}
+    if remaining <= 0 do
+      Logger.warning("[fetch] dropped a request that timed out while queued")
+      {:reply, {:error, :worker_down}, state}
+    else
+      Port.command(port, encode(request))
 
-      {^port, {:exit_status, status}} ->
-        Logger.warning("[fetch] worker exited with #{status} mid-request")
-        {:reply, {:error, :extract_failed}, %{state | port: nil}}
-    after
-      @call_timeout ->
-        Logger.warning("[fetch] worker took longer than #{@call_timeout} ms; restarting it")
-        Port.close(port)
-        {:reply, {:error, :extract_failed}, %{state | port: nil}}
+      receive do
+        {^port, {:data, reply}} ->
+          {:reply, decode(reply), state}
+
+        {^port, {:exit_status, status}} ->
+          Logger.warning("[fetch] worker exited with #{status} mid-request")
+          {:reply, {:error, :extract_failed}, %{state | port: nil}}
+      after
+        remaining ->
+          Logger.warning("[fetch] worker took longer than #{remaining} ms; killing it")
+          kill(port)
+          {:reply, {:error, :extract_failed}, %{state | port: nil}}
+      end
     end
+  end
+
+  # Closing the port only closes the pipes; a worker stuck in C code would go
+  # on burning CPU beside its replacement, so the OS process is killed too.
+  defp kill(port) do
+    case Port.info(port, :os_pid) do
+      {:os_pid, os_pid} -> System.cmd("kill", ["-9", Integer.to_string(os_pid)], stderr_to_stdout: true)
+      _ -> :ok
+    end
+
+    Port.close(port)
+  catch
+    _, _ -> :ok
+  end
+
+  defp encode(%{kind: kind, url: url, body: body, charset: charset}) do
+    Jason.encode!(%{kind: kind, url: url, body_b64: Base.encode64(body), charset: charset})
   end
 
   @impl true

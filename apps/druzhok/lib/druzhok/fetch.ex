@@ -14,15 +14,22 @@ defmodule Druzhok.Fetch do
   # error page) and is reported as no_text rather than sold.
   @min_chars 60
 
+  # The whole read, transfer and extraction together, stays inside ruoc's
+  # 45 s call so a slow page plus a slow PDF is a timeout here, not there.
+  @budget_ms 40_000
+  @extract_min_ms 2_000
+
   @type page :: %{final_url: String.t(), title: String.t(), markdown: String.t(), status_code: pos_integer, bytes: non_neg_integer}
   @type code :: HTTP.error() | :no_text | :worker_down | :extract_failed
 
   @doc "Options are `Fetch.HTTP.get/2`'s. `meta` carries `status_code` for `:no_text`."
   @spec fetch(String.t(), keyword) :: {:ok, page} | {:error, code, map}
   def fetch(url, opts \\ []) do
+    started = System.monotonic_time(:millisecond)
+
     case HTTP.get(url, opts) do
       {:ok, %{status: status} = got} when status in 200..299 ->
-        extract(got)
+        extract(got, max(@budget_ms - (System.monotonic_time(:millisecond) - started), @extract_min_ms))
 
       {:ok, %{status: status}} ->
         {:error, :no_text, %{status_code: status}}
@@ -32,8 +39,8 @@ defmodule Druzhok.Fetch do
     end
   end
 
-  defp extract(%{body: body, content_type: type, final_url: final_url, status: status}) do
-    case Worker.extract(kind(type), final_url, body) do
+  defp extract(%{body: body, content_type: type, charset: charset, final_url: final_url, status: status}, timeout) do
+    case Worker.extract(kind(type), final_url, body, charset: charset, timeout: timeout) do
       {:ok, %{title: title, markdown: markdown}} ->
         if String.length(String.trim(markdown)) < @min_chars do
           {:error, :no_text, %{status_code: status}}

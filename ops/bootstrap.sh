@@ -75,6 +75,11 @@ grep -q 'include "/etc/nftables.d/\*.nft"' /etc/nftables.conf || echo 'include "
 systemctl enable --now nftables
 nft list table inet druzhok >/dev/null 2>&1 && nft delete table inet druzhok
 nft -f /etc/nftables.d/druzhok.nft
+# A reloaded table starts with an empty set, which means open egress: put
+# every existing bot uid back before anything else runs.
+for uid in $(getent passwd | awk -F: '/^bot-/ {print $3}'); do
+  nft add element inet druzhok bot_uids "{ $uid }"
+done
 systemctl daemon-reload
 systemd-analyze verify /etc/systemd/system/hermes@.service /etc/systemd/system/druzhok.service || true
 

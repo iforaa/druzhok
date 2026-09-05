@@ -2,7 +2,7 @@
 
 Framing is {:packet, 4}: every message is a 4-byte big-endian length followed
 by one JSON object. Requests are {"kind": "html"|"pdf"|"text", "url": ...,
-"body_b64": ...}; replies are {"title": ..., "markdown": ...} or
+"body_b64": ..., "charset": <Content-Type charset or null>}; replies are {"title": ..., "markdown": ...} or
 {"error": "extract_failed"}. The worker has no network and no state: the
 Elixir side fetched the bytes and applies every limit.
 """
@@ -15,6 +15,7 @@ import sys
 
 import trafilatura
 from lxml import html as lxml_html
+from trafilatura.utils import decode_file
 from urllib.parse import urljoin
 
 MAX_CHARS = 200_000
@@ -43,6 +44,28 @@ def write_message(stream, obj):
     stream.write(struct.pack(">I", len(payload)))
     stream.write(payload)
     stream.flush()
+
+
+META_CHARSET = re.compile(rb"""<meta[^>]+charset\s*=\s*["']?\s*([\w.:-]+)""", re.IGNORECASE)
+
+
+def decode_html(body, charset):
+    """The page as text: the Content-Type charset, else the <meta> one, else
+    strict UTF-8, else trafilatura's detection. Legacy windows-1251 pages are
+    still common on Russian sites and must not come back as mojibake."""
+    candidates = [charset]
+    m = META_CHARSET.search(body[:4096])
+    if m:
+        candidates.append(m.group(1).decode("ascii", errors="ignore"))
+    candidates.append("utf-8")
+    for name in candidates:
+        if not name:
+            continue
+        try:
+            return body.decode(name)
+        except (LookupError, UnicodeDecodeError):
+            continue
+    return decode_file(body) or body.decode("utf-8", errors="replace")
 
 
 def html_title(html):
@@ -80,8 +103,8 @@ def headline_appendix(html, url, text):
     return f"\n\n## Заголовки на странице\n\n{lines}\n"
 
 
-def extract_html(url, body):
-    html = body.decode("utf-8", errors="replace")
+def extract_html(url, body, charset=None):
+    html = decode_html(body, charset)
     text = trafilatura.extract(
         html,
         url=url,
@@ -100,7 +123,7 @@ def extract_html(url, body):
     return {"title": title, "markdown": text}
 
 
-def extract_pdf(url, body):
+def extract_pdf(url, body, charset=None):
     import pymupdf
 
     doc = pymupdf.open(stream=body, filetype="pdf")
@@ -113,8 +136,8 @@ def extract_pdf(url, body):
     return {"title": title, "markdown": "\n\n---\n\n".join(pages)}
 
 
-def extract_text(url, body):
-    return {"title": url, "markdown": body.decode("utf-8", errors="replace")}
+def extract_text(url, body, charset=None):
+    return {"title": url, "markdown": decode_html(body, charset)}
 
 
 HANDLERS = {"html": extract_html, "pdf": extract_pdf, "text": extract_text}
@@ -126,7 +149,7 @@ def handle(request):
     if handler is None:
         return {"error": "extract_failed"}
     body = base64.b64decode(request.get("body_b64", ""))
-    result = handler(request.get("url", ""), body)
+    result = handler(request.get("url", ""), body, request.get("charset"))
     result["markdown"] = result["markdown"][:MAX_CHARS]
     return result
 
