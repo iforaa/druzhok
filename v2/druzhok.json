@@ -1,8 +1,0 @@
-{
-  "defaultModel": "nebius/zai-org/GLM-5",
-  "workspaceDir": "workspace",
-  "chats": {},
-  "heartbeat": {
-    "enabled": false
-  }
-}

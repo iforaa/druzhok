@@ -1,6 +1,6 @@
 # Druzhok
 
-Multi-tenant Hermes bot hosting. Elixir/Phoenix orchestrator (`v4/druzhok`) runs
+Multi-tenant Hermes bot hosting. Elixir/Phoenix orchestrator (umbrella at the repo root) runs
 one **systemd unit + Linux user per bot** on the KZ server; all LLM traffic goes
 through Druzhok's OpenAI-compatible proxy (budgets, metering). No Docker.
 
@@ -13,15 +13,16 @@ Always use `/my-commit` for committing changes.
 - **Never wipe a bot's data dir** (`/data/tenants/<name>`) — it holds memory/identity. Only `BotManager.delete/1` may, and only on explicit user request.
 - **Never set HTTP_PROXY/HTTPS_PROXY for bots** — breaks multipart uploads.
 - **One Telegram poller per token.** Stop a bot on the old host before starting it elsewhere.
-- Hermes source is the fork `github.com/iforaa/druzhok-hermes` (local clone `v4/hermes-agent`, remote `origin`; nousresearch is remote `upstream`). Updates go through the `update-hermes` skill.
-- `v4/hermes-agent`, `v4/openclaw`, `v4/*claw` are untracked upstream clones — never `git add -A` from the repo root.
+- Hermes source is the fork `github.com/iforaa/druzhok-hermes` (local clone `hermes-agent/`, remote `origin`; nousresearch is remote `upstream`). Updates go through the `update-hermes` skill.
+- `hermes-agent/` is a separate, gitignored git repo (the hermes fork clone) — never `git add` it into druzhok.
 
 ## Layout
 
 ```
-v4/druzhok/apps/druzhok/      core: BotManager, Host (Systemd|Process), Runtime.Hermes, HealthMonitor(+Probe), ManagerBot, Budget
-v4/druzhok/apps/druzhok_web/  Phoenix dashboard + LLM proxy (LlmProxyController) + BotSite plug
-v4/druzhok/ops/               druzhok-ctl, hermes@.service, nftables, Caddyfile, bootstrap.sh, smoke.sh
+apps/druzhok/      core: BotManager, Host (Systemd|Process), Runtime.Hermes, HealthMonitor(+Probe), ManagerBot, Budget
+apps/druzhok_web/  Phoenix dashboard + LLM proxy (LlmProxyController) + BotSite plug
+ops/               druzhok-ctl, hermes@.service, nftables, Caddyfile, bootstrap.sh, smoke.sh
+hermes-agent/      gitignored clone of the hermes fork (see update-hermes skill)
 (workspace seed: config.yaml + AGENTS.md come from Runtime.Hermes.workspace_files/1; SOUL.md from the provisioner)
 docs/superpowers/specs|plans  design docs (see 2026-08-23-systemd-host-*)
 ```
@@ -44,10 +45,9 @@ OpenRouter responses have leading whitespace — `String.trim()` before `Jason.d
 ## Development (macOS, no Docker)
 
 ```bash
-cd v4/druzhok
 mix deps.get && mix compile && mix test
 # run with a real local hermes venv for Host.Process:
-HERMES_BIN=/path/to/druzhok-hermes/.venv/bin/hermes DATABASE_PATH=data/druzhok.db mix phx.server
+HERMES_BIN=$PWD/hermes-agent/.venv/bin/hermes DATABASE_PATH=data/druzhok.db mix phx.server
 ```
 
 ## Server (KZ, PS Cloud Almaty)
@@ -55,7 +55,7 @@ HERMES_BIN=/path/to/druzhok-hermes/.venv/bin/hermes DATABASE_PATH=data/druzhok.d
 ```bash
 ssh ubuntu@195.49.213.8
 cd ~/druzhok && git pull
-cd v4/druzhok && . ~/.asdf/asdf.sh && MIX_ENV=prod mix compile
+. ~/.asdf/asdf.sh && MIX_ENV=prod mix compile
 DATABASE_PATH=/data/druzhok/druzhok.db MIX_ENV=prod mix ecto.migrate
 sudo systemctl restart druzhok
 ```

@@ -1,10 +1,35 @@
-node_modules/
-dist/
-*.tsbuildinfo
-.env
+# The directory Mix will write compiled artifacts to.
+/_build/
+
+# If you run "mix test --cover", coverage assets end up here.
+/cover/
+
+# The directory Mix downloads your dependencies sources to.
+/deps/
+
+# Where third-party dependencies like ExDoc output generated docs.
+/doc/
+
+# If the VM crashes, it generates a dump, let's ignore it too.
+erl_crash.dump
+
+# Also ignore archive artifacts (built via "mix archive.build").
+*.ez
+
+# Temporary files, for example, from tests.
+/tmp/
+
+# Rust NIF build artifacts
+**/native/*/target/
+
+# Local data / secrets
 data/
 *.db
 *.db-wal
 *.db-shm
-credentials.yaml
-vendor/upstream/
+.env
+.DS_Store
+*.png
+
+# Separate upstream clone of the hermes fork (github.com/iforaa/druzhok-hermes)
+/hermes-agent/
