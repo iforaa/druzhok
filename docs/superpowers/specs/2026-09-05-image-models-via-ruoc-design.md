@@ -1,6 +1,6 @@
 # Image models via ruoc-gateway
 
-Date: 2026-09-05. Status: **built** (not yet deployed). Depends on ruoc-gateway
+Date: 2026-09-05. Status: **built**, deployed 2026-09-05. Depends on ruoc-gateway
 `docs/superpowers/specs/2026-09-05-image-generation-design.md`.
 
 Image generation stops going from druzhok to OpenRouter directly. The list of
