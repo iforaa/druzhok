@@ -28,4 +28,5 @@ config :druzhok,
   anthropic_api_url: "https://api.anthropic.com"
 
 config :druzhok,
-  hermes_bin: Path.expand("../apps/druzhok/test/support/fake_hermes.sh", __DIR__)
+  hermes_bin: Path.expand("../apps/druzhok/test/support/fake_hermes.sh", __DIR__),
+  fetch_worker_bin: System.get_env("FETCH_WORKER_BIN") || Path.expand("../.fetch-venv/bin/python", __DIR__)

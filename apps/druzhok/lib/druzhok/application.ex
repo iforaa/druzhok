@@ -14,6 +14,7 @@ defmodule Druzhok.Application do
       {DynamicSupervisor, name: Druzhok.Host.ProcessSup, strategy: :one_for_one},
       {Finch, name: Druzhok.Finch},
       {Finch, name: Druzhok.LocalFinch},
+      Druzhok.Fetch.Worker,
       Druzhok.HealthMonitor,
       Druzhok.ManagerBot
     ]

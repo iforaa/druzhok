@@ -36,12 +36,25 @@ defmodule DruzhokWebWeb.Router do
     post "/responses", LlmProxyController, :responses_proxy
   end
 
-  # Firecrawl-compatible v2 API (only /search — hermes web_search via
-  # FIRECRAWL_API_URL). Forwards to OpenRouter perplexity/sonar.
+  # Firecrawl-compatible v2 API — hermes web_search and web_extract via
+  # FIRECRAWL_API_URL. Both forward to ruoc-gateway.
   scope "/v2", DruzhokWebWeb do
     pipe_through :llm_api
 
     post "/search", LlmProxyController, :firecrawl_search
+    post "/scrape", LlmProxyController, :firecrawl_scrape
+  end
+
+  # The page fetcher ruoc-gateway routes POST /v1/fetch to. Shared secret,
+  # localhost in practice; see docs/superpowers/specs/2026-09-05-web-fetch-service-design.md.
+  pipeline :internal_api do
+    plug DruzhokWebWeb.Plugs.FetchAuth
+  end
+
+  scope "/internal", DruzhokWebWeb do
+    pipe_through :internal_api
+
+    post "/fetch", FetchController, :fetch
   end
 
   # Public routes

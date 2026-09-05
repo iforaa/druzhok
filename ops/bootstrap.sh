@@ -57,6 +57,12 @@ if [ ! -f "$HERMES_DIR/pyproject.toml" ]; then git clone -q --depth 1 "$HERMES_R
 ( cd "$HERMES_DIR" && UV_CACHE_DIR=/data/opt/uv-cache UV_PYTHON_INSTALL_DIR=/data/opt/uv-python uv sync --frozen --python /usr/bin/python3 --extra all --extra messaging --extra firecrawl 2>&1 | tail -2 )
 chown -R root:root "$HERMES_DIR"; chmod -R a+rX "$HERMES_DIR"
 
+step "fetch worker venv (trafilatura + pymupdf for druzhok's page reader)"
+apt-get install -y -q --no-install-recommends python3-venv >/dev/null
+python3 -m venv /opt/druzhok-fetch/.venv
+/opt/druzhok-fetch/.venv/bin/pip install -q -r "$OPS/../apps/druzhok/priv/fetch-worker/requirements.txt"
+grep -q '^FETCH_WORKER_BIN=' /etc/druzhok/druzhok.env 2>/dev/null || echo 'FETCH_WORKER_BIN=/opt/druzhok-fetch/.venv/bin/python' >> /etc/druzhok/druzhok.env
+
 step "druzhok-ctl + units + sudoers + nftables"
 install -m 0755 "$OPS/druzhok-ctl" /usr/local/sbin/druzhok-ctl
 install -m 0644 "$OPS/hermes@.service" /etc/systemd/system/hermes@.service

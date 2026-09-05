@@ -64,6 +64,13 @@ defmodule Druzhok.RuocStub do
       reply(conn, 200, %{"object" => "list", "data" => models()})
     end)
 
+    Bypass.stub(bypass, "POST", "/v1/fetch", fn conn ->
+      conn = record(stub, "POST /v1/fetch", conn)
+      url = conn |> read_recorded(stub, "POST /v1/fetch") |> Map.get("url", "")
+      reply(conn, 200, %{"request_id" => "req_fetch", "url" => url, "final_url" => url, "title" => "Example Domain",
+        "markdown" => "# Example Domain\n\nThis domain is for use in illustrative examples.", "status_code" => 200})
+    end)
+
     Bypass.stub(bypass, "GET", "/v1/images/models", fn conn ->
       conn = record(stub, "GET /v1/images/models", conn)
       reply(conn, 200, %{"models" => image_models()})
@@ -104,6 +111,13 @@ defmodule Druzhok.RuocStub do
   @doc "Recorded calls to `route`: `[%{headers, params, path}]`, oldest first."
   def calls(%{calls: calls}, route) do
     calls |> Agent.get(& &1) |> Enum.reverse() |> Enum.filter(&(&1.route == route))
+  end
+
+  defp read_recorded(_conn, stub, route) do
+    case calls(stub, route) do
+      [] -> %{}
+      list -> List.last(list).params
+    end
   end
 
   defp record(%{calls: calls}, route, conn) do

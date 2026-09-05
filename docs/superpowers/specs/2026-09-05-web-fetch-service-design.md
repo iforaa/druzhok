@@ -107,7 +107,7 @@ reply `{"title": ..., "markdown": ...}` or `{"error": "extract_failed"}`.
 with a 20 s call timeout; calls are serialized by the GenServer, which is
 enough for the expected load and keeps one Python process. The supervisor
 restarts it on exit; a reply with `"error"` or a crash mid-request is
-`:extract_failed` for that request only. Markdown shorter than 200 characters
+`:extract_failed` for that request only. Markdown shorter than 60 characters
 after trimming → `:no_text`.
 
 `requirements.txt`: `trafilatura==2.0.0`, `pymupdf==1.25.5`. The venv is

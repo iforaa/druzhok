@@ -69,8 +69,4 @@ defmodule DruzhokWebWeb.LlmProxy.Ruoc.SearchTest do
     assert conn.status == 502
     assert Jason.decode!(conn.resp_body) == %{"success" => false, "error" => "search provider unavailable"}
   end
-
-  test "/v2/scrape is still not served, so hermes falls back to its browser", %{conn: conn} do
-    assert post(conn, "/v2/scrape", %{"url" => "https://x"}).status == 404
-  end
 end

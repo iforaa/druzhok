@@ -113,6 +113,20 @@ defmodule DruzhokWebWeb.LlmProxyController do
     end
   end
 
+  # hermes web_extract: Firecrawl `/v2/scrape {url, formats}`. Only markdown
+  # is served, whatever `formats` asks; the page comes from ruoc `/v1/fetch`.
+  def firecrawl_scrape(conn, _params) do
+    url = conn.body_params["url"]
+
+    if is_binary(url) and String.trim(url) != "" do
+      RuocProxy.fetch(conn, conn.assigns.instance, String.trim(url))
+    else
+      conn
+      |> put_resp_content_type("application/json")
+      |> send_resp(400, Jason.encode!(%{success: false, error: "url is required"}))
+    end
+  end
+
   defp normalize_limit(limit) when is_integer(limit) and limit > 0 and limit <= 20, do: limit
   defp normalize_limit(limit) when is_binary(limit) do
     case Integer.parse(limit) do

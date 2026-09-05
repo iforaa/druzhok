@@ -46,6 +46,14 @@ defmodule Druzhok.Settings do
     Application.get_env(:druzhok, :operator_telegram_id) || get("operator_telegram_id")
   end
 
+  @doc """
+  Shared secret ruoc-gateway presents to `POST /internal/fetch` (its
+  `FETCH_SECRET`): env wins, otherwise dashboard Settings. Nil closes the endpoint.
+  """
+  def fetch_secret do
+    Application.get_env(:druzhok, :fetch_secret) || get("fetch_secret")
+  end
+
   @doc "Setting keys the ruoc-gateway integration reads (see `Druzhok.Ruoc`)."
   def ruoc_keys, do: ["ruoc_url", "ruoc_admin_host", "ruoc_admin_token", "ruoc_catalog_key"]
 end

@@ -16,6 +16,13 @@ out=$(run "inst = Druzhok.Repo.get_by!(Druzhok.Instance, name: \"$name\"); IO.in
 echo "$out"
 echo "$out" | grep -q '{:healthy' || { echo "probe not healthy"; exit 1; }
 
+echo "== page fetch (/v2/scrape via ruoc)"
+key=$(run "IO.puts(Druzhok.Repo.get_by!(Druzhok.Instance, name: \"$name\").tenant_key)" | tail -1)
+scrape=$(curl -s -m 60 -H "Authorization: Bearer $key" -H 'Content-Type: application/json' \
+  -d '{"url":"https://example.com","formats":["markdown"]}' http://127.0.0.1:4000/v2/scrape)
+echo "$scrape" | head -c 200; echo
+echo "$scrape" | grep -q '"success":true' || { echo "scrape failed"; exit 1; }
+
 if [ -n "$chat" ]; then
   echo "== telegram nudge"
   mgr=$(run 'IO.puts(Druzhok.Settings.get("manager_bot_token") || "")' | tail -1)

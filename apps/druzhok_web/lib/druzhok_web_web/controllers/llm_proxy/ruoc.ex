@@ -28,6 +28,8 @@ defmodule DruzhokWebWeb.LlmProxy.Ruoc do
   @no_usage %{prompt_tokens: 0, completion_tokens: 0}
   # A render takes tens of seconds; ruoc gives the provider 180 s.
   @image_timeout 190_000
+  # A page read: ruoc allows the fetcher 45 s.
+  @fetch_timeout 50_000
 
   # --- Chat -------------------------------------------------------------------
 
@@ -220,6 +222,60 @@ defmodule DruzhokWebWeb.LlmProxy.Ruoc do
     |> Enum.map(fn {r, pos} ->
       %{"title" => r["title"] || "", "url" => r["url"] || "", "description" => r["content"] || "", "position" => pos}
     end)
+  end
+
+  # --- Page fetch ---------------------------------------------------------------
+
+  @doc """
+  Firecrawl `/v2/scrape` in, `{success, data: {markdown, metadata}}` out, over
+  ruoc `POST /v1/fetch`, which routes back to this node's `/internal/fetch`
+  for the actual read. A 402 keeps its status with the localized balance
+  notice; every other refusal keeps ruoc's status and message so the SDK
+  raises and hermes records a per-URL error.
+  """
+  def fetch(conn, instance, url) do
+    started_at = System.monotonic_time(:millisecond)
+
+    case Client.post("/v1/fetch", instance.ruoc_api_key, Jason.encode!(%{"url" => url}), receive_timeout: @fetch_timeout) do
+      {:ok, 200, headers, resp_body} ->
+        request_id = request_id(headers)
+        page = Jason.decode!(resp_body)
+        title = page["title"] || ""
+        meter(instance, "fetch", "ruoc-fetch", @no_usage, started_at, nil, title, request_id, url)
+
+        conn
+        |> relay_headers(headers, request_id)
+        |> send_resp(200, Jason.encode!(%{
+          success: true,
+          data: %{
+            markdown: page["markdown"] || "",
+            metadata: %{title: title, sourceURL: page["final_url"] || url, statusCode: page["status_code"] || 200, url: url}
+          }
+        }))
+
+      {:ok, 402, headers, _resp_body} ->
+        request_id = request_id(headers)
+        log(instance, "fetch", request_id, started_at, "HTTP 402 -> balance notice")
+
+        conn
+        |> relay_headers(headers, request_id)
+        |> send_resp(402, Jason.encode!(%{success: false, error: BalanceNotice.text(instance)}))
+
+      {:ok, status, headers, resp_body} ->
+        request_id = request_id(headers)
+        log(instance, "fetch", request_id, started_at, "HTTP #{status}")
+
+        conn
+        |> relay_headers(headers, request_id)
+        |> send_resp(status, Jason.encode!(%{success: false, error: error_message(resp_body, "upstream error")}))
+
+      {:error, reason} ->
+        Logger.error("[ruoc] #{instance.name} fetch unreachable: #{inspect(reason)}")
+
+        conn
+        |> put_resp_content_type("application/json")
+        |> send_resp(502, Jason.encode!(%{success: false, error: "fetch provider unavailable"}))
+    end
   end
 
   # --- Images -----------------------------------------------------------------

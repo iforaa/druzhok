@@ -1,7 +1,30 @@
 #!/usr/sbin/nft -f
 # Egress policy for bot users. druzhok-ctl adds each bot's uid to @bot_uids.
+#
+# A bot may reach exactly three things: the druzhok proxy (LLM, search, page
+# fetch — everything metered), DNS, and Telegram. Everything else is dropped
+# and counted, so the model's terminal cannot curl the web around the proxy
+# and a prompt-injected exfiltration has nowhere to go. Page reading happens
+# in druzhok itself (docs/superpowers/specs/2026-09-05-web-fetch-service-design.md),
+# whose user is not in the set.
+#
+# Telegram's published ranges (https://core.telegram.org/resources/cidr.txt);
+# long polling and file downloads both go to api.telegram.org inside them.
 table inet druzhok {
   set bot_uids { type uid; }
+
+  set telegram4 {
+    type ipv4_addr
+    flags interval
+    elements = { 149.154.160.0/20, 91.108.4.0/22, 91.108.8.0/22, 91.108.12.0/22,
+                 91.108.16.0/22, 91.108.20.0/22, 91.108.56.0/22, 185.76.151.0/24 }
+  }
+
+  set telegram6 {
+    type ipv6_addr
+    flags interval
+    elements = { 2001:b28:f23d::/48, 2001:b28:f23f::/48, 2001:67c:4e8::/48, 2a0a:f280::/32 }
+  }
 
   chain output {
     type filter hook output priority 0; policy accept;
@@ -13,12 +36,10 @@ table inet druzhok {
     # DNS
     udp dport 53 accept
     tcp dport 53 accept
-    # cloud metadata + any other local service
-    ip daddr 169.254.0.0/16 drop
-    ip daddr 127.0.0.0/8 drop
-    ip6 daddr ::1 drop
-    # general web, counted per uid
-    tcp dport { 80, 443 } meter bot_web { meta skuid counter } accept
+    # Telegram, counted per uid
+    ip daddr @telegram4 tcp dport 443 meter bot_tg { meta skuid counter } accept
+    ip6 daddr @telegram6 tcp dport 443 meter bot_tg6 { meta skuid counter } accept
+    # everything else: cloud metadata, other local services, the open web
     counter drop
   }
 }
