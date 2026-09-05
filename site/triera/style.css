@@ -125,11 +125,27 @@ a:focus-visible, button:focus-visible { outline: 2px solid var(--yellow); outlin
 @keyframes blink { 50% { opacity: 0; } }
 .cta-row { display: flex; align-items: center; gap: 28px; margin-top: 40px; flex-wrap: wrap; }
 
-/* Waves */
-.wave { display: block; width: 100%; height: clamp(36px, 6vw, 80px); }
-.wave-to-paper { background: var(--ink); fill: var(--paper); }
-.wave-to-blue { background: var(--paper); fill: var(--blue); }
-.wave-to-ink { background: var(--blue); fill: var(--ink); }
+/* Seas: three drifting swells and two triremes between sections */
+.sea { position: relative; width: 100%; height: clamp(64px, 9vw, 120px); overflow: hidden; margin-bottom: -1px; }
+.sea-to-paper { background: var(--ink); color: var(--paper); }
+.sea-to-blue { background: transparent; color: var(--blue); }
+.sea-to-ink { background: var(--blue); color: var(--ink); }
+.swell { position: absolute; left: 0; bottom: 0; width: 200%; height: 100%; fill: currentColor; }
+.swell-1 { opacity: 0.22; height: 92%; animation: swell 18s linear infinite; }
+.swell-2 { opacity: 0.45; height: 78%; animation: swell 11s linear infinite; }
+.swell-3 { height: 64%; bottom: -1px; animation: swell 7.5s linear infinite; }
+@keyframes swell { to { transform: translateX(-50%); } }
+.ship {
+  position: absolute; bottom: 44%; color: currentColor; fill: currentColor;
+  animation: sail var(--sail, 70s) linear infinite, bob 3.2s ease-in-out infinite;
+}
+.ship-a { width: clamp(76px, 8.4vw, 132px); left: -12%; --sail: 74s; animation-delay: -8s, 0s; }
+.ship-b { width: clamp(48px, 5.2vw, 84px); left: -8%; bottom: 52%; opacity: 0.8; --sail: 96s; animation-delay: -50s, -1.4s; }
+@keyframes sail { to { left: 112%; } }
+@keyframes bob {
+  0%, 100% { transform: translateY(0) rotate(-1.5deg); }
+  50% { transform: translateY(5px) rotate(1.8deg); }
+}
 
 /* Paper sections */
 .paper { background: var(--paper); color: var(--ink); }
@@ -153,7 +169,7 @@ a:focus-visible, button:focus-visible { outline: 2px solid var(--yellow); outlin
     repeating-linear-gradient(-32deg, transparent 0 46px, rgba(10, 10, 10, 0.045) 46px 48px),
     var(--paper);
 }
-.can .wave-to-blue { position: absolute; left: 0; bottom: 0; background: transparent; }
+.can .sea-to-blue { position: absolute; left: 0; bottom: 0; }
 .can-head { margin-bottom: clamp(32px, 4vw, 56px); }
 .grid {
   display: grid; grid-template-columns: repeat(3, 1fr);
@@ -212,6 +228,8 @@ a:focus-visible, button:focus-visible { outline: 2px solid var(--yellow); outlin
   html { scroll-behavior: auto; }
   .reveal { opacity: 1; transform: none; transition: none; }
   .caret { animation: none; }
+  .swell, .ship { animation: none; }
+  .ship-a { left: 62%; } .ship-b { left: 24%; }
 }
 
 /* Responsive */
