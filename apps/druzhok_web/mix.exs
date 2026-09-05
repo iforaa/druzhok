@@ -42,6 +42,7 @@ defmodule DruzhokWeb.MixProject do
       # TODO bump on release to {:phoenix_live_view, "~> 1.0.0"},
       {:phoenix_live_view, "~> 1.0.0-rc.1", override: true},
       {:floki, ">= 0.30.0", only: :test},
+      {:bypass, "~> 2.1", only: :test},
       {:esbuild, "~> 0.8", runtime: Mix.env() == :dev},
       {:tailwind, "~> 0.2", runtime: Mix.env() == :dev},
       {:heroicons,
