@@ -21,6 +21,7 @@ defmodule DruzhokWebWeb.LlmProxy.Ruoc do
   alias Druzhok.Ruoc.Client
   alias Druzhok.Usage
   alias DruzhokWebWeb.LlmFormat
+  alias DruzhokWebWeb.LlmProxy.BalanceNotice
 
   @request_id_header "x-ruoc-request-id"
   @search_max_results 10
@@ -50,6 +51,15 @@ defmodule DruzhokWebWeb.LlmProxy.Ruoc do
 
   defp sync_chat(conn, instance, body, model, started_at) do
     case Client.post("/v1/chat/completions", instance.ruoc_api_key, Jason.encode!(body)) do
+      {:ok, 402, headers, _resp_body} ->
+        request_id = request_id(headers)
+        log(instance, "chat", request_id, started_at, "HTTP 402 -> balance notice")
+
+        conn
+        |> relay_headers(headers, request_id)
+        |> put_resp_content_type("application/json")
+        |> send_resp(200, Jason.encode!(BalanceNotice.completion(instance, model)))
+
       {:ok, status, headers, resp_body} ->
         request_id = request_id(headers)
 
@@ -72,8 +82,9 @@ defmodule DruzhokWebWeb.LlmProxy.Ruoc do
   end
 
   # The response is only committed once the gateway's status is known, so a
-  # 402 or 429 on a streaming request reaches the bot as that status with the
-  # gateway's own envelope, not as an empty 200 event stream.
+  # 429 on a streaming request reaches the bot as that status with the
+  # gateway's own envelope, not as an empty 200 event stream. A 402 becomes
+  # the balance notice as a one-chunk stream (see BalanceNotice).
   defp stream_chat(conn, instance, body, model, started_at) do
     request = Client.build(:post, "/v1/chat/completions", instance.ruoc_api_key, Jason.encode!(body))
     usage_ref = make_ref()
@@ -129,6 +140,16 @@ defmodule DruzhokWebWeb.LlmProxy.Ruoc do
       {:ok, %{status: 200} = acc} ->
         meter(instance, "chat", model, Process.get(usage_ref), started_at, body, nil, request_id(acc.headers))
         acc.conn
+
+      {:ok, %{status: 402} = acc} ->
+        request_id = request_id(acc.headers)
+        log(instance, "chat", request_id, started_at, "HTTP 402 -> balance notice")
+
+        acc.conn
+        |> relay_headers(acc.headers, request_id)
+        |> put_resp_content_type("text/event-stream")
+        |> put_resp_header("cache-control", "no-cache")
+        |> send_resp(200, BalanceNotice.sse(instance, model))
 
       {:ok, %{status: status} = acc} when is_integer(status) ->
         request_id = request_id(acc.headers)

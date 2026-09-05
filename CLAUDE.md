@@ -39,7 +39,9 @@ Prod env (MIX_ENV, DATABASE_PATH, DRUZHOK_HOST, HEX/MIX homes, SECRET_KEY_BASE, 
 Chat, search and transcription go to **ruoc-gateway** (`Druzhok.Ruoc`, `LlmProxy.Ruoc`),
 one ruoc account per bot (`instances.ruoc_account_id` / `ruoc_api_key`); the balance there is
 the only spending limit (402 when empty). Druzhok records tokens and previews only, `cost_cents`
-is 0 on those rows. A bot without a ruoc key gets 503 from `LlmAuth` until migrated.
+is 0 on those rows. A bot without a ruoc key gets 503 from `LlmAuth` until migrated. A 402 (empty
+balance) on chat is answered as a normal 200 completion carrying `LlmProxy.BalanceNotice` in the bot's
+language, because hermes's own 402 text tells tenants to add provider credits and switch `/model`.
 Spec: `docs/superpowers/specs/2026-09-05-ruoc-gateway-migration-design.md`.
 
 | Endpoint | Upstream |

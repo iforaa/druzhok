@@ -50,7 +50,31 @@ defmodule DruzhokWebWeb.LlmProxy.Ruoc.ChatSyncTest do
     assert %{"error" => %{"type" => "api_error", "message" => "bot not migrated" <> _}} = json_response(conn, 503)
   end
 
-  for {status, type} <- [{402, "insufficient_quota"}, {429, "rate_limit_error"}, {404, "invalid_request_error"}] do
+  test "an empty balance becomes a plain reply in the bot's language, not an error",
+       %{conn: conn, bypass: bypass, instance: instance} do
+    Bypass.expect_once(bypass, "POST", "/v1/chat/completions", fn req ->
+      gateway_error(req, 402, "insufficient_quota", "account balance is too low for this request")
+    end)
+
+    conn = post(conn, "/v1/chat/completions", @body)
+
+    body = json_response(conn, 200)
+    assert get_in(body, ["choices", Access.at(0), "message", "content"]) == "💳 Баланс бота исчерпан. Пополни счёт, чтобы продолжить."
+    assert get_in(body, ["choices", Access.at(0), "finish_reason"]) == "stop"
+    assert body["model"] == "ruoc-flash"
+    assert get_resp_header(conn, "x-ruoc-request-id") == ["req_abc"]
+    assert usage_logs(instance) == []
+  end
+
+  test "the balance notice is English for a non-Russian bot", %{bypass: bypass} do
+    english = create_instance(%{model: "ruoc-flash", ruoc_account_id: "acct-2", ruoc_api_key: "ruoc_en", language: "en"})
+    Bypass.expect_once(bypass, "POST", "/v1/chat/completions", fn req -> gateway_error(req, 402, "insufficient_quota", "no") end)
+
+    conn = post(authed(build_conn(), english), "/v1/chat/completions", @body)
+    assert get_in(json_response(conn, 200), ["choices", Access.at(0), "message", "content"]) =~ "balance is used up"
+  end
+
+  for {status, type} <- [{429, "rate_limit_error"}, {404, "invalid_request_error"}] do
     test "relays a #{status} #{type} with the gateway's envelope", %{conn: conn, bypass: bypass, instance: instance} do
       Bypass.expect_once(bypass, "POST", "/v1/chat/completions", fn req ->
         gateway_error(req, unquote(status), unquote(type), "nope")
