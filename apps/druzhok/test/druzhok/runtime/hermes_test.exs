@@ -380,6 +380,39 @@ defmodule Druzhok.Runtime.HermesTest do
     end
   end
 
+  describe "sync_config/2 — cron + display notices" do
+    setup do
+      tmp_dir = Path.join(System.tmp_dir!(), "hermes-notices-#{System.unique_integer([:positive])}")
+      File.mkdir_p!(Path.join(tmp_dir, "workspace"))
+      on_exit(fn -> File.rm_rf!(tmp_dir) end)
+      %{tmp_dir: tmp_dir}
+    end
+
+    test "adds cron.wrap_response: false and display.memory_notifications: off when absent", %{tmp_dir: tmp_dir} do
+      File.write!(Path.join(tmp_dir, "config.yaml"), "model:\n  default: \"x\"\n")
+      assert :ok = Hermes.sync_config(%{name: "b", model: "x", tenant_key: "k"}, tmp_dir)
+      assert {:ok, cfg} = YamlElixir.read_from_string(File.read!(Path.join(tmp_dir, "config.yaml")))
+      assert cfg["cron"] == %{"wrap_response" => false}
+      assert cfg["display"]["memory_notifications"] == "off"
+    end
+
+    test "overrides the values inside existing blocks and keeps sibling keys", %{tmp_dir: tmp_dir} do
+      File.write!(Path.join(tmp_dir, "config.yaml"), """
+      cron:
+        wrap_response: true
+        timezone: UTC
+      display:
+        tool_progress: all
+        memory_notifications: verbose
+      """)
+
+      assert :ok = Hermes.sync_config(%{name: "b", model: "x", tenant_key: "k"}, tmp_dir)
+      assert {:ok, cfg} = YamlElixir.read_from_string(File.read!(Path.join(tmp_dir, "config.yaml")))
+      assert cfg["cron"] == %{"wrap_response" => false, "timezone" => "UTC"}
+      assert cfg["display"] == %{"tool_progress" => "all", "memory_notifications" => "off"}
+    end
+  end
+
   describe "build_config_yaml/1" do
     test "emits group_sessions_per_user: false when group_shared_memory is on" do
       inst = Map.put(@instance, :group_shared_memory, true)

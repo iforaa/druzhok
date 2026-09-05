@@ -174,6 +174,8 @@ defmodule Druzhok.Runtime.Hermes do
           |> sync_plugins_enabled()
           |> sync_gateway_block()
           |> sync_telegram_extra(instance)
+          |> sync_cron_block()
+          |> sync_display_block()
 
         if updated != content, do: File.write!(config_path, updated)
         :ok
@@ -192,6 +194,26 @@ defmodule Druzhok.Runtime.Hermes do
     sync_yaml_block(content, "gateway",
       upsert: &upsert_indented_line(&1, "systemd_watchdog_seconds", to_string(@systemd_watchdog_seconds)),
       default: "gateway:\n  systemd_watchdog_seconds: #{@systemd_watchdog_seconds}"
+    )
+  end
+
+  # Hermes wraps cron deliveries in an English "Cronjob Response: <name>
+  # (job_id: …) … To stop or manage this job…" envelope; the bot's own text
+  # is all a tenant should see (hermes `cron.wrap_response`).
+  defp sync_cron_block(content) do
+    sync_yaml_block(content, "cron",
+      upsert: &upsert_indented_line(&1, "wrap_response", "false"),
+      default: "cron:\n  wrap_response: false"
+    )
+  end
+
+  # No "💾 Self-improvement review: …" line in chat after the background
+  # memory review (hermes `display.memory_notifications`); the review itself
+  # still runs and writes.
+  defp sync_display_block(content) do
+    sync_yaml_block(content, "display",
+      upsert: &upsert_indented_line(&1, "memory_notifications", "off"),
+      default: "display:\n  memory_notifications: off"
     )
   end
 
