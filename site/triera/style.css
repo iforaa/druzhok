@@ -95,7 +95,7 @@ a:focus-visible, button:focus-visible { outline: 2px solid var(--yellow); outlin
 
 /* Hero */
 .hero {
-  position: relative; padding: clamp(64px, 10vw, 150px) 0 0; overflow: hidden;
+  position: relative; padding: clamp(64px, 10vw, 150px) 0 clamp(56px, 8vw, 120px); overflow: hidden;
   background-image: radial-gradient(rgba(245, 245, 245, 0.13) 1px, transparent 1.4px);
   background-size: 28px 28px;
 }
@@ -124,16 +124,6 @@ a:focus-visible, button:focus-visible { outline: 2px solid var(--yellow); outlin
 }
 @keyframes blink { 50% { opacity: 0; } }
 .cta-row { display: flex; align-items: center; gap: 28px; margin-top: 40px; flex-wrap: wrap; }
-
-.ticker { margin-top: clamp(48px, 7vw, 100px); border-top: 1px solid var(--line-light); border-bottom: 1px solid var(--line-light); overflow: hidden; }
-.ticker-track {
-  display: flex; width: max-content;
-  font-family: var(--mono); font-size: 13px; letter-spacing: 0.2em; text-transform: uppercase; color: var(--fg-dim);
-  animation: slide 40s linear infinite;
-}
-.ticker-track span { padding: 16px 0; }
-.ticker-track span::after { content: "◆"; margin: 0 40px; color: var(--yellow); font-size: 9px; vertical-align: middle; }
-@keyframes slide { to { transform: translateX(-50%); } }
 
 /* Waves */
 .wave { display: block; width: 100%; height: clamp(36px, 6vw, 80px); }
@@ -221,7 +211,6 @@ a:focus-visible, button:focus-visible { outline: 2px solid var(--yellow); outlin
 @media (prefers-reduced-motion: reduce) {
   html { scroll-behavior: auto; }
   .reveal { opacity: 1; transform: none; transition: none; }
-  .ticker-track { animation: none; }
   .caret { animation: none; }
 }
 
