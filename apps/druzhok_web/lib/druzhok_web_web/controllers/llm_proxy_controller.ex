@@ -66,16 +66,12 @@ defmodule DruzhokWebWeb.LlmProxyController do
         conn
 
       {:ok, %Finch.Response{status: status, body: resp_body}} ->
-        Plug.Conn.chunk(conn, "data: #{resp_body}\n\n")
-        Plug.Conn.chunk(conn, "data: [DONE]\n\n")
         Logger.warning("fake_stream_proxy upstream #{status}")
-        conn
+        conn |> chunk_raw("data: #{resp_body}\n\n") |> chunk_raw("data: [DONE]\n\n")
 
       {:error, reason} ->
         Logger.error("fake_stream_proxy error: #{inspect(reason)}")
-        Plug.Conn.chunk(conn, ~s(data: {"error":"upstream failed"}\n\n))
-        Plug.Conn.chunk(conn, "data: [DONE]\n\n")
-        conn
+        conn |> chunk_raw(~s(data: {"error":"upstream failed"}\n\n)) |> chunk_raw("data: [DONE]\n\n")
     end
   end
 
@@ -118,12 +114,15 @@ defmodule DruzhokWebWeb.LlmProxyController do
         conn
       end
 
-    {:ok, conn} = Plug.Conn.chunk(conn, "data: [DONE]\n\n")
-    conn
+    chunk_raw(conn, "data: [DONE]\n\n")
   end
 
-  defp chunk_sse(conn, payload) do
-    case Plug.Conn.chunk(conn, "data: #{Jason.encode!(payload)}\n\n") do
+  defp chunk_sse(conn, payload), do: chunk_raw(conn, "data: #{Jason.encode!(payload)}\n\n")
+
+  # Thread the conn through so test adapters (and anything else that records
+  # chunks on the struct) see every chunk; a closed client is not an error.
+  defp chunk_raw(conn, data) do
+    case Plug.Conn.chunk(conn, data) do
       {:ok, conn} -> conn
       {:error, _} -> conn
     end
@@ -177,23 +176,24 @@ defmodule DruzhokWebWeb.LlmProxyController do
           end
         end
 
-        case Plug.Conn.chunk(conn, data) do
-          {:ok, conn} -> conn
-          {:error, _} -> conn
-        end
+        chunk_raw(conn, data)
     end, receive_timeout: 120_000)
 
     usage = Process.get(usage_ref, %{prompt_tokens: 0, completion_tokens: 0})
     cost_cents = Process.get({usage_ref, :cost}, 0)
     meter(instance, usage, model, started_at, body, nil, cost_cents)
 
+    # Finch.stream/5 returns the accumulator (our conn) alongside the error;
+    # the 200 is already committed, so relay whatever was streamed.
     case result do
       {:ok, conn} -> conn
-      {:error, _} -> conn
+      {:error, reason, conn} ->
+        Logger.error("LLM stream proxy error: #{inspect(reason)}")
+        conn
     end
   end
 
-  defp meter(instance, usage, model, started_at, request_body, response_preview, cost_cents \\ 0) do
+  defp meter(instance, usage, model, started_at, request_body, response_preview, cost_cents) do
     total = usage.prompt_tokens + usage.completion_tokens
 
     if total > 0 do
@@ -415,7 +415,7 @@ defmodule DruzhokWebWeb.LlmProxyController do
     started_at = System.monotonic_time(:millisecond)
     body = conn.body_params
 
-    url = "https://api.openai.com/v1/audio/speech"
+    url = openai_api_url() <> "/audio/speech"
 
     headers = [
       {"authorization", "Bearer #{openai_key}"},
@@ -939,14 +939,11 @@ defmodule DruzhokWebWeb.LlmProxyController do
           }}
         ]
 
-        for event <- events do
-          Plug.Conn.chunk(conn, "data: #{Jason.encode!(event)}\n\n")
-        end
-
+        conn = Enum.reduce(events, conn, &chunk_sse(&2, &1))
         meter_image(instance, usage, image_model, started_at, cost_cents)
         conn
 
-      {:error, reason} ->
+      {:error, reason, _partial} ->
         Logger.error("Responses stream error: #{inspect(reason)}")
         conn
     end
@@ -987,6 +984,11 @@ defmodule DruzhokWebWeb.LlmProxyController do
       _ ->
         resp_body
     end
+  end
+
+  # Overridable so tests can point TTS at a local stub.
+  defp openai_api_url do
+    Application.get_env(:druzhok, :openai_api_url) || "https://api.openai.com/v1"
   end
 
   defp json_error(conn, status, message, type) do

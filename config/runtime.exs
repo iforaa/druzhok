@@ -97,6 +97,7 @@ end
 config :druzhok,
   openrouter_api_key: env_or_nil.("OPENROUTER_API_KEY"),
   openrouter_api_url: System.get_env("OPENROUTER_API_URL") || "https://openrouter.ai/api/v1",
+  openai_api_url: System.get_env("OPENAI_API_URL") || "https://api.openai.com/v1",
   host:
     (if System.get_env("DRUZHOK_HOST") == "systemd",
        do: Druzhok.Host.Systemd,
