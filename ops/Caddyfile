@@ -20,7 +20,7 @@ triera.oldey.dev {
   encode zstd gzip
   root * /data/triera
   file_server
-  header Cache-Control "public, max-age=300"
+  header Cache-Control "no-cache"
 }
 
 # Apex + wildcard are owned by the RuOC gateway (CleoCode) since 2026-08-29.
