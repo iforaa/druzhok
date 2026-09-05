@@ -30,6 +30,19 @@ defmodule Druzhok.TokenPool do
     end)
   end
 
+  @doc "Oldest unassigned token, without claiming it."
+  def peek_free do
+    case Repo.one(from t in __MODULE__, where: is_nil(t.instance_id), order_by: [asc: t.id], limit: 1) do
+      nil -> {:error, :no_tokens_available}
+      token -> {:ok, token}
+    end
+  end
+
+  @doc "Assign a token to an existing instance."
+  def claim(%__MODULE__{} = token, instance_id) do
+    token |> changeset(%{instance_id: instance_id}) |> Repo.update()
+  end
+
   def release(instance_id) do
     from(t in __MODULE__, where: t.instance_id == ^instance_id)
     |> Repo.update_all(set: [instance_id: nil])

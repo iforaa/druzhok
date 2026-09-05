@@ -40,6 +40,13 @@ defmodule Druzhok.ManagerBot.OnboardingTest do
       session = %{Onboarding.new_session() | step: :name}
       {:retry, _session, {:text, _}} = Onboarding.handle_input(session, %{text: ""})
     end
+
+    test "menu buttons restart from a fresh session instead of looping" do
+      session = %{Onboarding.new_session() | step: :name}
+      assert {:ok, %{step: :name}, {:text, "Как назовём бота?"}} =
+               Onboarding.handle_input(session, %{text: "🤖 Создать бота"})
+      assert {:ok, %{step: :idle}, {:my_bots}} = Onboarding.handle_input(session, %{text: "📋 Мои боты"})
+    end
   end
 
   describe "handle_input/2 at :language step" do

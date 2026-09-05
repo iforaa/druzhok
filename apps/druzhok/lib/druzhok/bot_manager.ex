@@ -10,10 +10,12 @@ defmodule Druzhok.BotManager do
   def create(name, opts) do
     workspace = Path.join([data_root_base(), name, "workspace"])
 
+    # A pooled token can only be claimed once the instance row exists
+    # (tokens.instance_id is a foreign key), so pick first, claim after insert.
     token_result = if opts[:telegram_token] do
       {:ok, %{token: opts[:telegram_token], id: nil}}
     else
-      TokenPool.allocate(0)
+      TokenPool.peek_free()
     end
 
     case token_result do
@@ -28,6 +30,7 @@ defmodule Druzhok.BotManager do
 
         case InstanceManager.create(name, config) do
           {:ok, instance} ->
+            if token_record.id, do: TokenPool.claim(token_record, instance.id)
             start(name)
             {:ok, %{name: name, model: instance.model}}
 

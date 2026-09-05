@@ -10,6 +10,7 @@ defmodule Druzhok.MixProject do
       deps_path: "../../deps",
       lockfile: "../../mix.lock",
       elixir: "~> 1.18",
+      elixirc_paths: elixirc_paths(Mix.env()),
       start_permanent: Mix.env() == :prod,
       deps: deps()
     ]
@@ -23,10 +24,15 @@ defmodule Druzhok.MixProject do
     ]
   end
 
+  # test/support holds the Telegram stub and bot fixtures.
+  defp elixirc_paths(:test), do: ["lib", "test/support"]
+  defp elixirc_paths(_), do: ["lib"]
+
   # Run "mix help deps" to learn about dependencies.
   defp deps do
     [
       {:bcrypt_elixir, "~> 3.0"},
+      {:bypass, "~> 2.1", only: :test},
       {:jason, "~> 1.4"},
       {:phoenix_pubsub, "~> 2.1"},
       {:ecto_sql, "~> 3.12"},

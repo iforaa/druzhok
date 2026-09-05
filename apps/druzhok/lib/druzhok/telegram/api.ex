@@ -3,8 +3,6 @@ defmodule Druzhok.Telegram.API do
   Raw Telegram Bot API client. No framework — just Finch HTTP calls.
   """
 
-  @base_url "https://api.telegram.org/bot"
-
   def get_me(token) do
     call(token, "getMe", %{})
   end
@@ -35,7 +33,7 @@ defmodule Druzhok.Telegram.API do
       {"content-type", "multipart/form-data; boundary=#{boundary}"}
     ]
 
-    url = "#{@base_url}#{token}/sendDocument"
+    url = bot_url(token, "sendDocument")
     case Finch.build(:post, url, headers, body) |> Finch.request(Druzhok.Finch) do
       {:ok, %{status: 200, body: resp}} -> {:ok, Jason.decode!(resp)}
       {:ok, %{body: resp}} -> {:error, resp}
@@ -57,7 +55,7 @@ defmodule Druzhok.Telegram.API do
     ])
 
     headers = [{"content-type", "multipart/form-data; boundary=#{boundary}"}]
-    url = "#{@base_url}#{token}/sendPhoto"
+    url = bot_url(token, "sendPhoto")
 
     case Finch.build(:post, url, headers, body) |> Finch.request(Druzhok.Finch) do
       {:ok, %{status: 200, body: resp}} -> {:ok, Jason.decode!(resp)}
@@ -71,7 +69,7 @@ defmodule Druzhok.Telegram.API do
   end
 
   def download_file(token, file_path) do
-    url = "https://api.telegram.org/file/bot#{token}/#{file_path}"
+    url = "#{base_url()}/file/bot#{token}/#{file_path}"
     case Finch.build(:get, url) |> Finch.request(Druzhok.Finch, receive_timeout: 30_000) do
       {:ok, %{status: 200, body: body}} -> {:ok, body}
       {:ok, %{status: status}} -> {:error, "HTTP #{status}"}
@@ -98,8 +96,12 @@ defmodule Druzhok.Telegram.API do
     call(token, "getManagedBotToken", %{user_id: bot_user_id})
   end
 
+  # Overridable so tests can point the client at a local stub.
+  defp base_url, do: Application.get_env(:druzhok, :telegram_api_base) || "https://api.telegram.org"
+  defp bot_url(token, method), do: "#{base_url()}/bot#{token}/#{method}"
+
   defp call(token, method, params) do
-    url = "#{@base_url}#{token}/#{method}"
+    url = bot_url(token, method)
     body = Jason.encode!(params)
     headers = [{"content-type", "application/json"}]
 

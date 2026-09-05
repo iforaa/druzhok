@@ -53,8 +53,9 @@ defmodule Druzhok.ManagerBot.Onboarding do
       name == "" ->
         {:retry, session, {:text, "Имя не может быть пустым. Как назовём бота?"}}
       name in ["🤖 Создать бота", "📋 Мои боты"] ->
-        # Re-dispatch menu buttons during name entry
-        handle_input(session, %{text: name})
+        # Re-dispatch menu buttons during name entry from a fresh session;
+        # re-dispatching with step :name would loop forever.
+        handle_input(new_session(), %{text: name})
       true ->
         username = generate_bot_username(name)
         session = %{session | step: :language, name: name, username: username}
