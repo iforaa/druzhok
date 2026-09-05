@@ -12,6 +12,17 @@ druzhok.oldey.dev {
   reverse_proxy 127.0.0.1:4000
 }
 
+# Triera landing (static, site/triera in the repo, rsynced to /data/triera).
+triera.oldey.dev {
+  tls {
+    dns cloudflare {env.CLOUDFLARE_API_TOKEN}
+  }
+  encode zstd gzip
+  root * /data/triera
+  file_server
+  header Cache-Control "public, max-age=300"
+}
+
 # Apex + wildcard are owned by the RuOC gateway (CleoCode) since 2026-08-29.
 # Bot sites (<bot>.oldey.dev, BotSite plug) are therefore NOT reachable
 # until they get their own sub-wildcard.
