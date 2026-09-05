@@ -204,6 +204,44 @@ defmodule Druzhok.Ruoc do
   def price_label(%{price: %{input: nil, output: nil}}), do: nil
   def price_label(%{price: %{input: i, output: o}}), do: "#{i || "?"}/#{o || "?"} ₽/M"
 
+  @doc """
+  The image catalogue, in ruoc's order: `[%{id, name, description,
+  rub_per_image, default}]`. Not cached: it is read when a picker opens, and
+  a failure is an answer the caller shows ("list unavailable"), not an
+  empty picker.
+  """
+  def image_models do
+    case catalog_key() do
+      nil ->
+        {:error, "ruoc_catalog_key is not set"}
+
+      key ->
+        case Client.get("/v1/images/models", key) do
+          {:ok, 200, _headers, body} ->
+            case Jason.decode(body) do
+              {:ok, %{"models" => list}} when is_list(list) -> {:ok, Enum.map(list, &to_image_model/1)}
+              _ -> {:error, "unexpected image models payload"}
+            end
+
+          {:ok, status, _headers, body} ->
+            {:error, "HTTP #{status}: #{String.slice(body, 0, 200)}"}
+
+          {:error, reason} ->
+            {:error, inspect(reason)}
+        end
+    end
+  end
+
+  defp to_image_model(m) do
+    %{
+      id: m["id"],
+      name: m["name"] || m["id"],
+      description: m["description"] || "",
+      rub_per_image: m["rub_per_image"],
+      default: m["default"] == true
+    }
+  end
+
   defp fetch_models do
     case catalog_key() do
       nil ->

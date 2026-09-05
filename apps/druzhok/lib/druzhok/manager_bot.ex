@@ -130,6 +130,19 @@ defmodule Druzhok.ManagerBot do
             edit_plain(state.token, chat_id, message_id, Onboarding.delete_cancelled())
             state
 
+          String.starts_with?(data, "img:") ->
+            handle_image_menu(state, user_id, chat_id, message_id, data)
+
+          String.starts_with?(data, "imgset:") ->
+            handle_image_set(state, user_id, chat_id, message_id, data)
+
+          String.starts_with?(data, "imgoff:") ->
+            handle_image_off(state, user_id, chat_id, message_id, data)
+
+          data == "imgback" ->
+            edit_my_bots(state, user_id, chat_id, message_id)
+            state
+
           true ->
             # Store message_id in session for editing
             state = update_in(state, [:sessions, user_id], fn
@@ -221,6 +234,27 @@ defmodule Druzhok.ManagerBot do
   # --- My Bots ---
 
   defp send_my_bots(state, user_id, chat_id) do
+    {text, buttons} = my_bots_payload(user_id)
+
+    if buttons == [] do
+      API.send_message(state.token, chat_id, text)
+    else
+      send_url_keyboard(state.token, chat_id, text, buttons)
+    end
+  end
+
+  # «Назад» from a bot's submenu: the same list, edited into that message.
+  defp edit_my_bots(state, user_id, chat_id, message_id) do
+    {text, buttons} = my_bots_payload(user_id)
+
+    if buttons == [] do
+      edit_plain(state.token, chat_id, message_id, text)
+    else
+      edit_url_keyboard(state.token, chat_id, message_id, text, buttons)
+    end
+  end
+
+  defp my_bots_payload(user_id) do
     import Ecto.Query
     bots = Druzhok.Repo.all(
       from(i in Druzhok.Instance,
@@ -240,13 +274,107 @@ defmodule Druzhok.ManagerBot do
       |> Map.put(:ruoc_subscription, subscription)
     end)
 
-    {text, buttons} = Onboarding.my_bots_message(bots)
+    Onboarding.my_bots_message(bots)
+  end
 
-    if buttons == [] do
-      API.send_message(state.token, chat_id, text)
-    else
-      send_url_keyboard(state.token, chat_id, text, buttons)
+  # --- Picture menu (image generation on/off + model, owner-only) ---
+
+  defp handle_image_menu(state, user_id, chat_id, message_id, "img:" <> id_str) do
+    with_owned(state, user_id, chat_id, message_id, id_str, fn instance ->
+      show_image_menu(state.token, chat_id, message_id, instance)
+    end)
+  end
+
+  defp handle_image_set(state, user_id, chat_id, message_id, "imgset:" <> rest) do
+    {id_str, model} =
+      case String.split(rest, ":", parts: 2) do
+        [id_str, model] -> {id_str, model}
+        [id_str] -> {id_str, nil}
+      end
+
+    with_owned(state, user_id, chat_id, message_id, id_str, fn instance ->
+      case BotManager.update_image_gen(instance.name, true, model) do
+        {:ok, updated} ->
+          if instance.image_gen_enabled do
+            # The proxy reads the model per request: nothing to restart.
+            show_image_menu(state.token, chat_id, message_id, updated)
+          else
+            restart_for_images(state.token, chat_id, message_id, updated, :enabled)
+          end
+
+        {:error, _} ->
+          edit_plain(state.token, chat_id, message_id, Onboarding.image_failed(bot_display_handle(instance)))
+      end
+    end)
+  end
+
+  defp handle_image_off(state, user_id, chat_id, message_id, "imgoff:" <> id_str) do
+    with_owned(state, user_id, chat_id, message_id, id_str, fn instance ->
+      if instance.image_gen_enabled do
+        case BotManager.update_image_gen(instance.name, false, instance.image_gen_model) do
+          {:ok, updated} -> restart_for_images(state.token, chat_id, message_id, updated, :disabled)
+          {:error, _} -> edit_plain(state.token, chat_id, message_id, Onboarding.image_failed(bot_display_handle(instance)))
+        end
+      else
+        show_image_menu(state.token, chat_id, message_id, instance)
+      end
+    end)
+  end
+
+  defp show_image_menu(token, chat_id, message_id, instance) do
+    {text, rows} = Onboarding.image_menu(Map.from_struct(instance), Druzhok.Ruoc.image_models())
+    edit_inline(token, chat_id, message_id, text, rows)
+  end
+
+  # Only the on/off state reaches hermes's config, so a restart is needed for
+  # that and nothing else. Async like deletion: stopping a unit takes seconds.
+  defp restart_for_images(token, chat_id, message_id, instance, change) do
+    handle = bot_display_handle(instance)
+    name = instance.name
+    edit_plain(token, chat_id, message_id, Onboarding.image_restarting(change, handle))
+
+    Task.start(fn ->
+      text =
+        try do
+          case BotManager.restart(name) do
+            {:ok, _} ->
+              model =
+                case change do
+                  :enabled ->
+                    case Druzhok.Ruoc.image_models() do
+                      {:ok, models} -> Onboarding.current_image_model(Map.from_struct(instance), models)
+                      _ -> nil
+                    end
+
+                  :disabled ->
+                    nil
+                end
+
+              if change == :enabled and is_nil(model),
+                do: "✅ Картинки включены для @#{handle}",
+                else: Onboarding.image_result(change, handle, model)
+
+            _ ->
+              Onboarding.image_failed(handle)
+          end
+        rescue
+          e ->
+            Logger.error("Image restart crashed for #{name}: #{Exception.message(e)}")
+            Onboarding.image_failed(handle)
+        end
+
+      edit_plain(token, chat_id, message_id, text)
+    end)
+  end
+
+  defp with_owned(state, user_id, chat_id, message_id, id_str, fun) do
+    case owned_instance(user_id, id_str) do
+      {:ok, instance} -> fun.(instance)
+      {:error, :not_owner} -> API.send_message(state.token, chat_id, "Это не твой бот.")
+      {:error, :not_found} -> edit_plain(state.token, chat_id, message_id, "Бот не найден.")
     end
+
+    state
   end
 
   # --- Bot deletion (two-step confirm, owner-only) ---

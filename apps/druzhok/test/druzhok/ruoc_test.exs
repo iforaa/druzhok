@@ -94,6 +94,31 @@ defmodule Druzhok.RuocTest do
                     period_end: ~U[2026-10-05 07:00:00Z]}
   end
 
+  describe "image_models/0" do
+    test "lists the image catalogue in ruoc's order with prices, uncached", %{stub: stub} do
+      assert {:ok,
+              [
+                %{id: "ruoc-flux-klein", name: "FLUX 2 Klein", description: "быстрая", rub_per_image: "2", default: true},
+                %{id: "ruoc-flux-pro", name: "FLUX 2 Pro", rub_per_image: "5", default: false}
+              ]} = Ruoc.image_models()
+
+      assert {:ok, _} = Ruoc.image_models()
+      [call, _] = RuocStub.calls(stub, "GET /v1/images/models")
+      assert {"authorization", "Bearer " <> RuocStub.catalog_key()} in call.headers
+    end
+
+    test "surfaces a gateway failure instead of an empty list", %{stub: stub} do
+      Bypass.down(stub.bypass)
+      assert {:error, _} = Ruoc.image_models()
+    end
+
+    test "fails without a catalog key", %{stub: stub} do
+      RuocStub.unset(:ruoc_catalog_key)
+      assert {:error, "ruoc_catalog_key is not set"} = Ruoc.image_models()
+      assert RuocStub.calls(stub, "GET /v1/images/models") == []
+    end
+  end
+
   describe "models/0" do
     test "maps the catalog with prices and caches it", %{stub: stub} do
       assert [%{id: "ruoc-flash", name: "GLM 5.3 Flash", price: %{input: "12", output: "38"}}, %{id: "ruoc-standard"}] =

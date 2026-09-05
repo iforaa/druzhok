@@ -63,6 +63,18 @@ defmodule Druzhok.RuocStub do
       conn = record(stub, "GET /v1/models", conn)
       reply(conn, 200, %{"object" => "list", "data" => models()})
     end)
+
+    Bypass.stub(bypass, "GET", "/v1/images/models", fn conn ->
+      conn = record(stub, "GET /v1/images/models", conn)
+      reply(conn, 200, %{"models" => image_models()})
+    end)
+  end
+
+  def image_models do
+    [
+      %{"id" => "ruoc-flux-klein", "name" => "FLUX 2 Klein", "description" => "быстрая", "rub_per_image" => "2", "default" => true},
+      %{"id" => "ruoc-flux-pro", "name" => "FLUX 2 Pro", "description" => "", "rub_per_image" => "5", "default" => false}
+    ]
   end
 
   def models do

@@ -285,7 +285,8 @@ defmodule Druzhok.ManagerBotTest do
       assert params["text"] =~ "🟢 *own2* — баланс 0.25 ₽ · план «Старт», продление 5 окт"
       rows = Jason.decode!(params["reply_markup"])["inline_keyboard"]
       assert length(rows) == 2
-      [[open, del]] = Enum.take(rows, 1)
+      [[open, img, del]] = Enum.take(rows, 1)
+      assert img["callback_data"] == "img:#{Repo.get_by!(Instance, name: "own1").id}"
       assert open["url"] == "https://t.me/own1_bot"
       assert del["callback_data"] == "del:#{Repo.get_by!(Instance, name: "own1").id}"
     end
@@ -325,6 +326,121 @@ defmodule Druzhok.ManagerBotTest do
 
       TelegramStub.push_update(stub, callback("delyes:999999"))
       assert TelegramStub.await_call(stub, "editMessageText", &(&1["text"] == "Бот не найден."))
+    end
+  end
+
+  describe "picture menu" do
+    setup %{data_root: root} do
+      ruoc = Druzhok.RuocStub.start()
+
+      for {n, attrs} <- [
+            {"pic_off", %{}},
+            {"pic_on", %{image_gen_enabled: true, image_gen_model: "ruoc-flux-klein"}}
+          ] do
+        %Instance{}
+        |> Instance.changeset(
+          Map.merge(
+            %{
+              name: n,
+              model: "m",
+              workspace: Path.join([root, n, "workspace"]),
+              tenant_key: "dk-#{n}",
+              owner_telegram_id: @owner,
+              trigger_name: "#{n}_bot",
+              ruoc_api_key: "ruoc_#{n}",
+              active: false
+            },
+            attrs
+          )
+        )
+        |> Repo.insert!()
+
+        cleanup_instance(n)
+      end
+
+      %{ruoc: ruoc, off: Repo.get_by!(Instance, name: "pic_off"), on: Repo.get_by!(Instance, name: "pic_on")}
+    end
+
+    defp edits(stub), do: Enum.map(TelegramStub.calls(stub, "editMessageText"), & &1["text"])
+
+    test "🎨 opens the menu built from ruoc's image catalogue", %{stub: stub, off: off} do
+      TelegramStub.push_update(stub, callback("img:#{off.id}"))
+      menu = TelegramStub.await_call(stub, "editMessageText", &(&1["text"] =~ "Картинки для @pic_off_bot"))
+      assert menu["text"] == "🎨 Картинки для @pic_off_bot\n\nСейчас: выключено"
+      rows = Jason.decode!(menu["reply_markup"])["inline_keyboard"]
+
+      assert Enum.map(rows, &Enum.map(&1, fn b -> {b["text"], b["callback_data"]} end)) == [
+               [{"✅ 🚫 Выкл", "imgoff:#{off.id}"}],
+               [{"FLUX 2 Klein · 2 ₽", "imgset:#{off.id}:ruoc-flux-klein"}],
+               [{"FLUX 2 Pro · 5 ₽", "imgset:#{off.id}:ruoc-flux-pro"}],
+               [{"« Назад", "imgback"}]
+             ]
+    end
+
+    test "picking a model while off turns pictures on and restarts the bot", %{stub: stub, off: off} do
+      TelegramStub.push_update(stub, callback("imgset:#{off.id}:ruoc-flux-pro"))
+      TelegramStub.await_call(stub, "editMessageText", &(&1["text"] == "⏳ Включаю картинки для @pic_off_bot…"))
+
+      TelegramStub.await_call(
+        stub,
+        "editMessageText",
+        &(&1["text"] == "✅ Картинки включены: FLUX 2 Pro · 5 ₽ за картинку"),
+        10_000
+      )
+
+      inst = Repo.get!(Instance, off.id)
+      assert inst.image_gen_enabled
+      assert inst.image_gen_model == "ruoc-flux-pro"
+      assert inst.active
+    end
+
+    test "switching the model while on only updates the row and redraws the menu", %{stub: stub, on: on} do
+      TelegramStub.push_update(stub, callback("imgset:#{on.id}:ruoc-flux-pro"))
+      menu = TelegramStub.await_call(stub, "editMessageText", &(&1["text"] =~ "Сейчас: FLUX 2 Pro · 5 ₽ за картинку"))
+      rows = Jason.decode!(menu["reply_markup"])["inline_keyboard"]
+      assert [%{"text" => "✅ FLUX 2 Pro · 5 ₽"}] = Enum.at(rows, 2)
+
+      inst = Repo.get!(Instance, on.id)
+      assert inst.image_gen_model == "ruoc-flux-pro"
+      refute inst.active
+      refute Enum.any?(edits(stub), &String.starts_with?(&1, "⏳"))
+    end
+
+    test "Выкл turns pictures off with a restart", %{stub: stub, on: on} do
+      TelegramStub.push_update(stub, callback("imgoff:#{on.id}"))
+      TelegramStub.await_call(stub, "editMessageText", &(&1["text"] == "⏳ Выключаю картинки для @pic_on_bot…"))
+      TelegramStub.await_call(stub, "editMessageText", &(&1["text"] == "✅ Картинки выключены для @pic_on_bot"), 10_000)
+      refute Repo.get!(Instance, on.id).image_gen_enabled
+    end
+
+    test "Выкл on a bot that is already off just redraws the menu", %{stub: stub, off: off} do
+      TelegramStub.push_update(stub, callback("imgoff:#{off.id}"))
+      TelegramStub.await_call(stub, "editMessageText", &(&1["text"] =~ "Сейчас: выключено"))
+      refute Enum.any?(edits(stub), &String.starts_with?(&1, "⏳"))
+    end
+
+    test "Назад redraws Мои боты in place", %{stub: stub} do
+      TelegramStub.push_update(stub, callback("imgback"))
+      back = TelegramStub.await_call(stub, "editMessageText", &(&1["text"] =~ "Твои боты"))
+      assert back["text"] =~ "*pic_off*"
+      assert Jason.decode!(back["reply_markup"])["inline_keyboard"] |> hd() |> Enum.at(1) |> Map.get("text") == "🎨"
+    end
+
+    test "a stranger is refused at every step", %{stub: stub, on: on} do
+      TelegramStub.push_update(stub, callback("img:#{on.id}", 999))
+      assert TelegramStub.await_call(stub, "sendMessage", &(&1["text"] == "Это не твой бот."))
+      TelegramStub.push_update(stub, callback("imgset:#{on.id}:ruoc-flux-pro", 999))
+      assert eventually(fn -> Enum.count(sent_texts(stub), &(&1 == "Это не твой бот.")) == 2 end)
+      TelegramStub.push_update(stub, callback("imgoff:#{on.id}", 999))
+      assert eventually(fn -> Enum.count(sent_texts(stub), &(&1 == "Это не твой бот.")) == 3 end)
+      assert Repo.get!(Instance, on.id).image_gen_model == "ruoc-flux-klein"
+    end
+
+    test "when ruoc is down the menu says so", %{stub: stub, ruoc: ruoc, off: off} do
+      Bypass.down(ruoc.bypass)
+      TelegramStub.push_update(stub, callback("img:#{off.id}"))
+      menu = TelegramStub.await_call(stub, "editMessageText", &(&1["text"] =~ "Список моделей сейчас недоступен"))
+      assert [[%{"text" => "« Назад"}]] = Jason.decode!(menu["reply_markup"])["inline_keyboard"]
     end
   end
 

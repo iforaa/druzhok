@@ -1,7 +1,7 @@
 defmodule DruzhokWebWeb.LlmProxy.Ruoc do
   @moduledoc """
-  The ruoc-gateway path of the LLM proxy: chat, web search and transcription
-  for a bot that has a `ruoc_api_key`.
+  The ruoc-gateway path of the LLM proxy: chat, web search, transcription
+  and image generation for a bot that has a `ruoc_api_key`.
 
   Money lives in ruoc-gateway. Nothing here checks a budget or computes a
   cost; a 402 from the gateway is relayed to the bot as the answer. What
@@ -26,6 +26,8 @@ defmodule DruzhokWebWeb.LlmProxy.Ruoc do
   @request_id_header "x-ruoc-request-id"
   @search_max_results 10
   @no_usage %{prompt_tokens: 0, completion_tokens: 0}
+  # A render takes tens of seconds; ruoc gives the provider 180 s.
+  @image_timeout 190_000
 
   # --- Chat -------------------------------------------------------------------
 
@@ -218,6 +220,57 @@ defmodule DruzhokWebWeb.LlmProxy.Ruoc do
     |> Enum.map(fn {r, pos} ->
       %{"title" => r["title"] || "", "url" => r["url"] || "", "description" => r["content"] || "", "position" => pos}
     end)
+  end
+
+  # --- Images -----------------------------------------------------------------
+
+  @doc """
+  OpenAI `images/generations` in, `{data: [{b64_json}]}` out, over ruoc
+  `POST /v1/images`. The client's `model` is ignored (hermes sends OpenAI
+  ids); the bot's `image_gen_model` names a ruoc catalogue entry, nil meaning
+  ruoc's default. A 402 keeps its status but carries the localized balance
+  notice, so hermes's tool error reaches the tenant in the bot's language.
+  """
+  def generate_image(conn, instance) do
+    started_at = System.monotonic_time(:millisecond)
+    prompt = conn.body_params["prompt"] || ""
+
+    payload =
+      case instance.image_gen_model do
+        nil -> %{"prompt" => prompt}
+        model -> %{"prompt" => prompt, "model" => model}
+      end
+
+    case Client.post("/v1/images", instance.ruoc_api_key, Jason.encode!(payload), receive_timeout: @image_timeout) do
+      {:ok, 200, headers, resp_body} ->
+        request_id = request_id(headers)
+        %{"model" => model, "image" => %{"b64" => b64}} = Jason.decode!(resp_body)
+        meter(instance, "image_gen", model, @no_usage, started_at, nil, nil, request_id, prompt)
+
+        conn
+        |> relay_headers(headers, request_id)
+        |> send_resp(200, Jason.encode!(%{"created" => System.os_time(:second), "data" => [%{"b64_json" => b64}]}))
+
+      {:ok, 402, headers, _resp_body} ->
+        request_id = request_id(headers)
+        log(instance, "image_gen", request_id, started_at, "HTTP 402 -> balance notice")
+
+        conn
+        |> relay_headers(headers, request_id)
+        |> send_resp(402, Jason.encode!(%{error: %{message: BalanceNotice.text(instance), type: "insufficient_quota"}}))
+
+      {:ok, status, headers, resp_body} ->
+        request_id = request_id(headers)
+        log(instance, "image_gen", request_id, started_at, "HTTP #{status}")
+
+        conn
+        |> relay_headers(headers, request_id)
+        |> send_resp(status, resp_body)
+
+      {:error, reason} ->
+        Logger.error("[ruoc] #{instance.name} image unreachable: #{inspect(reason)}")
+        json_error(conn, 502, "Image generation provider unavailable", "server_error")
+    end
   end
 
   # --- Transcription ----------------------------------------------------------

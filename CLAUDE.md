@@ -36,7 +36,7 @@ Prod env (MIX_ENV, DATABASE_PATH, DRUZHOK_HOST, HEX/MIX homes, SECRET_KEY_BASE, 
 
 ## Proxy endpoints (all require `Authorization: Bearer <tenant_key>`)
 
-Chat, search and transcription go to **ruoc-gateway** (`Druzhok.Ruoc`, `LlmProxy.Ruoc`),
+Chat, search, transcription and image generation go to **ruoc-gateway** (`Druzhok.Ruoc`, `LlmProxy.Ruoc`),
 one ruoc account per bot (`instances.ruoc_account_id` / `ruoc_api_key`); the balance there is
 the only spending limit (402 when empty). Druzhok records tokens and previews only, `cost_cents`
 is 0 on those rows. A bot without a ruoc key gets 503 from `LlmAuth` until migrated. A 402 (empty
@@ -49,7 +49,8 @@ Spec: `docs/superpowers/specs/2026-09-05-ruoc-gateway-migration-design.md`.
 | `POST /v1/chat/completions` | ruoc-gateway `/v1/chat/completions` |
 | `POST /v1/audio/transcriptions` | ruoc-gateway `/v1/transcribe` (base64 wav/mp3/ogg) |
 | `POST /v2/search` | ruoc-gateway `/v1/search` (Tavily), Firecrawl-shaped reply |
-| `POST /v1/embeddings`, `/v1/images/generations`, `/v1/responses` | OpenRouter (unmetered for money) |
+| `POST /v1/images/generations` | ruoc-gateway `/v1/images` (per-image price, model = `instances.image_gen_model`, nil = ruoc default; catalogue from `GET /v1/images/models` via `Druzhok.Ruoc.image_models/0`) |
+| `POST /v1/embeddings`, `/v1/responses` | OpenRouter (unmetered for money) |
 | `POST /v1/audio/speech` | OpenAI TTS (unmetered for money) |
 
 ruoc-gateway settings (dashboard Settings page, or `RUOC_URL` / `RUOC_ADMIN_HOST` /

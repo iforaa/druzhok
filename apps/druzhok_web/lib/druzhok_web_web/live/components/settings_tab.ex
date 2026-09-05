@@ -2,8 +2,6 @@ defmodule DruzhokWebWeb.Live.Components.SettingsTab do
   use DruzhokWebWeb, :live_component
 
   alias Druzhok.{Instance, Repo, Runtime, Pairing, Telegram, I18n, BotManager, SiteLister, Ruoc}
-  alias DruzhokWebWeb.LlmProxyController, as: ImageGen
-
 
   # Hermes pairing code: 8 characters from the unambiguous alphabet
   # (A–Z minus IO, 2–9), per hermes-agent/gateway/pairing.py.
@@ -39,6 +37,7 @@ defmodule DruzhokWebWeb.Live.Components.SettingsTab do
      |> assign(:migrated, migrated)
      |> assign(:balance, balance)
      |> assign(:subscription, subscription)
+     |> assign(:image_models, image_models(instance))
      |> assign(:console_url, migrated && Ruoc.console_url(instance[:ruoc_account_id]))
      |> assign(:can_migrate, !migrated && Ruoc.configured?())}
   end
@@ -218,12 +217,17 @@ defmodule DruzhokWebWeb.Live.Components.SettingsTab do
             <%= if @instance[:image_gen_enabled] do %>
               <form phx-change="set_image_gen_model" phx-target={@myself}>
                 <label class="block text-[10px] text-muted mb-0.5">Model</label>
-                <select name="image_gen_model"
-                        class="w-full border border-line2 rounded px-2 py-1 text-xs">
-                  <%= for m <- ImageGen.image_gen_models() do %>
-                    <option value={m.id} selected={m.id == (@instance[:image_gen_model] || ImageGen.default_image_gen_model())}><%= m.name %></option>
-                  <% end %>
-                </select>
+                <%= if @image_models == :unavailable do %>
+                  <p class="text-[11px] text-muted">ruoc catalogue unavailable</p>
+                <% else %>
+                  <select name="image_gen_model"
+                          class="w-full border border-line2 rounded px-2 py-1 text-xs">
+                    <option value="" selected={is_nil(@instance[:image_gen_model])}>ruoc default</option>
+                    <%= for m <- @image_models do %>
+                      <option value={m.id} selected={m.id == @instance[:image_gen_model]}><%= m.name %> · <%= m.rub_per_image %> ₽/image</option>
+                    <% end %>
+                  </select>
+                <% end %>
               </form>
             <% end %>
           </div>
@@ -377,11 +381,10 @@ defmodule DruzhokWebWeb.Live.Components.SettingsTab do
     {:noreply, socket}
   end
 
-  def handle_event("set_image_gen_model", %{"image_gen_model" => model}, socket)
-      when is_binary(model) and model != "" do
+  # No restart: the proxy reads the model on every request.
+  def handle_event("set_image_gen_model", %{"image_gen_model" => model}, socket) when is_binary(model) do
     name = socket.assigns.instance.name
-    update_instance(name, %{image_gen_model: model})
-    restart_bot(name)
+    update_instance(name, %{image_gen_model: non_empty(%{"m" => model}, "m")})
     notify_parent(socket)
     {:noreply, socket}
   end
@@ -541,6 +544,16 @@ defmodule DruzhokWebWeb.Live.Components.SettingsTab do
         nil
     end
   end
+
+  # Only read when the picker is shown; a failed read renders as unavailable.
+  defp image_models(%{image_gen_enabled: true}) do
+    case Ruoc.image_models() do
+      {:ok, list} -> list
+      {:error, _} -> :unavailable
+    end
+  end
+
+  defp image_models(_), do: []
 
   defp restart_bot(name) do
     Task.start(fn -> BotManager.restart(name) end)

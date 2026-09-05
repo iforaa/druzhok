@@ -147,6 +147,7 @@ defmodule Druzhok.ManagerBot.Onboarding do
         handle = bot_handle(bot)
         [
           %{text: "💬 @#{handle}", url: "https://t.me/#{handle}"},
+          %{text: "🎨", callback_data: "img:#{bot[:id]}"},
           %{text: "🗑", callback_data: "del:#{bot[:id]}"}
         ]
       end)
@@ -154,6 +155,62 @@ defmodule Druzhok.ManagerBot.Onboarding do
       {text, buttons}
     end
   end
+
+  # --- Image generation menu ---
+
+  @doc """
+  The picture menu for one bot: what is on now, then «Выкл» and one button
+  per ruoc image model with its price, ✅ on the current choice. `models` is
+  `Druzhok.Ruoc.image_models/0`'s result; a failed list leaves only «Назад».
+  """
+  def image_menu(bot, {:error, _}) do
+    text = "🎨 Картинки для @#{bot_handle(bot)}\n\nСписок моделей сейчас недоступен, попробуй позже"
+    {text, [back_row()]}
+  end
+
+  def image_menu(bot, {:ok, models}) do
+    enabled? = bot[:image_gen_enabled] == true
+    current = current_image_model(bot, models)
+
+    status =
+      cond do
+        not enabled? -> "выключено"
+        is_map(current) -> "#{model_label(current)} за картинку"
+        true -> bot[:image_gen_model]
+      end
+
+    text = "🎨 Картинки для @#{bot_handle(bot)}\n\nСейчас: #{status}"
+
+    off = [%{text: tick(not enabled?) <> "🚫 Выкл", callback_data: "imgoff:#{bot[:id]}"}]
+
+    choices =
+      Enum.map(models, fn m ->
+        chosen? = enabled? and is_map(current) and current.id == m.id
+        [%{text: tick(chosen?) <> model_label(m), callback_data: "imgset:#{bot[:id]}:#{m.id}"}]
+      end)
+
+    {text, [off | choices] ++ [back_row()]}
+  end
+
+  @doc "The model a bot with pictures on is using: its own, or ruoc's default when it names none."
+  def current_image_model(bot, models) do
+    case bot[:image_gen_model] do
+      nil -> Enum.find(models, & &1.default) || List.first(models)
+      id -> Enum.find(models, &(&1.id == id))
+    end
+  end
+
+  def image_restarting(:enabled, handle), do: "⏳ Включаю картинки для @#{handle}…"
+  def image_restarting(:disabled, handle), do: "⏳ Выключаю картинки для @#{handle}…"
+
+  def image_result(:enabled, _handle, model), do: "✅ Картинки включены: #{model_label(model)} за картинку"
+  def image_result(:disabled, handle, _model), do: "✅ Картинки выключены для @#{handle}"
+  def image_failed(handle), do: "Не получилось перезапустить @#{handle}, попробуй ещё раз."
+
+  defp model_label(%{name: name, rub_per_image: rub}), do: "#{name} · #{rub} ₽"
+  defp tick(true), do: "✅ "
+  defp tick(false), do: ""
+  defp back_row, do: [%{text: "« Назад", callback_data: "imgback"}]
 
   @doc "Confirm prompt + Yes/No keyboard for deleting a bot."
   def delete_confirm(id, handle) do

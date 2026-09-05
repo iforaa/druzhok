@@ -79,4 +79,29 @@ defmodule DruzhokWebWeb.SettingsTabTest do
     assert Repo.get_by!(Instance, name: inst.name).language == "en"
     stop(view)
   end
+
+  test "the image picker comes from ruoc and changing the model does not restart the bot", %{conn: conn, stub: stub} do
+    inst = create_instance(%{active: false, ruoc_api_key: "ruoc_img", image_gen_enabled: true})
+    {:ok, view, _} = live(conn, "/instances/#{inst.name}")
+    html = render(view)
+
+    assert html =~ "ruoc default"
+    assert html =~ "FLUX 2 Klein · 2 ₽/image"
+    assert html =~ "FLUX 2 Pro · 5 ₽/image"
+    refute html =~ "flux.2-klein-4b"
+
+    view |> element("form[phx-change=set_image_gen_model]") |> render_change(%{"image_gen_model" => "ruoc-flux-pro"})
+    assert Repo.get_by!(Instance, name: inst.name).image_gen_model == "ruoc-flux-pro"
+    # The bot was created inactive and stays that way: no restart was issued.
+    Process.sleep(100)
+    refute Repo.get_by!(Instance, name: inst.name).active
+
+    view |> element("form[phx-change=set_image_gen_model]") |> render_change(%{"image_gen_model" => ""})
+    assert Repo.get_by!(Instance, name: inst.name).image_gen_model == nil
+
+    Bypass.down(stub.bypass)
+    send(view.pid, :settings_updated)
+    assert render(view) =~ "ruoc catalogue unavailable"
+    stop(view)
+  end
 end

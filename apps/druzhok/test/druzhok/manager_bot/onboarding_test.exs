@@ -116,6 +116,64 @@ defmodule Druzhok.ManagerBot.OnboardingTest do
     end
   end
 
+  describe "image_menu/2" do
+    @models [
+      %{id: "ruoc-flux-klein", name: "FLUX 2 Klein", rub_per_image: "2", default: true},
+      %{id: "ruoc-flux-pro", name: "FLUX 2 Pro", rub_per_image: "5", default: false}
+    ]
+
+    test "off: says so and offers every model with its price" do
+      bot = %{id: 7, name: "fedya", trigger_name: nil, image_gen_enabled: false, image_gen_model: nil}
+      {text, rows} = Onboarding.image_menu(bot, {:ok, @models})
+      assert text == "🎨 Картинки для @fedya_bot\n\nСейчас: выключено"
+
+      assert rows == [
+               [%{text: "✅ 🚫 Выкл", callback_data: "imgoff:7"}],
+               [%{text: "FLUX 2 Klein · 2 ₽", callback_data: "imgset:7:ruoc-flux-klein"}],
+               [%{text: "FLUX 2 Pro · 5 ₽", callback_data: "imgset:7:ruoc-flux-pro"}],
+               [%{text: "« Назад", callback_data: "imgback"}]
+             ]
+    end
+
+    test "on with a model: names it with the price and ticks it" do
+      bot = %{id: 7, name: "fedya", trigger_name: nil, image_gen_enabled: true, image_gen_model: "ruoc-flux-pro"}
+      {text, rows} = Onboarding.image_menu(bot, {:ok, @models})
+      assert text =~ "Сейчас: FLUX 2 Pro · 5 ₽ за картинку"
+      assert Enum.at(rows, 0) == [%{text: "🚫 Выкл", callback_data: "imgoff:7"}]
+      assert Enum.at(rows, 2) == [%{text: "✅ FLUX 2 Pro · 5 ₽", callback_data: "imgset:7:ruoc-flux-pro"}]
+    end
+
+    test "on with no model: the tick sits on ruoc's default" do
+      bot = %{id: 7, name: "fedya", trigger_name: nil, image_gen_enabled: true, image_gen_model: nil}
+      {text, rows} = Onboarding.image_menu(bot, {:ok, @models})
+      assert text =~ "Сейчас: FLUX 2 Klein · 2 ₽ за картинку"
+      assert Enum.at(rows, 1) == [%{text: "✅ FLUX 2 Klein · 2 ₽", callback_data: "imgset:7:ruoc-flux-klein"}]
+    end
+
+    test "a model ruoc no longer lists is shown by id" do
+      bot = %{id: 7, name: "fedya", trigger_name: nil, image_gen_enabled: true, image_gen_model: "ruoc-gone"}
+      {text, _} = Onboarding.image_menu(bot, {:ok, @models})
+      assert text =~ "Сейчас: ruoc-gone"
+    end
+
+    test "when the list is unavailable only Назад remains" do
+      bot = %{id: 7, name: "fedya", trigger_name: nil, image_gen_enabled: false, image_gen_model: nil}
+      {text, rows} = Onboarding.image_menu(bot, {:error, "down"})
+      assert text =~ "Список моделей сейчас недоступен, попробуй позже"
+      assert rows == [[%{text: "« Назад", callback_data: "imgback"}]]
+    end
+  end
+
+  describe "image_result/3" do
+    test "phrases enabling, switching and disabling" do
+      model = %{id: "ruoc-flux-pro", name: "FLUX 2 Pro", rub_per_image: "5", default: false}
+      assert Onboarding.image_result(:enabled, "fedya_bot", model) == "✅ Картинки включены: FLUX 2 Pro · 5 ₽ за картинку"
+      assert Onboarding.image_result(:disabled, "fedya_bot", nil) == "✅ Картинки выключены для @fedya_bot"
+      assert Onboarding.image_restarting(:enabled, "fedya_bot") == "⏳ Включаю картинки для @fedya_bot…"
+      assert Onboarding.image_restarting(:disabled, "fedya_bot") == "⏳ Выключаю картинки для @fedya_bot…"
+    end
+  end
+
   describe "my_bots_message/1" do
     test "empty list shows helpful text" do
       {text, buttons} = Onboarding.my_bots_message([])
@@ -132,16 +190,18 @@ defmodule Druzhok.ManagerBot.OnboardingTest do
 
     test "button URL appends _bot to the handle" do
       bots = [%{id: 7, name: "fedya_b318", active: true, trigger_name: nil}]
-      {_text, [[btn, del]]} = Onboarding.my_bots_message(bots)
+      {_text, [[btn, img, del]]} = Onboarding.my_bots_message(bots)
       assert btn.text == "💬 @fedya_b318_bot"
       assert btn.url == "https://t.me/fedya_b318_bot"
+      assert img.text == "🎨"
+      assert img.callback_data == "img:7"
       assert del.text == "🗑"
       assert del.callback_data == "del:7"
     end
 
     test "button URL does not double-append _bot" do
       bots = [%{id: 8, name: "already_bot", active: true, trigger_name: nil}]
-      {_text, [[btn, _del]]} = Onboarding.my_bots_message(bots)
+      {_text, [[btn, _img, _del]]} = Onboarding.my_bots_message(bots)
       assert btn.url == "https://t.me/already_bot"
     end
 

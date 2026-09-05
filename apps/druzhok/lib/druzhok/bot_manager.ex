@@ -123,6 +123,18 @@ defmodule Druzhok.BotManager do
     :ok
   end
 
+  @doc """
+  Turn the image tool on or off and name the ruoc image model (nil = ruoc's
+  default). A row update only: the caller restarts when `enabled?` changed,
+  since only the on/off state reaches hermes's config.
+  """
+  def update_image_gen(name, enabled?, model) when is_boolean(enabled?) do
+    case Repo.get_by(Instance, name: name) do
+      nil -> {:error, :not_found}
+      inst -> inst |> Instance.changeset(%{image_gen_enabled: enabled?, image_gen_model: model}) |> Repo.update()
+    end
+  end
+
   def restart(name) do
     # Serialize per-bot: rapid UI clicks race on unit start. Losers
     # no-op; the winner's start/1 re-reads DB state so no change is lost.
