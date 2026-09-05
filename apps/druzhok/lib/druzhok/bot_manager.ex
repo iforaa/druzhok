@@ -84,7 +84,12 @@ defmodule Druzhok.BotManager do
         data_root = runtime.data_root(instance)
 
         write_workspace_files(data_root, runtime.workspace_files(instance))
-        runtime.sync_config(instance, data_root)
+        # The operator is the hermes slash-command admin on every bot
+        # (Runtime.Hermes.sync_config/2); the instance row does not carry it.
+        runtime.sync_config(
+          Map.put(instance, :operator_telegram_id, Druzhok.Settings.operator_telegram_id()),
+          data_root
+        )
 
         case Druzhok.Host.start(name, env, data_root) do
           :ok ->

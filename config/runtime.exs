@@ -102,6 +102,7 @@ config :druzhok,
   ruoc_admin_host: env_or_nil.("RUOC_ADMIN_HOST"),
   ruoc_admin_token: env_or_nil.("RUOC_ADMIN_TOKEN"),
   ruoc_catalog_key: env_or_nil.("RUOC_CATALOG_KEY"),
+  operator_telegram_id: env_or_nil.("OPERATOR_TELEGRAM_ID"),
   host:
     (if System.get_env("DRUZHOK_HOST") == "systemd",
        do: Druzhok.Host.Systemd,

@@ -14,6 +14,9 @@ Always use `/my-commit` for committing changes.
 - **Never set HTTP_PROXY/HTTPS_PROXY for bots** — breaks multipart uploads.
 - **One Telegram poller per token.** Stop a bot on the old host before starting it elsewhere.
 - Hermes source is the fork `github.com/iforaa/druzhok-hermes` (local clone `hermes-agent/`, remote `origin`; nousresearch is remote `upstream`). Updates go through the `update-hermes` skill.
+- Tenants get hermes's *user* slash tier (`/new /compress /status /voice`, plus `/help /whoami`); the operator
+  (Settings `operator_telegram_id` / `OPERATOR_TELEGRAM_ID`) is admin on every bot. Enforced via upstream
+  `platforms.telegram.extra` keys written by `Runtime.Hermes.sync_config/2` on each start — no fork patch.
 - `hermes-agent/` is a separate, gitignored git repo (the hermes fork clone) — never `git add` it into druzhok.
 
 ## Layout

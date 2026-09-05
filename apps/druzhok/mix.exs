@@ -35,6 +35,7 @@ defmodule Druzhok.MixProject do
     [
       {:bcrypt_elixir, "~> 3.0"},
       {:bypass, "~> 2.1", only: :test},
+      {:yaml_elixir, "~> 2.11", only: :test},
       {:jason, "~> 1.4"},
       {:phoenix_pubsub, "~> 2.1"},
       {:ecto_sql, "~> 3.12"},

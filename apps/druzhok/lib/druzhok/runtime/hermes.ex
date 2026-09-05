@@ -173,6 +173,7 @@ defmodule Druzhok.Runtime.Hermes do
           |> sync_streaming_block()
           |> sync_plugins_enabled()
           |> sync_gateway_block()
+          |> sync_telegram_extra(instance)
 
         if updated != content, do: File.write!(config_path, updated)
         :ok
@@ -193,6 +194,171 @@ defmodule Druzhok.Runtime.Hermes do
       default: "gateway:\n  systemd_watchdog_seconds: #{@systemd_watchdog_seconds}"
     )
   end
+
+  # Slash-command access + Telegram command menu (upstream config keys, see
+  # hermes gateway/slash_access.py and hermes_cli/commands.py — no fork patch).
+  #
+  # Tenants are "users" in hermes's terms: they may run @user_commands, and
+  # everything else (/model, /tools, /config, /yolo, ...) replies "⛔ admin-only".
+  # /help and /whoami are always allowed by hermes. The operator (Settings
+  # `operator_telegram_id`) is the admin in DMs and groups; hermes only turns
+  # the gate on when allow_admin_from is non-empty, so "0" stands in when no
+  # operator is configured (no Telegram user has id 0).
+  #
+  # The menu Telegram shows on "/" is cut to exactly @menu_commands:
+  # priority_mode=replace ranks them first, max_commands drops the rest.
+  # `start` is the /start -> /new quick-command alias (sync_quick_commands/1);
+  # hermes checks the typed name against the policy, so it must be listed.
+  @user_commands ~w(start new compress status voice)
+  @menu_commands ~w(new compress status voice)
+  @telegram_extra_keys ~w(allow_admin_from user_allowed_commands group_allow_admin_from group_user_allowed_commands command_menu)
+
+  def user_commands, do: @user_commands
+  def menu_commands, do: @menu_commands
+
+  defp sync_telegram_extra(content, instance) do
+    admin = operator_telegram_id(instance)
+
+    owned = [
+      {"allow_admin_from", [~s("#{admin}")]},
+      {"user_allowed_commands", @user_commands},
+      {"group_allow_admin_from", [~s("#{admin}")]},
+      {"group_user_allowed_commands", @user_commands},
+      {"command_menu",
+       [
+         {"priority_mode", "replace"},
+         {"max_commands", to_string(length(@menu_commands))},
+         {"priority", @menu_commands}
+       ]}
+    ]
+
+    lines = String.split(content, "\n")
+
+    case yaml_block(lines, 0, "platforms", 0, length(lines) - 1) do
+      nil ->
+        String.trim_trailing(content) <>
+          "\n\nplatforms:\n  telegram:\n    extra:\n" <> render_yaml(owned, 6, 2) <> "\n"
+
+      {p_idx, p_end} ->
+        case yaml_block(lines, nil, "telegram", p_idx + 1, p_end) do
+          nil ->
+            insert = ["  telegram:", "    extra:" | String.split(render_yaml(owned, 6, 2), "\n")]
+            splice(lines, p_idx + 1, p_idx, insert)
+
+          {t_idx, t_end} ->
+            step = indent_of(Enum.at(lines, t_idx))
+
+            case yaml_block(lines, nil, "extra", t_idx + 1, t_end) do
+              nil ->
+                insert = [pad(2 * step) <> "extra:" | String.split(render_yaml(owned, 3 * step, step), "\n")]
+                splice(lines, t_idx + 1, t_idx, insert)
+
+              {e_idx, e_end} ->
+                e_indent = indent_of(Enum.at(lines, e_idx))
+                body = Enum.slice(lines, (e_idx + 1)..e_end//1)
+                kept = drop_owned_keys(body, @telegram_extra_keys)
+                rendered = String.split(render_yaml(owned, e_indent + step, step), "\n")
+                splice(lines, e_idx + 1, e_end, rendered ++ kept)
+            end
+        end
+    end
+  end
+
+  defp operator_telegram_id(instance) do
+    case Map.get(instance, :operator_telegram_id) do
+      id when is_integer(id) -> to_string(id)
+      id when is_binary(id) and id != "" -> String.trim(id)
+      _ -> "0"
+    end
+  end
+
+  # {first_line_idx, last_body_idx} of `key:` at `indent` (nil = any indent > 0)
+  # within lines[from..to]; the body is every following line that is blank or
+  # indented deeper than the key.
+  defp yaml_block(lines, indent, key, from, to) when from <= to do
+    Enum.find_value(from..to, fn i ->
+      line = Enum.at(lines, i)
+
+      if yaml_key_line?(line, key, indent) do
+        k = indent_of(line)
+
+        last =
+          Enum.reduce_while((i + 1)..to//1, i, fn j, acc ->
+            l = Enum.at(lines, j)
+            if String.trim(l) == "" or indent_of(l) > k, do: {:cont, j}, else: {:halt, acc}
+          end)
+
+        {i, trim_blank_tail(lines, i, last)}
+      end
+    end)
+  end
+
+  defp yaml_block(_lines, _indent, _key, _from, _to), do: nil
+
+  defp yaml_key_line?(line, key, indent) do
+    case Regex.run(~r/^([ \t]*)([A-Za-z0-9_]+):[ \t]*$/, line) do
+      [_, ws, ^key] -> if indent == nil, do: byte_size(ws) > 0, else: byte_size(ws) == indent
+      _ -> false
+    end
+  end
+
+  defp trim_blank_tail(lines, first, last) do
+    Enum.reduce_while(last..first//-1, first, fn j, _ ->
+      if String.trim(Enum.at(lines, j)) == "", do: {:cont, first}, else: {:halt, j}
+    end)
+  end
+
+  # Remove `key:` lines (and their nested bodies) for keys we own, keep the rest
+  # (e.g. dm_topics hermes writes back at runtime).
+  defp drop_owned_keys(body, keys) do
+    Enum.reduce(body, {[], nil}, fn line, {acc, skipping} ->
+      cond do
+        # Nested body, or list items hermes's dumper puts at the key's own indent.
+        skipping != nil and
+            (String.trim(line) == "" or indent_of(line) > skipping or
+               (indent_of(line) == skipping and String.starts_with?(String.trim_leading(line), "- "))) ->
+          {acc, skipping}
+
+        Regex.run(~r/^([ \t]*)([A-Za-z0-9_]+):/, line) |> owned_key?(keys) ->
+          {acc, indent_of(line)}
+
+        true ->
+          {[line | acc], nil}
+      end
+    end)
+    |> elem(0)
+    |> Enum.reverse()
+  end
+
+  defp owned_key?([_, _ws, key], keys), do: key in keys
+  defp owned_key?(_, _keys), do: false
+
+  # Replace lines[from..to] with `insert` (to < from inserts before `from`).
+  defp splice(lines, from, to, insert) do
+    {head, _} = Enum.split(lines, from)
+    tail = Enum.drop(lines, to + 1)
+    Enum.join(head ++ insert ++ tail, "\n")
+  end
+
+  # Render [{key, scalar | [scalar] | [{key, _}]}] as YAML at `indent`, `step`
+  # spaces per level; list items sit one step under their key.
+  defp render_yaml(pairs, indent, step) do
+    pairs
+    |> Enum.flat_map(fn
+      {key, [{_, _} | _] = nested} ->
+        [pad(indent) <> key <> ":" | render_yaml(nested, indent + step, step) |> String.split("\n")]
+
+      {key, items} when is_list(items) ->
+        [pad(indent) <> key <> ":" | Enum.map(items, &(pad(indent + step) <> "- " <> &1))]
+
+      {key, scalar} ->
+        [pad(indent) <> key <> ": " <> scalar]
+    end)
+    |> Enum.join("\n")
+  end
+
+  defp indent_of(line), do: byte_size(line) - byte_size(String.trim_leading(line, " "))
+  defp pad(n), do: String.duplicate(" ", n)
 
   # Enable gateway streaming (progressive Telegram message edits). Existing bots
   # were seeded before the streaming block existed, so append it when absent.

@@ -1,7 +1,7 @@
 defmodule DruzhokWebWeb.SettingsLive do
   use DruzhokWebWeb, :live_view
 
-  @keys ~w(openrouter_api_key openai_api_key manager_bot_token
+  @keys ~w(openrouter_api_key openai_api_key manager_bot_token operator_telegram_id
            ruoc_url ruoc_admin_host ruoc_admin_token ruoc_catalog_key)
   @secret ~w(openrouter_api_key openai_api_key manager_bot_token ruoc_admin_token ruoc_catalog_key)
 
@@ -34,6 +34,7 @@ defmodule DruzhokWebWeb.SettingsLive do
       openrouter_api_key: mask(Druzhok.Settings.get("openrouter_api_key")),
       openai_api_key: mask(Druzhok.Settings.get("openai_api_key")),
       manager_bot_token: mask(Druzhok.Settings.get("manager_bot_token")),
+      operator_telegram_id: Druzhok.Settings.get("operator_telegram_id") || "",
       ruoc_url: Druzhok.Settings.get("ruoc_url") || "http://127.0.0.1:8787",
       ruoc_admin_host: Druzhok.Settings.get("ruoc_admin_host") || "",
       ruoc_admin_token: mask(Druzhok.Settings.get("ruoc_admin_token")),
@@ -66,6 +67,11 @@ defmodule DruzhokWebWeb.SettingsLive do
           <.card title="Manager bot (Telegram)">
             <.field name="manager_bot_token" label="Bot token" value={@manager_bot_token} placeholder="123456:ABC…" mono />
             <p class="text-[10px] text-muted">Picked up within a minute, no restart needed.</p>
+          </.card>
+
+          <.card title="Operator (Telegram)">
+            <.field name="operator_telegram_id" label="Your Telegram user id" value={@operator_telegram_id} placeholder="109620092" mono />
+            <p class="text-[10px] text-muted">Full slash-command access on every bot (/model, /tools, …). Everyone else gets only /new, /compress, /status, /voice. Applied on the next restart of each bot.</p>
           </.card>
 
           <.card title="ruoc-gateway (chat, search, voice)">

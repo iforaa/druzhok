@@ -94,6 +94,15 @@ defmodule Druzhok.BotManagerLifecycleTest do
       assert eventually(fn -> BotManager.status(name) == "active" end)
     end
 
+    test "start makes the operator from Settings the slash-command admin", %{name: name, data_root: root} do
+      Druzhok.Settings.set("operator_telegram_id", "777001")
+      on_exit(fn -> Repo.get_by(Druzhok.Settings, key: "operator_telegram_id") |> Repo.delete() end)
+      assert {:ok, ^name} = BotManager.start(name)
+      content = File.read!(Path.join([root, name, "config.yaml"]))
+      assert content =~ ~r/^      allow_admin_from:\n        - "777001"$/m
+      assert content =~ ~r/^      user_allowed_commands:\n        - start\n        - new$/m
+    end
+
     test "start keeps hermes's own edits to config.yaml", %{name: name, data_root: root} do
       :ok = BotManager.stop(name)
       path = Path.join([root, name, "config.yaml"])

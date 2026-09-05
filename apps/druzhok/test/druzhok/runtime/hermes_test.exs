@@ -264,6 +264,122 @@ defmodule Druzhok.Runtime.HermesTest do
     end
   end
 
+  describe "sync_config/2 — telegram slash access + menu" do
+    setup do
+      tmp_dir = Path.join(System.tmp_dir!(), "hermes-tg-#{System.unique_integer([:positive])}")
+      File.mkdir_p!(Path.join(tmp_dir, "workspace"))
+      on_exit(fn -> File.rm_rf!(tmp_dir) end)
+      %{tmp_dir: tmp_dir}
+    end
+
+    defp sync!(tmp_dir, yaml, instance \\ %{name: "b", model: "x", tenant_key: "k", operator_telegram_id: 4242}) do
+      File.write!(Path.join(tmp_dir, "config.yaml"), yaml)
+      assert :ok = Hermes.sync_config(instance, tmp_dir)
+      File.read!(Path.join(tmp_dir, "config.yaml"))
+    end
+
+    test "adds extra under the seeded telegram block: operator is admin, tenants get the user list", %{tmp_dir: tmp_dir} do
+      content =
+        sync!(tmp_dir, """
+        model:
+          default: "x"
+
+        platforms:
+          telegram:
+            enabled: true
+            observe_unmentioned_group_messages: false
+
+        streaming:
+          enabled: true
+        """)
+
+      assert content =~ """
+             platforms:
+               telegram:
+                 extra:
+                   allow_admin_from:
+                     - "4242"
+                   user_allowed_commands:
+                     - start
+                     - new
+                     - compress
+                     - status
+                     - voice
+                   group_allow_admin_from:
+                     - "4242"
+                   group_user_allowed_commands:
+                     - start
+                     - new
+                     - compress
+                     - status
+                     - voice
+                   command_menu:
+                     priority_mode: replace
+                     max_commands: 4
+                     priority:
+                       - new
+                       - compress
+                       - status
+                       - voice
+                 enabled: true
+                 observe_unmentioned_group_messages: false
+
+             streaming:
+             """
+
+      assert {:ok, %{"platforms" => %{"telegram" => %{"extra" => extra, "enabled" => true}}}} =
+               YamlElixir.read_from_string(content)
+
+      assert extra["allow_admin_from"] == ["4242"]
+      assert extra["command_menu"] == %{"priority_mode" => "replace", "max_commands" => 4, "priority" => Hermes.menu_commands()}
+    end
+
+    test "rewrites its own keys and keeps what hermes wrote into extra", %{tmp_dir: tmp_dir} do
+      content =
+        sync!(tmp_dir, """
+        platforms:
+          telegram:
+            enabled: true
+            extra:
+              dm_topics:
+              - chat_id: 1
+                topics:
+                - name: x
+                  thread_id: 7
+              allow_admin_from:
+              - '999'
+              user_allowed_commands: [model, tools]
+              command_menu: {max_commands: 60}
+        """)
+
+      assert {:ok, %{"platforms" => %{"telegram" => %{"extra" => extra}}}} = YamlElixir.read_from_string(content)
+      assert extra["allow_admin_from"] == ["4242"]
+      assert extra["user_allowed_commands"] == Hermes.user_commands()
+      assert extra["command_menu"]["max_commands"] == 4
+      assert extra["dm_topics"] == [%{"chat_id" => 1, "topics" => [%{"name" => "x", "thread_id" => 7}]}]
+      refute content =~ "999"
+      refute content =~ "tools"
+    end
+
+    test "is idempotent", %{tmp_dir: tmp_dir} do
+      once = sync!(tmp_dir, "platforms:\n  telegram:\n    enabled: true\n")
+      twice = sync!(tmp_dir, once)
+      assert YamlElixir.read_from_string!(once) == YamlElixir.read_from_string!(twice)
+      assert length(Regex.scan(~r/^\s+allow_admin_from:/m, twice)) == 1
+    end
+
+    test "uses the sentinel id 0 when no operator is configured, so gating stays on", %{tmp_dir: tmp_dir} do
+      content = sync!(tmp_dir, "platforms:\n  telegram:\n    enabled: true\n", %{name: "b", model: "x", tenant_key: "k"})
+      assert {:ok, %{"platforms" => %{"telegram" => %{"extra" => extra}}}} = YamlElixir.read_from_string(content)
+      assert extra["allow_admin_from"] == ["0"]
+    end
+
+    test "appends a platforms block when the file has none", %{tmp_dir: tmp_dir} do
+      content = sync!(tmp_dir, "model:\n  default: \"x\"\n")
+      assert {:ok, %{"platforms" => %{"telegram" => %{"extra" => %{"allow_admin_from" => ["4242"]}}}}} = YamlElixir.read_from_string(content)
+    end
+  end
+
   describe "build_config_yaml/1" do
     test "emits group_sessions_per_user: false when group_shared_memory is on" do
       inst = Map.put(@instance, :group_shared_memory, true)

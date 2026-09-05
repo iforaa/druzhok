@@ -38,6 +38,14 @@ defmodule Druzhok.Settings do
     Application.get_env(:druzhok, :openrouter_api_key) || get("openrouter_api_key")
   end
 
+  @doc """
+  Telegram user id of the platform operator, or nil. Hermes makes this id the
+  slash-command admin on every bot; tenants get the user tier.
+  """
+  def operator_telegram_id do
+    Application.get_env(:druzhok, :operator_telegram_id) || get("operator_telegram_id")
+  end
+
   @doc "Setting keys the ruoc-gateway integration reads (see `Druzhok.Ruoc`)."
   def ruoc_keys, do: ["ruoc_url", "ruoc_admin_host", "ruoc_admin_token", "ruoc_catalog_key"]
 end
