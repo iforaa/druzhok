@@ -26,6 +26,8 @@ defmodule Druzhok.Instance do
     field :daily_budget_cents, :integer, default: 0
     field :image_gen_enabled, :boolean, default: false
     field :image_gen_model, :string
+    field :ruoc_account_id, :string
+    field :ruoc_api_key, :string
 
     has_one :budget, Druzhok.Budget
 
@@ -34,7 +36,7 @@ defmodule Druzhok.Instance do
 
   def changeset(instance, attrs) do
     instance
-    |> cast(attrs, [:name, :telegram_token, :model, :workspace, :active, :owner_telegram_id, :timezone, :api_key, :language, :tenant_key, :mention_only, :welcome_message, :allowed_telegram_ids, :allowed_telegram_chats, :allow_all_telegram_users, :trigger_name, :image_model, :group_sessions_per_user, :group_shared_memory, :website_hosting_enabled, :daily_budget_cents, :image_gen_enabled, :image_gen_model])
+    |> cast(attrs, [:name, :telegram_token, :model, :workspace, :active, :owner_telegram_id, :timezone, :api_key, :language, :tenant_key, :mention_only, :welcome_message, :allowed_telegram_ids, :allowed_telegram_chats, :allow_all_telegram_users, :trigger_name, :image_model, :group_sessions_per_user, :group_shared_memory, :website_hosting_enabled, :daily_budget_cents, :image_gen_enabled, :image_gen_model, :ruoc_account_id, :ruoc_api_key])
     |> validate_required([:name, :model, :workspace])
     |> unique_constraint(:name)
   end

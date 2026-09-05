@@ -37,4 +37,7 @@ defmodule Druzhok.Settings do
   def openrouter_api_key do
     Application.get_env(:druzhok, :openrouter_api_key) || get("openrouter_api_key")
   end
+
+  @doc "Setting keys the ruoc-gateway integration reads (see `Druzhok.Ruoc`)."
+  def ruoc_keys, do: ["ruoc_url", "ruoc_admin_host", "ruoc_admin_token", "ruoc_catalog_key"]
 end
