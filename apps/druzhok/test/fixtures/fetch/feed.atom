@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<feed xmlns="http://www.w3.org/2005/Atom">
+  <title>Koleso Engineering Blog</title>
+  <link href="https://blog.koleso.example/"/>
+  <updated>2026-09-05T12:00:00Z</updated>
+  <entry>
+    <title>Measuring spoke tension with a phone</title>
+    <link rel="alternate" href="https://blog.koleso.example/spoke-tension"/>
+    <updated>2026-09-05T12:00:00Z</updated>
+    <summary>A microphone and a tone table are enough for a first pass at truing a wheel.</summary>
+  </entry>
+  <entry>
+    <title>Why hub gears fail in the cold</title>
+    <link href="https://blog.koleso.example/hub-cold"/>
+    <updated>2026-09-03T08:00:00Z</updated>
+    <content type="html">&lt;p&gt;Old grease thickens and the pawls stop engaging. Here is what to relube with.&lt;/p&gt;</content>
+  </entry>
+</feed>

@@ -15,7 +15,7 @@ defmodule Druzhok.Fetch.Worker do
   @default_timeout 20_000
   @max_chars 200_000
 
-  @type kind :: :html | :pdf | :text
+  @type kind :: :html | :pdf | :text | :feed
   @type result :: {:ok, %{title: String.t(), markdown: String.t()}} | {:error, :extract_failed | :worker_down}
 
   def start_link(opts \\ []), do: GenServer.start_link(__MODULE__, opts, name: Keyword.get(opts, :name, __MODULE__))
@@ -26,7 +26,7 @@ defmodule Druzhok.Fetch.Worker do
   (default #{@default_timeout}), `server`.
   """
   @spec extract(kind, String.t(), binary, keyword) :: result
-  def extract(kind, url, body, opts \\ []) when kind in [:html, :pdf, :text] do
+  def extract(kind, url, body, opts \\ []) when kind in [:html, :pdf, :text, :feed] do
     server = Keyword.get(opts, :server, __MODULE__)
     timeout = Keyword.get(opts, :timeout, @default_timeout)
     deadline = System.monotonic_time(:millisecond) + timeout

@@ -1,7 +1,7 @@
 """Druzhok fetch worker: HTML or PDF in, markdown out, over an Erlang Port.
 
 Framing is {:packet, 4}: every message is a 4-byte big-endian length followed
-by one JSON object. Requests are {"kind": "html"|"pdf"|"text", "url": ...,
+by one JSON object. Requests are {"kind": "html"|"pdf"|"text"|"feed", "url": ...,
 "body_b64": ..., "charset": <Content-Type charset or null>}; replies are {"title": ..., "markdown": ...} or
 {"error": "extract_failed"}. The worker has no network and no state: the
 Elixir side fetched the bytes and applies every limit.
@@ -14,6 +14,7 @@ import struct
 import sys
 
 import trafilatura
+from lxml import etree
 from lxml import html as lxml_html
 from trafilatura.utils import decode_file
 from urllib.parse import urljoin
@@ -26,6 +27,12 @@ MAX_CHARS = 200_000
 # as a linked list so "what are the top stories" can still be answered.
 MIN_DROPPED_HEADINGS = 3
 MAX_HEADINGS = 60
+
+# A feed is the open door on a paywalled news site: its headlines, links and
+# blurbs are what a bot needs for "what's in the news", so RSS and Atom are
+# read as a dated headline list rather than refused as XML.
+MAX_FEED_ITEMS = 60
+MAX_SUMMARY_CHARS = 300
 
 
 def read_message(stream):
@@ -136,11 +143,95 @@ def extract_pdf(url, body, charset=None):
     return {"title": title, "markdown": "\n\n---\n\n".join(pages)}
 
 
+def local_name(node):
+    return etree.QName(node).localname if isinstance(node.tag, str) else ""
+
+
+def child_text(node, *names):
+    """Text of the first child whose local name is in names, HTML stripped."""
+    for child in node:
+        if local_name(child) in names:
+            text = child.text or ""
+            if child.get("type") == "xhtml":
+                text = etree.tostring(child, method="text", encoding="unicode")
+            return plain_text(text)
+    return ""
+
+
+def child_link(node, url):
+    for child in node:
+        if local_name(child) != "link":
+            continue
+        href = child.get("href") or (child.text or "").strip()
+        if href and child.get("rel", "alternate") == "alternate":
+            return urljoin(url, href)
+    return ""
+
+
+def plain_text(fragment):
+    fragment = (fragment or "").strip()
+    if not fragment:
+        return ""
+    if "<" in fragment:
+        try:
+            fragment = lxml_html.fromstring(fragment).text_content()
+        except Exception:  # noqa: BLE001 — leave the raw text
+            pass
+    return re.sub(r"\s+", " ", fragment).strip()
+
+
+def feed_date(node):
+    raw = child_text(node, "pubDate", "published", "updated", "date")
+    m = re.search(r"\d{4}-\d{2}-\d{2}", raw)
+    if m:
+        return m.group(0)
+    try:
+        from email.utils import parsedate_to_datetime
+
+        return parsedate_to_datetime(raw).date().isoformat()
+    except Exception:  # noqa: BLE001 — undated item
+        return ""
+
+
+def extract_feed(url, body, charset=None):
+    root = etree.fromstring(body, etree.XMLParser(recover=True, huge_tree=False))
+    if root is None:
+        raise ValueError("not xml")
+    kind = local_name(root)
+    if kind == "rss":
+        channel = next((c for c in root if local_name(c) == "channel"), root)
+        title = child_text(channel, "title")
+        items = [c for c in channel if local_name(c) == "item"]
+    elif kind == "feed":
+        title = child_text(root, "title")
+        items = [c for c in root if local_name(c) == "entry"]
+    elif kind == "RDF":
+        title = next((child_text(c, "title") for c in root if local_name(c) == "channel"), "")
+        items = [c for c in root if local_name(c) == "item"]
+    else:
+        raise ValueError("not a feed")
+
+    lines = []
+    for item in items[:MAX_FEED_ITEMS]:
+        heading = child_text(item, "title") or "(без заголовка)"
+        link = child_link(item, url)
+        date = feed_date(item)
+        line = f"- [{heading}]({link})" if link else f"- {heading}"
+        if date:
+            line += f" — {date}"
+        summary = child_text(item, "description", "summary", "content", "encoded")
+        if summary:
+            line += f"\n  {summary[:MAX_SUMMARY_CHARS]}"
+        lines.append(line)
+    title = title or url
+    return {"title": title, "markdown": f"# {title}\n\n" + "\n".join(lines)}
+
+
 def extract_text(url, body, charset=None):
     return {"title": url, "markdown": decode_html(body, charset)}
 
 
-HANDLERS = {"html": extract_html, "pdf": extract_pdf, "text": extract_text}
+HANDLERS = {"html": extract_html, "pdf": extract_pdf, "text": extract_text, "feed": extract_feed}
 
 
 def handle(request):

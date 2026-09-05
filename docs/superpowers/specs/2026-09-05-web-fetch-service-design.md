@@ -74,10 +74,13 @@ hostname: host)`), and because the body must be capped while streaming.
 - Connect timeout 10 s, total budget 30 s from the first connect (redirects
   included), enforced by a deadline passed down.
 - Request headers: `User-Agent: Mozilla/5.0 (compatible; Druzhok/1.0)`,
-  `Accept: text/html,application/xhtml+xml,application/pdf,text/plain;q=0.8,*/*;q=0.1`,
+  `Accept: text/html,application/xhtml+xml,application/pdf,application/rss+xml,application/atom+xml,application/xml,text/plain;q=0.8,*/*;q=0.1`,
   `Accept-Language: ru,en;q=0.8`, `Accept-Encoding: identity`.
 - Response: `Content-Type` must start with `text/html`,
-  `application/xhtml+xml`, `text/plain` or `application/pdf`, else
+  `application/xhtml+xml`, `text/plain`, `application/pdf`, or a feed type
+  (`application/rss+xml`, `application/atom+xml`, `application/xml`,
+  `text/xml`; RSS, Atom and RDF become a dated headline list with plain-text
+  blurbs, the open door on a paywalled news site), else
   `:unsupported_type` (the body is not read). Body read up to 5 MiB, one byte
   more → `:too_large`. Non-2xx after redirects → `{:error, :no_text,
   %{status_code: n}}` without extraction.
@@ -92,7 +95,7 @@ where `bin` is `FETCH_WORKER_BIN` / `config :druzhok, :fetch_worker_bin`
 through `Application.app_dir(:druzhok, "priv/fetch-worker")`. Port options
 `[:binary, {:packet, 4}, :exit_status]`; each message is a JSON object.
 
-Request `{"kind": "html"|"pdf"|"text", "url": ..., "body_b64": ...}`;
+Request `{"kind": "html"|"pdf"|"text"|"feed", "url": ..., "body_b64": ..., "charset": ...}`;
 reply `{"title": ..., "markdown": ...}` or `{"error": "extract_failed"}`.
 
 - `html`: `trafilatura.bare_extraction(html, url=url, output_format="markdown",

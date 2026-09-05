@@ -50,6 +50,30 @@ defmodule Druzhok.Fetch.WorkerTest do
     assert md =~ "Second page"
   end
 
+  test "an RSS feed becomes a dated headline list with plain-text summaries" do
+    rss = File.read!(Path.join(@fixtures, "feed.rss"))
+    assert {:ok, %{title: title, markdown: md}} = Worker.extract(:feed, "https://koleso.example/rss", rss)
+
+    assert title == "Колесо — новости велоспорта"
+    assert md =~ "# Колесо — новости велоспорта"
+    assert md =~ "[Десять ошибок при покупке первого велосипеда](https://koleso.example/articles/1)"
+    assert md =~ "2026-09-05"
+    assert md =~ "размер рамы, тип тормозов"
+    refute md =~ "<b>"
+    refute md =~ "<img"
+    assert md =~ "[Зимняя резина для велосипеда: шипы или нет](https://koleso.example/articles/3)"
+  end
+
+  test "an Atom feed is read the same way" do
+    atom = File.read!(Path.join(@fixtures, "feed.atom"))
+    assert {:ok, %{title: "Koleso Engineering Blog", markdown: md}} = Worker.extract(:feed, "https://blog.koleso.example/atom", atom)
+
+    assert md =~ "[Measuring spoke tension with a phone](https://blog.koleso.example/spoke-tension)"
+    assert md =~ "[Why hub gears fail in the cold](https://blog.koleso.example/hub-cold)"
+    assert md =~ "Old grease thickens"
+    refute md =~ "<p>"
+  end
+
   test "plain text is passed through" do
     assert {:ok, %{markdown: "hello\nworld"}} = Worker.extract(:text, "https://x.example/a.txt", "hello\nworld")
   end

@@ -55,5 +55,6 @@ defmodule Druzhok.Fetch do
 
   defp kind("application/pdf"), do: :pdf
   defp kind("text/plain"), do: :text
+  defp kind(type) when type in ["application/rss+xml", "application/atom+xml", "application/xml", "text/xml"], do: :feed
   defp kind(_), do: :html
 end

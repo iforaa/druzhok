@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0" xmlns:dc="http://purl.org/dc/elements/1.1/">
+  <channel>
+    <title>Колесо — новости велоспорта</title>
+    <link>https://koleso.example/</link>
+    <description>Всё о велосипедах</description>
+    <item>
+      <title>Десять ошибок при покупке первого велосипеда</title>
+      <link>https://koleso.example/articles/1</link>
+      <pubDate>Sat, 05 Sep 2026 10:00:00 +0000</pubDate>
+      <description><![CDATA[<p>Разбираем самые частые промахи новичков: <b>размер рамы</b>, тип тормозов и переплата за подвеску.</p><img src="x.png">]]></description>
+    </item>
+    <item>
+      <title>Планетарная втулка против кассеты</title>
+      <link>https://koleso.example/articles/2</link>
+      <pubDate>Fri, 04 Sep 2026 09:30:00 +0000</pubDate>
+      <description>Что выбрать для города и почему втулка служит дольше.</description>
+    </item>
+    <item>
+      <title>Зимняя резина для велосипеда: шипы или нет</title>
+      <link>https://koleso.example/articles/3</link>
+    </item>
+  </channel>
+</rss>

@@ -13,10 +13,11 @@ defmodule Druzhok.Fetch.HTTP do
   @connect_timeout 10_000
   @deadline_ms 30_000
   @max_body 5 * 1024 * 1024
-  @readable ~w(text/html application/xhtml+xml text/plain application/pdf)
+  @readable ~w(text/html application/xhtml+xml text/plain application/pdf
+               application/rss+xml application/atom+xml application/xml text/xml)
   @headers [
     {"user-agent", "Mozilla/5.0 (compatible; Druzhok/1.0; +https://druzhok.oldey.dev)"},
-    {"accept", "text/html,application/xhtml+xml,application/pdf,text/plain;q=0.8,*/*;q=0.1"},
+    {"accept", "text/html,application/xhtml+xml,application/pdf,application/rss+xml,application/atom+xml,application/xml,text/plain;q=0.8,*/*;q=0.1"},
     {"accept-language", "ru,en;q=0.8"},
     {"accept-encoding", "identity"}
   ]

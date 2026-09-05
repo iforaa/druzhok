@@ -54,6 +54,16 @@ defmodule Druzhok.Fetch.HTTPTest do
     assert {:error, :unreachable} = get(base <> "/leave2", resolver: only_local)
   end
 
+  test "feeds are readable by content type", %{bypass: bypass, base: base} do
+    for type <- ["application/rss+xml", "application/atom+xml", "application/xml", "text/xml"] do
+      Bypass.expect_once(bypass, "GET", "/feed", fn conn ->
+        conn |> Plug.Conn.put_resp_content_type(type) |> Plug.Conn.resp(200, "<rss/>")
+      end)
+
+      assert {:ok, %{content_type: ^type, body: "<rss/>"}} = get(base <> "/feed")
+    end
+  end
+
   test "a content type it cannot read is refused", %{bypass: bypass, base: base} do
     Bypass.expect_once(bypass, "GET", "/bin", fn conn ->
       conn |> Plug.Conn.put_resp_content_type("application/octet-stream") |> Plug.Conn.resp(200, "0000")

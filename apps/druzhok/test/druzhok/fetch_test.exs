@@ -32,6 +32,15 @@ defmodule Druzhok.FetchTest do
   end
 
   @tag :fetch_worker
+  test "an RSS feed is read as a headline list", %{bypass: bypass, base: base} do
+    serve(bypass, "/rss", "application/rss+xml", File.read!(Path.join(@fixtures, "feed.rss")))
+
+    assert {:ok, page} = fetch(base <> "/rss")
+    assert page.title == "Колесо — новости велоспорта"
+    assert page.markdown =~ "[Планетарная втулка против кассеты](https://koleso.example/articles/2)"
+  end
+
+  @tag :fetch_worker
   test "a PDF is read by content type, whatever the URL says", %{bypass: bypass, base: base} do
     serve(bypass, "/download", "application/pdf", File.read!(Path.join(@fixtures, "report.pdf")))
     assert {:ok, %{title: "Quarterly Report Q3", markdown: md}} = fetch(base <> "/download")
