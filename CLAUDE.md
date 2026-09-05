@@ -71,10 +71,12 @@ HERMES_BIN=$PWD/hermes-agent/.venv/bin/hermes DATABASE_PATH=data/druzhok.db mix 
 ## Server (KZ, PS Cloud Almaty)
 
 ```bash
+# ~/druzhok on the box is an rsync target (symlink to /data/home-ubuntu/druzhok-new), not a git checkout
+rsync -az --delete --exclude=_build --exclude=deps apps config ops mix.exs mix.lock .tool-versions ubuntu@195.49.213.8:~/druzhok/
 ssh ubuntu@195.49.213.8
-cd ~/druzhok && git pull
-. ~/.asdf/asdf.sh && MIX_ENV=prod mix compile
-DATABASE_PATH=/data/druzhok/druzhok.db MIX_ENV=prod mix ecto.migrate
+. ~/.asdf/asdf.sh; set -a; . /etc/druzhok/druzhok.env; set +a
+cd ~/druzhok && MIX_ENV=prod mix compile
+MIX_ENV=prod mix ecto.migrate          # DATABASE_PATH comes from druzhok.env
 sudo systemctl restart druzhok
 ```
 
