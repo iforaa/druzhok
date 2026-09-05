@@ -72,6 +72,9 @@ case "$cmd" in
     # Druzhok (CAP_DAC_OVERRIDE) may have created/rewritten files as its own
     # user; hand the whole tree back to the bot before it runs.
     chown -R "$user:$user" "$root"
+    # The nft set is empty after an nftables reload (reboot, bootstrap): with
+    # no uids in it every bot has open egress, so re-add on every start.
+    nft_add
     systemctl "$cmd" "$unit"
     ;;
   stop)

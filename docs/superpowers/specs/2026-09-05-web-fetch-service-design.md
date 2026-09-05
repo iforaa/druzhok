@@ -1,6 +1,6 @@
 # Web fetch service
 
-Date: 2026-09-05. Status: **designed**. Depends on ruoc-gateway
+Date: 2026-09-05. Status: **built**, deployed 2026-09-05. Depends on ruoc-gateway
 `docs/superpowers/specs/2026-09-05-page-fetch-design.md`.
 
 Hermes's `web_extract` tool posts `/v2/scrape` to druzhok and gets a 404, so
