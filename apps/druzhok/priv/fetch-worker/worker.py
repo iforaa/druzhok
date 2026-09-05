@@ -14,8 +14,17 @@ import struct
 import sys
 
 import trafilatura
+from lxml import html as lxml_html
+from urllib.parse import urljoin
 
 MAX_CHARS = 200_000
+
+# A listing page (a feed, a category, a front page) is a set of linked
+# headlines, which article extractors treat as boilerplate and drop. When the
+# extraction lost at least this many of the page's headings, they are appended
+# as a linked list so "what are the top stories" can still be answered.
+MIN_DROPPED_HEADINGS = 3
+MAX_HEADINGS = 60
 
 
 def read_message(stream):
@@ -43,6 +52,34 @@ def html_title(html):
     return re.sub(r"\s+", " ", m.group(1)).strip()
 
 
+def linked_headings(html, url):
+    """(title, absolute href) for every h1-h3 whose text is a link."""
+    try:
+        tree = lxml_html.fromstring(html)
+    except Exception:  # noqa: BLE001 — unparsable markup, no appendix
+        return []
+    out, seen = [], set()
+    for node in tree.iter("h1", "h2", "h3"):
+        link = node if node.tag == "a" else node.find(".//a")
+        if link is None or not link.get("href"):
+            continue
+        title = re.sub(r"\s+", " ", node.text_content()).strip()
+        href = urljoin(url, link.get("href"))
+        if len(title) < 8 or href in seen:
+            continue
+        seen.add(href)
+        out.append((title, href))
+    return out[:MAX_HEADINGS]
+
+
+def headline_appendix(html, url, text):
+    headings = [(t, h) for t, h in linked_headings(html, url) if t not in text]
+    if len(headings) < MIN_DROPPED_HEADINGS:
+        return ""
+    lines = "\n".join(f"- [{t}]({h})" for t, h in headings)
+    return f"\n\n## Заголовки на странице\n\n{lines}\n"
+
+
 def extract_html(url, body):
     html = body.decode("utf-8", errors="replace")
     text = trafilatura.extract(
@@ -59,6 +96,7 @@ def extract_html(url, body):
     title = (meta.title if meta and meta.title else "") or html_title(html)
     if title and not text.lstrip().startswith("#"):
         text = f"# {title}\n\n{text}"
+    text += headline_appendix(html, url, text)
     return {"title": title, "markdown": text}
 
 

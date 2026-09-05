@@ -51,3 +51,30 @@ defmodule Druzhok.Fetch.WorkerTest do
     assert {:ok, %{markdown: "again"}} = Worker.extract(:text, "u", "again")
   end
 end
+
+defmodule Druzhok.Fetch.WorkerListingTest do
+  use ExUnit.Case, async: false
+  @moduletag :fetch_worker
+
+  alias Druzhok.Fetch.Worker
+
+  @fixtures Path.expand("../../fixtures/fetch", __DIR__)
+
+  # Article extractors drop card headlines on a listing page; the worker adds
+  # them back as a linked list so "what are the top stories" can be answered.
+  test "a listing page keeps its headlines as links" do
+    html = File.read!(Path.join(@fixtures, "listing.html"))
+    assert {:ok, %{markdown: md}} = Worker.extract(:html, "https://koleso.example/articles/", html)
+
+    assert md =~ "[Десять ошибок при покупке первого велосипеда](https://koleso.example/articles/1)"
+    assert md =~ "[Планетарная втулка против кассеты](https://koleso.example/articles/2)"
+    assert md =~ "[Обзор фонарей до трёх тысяч рублей](https://koleso.example/articles/5)"
+    refute md =~ "Войти"
+  end
+
+  test "an article page gets no headline appendix" do
+    html = File.read!(Path.join(@fixtures, "article.html"))
+    assert {:ok, %{markdown: md}} = Worker.extract(:html, "https://koleso.example/bike", html)
+    refute md =~ "Заголовки на странице"
+  end
+end
