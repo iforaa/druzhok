@@ -179,10 +179,16 @@ defmodule Druzhok.ManagerBotTest do
 
     TelegramStub.push_update(stub, managed_bot_update(555, "kot_1a2b_bot"))
 
+    # The creator sees a progress message at once, which is edited into the result.
+    progress = TelegramStub.await_call(stub, "sendMessage", &(&1["text"] =~ "Создаю @kot_1a2b_bot"))
+    assert progress["chat_id"] == @owner
+    assert progress["text"] =~ "⏳"
+
     assert TelegramStub.await_call(stub, "getManagedBotToken", &(&1["user_id"] == 555), 10_000)
-    done = TelegramStub.await_call(stub, "sendMessage", &(&1["text"] =~ "создан и запущен"), 15_000)
+    done = TelegramStub.await_call(stub, "editMessageText", &(&1["text"] =~ "создан и запущен"), 15_000)
     assert done["chat_id"] == @owner
     assert done["text"] =~ "https://t.me/kot_1a2b_bot"
+    refute Enum.any?(sent_texts(stub), &(&1 =~ "создан и запущен"))
 
     inst = Repo.get_by!(Instance, name: "kot_1a2b")
     assert inst.telegram_token == "555NEWBOT"
@@ -202,9 +208,17 @@ defmodule Druzhok.ManagerBotTest do
   test "managed_bot without a prior session still provisions, defaulting to Russian", %{stub: stub, data_root: root} do
     TelegramStub.set_managed_bot_token(stub, "556NEWBOT")
     cleanup_instance("zhora_ff00")
+    Application.put_env(:druzhok, :provision_progress_tick_ms, 5)
+    on_exit(fn -> Application.delete_env(:druzhok, :provision_progress_tick_ms) end)
 
     TelegramStub.push_update(stub, managed_bot_update(556, "zhora_ff00_bot"))
-    TelegramStub.await_call(stub, "sendMessage", &(&1["text"] =~ "создан и запущен"), 15_000)
+    TelegramStub.await_call(stub, "editMessageText", &(&1["text"] =~ "создан и запущен"), 15_000)
+
+    # The ticker advanced the checklist and stopped before the result was written.
+    edits = TelegramStub.calls(stub, "editMessageText") |> Enum.map(& &1["text"])
+    assert Enum.any?(edits, &(&1 =~ "✅ Выращиваю нейроны"))
+    Process.sleep(200)
+    assert TelegramStub.calls(stub, "editMessageText") |> List.last() |> Map.fetch!("text") =~ "создан и запущен"
 
     inst = Repo.get_by!(Instance, name: "zhora_ff00")
     assert inst.language == "ru"
@@ -218,7 +232,7 @@ defmodule Druzhok.ManagerBotTest do
 
     TelegramStub.push_update(stub, managed_bot_update(557, "ghost_bot"))
 
-    err = TelegramStub.await_call(stub, "sendMessage", &(&1["text"] =~ "Ошибка создания бота"), 10_000)
+    err = TelegramStub.await_call(stub, "editMessageText", &(&1["text"] =~ "Ошибка создания бота"), 10_000)
     assert err["text"] =~ "BOT_NOT_MANAGED"
     assert Repo.get_by(Instance, name: "ghost") == nil
   end

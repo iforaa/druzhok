@@ -331,25 +331,72 @@ defmodule Druzhok.ManagerBot do
     token = state.token
 
     Task.start(fn ->
-      try do
-        case Provisioner.provision(token, bot_id, bot_username, session) do
-          {:ok, _name, username} ->
-            msg = Onboarding.completion_message(username)
-            API.send_message(token, creator_id, msg)
+      progress = start_progress(token, creator_id, bot_username)
 
-          {:error, reason} ->
-            API.send_message(token, creator_id,
-              "Ошибка создания бота: #{inspect(reason)}\nПопробуй ещё раз.")
+      text =
+        try do
+          case Provisioner.provision(token, bot_id, bot_username, session) do
+            {:ok, _name, username} ->
+              Onboarding.completion_message(username)
+
+            {:error, reason} ->
+              "Ошибка создания бота: #{inspect(reason)}\nПопробуй ещё раз."
+          end
+        rescue
+          e ->
+            Logger.error("Provisioning crashed for @#{bot_username}: #{Exception.message(e)}")
+            "Ошибка создания бота. Попробуй ещё раз."
         end
-      rescue
-        e ->
-          Logger.error("Provisioning crashed for @#{bot_username}: #{Exception.message(e)}")
-          API.send_message(token, creator_id,
-            "Ошибка создания бота. Попробуй ещё раз.")
-      end
+
+      finish_progress(progress, token, creator_id, text)
     end)
 
     update_in(state, [:sessions], &Map.delete(&1, creator_id))
+  end
+
+  # Provisioning takes tens of seconds (ruoc account, linux user, unit start),
+  # so the creator gets one message right away that a ticker keeps editing
+  # through the checklist; the result is edited into that same message.
+  defp progress_tick_ms, do: Application.get_env(:druzhok, :provision_progress_tick_ms, 5_000)
+
+  defp start_progress(token, chat_id, bot_username) do
+    case API.send_message(token, chat_id, Onboarding.progress_message(bot_username, 0)) do
+      {:ok, %{"message_id" => message_id}} ->
+        ticker = spawn(fn -> progress_loop(token, chat_id, message_id, bot_username, 1) end)
+        %{message_id: message_id, ticker: ticker}
+
+      _ ->
+        nil
+    end
+  end
+
+  defp progress_loop(token, chat_id, message_id, bot_username, step) do
+    receive do
+      :stop -> :ok
+    after
+      progress_tick_ms() ->
+        edit_plain(token, chat_id, message_id, Onboarding.progress_message(bot_username, step))
+        progress_loop(token, chat_id, message_id, bot_username, step + 1)
+    end
+  end
+
+  defp finish_progress(nil, token, chat_id, text), do: API.send_message(token, chat_id, text)
+
+  defp finish_progress(%{message_id: message_id, ticker: ticker}, token, chat_id, text) do
+    # Wait for the ticker to exit so no in-flight edit lands after the result.
+    ref = Process.monitor(ticker)
+    send(ticker, :stop)
+
+    receive do
+      {:DOWN, ^ref, :process, _, _} -> :ok
+    after
+      10_000 -> Process.exit(ticker, :kill)
+    end
+
+    case edit_plain(token, chat_id, message_id, text) do
+      {:ok, _} -> :ok
+      _ -> API.send_message(token, chat_id, text)
+    end
   end
 
   # --- Helpers ---

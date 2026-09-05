@@ -99,6 +99,23 @@ defmodule Druzhok.ManagerBot.OnboardingTest do
     end
   end
 
+  describe "progress_message/2" do
+    test "step 0 shows only the first step pending" do
+      assert Onboarding.progress_message("kot_bot", 0) ==
+               "🥚 Создаю @kot_bot\n\n⏳ #{hd(Onboarding.provision_steps())}…"
+    end
+
+    test "later steps list the finished ones and clamp at the last step" do
+      last = length(Onboarding.provision_steps()) - 1
+      msg = Onboarding.progress_message("kot_bot", 2)
+      assert msg =~ "✅ #{Enum.at(Onboarding.provision_steps(), 0)}"
+      assert msg =~ "✅ #{Enum.at(Onboarding.provision_steps(), 1)}"
+      assert msg =~ "⏳ #{Enum.at(Onboarding.provision_steps(), 2)}…"
+      assert Onboarding.progress_message("kot_bot", 99) == Onboarding.progress_message("kot_bot", last)
+      assert length(String.split(Onboarding.progress_message("kot_bot", last), "\n")) == last + 3
+    end
+  end
+
   describe "my_bots_message/1" do
     test "empty list shows helpful text" do
       {text, buttons} = Onboarding.my_bots_message([])

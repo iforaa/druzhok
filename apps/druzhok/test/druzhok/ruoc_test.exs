@@ -75,6 +75,22 @@ defmodule Druzhok.RuocTest do
     assert {:error, "HTTP 403" <> _} = Ruoc.balance("ruoc_bot")
   end
 
+  describe "new_bot_grant_rubles/0" do
+    setup do
+      on_exit(fn -> Druzhok.Settings.set("new_bot_grant_rubles", "") end)
+    end
+
+    test "defaults to 50 and reads the setting; 0 disables, garbage falls back" do
+      assert Ruoc.new_bot_grant_rubles() == 50
+      Druzhok.Settings.set("new_bot_grant_rubles", "120")
+      assert Ruoc.new_bot_grant_rubles() == 120
+      Druzhok.Settings.set("new_bot_grant_rubles", "0")
+      assert Ruoc.new_bot_grant_rubles() == 0
+      Druzhok.Settings.set("new_bot_grant_rubles", "lots")
+      assert Ruoc.new_bot_grant_rubles() == 50
+    end
+  end
+
   describe "models/0" do
     test "maps the catalog with prices and caches it", %{stub: stub} do
       assert [%{id: "ruoc-flash", name: "GLM 5.3 Flash", price: %{input: "12", output: "38"}}, %{id: "ruoc-standard"}] =

@@ -24,6 +24,7 @@ defmodule Druzhok.Ruoc do
 
   @default_url "http://127.0.0.1:8787"
   @default_model "ruoc-flash"
+  @default_new_bot_grant_rubles 50
   @cache_ttl_ms 60_000
   @cache_key {__MODULE__, :models}
 
@@ -43,6 +44,20 @@ defmodule Druzhok.Ruoc do
 
   @doc "True when druzhok can provision accounts, i.e. the admin token is set."
   def configured?, do: admin_token() != nil
+
+  @doc """
+  Promo rubles granted to every newly created bot's account. Settings key
+  `new_bot_grant_rubles` (whole rubles; `0` disables); default 50. A stand-in
+  until druzhok users get real subscriptions.
+  """
+  def new_bot_grant_rubles do
+    with v when is_binary(v) <- setting("new_bot_grant_rubles"),
+         {n, ""} when n >= 0 <- Integer.parse(String.trim(v)) do
+      n
+    else
+      _ -> @default_new_bot_grant_rubles
+    end
+  end
 
   def default_model, do: @default_model
 

@@ -148,12 +148,27 @@ defmodule Druzhok.BotManagerLifecycleTest do
       assert inst.image_model == "ruoc-flash"
       assert [call | _] = Druzhok.RuocStub.calls(stub, "POST /admin/accounts") |> Enum.reverse()
       assert call.params["label"] == "druzhok:#{name}"
+      # Migration funds nothing; the owner already has a balance to move.
+      refute Map.has_key?(call.params, "grant_rubles")
 
       assert eventually(fn -> BotManager.status(name) == "active" end)
       assert File.read!(Path.join([root, name, "config.yaml"])) =~ ~s(default: "ruoc-flash")
 
       assert {:already_migrated, ^name} = BotManager.migrate_to_ruoc(name)
       assert {:error, :not_found} = BotManager.migrate_to_ruoc("no-such-bot")
+    end
+
+    test "create grants the configured promo to the new account", %{name: name, stub: stub} do
+      {:ok, _} = BotManager.create(name, %{model: "m", telegram_token: "1A"})
+      assert [%{params: %{"grant_rubles" => "50"}}] = Druzhok.RuocStub.calls(stub, "POST /admin/accounts")
+    end
+
+    test "create sends no grant when the promo is set to 0", %{name: name, stub: stub} do
+      Druzhok.Settings.set("new_bot_grant_rubles", "0")
+      on_exit(fn -> Druzhok.Settings.set("new_bot_grant_rubles", "") end)
+      {:ok, _} = BotManager.create(name, %{model: "m", telegram_token: "1A"})
+      assert [%{params: params}] = Druzhok.RuocStub.calls(stub, "POST /admin/accounts")
+      refute Map.has_key?(params, "grant_rubles")
     end
 
     test "migrate_to_ruoc leaves the row alone when the gateway refuses", %{name: name, stub: stub} do

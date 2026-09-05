@@ -103,6 +103,31 @@ defmodule Druzhok.ManagerBot.Onboarding do
     {text, keyboard, link}
   end
 
+  @provision_steps [
+    "Выращиваю нейроны",
+    "Загружаю сознание",
+    "Прикручиваю инструменты",
+    "Прививаю чувство юмора",
+    "Объясняю, кто тут главный",
+    "Наливаю кофе",
+    "Учу здороваться"
+  ]
+
+  @doc "The checklist a creator watches while their bot is provisioned, in order."
+  def provision_steps, do: @provision_steps
+
+  @doc """
+  Progress message with the first `step` items ticked and the next one
+  pending. Past the last step it keeps showing the last one, so a slow
+  provision never claims to be done early.
+  """
+  def progress_message(bot_username, step) do
+    step = min(step, length(@provision_steps) - 1)
+    {done, [current | _]} = Enum.split(@provision_steps, step)
+    lines = Enum.map(done, &"✅ #{&1}") ++ ["⏳ #{current}…"]
+    "🥚 Создаю @#{bot_username}\n\n" <> Enum.join(lines, "\n")
+  end
+
   def completion_message(bot_username) do
     "✅ Бот @#{bot_username} создан и запущен!\n→ Написать боту: https://t.me/#{bot_username}"
   end
