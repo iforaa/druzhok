@@ -71,7 +71,27 @@ defmodule DruzhokWebWeb.LlmFormat do
     end
   end
 
-  defp strip_images(messages) when is_list(messages) do
+  @doc "Text of the last message, capped at 500 chars, for the dashboard's request list."
+  def prompt_preview(%{"messages" => [_ | _] = msgs}) do
+    case msgs |> List.last() |> Map.get("content", "") do
+      text when is_binary(text) ->
+        String.slice(text, 0, 500)
+
+      parts when is_list(parts) ->
+        parts
+        |> Enum.filter(&(&1["type"] == "text"))
+        |> Enum.map_join(" ", &(&1["text"] || ""))
+        |> String.slice(0, 500)
+
+      _ ->
+        nil
+    end
+  end
+
+  def prompt_preview(_), do: nil
+
+  @doc "Drop image parts and flatten the message to text, for models that cannot see."
+  def strip_images(messages) when is_list(messages) do
     Enum.map(messages, fn msg ->
       case msg["content"] do
         parts when is_list(parts) ->
@@ -86,6 +106,8 @@ defmodule DruzhokWebWeb.LlmFormat do
       end
     end)
   end
+
+  def strip_images(other), do: other
 
   @doc """
   Extracts cost in cents from an OpenRouter response body (parsed map).

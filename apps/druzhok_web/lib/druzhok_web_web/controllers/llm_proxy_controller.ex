@@ -1,11 +1,21 @@
 defmodule DruzhokWebWeb.LlmProxyController do
   use DruzhokWebWeb, :controller
   alias DruzhokWebWeb.LlmFormat
+  alias DruzhokWebWeb.LlmProxy.Ruoc, as: RuocProxy
   alias Druzhok.{Budget, Usage, ModelCatalog}
   require Logger
 
   @default_image_model ModelCatalog.default_image_model()
   @default_image_gen_model ModelCatalog.default_image_gen_model()
+
+  # A bot with a ruoc key is served by ruoc-gateway; the rest of this module
+  # is the legacy OpenRouter path, kept until every bot has migrated.
+  defp ruoc?(instance), do: is_binary(instance.ruoc_api_key) and instance.ruoc_api_key != ""
+
+  def chat_completions(%{assigns: %{instance: %{ruoc_api_key: key} = instance}} = conn, _params)
+      when is_binary(key) and key != "" do
+    RuocProxy.chat(conn, instance)
+  end
 
   def chat_completions(conn, _params) do
     instance = conn.assigns.instance
@@ -200,20 +210,7 @@ defmodule DruzhokWebWeb.LlmProxyController do
       latency = System.monotonic_time(:millisecond) - started_at
       Budget.deduct(instance.id, cost_cents)
 
-      prompt_preview = case request_body["messages"] do
-        [_ | _] = msgs ->
-          content = msgs |> List.last() |> Map.get("content", "")
-          case content do
-            text when is_binary(text) -> String.slice(text, 0, 500)
-            parts when is_list(parts) ->
-              parts
-              |> Enum.filter(&(&1["type"] == "text"))
-              |> Enum.map_join(" ", &(&1["text"] || ""))
-              |> String.slice(0, 500)
-            _ -> nil
-          end
-        _ -> nil
-      end
+      prompt_preview = LlmFormat.prompt_preview(request_body)
 
       resp_preview = if response_preview, do: String.slice(response_preview, 0, 500), else: nil
 
@@ -248,6 +245,11 @@ defmodule DruzhokWebWeb.LlmProxyController do
   no labels, no quotation marks, no translation. If there is no intelligible \
   speech, output an empty string.\
   """
+
+  def audio_transcriptions(%{assigns: %{instance: %{ruoc_api_key: key} = instance}} = conn, _params)
+      when is_binary(key) and key != "" do
+    RuocProxy.transcribe(conn, instance)
+  end
 
   def audio_transcriptions(conn, _params) do
     or_key = LlmFormat.provider_key()
@@ -499,6 +501,9 @@ defmodule DruzhokWebWeb.LlmProxyController do
     cond do
       query == "" ->
         send_resp(conn, 400, Jason.encode!(%{success: false, error: "query is required"}))
+
+      ruoc?(conn.assigns.instance) ->
+        RuocProxy.search(conn, conn.assigns.instance, query, limit)
 
       true ->
         instance = conn.assigns.instance
