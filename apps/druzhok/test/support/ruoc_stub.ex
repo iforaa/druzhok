@@ -4,11 +4,11 @@ defmodule Druzhok.RuocStub do
   and the model catalog. Points `Druzhok.Ruoc` at it for the test and clears
   the model cache and settings on exit.
 
-  Core tests run outside a sandbox, so settings rows are removed in on_exit.
+  Configuration goes through app env, not settings rows, so the stub works
+  the same inside a web test's SQL sandbox and in a core test without one.
   """
 
   import ExUnit.Callbacks, only: [on_exit: 1]
-  alias Druzhok.{Repo, Settings}
 
   @admin_token "test-admin-token"
   @catalog_key "ruoc_catalog0000000000000000000000000000"
@@ -21,16 +21,16 @@ defmodule Druzhok.RuocStub do
     bypass = Bypass.open()
     base = "http://localhost:#{bypass.port}"
 
-    prev_url = Application.get_env(:druzhok, :ruoc_url)
-    Application.put_env(:druzhok, :ruoc_url, base)
-    Settings.set("ruoc_admin_token", @admin_token)
-    Settings.set("ruoc_admin_host", "admin.test")
-    Settings.set("ruoc_catalog_key", @catalog_key)
+    env = %{ruoc_url: base, ruoc_admin_token: @admin_token, ruoc_admin_host: "admin.test", ruoc_catalog_key: @catalog_key}
+    prev = Map.new(env, fn {k, _} -> {k, Application.get_env(:druzhok, k)} end)
+    for {k, v} <- env, do: Application.put_env(:druzhok, k, v)
     Druzhok.Ruoc.reset_cache()
 
     on_exit(fn ->
-      if prev_url, do: Application.put_env(:druzhok, :ruoc_url, prev_url), else: Application.delete_env(:druzhok, :ruoc_url)
-      for key <- Settings.ruoc_keys(), s = Repo.get_by(Settings, key: key), do: Repo.delete(s)
+      for {k, v} <- prev do
+        if v, do: Application.put_env(:druzhok, k, v), else: Application.delete_env(:druzhok, k)
+      end
+
       Druzhok.Ruoc.reset_cache()
     end)
 
@@ -82,6 +82,11 @@ defmodule Druzhok.RuocStub do
         "price" => %{"input_rub_per_million" => "210", "output_rub_per_million" => "660"}
       }
     ]
+  end
+
+  @doc "Unset one ruoc setting for the rest of the test."
+  def unset(key) when key in [:ruoc_admin_token, :ruoc_admin_host, :ruoc_catalog_key] do
+    Application.put_env(:druzhok, key, "")
   end
 
   @doc "Recorded calls to `route`: `[%{headers, params, path}]`, oldest first."

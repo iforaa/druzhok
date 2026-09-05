@@ -7,8 +7,9 @@ defmodule Druzhok.Ruoc do
   proxies the bot's traffic with it. Balance, prices and admission live over
   there; this module only asks.
 
-  Settings (dashboard) — env `RUOC_URL` overrides `ruoc_url` so tests can
-  point at Bypass:
+  Settings (dashboard rows); each is overridden by the app env of the same
+  name, which `config/runtime.exs` fills from `RUOC_URL`, `RUOC_ADMIN_HOST`,
+  `RUOC_ADMIN_TOKEN`, `RUOC_CATALOG_KEY`:
 
     * `ruoc_url`         — base for `/v1/*` and `/admin/*` (default loopback :8787)
     * `ruoc_admin_host`  — `Host` header on admin calls; the gateway serves
@@ -26,10 +27,19 @@ defmodule Druzhok.Ruoc do
   @cache_ttl_ms 60_000
   @cache_key {__MODULE__, :models}
 
-  def url, do: Application.get_env(:druzhok, :ruoc_url) || Settings.get("ruoc_url") || @default_url
-  def admin_host, do: Settings.get("ruoc_admin_host")
-  def admin_token, do: Settings.get("ruoc_admin_token")
-  def catalog_key, do: Settings.get("ruoc_catalog_key")
+  def url, do: setting("ruoc_url") || @default_url
+  def admin_host, do: setting("ruoc_admin_host")
+  def admin_token, do: setting("ruoc_admin_token")
+  def catalog_key, do: setting("ruoc_catalog_key")
+
+  # App env (from RUOC_* env vars or a test's put_env) wins over the settings
+  # row; a blank in either place counts as unset.
+  defp setting(key) do
+    case Application.get_env(:druzhok, String.to_atom(key)) do
+      v when is_binary(v) and v != "" -> v
+      _ -> Settings.get(key)
+    end
+  end
 
   @doc "True when druzhok can provision accounts, i.e. the admin token is set."
   def configured?, do: admin_token() != nil

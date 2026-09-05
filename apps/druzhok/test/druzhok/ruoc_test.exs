@@ -2,7 +2,7 @@ defmodule Druzhok.RuocTest do
   # async: false — app env and settings rows.
   use ExUnit.Case, async: false
 
-  alias Druzhok.{Ruoc, RuocStub, Settings}
+  alias Druzhok.{Ruoc, RuocStub}
 
   setup do
     %{stub: RuocStub.start()}
@@ -34,7 +34,7 @@ defmodule Druzhok.RuocTest do
     end
 
     test "fails without an admin token and without reaching the gateway", %{stub: stub} do
-      Settings.set("ruoc_admin_token", "")
+      RuocStub.unset(:ruoc_admin_token)
       refute Ruoc.configured?()
       assert {:error, "ruoc_admin_token is not set"} = Ruoc.create_account("x")
       assert RuocStub.calls(stub, "POST /admin/accounts") == []
@@ -94,7 +94,7 @@ defmodule Druzhok.RuocTest do
     end
 
     test "is empty without a catalog key", %{stub: stub} do
-      Settings.set("ruoc_catalog_key", "")
+      RuocStub.unset(:ruoc_catalog_key)
       assert Ruoc.models() == []
       assert RuocStub.calls(stub, "GET /v1/models") == []
     end
@@ -102,7 +102,7 @@ defmodule Druzhok.RuocTest do
 
   test "console_url/1 needs the admin host" do
     assert Ruoc.console_url("acct-1") == "https://admin.test/#/requests/acct-1"
-    Settings.set("ruoc_admin_host", "")
+    RuocStub.unset(:ruoc_admin_host)
     assert Ruoc.console_url("acct-1") == nil
   end
 
