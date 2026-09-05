@@ -158,17 +158,11 @@ defmodule Druzhok.BotManagerLifecycleTest do
       assert {:error, :not_found} = BotManager.migrate_to_ruoc("no-such-bot")
     end
 
-    test "create grants the configured promo to the new account", %{name: name, stub: stub} do
-      {:ok, _} = BotManager.create(name, %{model: "m", telegram_token: "1A"})
-      assert [%{params: %{"grant_rubles" => "50"}}] = Druzhok.RuocStub.calls(stub, "POST /admin/accounts")
-    end
-
-    test "create sends no grant when the promo is set to 0", %{name: name, stub: stub} do
-      Druzhok.Settings.set("new_bot_grant_rubles", "0")
-      on_exit(fn -> Druzhok.Settings.set("new_bot_grant_rubles", "") end)
+    test "create leaves funding to ruoc's default plan: no grant_rubles", %{name: name, stub: stub} do
       {:ok, _} = BotManager.create(name, %{model: "m", telegram_token: "1A"})
       assert [%{params: params}] = Druzhok.RuocStub.calls(stub, "POST /admin/accounts")
       refute Map.has_key?(params, "grant_rubles")
+      refute Map.has_key?(params, "plan")
     end
 
     test "migrate_to_ruoc leaves the row alone when the gateway refuses", %{name: name, stub: stub} do

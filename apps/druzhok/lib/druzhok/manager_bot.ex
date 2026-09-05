@@ -228,13 +228,16 @@ defmodule Druzhok.ManagerBot do
         order_by: [desc: i.active, asc: i.name])
     )
     |> Enum.map(fn inst ->
-      balance =
+      {balance, subscription} =
         case inst.ruoc_api_key && Druzhok.Ruoc.balance(inst.ruoc_api_key) do
-          {:ok, %{balance_rub: rub}} -> rub
-          _ -> nil
+          {:ok, %{balance_rub: rub, subscription: sub}} -> {rub, sub}
+          _ -> {nil, nil}
         end
 
-      inst |> Map.from_struct() |> Map.put(:ruoc_balance_rub, balance)
+      inst
+      |> Map.from_struct()
+      |> Map.put(:ruoc_balance_rub, balance)
+      |> Map.put(:ruoc_subscription, subscription)
     end)
 
     {text, buttons} = Onboarding.my_bots_message(bots)

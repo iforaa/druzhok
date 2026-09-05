@@ -24,11 +24,30 @@ defmodule DruzhokWebWeb.SettingsTabTest do
 
     assert html =~ "Balance (ruoc)"
     assert html =~ "12.50 ₽"
+    assert html =~ "No plan"
     assert html =~ "https://admin.test/#/requests/acct-77"
     assert html =~ "GLM 5.3 Flash (12/38 ₽/M)"
     assert html =~ "GLM 5.3 (210/660 ₽/M)"
     refute html =~ "Migrate to ruoc"
     refute html =~ "Daily budget"
+    stop(view)
+  end
+
+  test "a subscribed bot shows its plan and renewal date", %{conn: conn, stub: stub} do
+    Bypass.stub(stub.bypass, "GET", "/v1/balance", fn conn ->
+      Druzhok.RuocStub.reply(conn, 200, %{
+        "balance_nanorub" => 42_000_000_000, "balance_rub" => "42 RUB",
+        "subscription" => %{"plan_name" => "Старт", "credit_nanorub" => 50_000_000_000, "period_days" => 30,
+                            "status" => "active", "current_period_end" => "2026-10-05T12:00:00+05:00"}
+      })
+    end)
+    inst = create_instance(%{active: false, ruoc_account_id: "acct-78", ruoc_api_key: "ruoc_bot78", model: "ruoc-flash"})
+
+    {:ok, view, _} = live(conn, "/instances/#{inst.name}")
+    html = render(view)
+    assert html =~ "Plan: Старт, 50.00 ₽ / 30 d"
+    assert html =~ "renews"
+    assert html =~ "2026-10-05"
     stop(view)
   end
 

@@ -2,7 +2,7 @@ defmodule DruzhokWebWeb.SettingsLive do
   use DruzhokWebWeb, :live_view
 
   @keys ~w(openrouter_api_key openai_api_key manager_bot_token operator_telegram_id
-           ruoc_url ruoc_admin_host ruoc_admin_token ruoc_catalog_key new_bot_grant_rubles)
+           ruoc_url ruoc_admin_host ruoc_admin_token ruoc_catalog_key)
   @secret ~w(openrouter_api_key openai_api_key manager_bot_token ruoc_admin_token ruoc_catalog_key)
 
   @impl true
@@ -38,8 +38,7 @@ defmodule DruzhokWebWeb.SettingsLive do
       ruoc_url: Druzhok.Settings.get("ruoc_url") || "http://127.0.0.1:8787",
       ruoc_admin_host: Druzhok.Settings.get("ruoc_admin_host") || "",
       ruoc_admin_token: mask(Druzhok.Settings.get("ruoc_admin_token")),
-      ruoc_catalog_key: mask(Druzhok.Settings.get("ruoc_catalog_key")),
-      new_bot_grant_rubles: Druzhok.Settings.get("new_bot_grant_rubles") || "50"
+      ruoc_catalog_key: mask(Druzhok.Settings.get("ruoc_catalog_key"))
     )
   end
 
@@ -80,12 +79,7 @@ defmodule DruzhokWebWeb.SettingsLive do
             <.field name="ruoc_admin_host" label="Admin host (Host header + console link)" value={@ruoc_admin_host} placeholder="admin.example.com" mono />
             <.field name="ruoc_admin_token" label="Admin token" value={@ruoc_admin_token} placeholder="Paste ADMIN_TOKEN" mono />
             <.field name="ruoc_catalog_key" label="Catalog key (a never-funded bot key for GET /v1/models)" value={@ruoc_catalog_key} placeholder="ruoc_…" mono />
-            <p class="text-[10px] text-muted">Every new bot gets its own ruoc account; a bot without one is refused by the proxy until migrated from its Settings tab.</p>
-          </.card>
-
-          <.card title="New bots">
-            <.field name="new_bot_grant_rubles" label="Starting promo balance, ₽ (0 = none)" value={@new_bot_grant_rubles} placeholder="50" mono />
-            <p class="text-[10px] text-muted">Granted to the bot's ruoc account when it is created. A stand-in until users have subscriptions.</p>
+            <p class="text-[10px] text-muted">Every new bot gets its own ruoc account and joins the default plan set on the ruoc console's Plans page; a bot without an account is refused by the proxy until migrated from its Settings tab.</p>
           </.card>
 
           <div class="flex items-center gap-3">

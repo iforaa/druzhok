@@ -41,7 +41,6 @@ defmodule DruzhokWebWeb.SettingsLiveTest do
         "ruoc_admin_token" => masked,
         "ruoc_catalog_key" => "ruoc_catalogkey",
         "operator_telegram_id" => "4242",
-        "new_bot_grant_rubles" => "75",
         "openrouter_api_key" => "",
         "openai_api_key" => "",
         "manager_bot_token" => ""
@@ -53,8 +52,6 @@ defmodule DruzhokWebWeb.SettingsLiveTest do
     assert Settings.get("ruoc_admin_token") == "keepme"
     assert Settings.get("ruoc_catalog_key") == "ruoc_catalogkey"
     assert Settings.operator_telegram_id() == "4242"
-    assert Druzhok.Ruoc.new_bot_grant_rubles() == 75
-    Settings.set("new_bot_grant_rubles", "")
     assert Settings.get("openrouter_api_key") == nil
     GenServer.stop(view.pid, :normal, 5_000)
   end

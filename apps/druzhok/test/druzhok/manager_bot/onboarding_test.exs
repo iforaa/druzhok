@@ -155,6 +155,17 @@ defmodule Druzhok.ManagerBot.OnboardingTest do
       assert text =~ "*z* — баланс —"
     end
 
+    test "a subscribed bot shows its plan and the renewal date" do
+      sub = %{plan_name: "Старт", credit_rub: "50.00", period_days: 30, status: "active", period_end: ~U[2026-10-05 07:00:00Z]}
+      bots = [%{name: "z", active: true, trigger_name: nil, ruoc_balance_rub: "42.00", ruoc_subscription: sub}]
+      {text, _} = Onboarding.my_bots_message(bots)
+      assert text =~ "*z* — баланс 42.00 ₽ · план «Старт», продление 5 окт"
+
+      bots = [%{name: "z", active: true, trigger_name: nil, ruoc_balance_rub: "42.00", ruoc_subscription: %{sub | status: "cancelled"}}]
+      {text, _} = Onboarding.my_bots_message(bots)
+      assert text =~ "*z* — баланс 42.00 ₽ · план «Старт» отменён, до 5 окт"
+    end
+
     test "a bot with no balance yet shows a dash" do
       bots = [%{name: "vasya", active: true, trigger_name: nil}]
       {text, _buttons} = Onboarding.my_bots_message(bots)

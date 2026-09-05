@@ -54,8 +54,11 @@ Spec: `docs/superpowers/specs/2026-09-05-ruoc-gateway-migration-design.md`.
 
 ruoc-gateway settings (dashboard Settings page, or `RUOC_URL` / `RUOC_ADMIN_HOST` /
 `RUOC_ADMIN_TOKEN` / `RUOC_CATALOG_KEY` env): `BotManager.create/2` provisions a ruoc account
-per bot; `BotManager.migrate_to_ruoc/1` (settings-tab button or `mix druzhok.migrate_ruoc <name>`)
-moves an old row. Funding is manual in the ruoc console. The model catalog is ruoc's
+per bot, which joins the **default plan** set on the ruoc console's Plans page (ruoc issues the
+plan's credit each period, no payment gateway yet); `BotManager.migrate_to_ruoc/1` (settings-tab
+button or `mix druzhok.migrate_ruoc <name>`) moves an old row, unfunded. Extra funding and plan
+changes happen in the ruoc console; the manager bot and the settings tab only show plan + renewal
+date from `GET /v1/balance` (`Druzhok.Ruoc.balance/1`). The model catalog is ruoc's
 `GET /v1/models` (`Druzhok.Ruoc.models/0`, default `ruoc-flash`).
 
 OpenRouter responses have leading whitespace — `String.trim()` before `Jason.decode()`.

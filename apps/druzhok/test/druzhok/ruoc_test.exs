@@ -75,20 +75,23 @@ defmodule Druzhok.RuocTest do
     assert {:error, "HTTP 403" <> _} = Ruoc.balance("ruoc_bot")
   end
 
-  describe "new_bot_grant_rubles/0" do
-    setup do
-      on_exit(fn -> Druzhok.Settings.set("new_bot_grant_rubles", "") end)
-    end
+  test "balance/1 carries the subscription when the account has one", %{stub: stub} do
+    assert {:ok, %{subscription: nil}} = Ruoc.balance("ruoc_bot")
 
-    test "defaults to 50 and reads the setting; 0 disables, garbage falls back" do
-      assert Ruoc.new_bot_grant_rubles() == 50
-      Druzhok.Settings.set("new_bot_grant_rubles", "120")
-      assert Ruoc.new_bot_grant_rubles() == 120
-      Druzhok.Settings.set("new_bot_grant_rubles", "0")
-      assert Ruoc.new_bot_grant_rubles() == 0
-      Druzhok.Settings.set("new_bot_grant_rubles", "lots")
-      assert Ruoc.new_bot_grant_rubles() == 50
-    end
+    Bypass.expect_once(stub.bypass, "GET", "/v1/balance", fn conn ->
+      RuocStub.reply(conn, 200, %{
+        "balance_nanorub" => 42_000_000_000,
+        "balance_rub" => "42 RUB",
+        "subscription" => %{
+          "plan_id" => "p1", "plan_name" => "Старт", "credit_nanorub" => 50_000_000_000, "period_days" => 30,
+          "status" => "active", "current_period_end" => "2026-10-05T12:00:00+05:00"
+        }
+      })
+    end)
+
+    assert {:ok, %{balance_rub: "42.00", subscription: sub}} = Ruoc.balance("ruoc_bot")
+    assert sub == %{plan_name: "Старт", credit_rub: "50.00", period_days: 30, status: "active",
+                    period_end: ~U[2026-10-05 07:00:00Z]}
   end
 
   describe "models/0" do

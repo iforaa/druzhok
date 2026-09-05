@@ -13,9 +13,10 @@ defmodule Druzhok.BotManager do
     end
   end
 
-  # Once ruoc-gateway is configured every new bot gets its own account there,
-  # funded with the starting promo, before anything is written locally, so a
-  # failed provision leaves no row.
+  # Once ruoc-gateway is configured every new bot gets its own account there
+  # before anything is written locally, so a failed provision leaves no row.
+  # Funding is ruoc's business: the account joins the operator's default plan
+  # on creation and its first period is granted there.
   defp provision_ruoc(name, opts) do
     cond do
       opts[:ruoc_api_key] ->
@@ -24,7 +25,7 @@ defmodule Druzhok.BotManager do
       Druzhok.Ruoc.configured?() ->
         label = ruoc_label(name, opts[:owner_telegram_id])
 
-        case Druzhok.Ruoc.create_account(label, starting_grant()) do
+        case Druzhok.Ruoc.create_account(label) do
           {:ok, %{account_id: id, api_key: key}} ->
             {:ok,
              opts
@@ -161,13 +162,6 @@ defmodule Druzhok.BotManager do
 
   # What the ruoc console shows for the account: the bot name and, when
   # known, the owner's Telegram id so a top-up request can be matched.
-  defp starting_grant do
-    case Druzhok.Ruoc.new_bot_grant_rubles() do
-      0 -> nil
-      rubles -> rubles
-    end
-  end
-
   def ruoc_label(name, nil), do: "druzhok:" <> name
   def ruoc_label(name, owner_id), do: "druzhok:#{name} tg:#{owner_id}"
 

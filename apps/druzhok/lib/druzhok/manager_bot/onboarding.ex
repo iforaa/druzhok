@@ -171,11 +171,28 @@ defmodule Druzhok.ManagerBot.Onboarding do
   defp bot_line(bot) do
     status = if bot[:active], do: "🟢", else: "🔴"
 
-    "#{status} *#{bot.name}* — #{format_balance(bot[:ruoc_balance_rub])}"
+    "#{status} *#{bot.name}* — #{format_balance(bot[:ruoc_balance_rub])}#{format_plan(bot[:ruoc_subscription])}"
   end
 
   defp format_balance(nil), do: "баланс —"
   defp format_balance(rub), do: "баланс #{rub} ₽"
+
+  defp format_plan(%{plan_name: name, status: "active", period_end: %DateTime{} = at}),
+    do: " · план «#{name}», продление #{short_date(at)}"
+
+  defp format_plan(%{plan_name: name, status: "cancelled", period_end: %DateTime{} = at}),
+    do: " · план «#{name}» отменён, до #{short_date(at)}"
+
+  defp format_plan(%{plan_name: name}), do: " · план «#{name}»"
+  defp format_plan(_), do: ""
+
+  @months ~w(янв фев мар апр мая июн июл авг сен окт ноя дек)
+
+  @doc "Day and short month in Moscow time: `5 окт`."
+  def short_date(%DateTime{} = at) do
+    local = DateTime.shift_zone!(at, "Europe/Moscow")
+    "#{local.day} #{Enum.at(@months, local.month - 1)}"
+  end
 
   defp bot_handle(bot) do
     case bot[:trigger_name] do

@@ -268,7 +268,12 @@ defmodule Druzhok.ManagerBotTest do
 
       Bypass.stub(ruoc.bypass, "GET", "/v1/balance", fn conn ->
         case Plug.Conn.get_req_header(conn, "authorization") do
-          ["Bearer ruoc_own2"] -> Druzhok.RuocStub.reply(conn, 200, %{"balance_nanorub" => 250_000_000, "balance_rub" => "0.25 RUB"})
+          ["Bearer ruoc_own2"] ->
+            Druzhok.RuocStub.reply(conn, 200, %{
+              "balance_nanorub" => 250_000_000, "balance_rub" => "0.25 RUB",
+              "subscription" => %{"plan_name" => "Старт", "credit_nanorub" => 50_000_000_000, "period_days" => 30,
+                                  "status" => "active", "current_period_end" => "2026-10-05T12:00:00+05:00"}
+            })
           _ -> Druzhok.RuocStub.reply(conn, 200, %{"balance_nanorub" => 1_000_000_000, "balance_rub" => "1 RUB"})
         end
       end)
@@ -277,7 +282,7 @@ defmodule Druzhok.ManagerBotTest do
       params = TelegramStub.await_call(stub, "sendMessage", &(&1["text"] =~ "Твои боты"))
       assert params["parse_mode"] == "Markdown"
       assert params["text"] =~ "🟢 *own1* — баланс 1.00 ₽"
-      assert params["text"] =~ "🟢 *own2* — баланс 0.25 ₽"
+      assert params["text"] =~ "🟢 *own2* — баланс 0.25 ₽ · план «Старт», продление 5 окт"
       rows = Jason.decode!(params["reply_markup"])["inline_keyboard"]
       assert length(rows) == 2
       [[open, del]] = Enum.take(rows, 1)

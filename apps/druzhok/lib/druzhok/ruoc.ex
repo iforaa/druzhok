@@ -24,7 +24,6 @@ defmodule Druzhok.Ruoc do
 
   @default_url "http://127.0.0.1:8787"
   @default_model "ruoc-flash"
-  @default_new_bot_grant_rubles 50
   @cache_ttl_ms 60_000
   @cache_key {__MODULE__, :models}
 
@@ -44,20 +43,6 @@ defmodule Druzhok.Ruoc do
 
   @doc "True when druzhok can provision accounts, i.e. the admin token is set."
   def configured?, do: admin_token() != nil
-
-  @doc """
-  Promo rubles granted to every newly created bot's account. Settings key
-  `new_bot_grant_rubles` (whole rubles; `0` disables); default 50. A stand-in
-  until druzhok users get real subscriptions.
-  """
-  def new_bot_grant_rubles do
-    with v when is_binary(v) <- setting("new_bot_grant_rubles"),
-         {n, ""} when n >= 0 <- Integer.parse(String.trim(v)) do
-      n
-    else
-      _ -> @default_new_bot_grant_rubles
-    end
-  end
 
   def default_model, do: @default_model
 
@@ -99,15 +84,17 @@ defmodule Druzhok.Ruoc do
   # --- Bot-facing API --------------------------------------------------------
 
   @doc """
-  Balance for a bot key. `{:ok, %{balance_rub: "12.50", balance_nanorub: int}}` —
-  `balance_rub` is a plain two-decimal string (the gateway sends "12.5 RUB").
+  Balance for a bot key. `{:ok, %{balance_rub: "12.50", balance_nanorub: int, subscription: sub | nil}}` —
+  `balance_rub` is a plain two-decimal string (the gateway sends "12.5 RUB"), and
+  `subscription` is `%{plan_name, credit_rub, period_days, status, period_end}` when
+  the account is on a plan.
   """
   def balance(api_key) do
     case Client.get("/v1/balance", api_key) do
       {:ok, 200, _headers, body} ->
         case Jason.decode(body) do
-          {:ok, %{"balance_nanorub" => nano}} when is_integer(nano) ->
-            {:ok, %{balance_rub: format_rub(nano), balance_nanorub: nano}}
+          {:ok, %{"balance_nanorub" => nano} = payload} when is_integer(nano) ->
+            {:ok, %{balance_rub: format_rub(nano), balance_nanorub: nano, subscription: subscription(payload["subscription"])}}
 
           _ ->
             {:error, "unexpected balance payload"}
@@ -120,6 +107,24 @@ defmodule Druzhok.Ruoc do
         {:error, inspect(reason)}
     end
   end
+
+  defp subscription(%{"plan_name" => name, "status" => status} = sub) do
+    period_end =
+      case DateTime.from_iso8601(sub["current_period_end"] || "") do
+        {:ok, dt, _} -> DateTime.truncate(dt, :second)
+        _ -> nil
+      end
+
+    %{
+      plan_name: name,
+      credit_rub: format_rub(sub["credit_nanorub"] || 0),
+      period_days: sub["period_days"],
+      status: status,
+      period_end: period_end
+    }
+  end
+
+  defp subscription(_), do: nil
 
   # Nanorubles to a two-decimal string, rounding half up, without floats.
   defp format_rub(nano) do

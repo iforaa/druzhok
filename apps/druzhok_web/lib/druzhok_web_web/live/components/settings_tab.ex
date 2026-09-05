@@ -21,12 +21,14 @@ defmodule DruzhokWebWeb.Live.Components.SettingsTab do
 
     migrated = migrated?(instance)
 
-    balance =
+    {balance, subscription} =
       if migrated do
         case Ruoc.balance(instance[:ruoc_api_key]) do
-          {:ok, %{balance_rub: rub}} -> rub
-          _ -> nil
+          {:ok, %{balance_rub: rub, subscription: sub}} -> {rub, sub}
+          _ -> {nil, nil}
         end
+      else
+        {nil, nil}
       end
 
     {:ok,
@@ -36,6 +38,7 @@ defmodule DruzhokWebWeb.Live.Components.SettingsTab do
      |> assign(:sites, sites)
      |> assign(:migrated, migrated)
      |> assign(:balance, balance)
+     |> assign(:subscription, subscription)
      |> assign(:console_url, migrated && Ruoc.console_url(instance[:ruoc_account_id]))
      |> assign(:can_migrate, !migrated && Ruoc.configured?())}
   end
@@ -56,6 +59,12 @@ defmodule DruzhokWebWeb.Live.Components.SettingsTab do
                 <div :if={@migrated}>
                   <label class="block text-[10px] text-muted mb-0.5">Balance (ruoc)</label>
                   <div class="text-xs font-mono"><%= if @balance, do: "#{@balance} ₽", else: "—" %></div>
+                  <div :if={@subscription} class="text-[10px] text-muted">
+                    Plan: <%= @subscription.plan_name %>, <%= @subscription.credit_rub %> ₽ / <%= @subscription.period_days %> d,
+                    <%= if @subscription.status == "active", do: "renews", else: "cancelled, ends" %>
+                    <%= @subscription.period_end && Calendar.strftime(@subscription.period_end, "%Y-%m-%d") %>
+                  </div>
+                  <div :if={!@subscription} class="text-[10px] text-muted">No plan — enroll in the ruoc console.</div>
                   <a :if={@console_url} href={@console_url} target="_blank" class="text-[10px] text-accent hover:text-accent/80">open in ruoc console</a>
                 </div>
                 <div :if={!@migrated}>
