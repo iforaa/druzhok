@@ -12,7 +12,7 @@ defmodule Druzhok.Application do
       Druzhok.Repo,
       {Registry, keys: :unique, name: Druzhok.Registry},
       {DynamicSupervisor, name: Druzhok.Host.ProcessSup, strategy: :one_for_one},
-      {Finch, name: Druzhok.Finch, pools: finch_pools()},
+      {Finch, name: Druzhok.Finch},
       {Finch, name: Druzhok.LocalFinch},
       Druzhok.HealthMonitor,
       Druzhok.ManagerBot
@@ -22,12 +22,4 @@ defmodule Druzhok.Application do
     Supervisor.start_link(children, opts)
   end
 
-  defp finch_pools do
-    case Application.get_env(:druzhok, :http_proxy_url) do
-      nil -> %{}
-      proxy_url ->
-        uri = URI.parse(proxy_url)
-        %{default: [conn_opts: [proxy: {String.to_atom(uri.scheme), uri.host, uri.port, []}]]}
-    end
-  end
 end

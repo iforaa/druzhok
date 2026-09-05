@@ -10,8 +10,6 @@ defmodule Druzhok.InstanceManager do
       name: name,
       workspace: opts[:workspace] || default_workspace(name),
       model: opts[:model] || "default",
-      heartbeat_interval: opts[:heartbeat_interval] || 0,
-      bot_runtime: opts[:bot_runtime] || "hermes",
       tenant_key: opts[:tenant_key] || Instance.generate_tenant_key(name),
       telegram_token: opts[:telegram_token],
       owner_telegram_id: opts[:owner_telegram_id],
@@ -37,12 +35,7 @@ defmodule Druzhok.InstanceManager do
 
   def list do
     import Ecto.Query
-    # Exclude legacy synthetic "system" rows.
-    Repo.all(
-      from i in Instance,
-        where: i.bot_runtime != "system",
-        order_by: [desc: i.active, asc: i.name]
-    )
+    Repo.all(from i in Instance, order_by: [desc: i.active, asc: i.name])
   end
 
   def delete(name) do
@@ -117,7 +110,6 @@ defmodule Druzhok.InstanceManager do
           telegram_token: config.telegram_token,
           model: config.model,
           workspace: config.workspace,
-          bot_runtime: config.bot_runtime,
           tenant_key: config.tenant_key,
           language: config[:language] || "ru",
           owner_telegram_id: config[:owner_telegram_id],

@@ -25,7 +25,6 @@ defmodule Druzhok.Runtime.Hermes do
   require Logger
   alias Druzhok.Instance
 
-  @default_model "anthropic/claude-opus-4.6"
   @default_vision_model "google/gemini-2.5-flash-lite"
 
   @agents_md_session_section """
@@ -90,7 +89,7 @@ defmodule Druzhok.Runtime.Hermes do
     # The provider choice (openai vs local/faster-whisper) lives in
     # config.yaml's `stt:` section — see build_config_yaml/1.
     tenant_key = Map.get(instance, :tenant_key, "") || ""
-    model = Map.get(instance, :model) || @default_model
+    model = Map.get(instance, :model) || Druzhok.ModelCatalog.default_model()
     proxy_url = Druzhok.Runtime.proxy_url()
 
     %{
@@ -157,7 +156,7 @@ defmodule Druzhok.Runtime.Hermes do
     # dashboard stays the source of truth without clobbering hermes's
     # runtime writes (thread IDs etc).
     config_path = Path.join(data_root, "config.yaml")
-    model = Map.get(instance, :model) || @default_model
+    model = Map.get(instance, :model) || Druzhok.ModelCatalog.default_model()
     vision_model = Map.get(instance, :image_model) || @default_vision_model
     tenant_key = Map.get(instance, :tenant_key, "") || ""
 
@@ -547,11 +546,6 @@ defmodule Druzhok.Runtime.Hermes do
   def supports_feature?(:pairing_code_approval), do: true
   def supports_feature?(:group_chat_config), do: true
   def supports_feature?(:website_hosting), do: true
-  # Hermes manages these via its own config.yaml, not through druzhok env vars.
-  # Hide the dashboard dropdowns to avoid confusion.
-  def supports_feature?(:on_demand_model), do: false
-  def supports_feature?(:audio_model), do: false
-  def supports_feature?(:embedding_model), do: false
   def supports_feature?(_), do: false
 
   # --- Helpers ---
@@ -618,7 +612,7 @@ defmodule Druzhok.Runtime.Hermes do
   end
 
   def build_config_yaml(instance) do
-    model = Map.get(instance, :model) || @default_model
+    model = Map.get(instance, :model) || Druzhok.ModelCatalog.default_model()
     vision_model = Map.get(instance, :image_model) || @default_vision_model
     tenant_key = Map.get(instance, :tenant_key, "") || ""
     url = Druzhok.Runtime.proxy_url()

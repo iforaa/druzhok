@@ -18,7 +18,7 @@ defmodule DruzhokWebWeb.LlmFormat do
 
   # OPENROUTER_API_KEY env wins; otherwise the key entered in dashboard Settings.
   def provider_key do
-    Application.get_env(:druzhok, :openrouter_api_key) || Druzhok.Settings.get("openrouter_api_key")
+    Druzhok.Settings.openrouter_api_key()
   end
 
   def request_url, do: provider_url() <> "/chat/completions"

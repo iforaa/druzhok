@@ -8,10 +8,8 @@ defmodule Druzhok.ManagerBot.Provisioner do
 
   require Logger
 
-  alias Druzhok.{BotManager, Instance, Repo}
+  alias Druzhok.{BotManager, Instance, ModelCatalog, Repo}
   alias Druzhok.Telegram.API
-
-  @default_model "z-ai/glm-5.3-flash"
 
   @doc """
   Run the full provisioning pipeline.
@@ -23,10 +21,9 @@ defmodule Druzhok.ManagerBot.Provisioner do
          instance_name = derive_instance_name(bot_username),
          opts = build_create_opts(%{
            token: token,
-           model: @default_model,
+           model: ModelCatalog.default_model(),
            owner_id: session[:owner_id],
-           language: session[:language] || "ru",
-           bot_runtime: "hermes"
+           language: session[:language] || "ru"
          }),
          {:ok, _result} <- BotManager.create(instance_name, opts) do
       # The owner is already in the allowlist via owner_telegram_id (see
@@ -52,10 +49,9 @@ defmodule Druzhok.ManagerBot.Provisioner do
   def build_create_opts(params) do
     %{
       telegram_token: params[:token],
-      model: params[:model] || @default_model,
+      model: params[:model] || ModelCatalog.default_model(),
       owner_telegram_id: params[:owner_id],
       language: params[:language] || "ru",
-      bot_runtime: params[:bot_runtime] || "hermes",
       mention_only: true,
       allow_all_telegram_users: false,
     }

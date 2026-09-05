@@ -23,11 +23,7 @@ defmodule DruzhokWebWeb.DashboardLive do
       id -> Druzhok.Repo.get(Druzhok.User, id)
     end
 
-    models = Druzhok.Model.list()
-    default_model = case models do
-      [{id, _, _} | _] -> id
-      _ -> ""
-    end
+    models = Druzhok.ModelCatalog.all()
 
     # Render immediately with lightweight instance list (no host stats).
     # Full stats load async via :load_instances message.
@@ -35,7 +31,7 @@ defmodule DruzhokWebWeb.DashboardLive do
       current_user: current_user,
       instances: list_instances_fast(),
       models: models,
-      create_form: %{"name" => "", "token" => "", "model" => default_model, "bot_runtime" => "hermes"},
+      create_form: %{"name" => "", "token" => "", "model" => Druzhok.ModelCatalog.default_model()},
       selected: nil,
       tab: :settings,
       tab_loading: false,
@@ -205,17 +201,11 @@ defmodule DruzhokWebWeb.DashboardLive do
     if name != "" do
       token = params["token"]
       token = if token == "", do: nil, else: token
-      bot_runtime = params["bot_runtime"] || "hermes"
-
-      case Druzhok.BotManager.create(name, %{
-        model: model,
-        telegram_token: token,
-        bot_runtime: bot_runtime,
-      }) do
+      case Druzhok.BotManager.create(name, %{model: model, telegram_token: token}) do
         {:ok, _instance} ->
           {:noreply, assign(socket,
             instances: list_instances(),
-            create_form: %{"name" => "", "token" => "", "model" => model, "bot_runtime" => bot_runtime},
+            create_form: %{"name" => "", "token" => "", "model" => model},
             show_create: false
           )}
         {:error, reason} ->
@@ -359,7 +349,6 @@ defmodule DruzhokWebWeb.DashboardLive do
     q = String.downcase(q)
     Enum.filter(instances, fn inst ->
       String.contains?(String.downcase(inst.name), q) or
-        String.contains?(String.downcase(inst[:bot_runtime] || ""), q) or
         String.contains?(String.downcase(inst.model || ""), q)
     end)
   end
@@ -392,9 +381,8 @@ defmodule DruzhokWebWeb.DashboardLive do
             <.term_input name="name" value={@create_form["name"]} placeholder="instance name" />
             <.term_input name="token" value={@create_form["token"]} placeholder="telegram token (optional)" />
             <.term_select name="model">
-              <option :for={{id, label, _provider} <- @models} value={id}
-                      selected={id == @create_form["model"]}>
-                <%= label %>
+              <option :for={m <- @models} value={m.id} selected={m.id == @create_form["model"]}>
+                <%= m.name %> (<%= m.price %>)
               </option>
             </.term_select>
             <button type="submit"
@@ -435,8 +423,6 @@ defmodule DruzhokWebWeb.DashboardLive do
             <div class="flex-1 min-w-0">
               <div class="font-display text-sm text-fg truncate"><%= inst.name %></div>
               <div class="text-[10px] text-muted uppercase tracking-wider2 font-display truncate">
-                <%= String.upcase(inst[:bot_runtime] || "hermes") %>
-                <span class="text-faint">·</span>
                 <%= model_short(inst.model) %><%= if !inst[:active], do: " · stopped" %>
                 <%= if h = inst[:health] do %>
                   <span class="text-faint">·</span>
@@ -487,7 +473,6 @@ defmodule DruzhokWebWeb.DashboardLive do
 
         <div :if={@selected} class="flex-1 flex flex-col min-h-0">
           <%!-- Top bar --%>
-          <% runtime = selected_field(@instances, @selected, :bot_runtime) || "hermes" %>
           <% status  = selected_field(@instances, @selected, :container_status) || "unknown" %>
           <% stats   = selected_field(@instances, @selected, :container_stats) %>
           <% active? = selected_field(@instances, @selected, :active) %>
@@ -499,9 +484,6 @@ defmodule DruzhokWebWeb.DashboardLive do
             </button>
 
             <h2 class="font-display text-base text-fg truncate"><%= @selected %></h2>
-
-            <%!-- Runtime: uppercase label + 1px accent underline --%>
-            <span class="font-display text-[10px] uppercase tracking-caps text-fg border-b border-accent pb-0.5 px-0.5"><%= String.upcase(runtime) %></span>
 
             <%!-- Status dot + text --%>
             <span class="flex items-center gap-1.5">
@@ -599,9 +581,6 @@ defmodule DruzhokWebWeb.DashboardLive do
                     ]}>
               <span class={"w-1.5 h-1.5 rounded-full flex-shrink-0 #{status_dot(inst)}"}></span>
               <span class="font-display text-sm text-fg flex-1 truncate"><%= inst.name %></span>
-              <span class="font-display text-[10px] text-muted uppercase tracking-wider2">
-                <%= String.upcase(inst[:bot_runtime] || "hermes") %>
-              </span>
               <span class="font-mono text-[10px] text-subtle"><%= model_short(inst.model) %></span>
             </button>
           </div>

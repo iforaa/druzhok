@@ -95,14 +95,8 @@ env_or_nil = fn name ->
 end
 
 config :druzhok,
-  nebius_api_key: env_or_nil.("NEBIUS_API_KEY"),
-  nebius_api_url:
-    System.get_env("NEBIUS_BASE_URL") || "https://api.tokenfactory.us-central1.nebius.com/v1",
-  anthropic_api_key: env_or_nil.("ANTHROPIC_API_KEY"),
-  anthropic_api_url: System.get_env("ANTHROPIC_API_URL") || "https://api.anthropic.com",
   openrouter_api_key: env_or_nil.("OPENROUTER_API_KEY"),
   openrouter_api_url: System.get_env("OPENROUTER_API_URL") || "https://openrouter.ai/api/v1",
-  http_proxy_url: env_or_nil.("HTTP_PROXY_URL"),
   host:
     (if System.get_env("DRUZHOK_HOST") == "systemd",
        do: Druzhok.Host.Systemd,

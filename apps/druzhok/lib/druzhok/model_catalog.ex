@@ -4,8 +4,11 @@ defmodule Druzhok.ModelCatalog do
   Images are automatically stripped from conversation for non-vision models.
   """
 
+  @default_model "z-ai/glm-5.3-flash"
+
   @models [
     # Cheap tier — for everyday messages
+    %{id: @default_model, name: "GLM 5.3 Flash", price: "$0.08/M", tier: :cheap},
     %{id: "qwen/qwen3.5-flash", name: "Qwen 3.5 Flash", price: "$0.07/M", tier: :cheap},
     %{id: "google/gemini-2.5-flash-lite", name: "Gemini 2.5 Flash Lite", price: "$0.15/M", tier: :cheap},
     %{id: "openai/gpt-5.4-nano", name: "GPT-5.4 Nano", price: "$0.20/M", tier: :cheap},
@@ -30,8 +33,10 @@ defmodule Druzhok.ModelCatalog do
 
   def all, do: @models
   def default_options, do: @models
-  def smart, do: @models
   def find(id), do: Enum.find(@models, &(&1.id == id))
+
+  @doc "Model new bots get when none is chosen (manager bot, dashboard, runtime fallback)."
+  def default_model, do: @default_model
 
   @image_models [
     %{id: "google/gemini-2.5-flash-lite", name: "Gemini 2.5 Flash Lite"},
@@ -39,13 +44,6 @@ defmodule Druzhok.ModelCatalog do
     %{id: "openai/gpt-5.4-mini", name: "GPT-5.4 Mini"},
   ]
 
-  @audio_models [
-    %{id: "gpt-4o-mini-transcribe", name: "GPT-4o Mini Transcribe"},
-  ]
-
-  @embedding_models [
-    %{id: "openai/text-embedding-3-small", name: "Text Embedding 3 Small"},
-  ]
 
   @image_gen_models [
     %{id: "black-forest-labs/flux.2-klein-4b", name: "FLUX 2 Klein 4B (~$0.014/image)"},
@@ -55,19 +53,16 @@ defmodule Druzhok.ModelCatalog do
   ]
 
   def image_models, do: @image_models
-  def audio_models, do: @audio_models
-  def embedding_models, do: @embedding_models
   def image_gen_models, do: @image_gen_models
 
   def default_image_model, do: "google/gemini-2.5-flash-lite"
-  def default_audio_model, do: "gpt-4o-mini-transcribe"
-  def default_embedding_model, do: "openai/text-embedding-3-small"
   def default_image_gen_model, do: "black-forest-labs/flux.2-klein-4b"
 
   # Fallback prices used only when OpenRouter's usage.cost is missing from
   # the response. Values are cents per 1,000,000 tokens. Check
   # https://openrouter.ai/models for current published prices.
   @prices %{
+    "z-ai/glm-5.3-flash" => %{input: 8, output: 25},
     "xiaomi/mimo-v2.5-pro" => %{input: 10, output: 150},
     "z-ai/glm-5.2" => %{input: 120, output: 410},
     "google/gemini-2.5-flash-lite" => %{input: 10, output: 40},

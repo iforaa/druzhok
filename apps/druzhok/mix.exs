@@ -26,6 +26,7 @@ defmodule Druzhok.MixProject do
   # Run "mix help deps" to learn about dependencies.
   defp deps do
     [
+      {:bcrypt_elixir, "~> 3.0"},
       {:jason, "~> 1.4"},
       {:phoenix_pubsub, "~> 2.1"},
       {:ecto_sql, "~> 3.12"},

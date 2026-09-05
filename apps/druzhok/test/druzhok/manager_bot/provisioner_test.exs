@@ -23,15 +23,13 @@ defmodule Druzhok.ManagerBot.ProvisionerTest do
         token: "123:ABC",
         model: "xiaomi/mimo-v2-pro",
         owner_id: 601956,
-        language: "ru",
-        bot_runtime: "hermes"
+        language: "ru"
       })
 
       assert opts[:telegram_token] == "123:ABC"
       assert opts[:model] == "xiaomi/mimo-v2-pro"
       assert opts[:owner_telegram_id] == 601956
       assert opts[:language] == "ru"
-      assert opts[:bot_runtime] == "hermes"
       assert opts[:mention_only] == true
     end
 

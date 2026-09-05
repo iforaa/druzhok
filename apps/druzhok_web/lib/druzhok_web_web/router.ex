@@ -67,7 +67,6 @@ defmodule DruzhokWebWeb.Router do
     pipe_through [:browser, :auth, :admin]
 
     live "/settings", SettingsLive
-    live "/models", ModelsLive
     live "/errors", ErrorsLive
     live "/usage", UsageLive
   end

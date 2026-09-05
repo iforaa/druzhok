@@ -33,15 +33,8 @@ defmodule Druzhok.Settings do
     )
   end
 
-  def api_key(provider) do
-    get("#{provider}_api_key") || Application.get_env(:druzhok, :"#{provider}_api_key")
-  end
-
-  def api_url(provider) do
-    case provider do
-      "anthropic" -> get("anthropic_api_url") || Application.get_env(:druzhok, :anthropic_api_url) || "https://api.anthropic.com"
-      "openrouter" -> get("openrouter_api_url") || Application.get_env(:druzhok, :openrouter_api_url) || "https://openrouter.ai/api/v1"
-      _ -> get("nebius_api_url") || Application.get_env(:druzhok, :nebius_api_url)
-    end
+  @doc "OpenRouter key: env wins, otherwise the value entered in dashboard Settings."
+  def openrouter_api_key do
+    Application.get_env(:druzhok, :openrouter_api_key) || get("openrouter_api_key")
   end
 end

@@ -187,16 +187,18 @@ defmodule Druzhok.ManagerBot do
           end
 
         {_status, session, {:edit, text, rows}} ->
-          # Edit existing inline message
-          if session.message_id do
-            edit_inline(state.token, chat_id, session.message_id, text, rows)
-          else
-            case send_inline(state.token, chat_id, text, rows) do
-              {:ok, %{"message_id" => mid}} ->
-                session = %{session | message_id: mid}
-              _ -> :ok
+          # Edit existing inline message, or send a fresh one if we lost it
+          session =
+            if session.message_id do
+              edit_inline(state.token, chat_id, session.message_id, text, rows)
+              session
+            else
+              case send_inline(state.token, chat_id, text, rows) do
+                {:ok, %{"message_id" => mid}} -> %{session | message_id: mid}
+                _ -> session
+              end
             end
-          end
+
           put_in(state, [:sessions, user_id], session)
 
         {_status, session, {:confirm, session}} ->

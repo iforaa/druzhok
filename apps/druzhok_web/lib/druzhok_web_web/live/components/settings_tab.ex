@@ -89,15 +89,6 @@ defmodule DruzhokWebWeb.Live.Components.SettingsTab do
                   <% end %>
                 </select>
               </div>
-              <div :if={@runtime.supports_feature?(:on_demand_model)}>
-                <label class="block text-[10px] text-muted mb-0.5">On-demand</label>
-                <select name="on_demand_model" disabled={is_running} class={"w-full border border-line2 rounded px-2 py-1 text-xs #{if is_running, do: "opacity-50 cursor-not-allowed"}"}>
-                  <option value="">None</option>
-                  <%= for m <- ModelCatalog.smart() do %>
-                    <option value={m.id} selected={m.id == (@instance[:on_demand_model] || "")}><%= m.name %> (<%= m.price %>)</option>
-                  <% end %>
-                </select>
-              </div>
               <div>
                 <label class="block text-[10px] text-muted mb-0.5">Vision / image</label>
                 <select name="image_model" disabled={is_running} class={"w-full border border-line2 rounded px-2 py-1 text-xs #{if is_running, do: "opacity-50 cursor-not-allowed"}"}>
@@ -106,70 +97,9 @@ defmodule DruzhokWebWeb.Live.Components.SettingsTab do
                   <% end %>
                 </select>
               </div>
-              <div :if={@runtime.supports_feature?(:audio_model)}>
-                <label class="block text-[10px] text-muted mb-0.5">Audio</label>
-                <select name="audio_model" disabled={is_running} class={"w-full border border-line2 rounded px-2 py-1 text-xs #{if is_running, do: "opacity-50 cursor-not-allowed"}"}>
-                  <%= for m <- ModelCatalog.audio_models() do %>
-                    <option value={m.id} selected={m.id == (@instance[:audio_model] || ModelCatalog.default_audio_model())}><%= m.name %></option>
-                  <% end %>
-                </select>
-              </div>
-              <div :if={@runtime.supports_feature?(:embedding_model)}>
-                <label class="block text-[10px] text-muted mb-0.5">Embedding</label>
-                <select name="embedding_model" disabled={is_running} class={"w-full border border-line2 rounded px-2 py-1 text-xs #{if is_running, do: "opacity-50 cursor-not-allowed"}"}>
-                  <%= for m <- ModelCatalog.embedding_models() do %>
-                    <option value={m.id} selected={m.id == (@instance[:embedding_model] || ModelCatalog.default_embedding_model())}><%= m.name %></option>
-                  <% end %>
-                </select>
-              </div>
-              <div :if={@runtime.supports_feature?(:fallback_models)}>
-                <label class="block text-[10px] text-muted mb-0.5">Fallback (JSON)</label>
-                <input name="fallback_models" value={@instance[:fallback_models] || ""} disabled={is_running}
-                       phx-debounce="blur" placeholder='["model/a"]'
-                       class={"w-full border border-line2 rounded px-2 py-1 text-xs font-mono #{if is_running, do: "opacity-50 cursor-not-allowed"}"} />
-              </div>
             </form>
           </div>
 
-          <%!-- Card: Heartbeat (conditional) --%>
-          <div :if={@runtime.supports_feature?(:heartbeat)} class="bg-raised/50 border border-line rounded-lg p-3 space-y-2.5">
-            <h3 class="label">Heartbeat</h3>
-            <form phx-change="update_models" phx-target={@myself} class="grid grid-cols-3 gap-2">
-              <input type="hidden" name="default_model" value={@instance[:model]} />
-              <div>
-                <label class="block text-[10px] text-muted mb-0.5">Target</label>
-                <select name="heartbeat_target" class="w-full border border-line2 rounded px-2 py-1 text-xs">
-                  <option value="" selected={is_nil(@instance[:heartbeat_target])}>Default</option>
-                  <option value="none" selected={@instance[:heartbeat_target] == "none"}>Silent</option>
-                  <option value="last" selected={@instance[:heartbeat_target] == "last"}>Last contact</option>
-                </select>
-              </div>
-              <div>
-                <label class="block text-[10px] text-muted mb-0.5">From</label>
-                <input name="heartbeat_active_start" value={@instance[:heartbeat_active_start] || ""}
-                       phx-debounce="blur" placeholder="08:00"
-                       class="w-full border border-line2 rounded px-2 py-1 text-xs font-mono" />
-              </div>
-              <div>
-                <label class="block text-[10px] text-muted mb-0.5">Until</label>
-                <input name="heartbeat_active_end" value={@instance[:heartbeat_active_end] || ""}
-                       phx-debounce="blur" placeholder="24:00"
-                       class="w-full border border-line2 rounded px-2 py-1 text-xs font-mono" />
-              </div>
-            </form>
-          </div>
-
-          <%!-- Card: Dreaming (conditional) --%>
-          <div :if={@runtime.supports_feature?(:dreaming)} class="bg-raised/50 border border-line rounded-lg p-3 space-y-2.5">
-            <h3 class="label">Dreaming</h3>
-            <form phx-change="update_models" phx-target={@myself}>
-              <input type="hidden" name="default_model" value={@instance[:model]} />
-              <select name="dreaming" class="w-full border border-line2 rounded px-2 py-1 text-xs">
-                <option value="false" selected={!@instance[:dreaming]}>Disabled</option>
-                <option value="true" selected={@instance[:dreaming] == true}>Enabled</option>
-              </select>
-            </form>
-          </div>
         </div>
 
         <%!-- ═══ RIGHT COLUMN ═══ --%>
@@ -296,12 +226,6 @@ defmodule DruzhokWebWeb.Live.Components.SettingsTab do
             <h3 class="label">Auto-messages</h3>
             <div class="space-y-2">
               <div>
-                <label class="block text-[10px] text-muted mb-0.5">Sent to unauthorized users</label>
-                <textarea phx-blur="update_reject_message" phx-target={@myself}
-                          class="w-full border border-line2 rounded px-2 py-1 text-xs resize-none"
-                          placeholder="Default rejection" rows="1"><%= @instance[:reject_message] %></textarea>
-              </div>
-              <div>
                 <label class="block text-[10px] text-muted mb-0.5">Sent on user approval</label>
                 <textarea phx-blur="update_welcome_message" phx-target={@myself}
                           class="w-full border border-line2 rounded px-2 py-1 text-xs resize-none"
@@ -344,21 +268,8 @@ defmodule DruzhokWebWeb.Live.Components.SettingsTab do
 
   def handle_event("update_models", params, socket) do
     name = socket.assigns.instance.name
-    changes = %{model: params["default_model"], on_demand_model: non_empty(params, "on_demand_model")}
+    changes = %{model: params["default_model"]}
     changes = if p = non_empty(params, "image_model"), do: Map.put(changes, :image_model, p), else: changes
-    changes = if p = non_empty(params, "audio_model"), do: Map.put(changes, :audio_model, p), else: changes
-    changes = if p = non_empty(params, "embedding_model"), do: Map.put(changes, :embedding_model, p), else: changes
-    changes = if p = non_empty(params, "heartbeat_target"), do: Map.put(changes, :heartbeat_target, p), else: changes
-    changes = if p = non_empty(params, "heartbeat_active_start"), do: Map.put(changes, :heartbeat_active_start, p), else: changes
-    changes = if p = non_empty(params, "heartbeat_active_end"), do: Map.put(changes, :heartbeat_active_end, p), else: changes
-    changes = if p = non_empty(params, "fallback_models"), do: Map.put(changes, :fallback_models, p), else: changes
-
-    changes =
-      case params["dreaming"] do
-        "true" -> Map.put(changes, :dreaming, true)
-        "false" -> Map.put(changes, :dreaming, false)
-        _ -> changes
-      end
 
     update_instance(name, changes)
     notify_parent(socket)
@@ -463,11 +374,8 @@ defmodule DruzhokWebWeb.Live.Components.SettingsTab do
     {:noreply, socket}
   end
 
-  def handle_event("update_" <> field, %{"value" => value}, socket)
-      when field in ["reject_message", "welcome_message"] do
-    update_instance(socket.assigns.instance.name, %{
-      String.to_existing_atom(field) => non_empty_string(value)
-    })
+  def handle_event("update_welcome_message", %{"value" => value}, socket) do
+    update_instance(socket.assigns.instance.name, %{welcome_message: non_empty_string(value)})
 
     notify_parent(socket)
     {:noreply, socket}

@@ -8,31 +8,18 @@ defmodule Druzhok.Instance do
     field :model, :string
     field :workspace, :string
     field :active, :boolean, default: true
-    field :heartbeat_interval, :integer, default: 0
     field :owner_telegram_id, :integer
     field :timezone, :string, default: "UTC"
     field :api_key, :string
-    field :daily_token_limit, :integer, default: 0
-    field :dream_hour, :integer, default: -1
     field :language, :string, default: "ru"
     field :tenant_key, :string
-    field :bot_runtime, :string, default: "hermes"
-    field :on_demand_model, :string
     field :mention_only, :boolean, default: false
-    field :reject_message, :string
     field :welcome_message, :string
     field :allowed_telegram_ids, :string
     field :allowed_telegram_chats, :string
     field :allow_all_telegram_users, :boolean, default: false
     field :trigger_name, :string
     field :image_model, :string
-    field :audio_model, :string
-    field :embedding_model, :string
-    field :heartbeat_active_start, :string
-    field :heartbeat_active_end, :string
-    field :heartbeat_target, :string
-    field :fallback_models, :string
-    field :dreaming, :boolean, default: false
     field :group_sessions_per_user, :boolean, default: true
     field :group_shared_memory, :boolean, default: false
     field :website_hosting_enabled, :boolean, default: false
@@ -47,7 +34,7 @@ defmodule Druzhok.Instance do
 
   def changeset(instance, attrs) do
     instance
-    |> cast(attrs, [:name, :telegram_token, :model, :workspace, :active, :heartbeat_interval, :owner_telegram_id, :timezone, :api_key, :daily_token_limit, :dream_hour, :language, :tenant_key, :bot_runtime, :on_demand_model, :mention_only, :reject_message, :welcome_message, :allowed_telegram_ids, :allowed_telegram_chats, :allow_all_telegram_users, :trigger_name, :image_model, :audio_model, :embedding_model, :heartbeat_active_start, :heartbeat_active_end, :heartbeat_target, :fallback_models, :dreaming, :group_sessions_per_user, :group_shared_memory, :website_hosting_enabled, :daily_budget_cents, :image_gen_enabled, :image_gen_model])
+    |> cast(attrs, [:name, :telegram_token, :model, :workspace, :active, :owner_telegram_id, :timezone, :api_key, :language, :tenant_key, :mention_only, :welcome_message, :allowed_telegram_ids, :allowed_telegram_chats, :allow_all_telegram_users, :trigger_name, :image_model, :group_sessions_per_user, :group_shared_memory, :website_hosting_enabled, :daily_budget_cents, :image_gen_enabled, :image_gen_model])
     |> validate_required([:name, :model, :workspace])
     |> unique_constraint(:name)
   end
