@@ -25,9 +25,15 @@ defmodule DruzhokWebWeb.Plugs.BotSite do
   def init(opts), do: opts
 
   def call(%Plug.Conn{host: host} = conn, _opts) do
-    case Regex.run(@host_re, host) do
-      [_, bot] -> serve(conn, bot)
-      _ -> conn
+    # The dashboard itself lives on a subdomain too (PHX_HOST, e.g.
+    # druzhok.oldey.dev) — never treat that host as a bot site.
+    if host == DruzhokWebWeb.Endpoint.host() do
+      conn
+    else
+      case Regex.run(@host_re, host) do
+        [_, bot] -> serve(conn, bot)
+        _ -> conn
+      end
     end
   end
 
