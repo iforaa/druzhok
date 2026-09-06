@@ -27,14 +27,20 @@ defmodule Druzhok.Instance do
     field :image_gen_model, :string
     field :ruoc_account_id, :string
     field :ruoc_api_key, :string
+    field :memory_provider, :string, default: "builtin"
 
     timestamps()
   end
 
+  # Hermes memory providers druzhok knows how to configure (Runtime.Hermes).
+  @memory_providers ~w(builtin mnemosyne)
+  def memory_providers, do: @memory_providers
+
   def changeset(instance, attrs) do
     instance
-    |> cast(attrs, [:name, :telegram_token, :model, :workspace, :active, :owner_telegram_id, :timezone, :api_key, :language, :tenant_key, :mention_only, :welcome_message, :allowed_telegram_ids, :allowed_telegram_chats, :allow_all_telegram_users, :trigger_name, :image_model, :group_sessions_per_user, :group_shared_memory, :website_hosting_enabled, :image_gen_enabled, :image_gen_model, :ruoc_account_id, :ruoc_api_key])
+    |> cast(attrs, [:name, :telegram_token, :model, :workspace, :active, :owner_telegram_id, :timezone, :api_key, :language, :tenant_key, :mention_only, :welcome_message, :allowed_telegram_ids, :allowed_telegram_chats, :allow_all_telegram_users, :trigger_name, :image_model, :group_sessions_per_user, :group_shared_memory, :website_hosting_enabled, :image_gen_enabled, :image_gen_model, :ruoc_account_id, :ruoc_api_key, :memory_provider])
     |> validate_required([:name, :model, :workspace])
+    |> validate_inclusion(:memory_provider, @memory_providers)
     |> unique_constraint(:name)
   end
 
