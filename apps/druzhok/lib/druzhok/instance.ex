@@ -27,7 +27,7 @@ defmodule Druzhok.Instance do
     field :image_gen_model, :string
     field :ruoc_account_id, :string
     field :ruoc_api_key, :string
-    field :memory_provider, :string, default: "builtin"
+    field :memory_provider, :string, default: "mnemosyne"
 
     timestamps()
   end

@@ -5,10 +5,10 @@ defmodule Druzhok.InstanceTest do
 
   @base %{name: "memtest", model: "ruoc-flash", workspace: "/tmp/x"}
 
-  test "memory_provider defaults to builtin and accepts mnemosyne" do
-    assert %Instance{memory_provider: "builtin"} = %Instance{}
+  test "memory_provider defaults to mnemosyne and accepts builtin" do
+    assert %Instance{memory_provider: "mnemosyne"} = %Instance{}
     assert Instance.changeset(%Instance{}, @base).changes[:memory_provider] == nil
-    assert Instance.changeset(%Instance{}, Map.put(@base, :memory_provider, "mnemosyne")).valid?
+    assert Instance.changeset(%Instance{}, Map.put(@base, :memory_provider, "builtin")).valid?
   end
 
   test "an unknown memory_provider is rejected" do

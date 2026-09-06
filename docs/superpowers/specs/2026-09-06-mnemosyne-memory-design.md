@@ -18,7 +18,7 @@ priced later. Nothing changes for a bot until its `memory_provider` is flipped.
 | Pricing | New ruoc catalogue kind `embedding`, per million input tokens, rate 0 at launch | Mirrors `transcribe`'s token pricing and `fetch`'s "free is still a ledger row". Repricing is one `ruocd embed setup`. |
 | LLM consolidation | Off (`MNEMOSYNE_LLM_ENABLED` default false) | Zero LLM cost. Mnemosyne's non-LLM sleep (dedup, decay, prune) still runs every 10 turns. Revisit after seeing recall quality. |
 | Tool surface | `memory.mnemosyne.tools: [mnemosyne_remember, mnemosyne_recall, mnemosyne_forget]` | The provider exposes 37 tools by default, about 9k tokens of schema on every LLM call. Three tools cover what a Telegram assistant needs; prefetch injection works regardless. |
-| Rollout | Per-bot instance flag, default `builtin`, operator's bot first | Existing bots keep today's behaviour until flipped from the settings tab. |
+| Rollout | Per-bot instance flag, operator's bot first, then the rest from the settings tab; new bots default to `mnemosyne` (since 2026-09-06) | Any bot can be switched back to `builtin` from the settings tab. |
 
 ## 3. Request path
 
@@ -104,7 +104,7 @@ its environment. Mnemosyne adds the `query: ` / `passage: ` prefixes itself from
 
 ### 4.5 Bot configuration (druzhok)
 
-- Migration: `instances.memory_provider :string, default "builtin"`. Allowed values
+- `instances.memory_provider :string` (schema default `"mnemosyne"` for new bots). Allowed values
   `"builtin"`, `"mnemosyne"`, validated in the `Instance` changeset.
 - `Runtime.Hermes.sync_memory_block/1` writes `provider: <value>` (currently pinned to
   `builtin`); builtin flags stay `true` for both values. When the value is `mnemosyne` it also
@@ -136,9 +136,8 @@ its environment. Mnemosyne adds the `query: ` / `passage: ` prefixes itself from
 
   The two prefixes carry a trailing space; the env file writer must quote them.
 - Settings tab: a "Память" select with the two values, saved through the existing instance
-  update path, applied on the next restart (same as other config changes). Dashboard create
-  form and the manager bot keep `builtin`; flipping the default for new bots is a later
-  one-line change once the operator's bot has run on it for a week.
+  update path, applied on the next restart (same as other config changes). The dashboard
+  create form and the manager bot inherit the schema default, `mnemosyne`.
 - Data dir: `<tenant>/mnemosyne/` is created by Mnemosyne itself under the bot user; it sits
   inside `ReadWritePaths=/data/tenants/%i`, so the unit needs no change. The
   never-wipe rule covers it.

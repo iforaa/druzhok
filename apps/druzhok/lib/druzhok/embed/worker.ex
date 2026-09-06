@@ -14,10 +14,12 @@ defmodule Druzhok.Embed.Worker do
 
   @default_timeout 10_000
   # Loading the ONNX model (~470 MB) happens once per worker start, in this
-  # process but never inside `init/1` (the app would boot late) or a caller's
-  # call; the worker announces `{"ready": true}` when done. After a failed
-  # start the next attempt waits `@open_cooldown`, so a broken venv does not
-  # spawn a dying Python per request.
+  # process but never inside `init/1` (the app would boot late) or inside a
+  # caller's call; the worker announces `{"ready": true}` when done. Calls
+  # that arrive during a load queue behind it (seconds on a healthy box) and
+  # are served if their budget is left. After a failed start the next attempt
+  # waits `@open_cooldown`, so a broken venv does not spawn a dying Python per
+  # request.
   @load_timeout 60_000
   @open_cooldown 30_000
 
@@ -105,8 +107,8 @@ defmodule Druzhok.Embed.Worker do
     end
   end
 
-  # No worker: answer now and (re)start one after the reply, so the model
-  # load is never charged to a caller.
+  # No worker: answer now and (re)start one after the reply. A load already
+  # in progress delays queued calls rather than failing them.
   @impl true
   def handle_call({:embed, _texts, _deadline}, _from, %{port: nil} = state) do
     {:reply, {:error, :worker_down}, state, {:continue, :open}}

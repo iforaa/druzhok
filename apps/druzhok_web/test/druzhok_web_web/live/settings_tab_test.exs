@@ -17,7 +17,7 @@ defmodule DruzhokWebWeb.SettingsTabTest do
   defp stop(view), do: GenServer.stop(view.pid, :normal, 5_000)
 
   test "the memory card switches the provider; an inactive bot is not started", %{conn: conn} do
-    inst = create_instance(%{active: false, ruoc_account_id: "acct-77", ruoc_api_key: "ruoc_bot77", model: "ruoc-flash"})
+    inst = create_instance(%{active: false, ruoc_account_id: "acct-77", ruoc_api_key: "ruoc_bot77", model: "ruoc-flash", memory_provider: "builtin"})
     {:ok, view, _} = live(conn, "/instances/#{inst.name}")
 
     html = render(view)

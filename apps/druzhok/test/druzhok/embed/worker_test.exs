@@ -51,7 +51,7 @@ defmodule Druzhok.Embed.WorkerTest do
     assert {:error, :worker_down} = Worker.embed(["x"], server: :embed_die)
   end
 
-  test "the model load blocks neither startup nor callers" do
+  test "the model load does not block startup; a call during it is delayed, not failed" do
     dir = Path.join(System.tmp_dir!(), "slow")
     File.mkdir_p!(dir)
     {us, _} = :timer.tc(fn -> start_supervised!({Worker, name: :embed_slow, bin: System.find_executable("python3"), script: @fake, model_dir: dir}) end)
