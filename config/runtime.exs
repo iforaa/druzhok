@@ -112,3 +112,5 @@ config :druzhok,
 # Dev: point at a local hermes venv. Tests keep the fake from config/test.exs.
 if bin = System.get_env("HERMES_BIN"), do: config(:druzhok, hermes_bin: bin)
 if bin = System.get_env("FETCH_WORKER_BIN"), do: config(:druzhok, fetch_worker_bin: bin)
+if bin = System.get_env("EMBED_WORKER_BIN"), do: config(:druzhok, embed_worker_bin: bin)
+if dir = System.get_env("EMBED_MODEL_DIR"), do: config(:druzhok, embed_model_dir: dir)
