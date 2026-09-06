@@ -46,7 +46,12 @@ if config_env() == :prod do
       # Loopback only: Caddy terminates TLS and proxies in; bots reach the
       # LLM proxy at 127.0.0.1:4000. Override with PHX_BIND_ALL=1 if needed.
       ip: (if System.get_env("PHX_BIND_ALL") == "1", do: {0, 0, 0, 0}, else: {127, 0, 0, 1}),
-      port: port
+      port: port,
+      # A `Connection: close` client (python urllib, which Mnemosyne uses) lost
+      # the tail of large responses on Linux: Bandit closes right after the
+      # send and the inet driver dropped what was still queued (~100 KB of a
+      # 500 KB embeddings reply). linger makes close flush the queue first.
+      thousand_island_options: [transport_options: [linger: {true, 30}]]
     ],
     secret_key_base: secret_key_base
 
