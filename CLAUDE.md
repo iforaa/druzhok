@@ -52,7 +52,8 @@ Spec: `docs/superpowers/specs/2026-09-05-ruoc-gateway-migration-design.md`.
 | `POST /v2/search` | ruoc-gateway `/v1/search` (Tavily), Firecrawl-shaped reply |
 | `POST /v2/scrape` | ruoc-gateway `/v1/fetch`, which routes back to druzhok `POST /internal/fetch` (shared secret `fetch_secret` / `FETCH_SECRET`); `Druzhok.Fetch` reads the page (SSRF policy, 5 MiB, 30 s) and the Python worker at `FETCH_WORKER_BIN` (venv `/opt/druzhok-fetch`, `apps/druzhok/priv/fetch-worker`) turns it into markdown. Priced per page in ruoc (`ruocd fetch setup -rub 0`, free at launch) |
 | `POST /v1/images/generations` | ruoc-gateway `/v1/images` (per-image price, model = `instances.image_gen_model`, nil = ruoc default; catalogue from `GET /v1/images/models` via `Druzhok.Ruoc.image_models/0`) |
-| `POST /v1/embeddings`, `/v1/responses` | OpenRouter (unmetered for money) |
+| `POST /v1/embeddings` | ruoc-gateway `/v1/embeddings` (kind `embedding`, entry `ruoc-embed`, per 1M input tokens, free at launch) → druzhok `POST /internal/embed` (same `FETCH_SECRET`) → `Druzhok.Embed.Worker` + Python ONNX worker (`EMBED_WORKER_BIN`, `EMBED_MODEL_DIR`, multilingual-e5-small, `apps/druzhok/priv/embed-worker`). Used by the Mnemosyne memory provider (`instances.memory_provider`, settings tab); spec `docs/superpowers/specs/2026-09-06-mnemosyne-memory-design.md`, eval `ops/embed-eval` |
+| `POST /v1/responses` | OpenRouter (unmetered for money) |
 | `POST /v1/audio/speech` | OpenAI TTS (unmetered for money) |
 
 ruoc-gateway settings (dashboard Settings page, or `RUOC_URL` / `RUOC_ADMIN_HOST` /
