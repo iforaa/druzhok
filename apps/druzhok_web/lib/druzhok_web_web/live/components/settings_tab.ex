@@ -203,6 +203,15 @@ defmodule DruzhokWebWeb.Live.Components.SettingsTab do
           <%!-- Card: Memory --%>
           <div class="bg-raised/50 border border-line rounded-lg p-3 space-y-2.5">
             <h3 class="label">Memory</h3>
+            <form phx-change="set_memory_provider" phx-target={@myself}>
+              <label class="block text-[10px] text-muted mb-0.5">Memory provider</label>
+              <select name="memory_provider" class="w-full border border-line2 rounded px-2 py-1 text-xs">
+                <%= for p <- Druzhok.Instance.memory_providers() do %>
+                  <option value={p} selected={p == (@instance[:memory_provider] || "builtin")}><%= memory_provider_label(p) %></option>
+                <% end %>
+              </select>
+              <p class="text-[10px] text-muted mt-1">builtin: MEMORY.md / USER.md only. mnemosyne: adds recall of past turns (embeddings via ruoc). Applies on restart.</p>
+            </form>
           </div>
 
           <%!-- Card: Image Generation --%>
@@ -377,6 +386,19 @@ defmodule DruzhokWebWeb.Live.Components.SettingsTab do
     current = socket.assigns.instance[:image_gen_enabled]
     update_instance(name, %{image_gen_enabled: !current})
     restart_bot(name)
+    notify_parent(socket)
+    {:noreply, socket}
+  end
+
+  # Restart: hermes reads memory.provider and the MNEMOSYNE_* env at start.
+  def handle_event("set_memory_provider", %{"memory_provider" => provider}, socket) when is_binary(provider) do
+    name = socket.assigns.instance.name
+
+    if provider in Druzhok.Instance.memory_providers() do
+      update_instance(name, %{memory_provider: provider})
+      if socket.assigns.instance[:active], do: restart_bot(name)
+    end
+
     notify_parent(socket)
     {:noreply, socket}
   end
@@ -559,6 +581,10 @@ defmodule DruzhokWebWeb.Live.Components.SettingsTab do
     Task.start(fn -> BotManager.restart(name) end)
     :ok
   end
+
+  defp memory_provider_label("builtin"), do: "builtin (MEMORY.md)"
+  defp memory_provider_label("mnemosyne"), do: "mnemosyne (episodic + builtin)"
+  defp memory_provider_label(other), do: other
 
   defp non_empty(params, key) do
     case params[key] do

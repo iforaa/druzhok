@@ -16,6 +16,25 @@ defmodule DruzhokWebWeb.SettingsTabTest do
   # while the next test's setup runs.
   defp stop(view), do: GenServer.stop(view.pid, :normal, 5_000)
 
+  test "the memory card switches the provider and restarts a running bot only", %{conn: conn} do
+    inst = create_instance(%{active: false, ruoc_account_id: "acct-77", ruoc_api_key: "ruoc_bot77", model: "ruoc-flash"})
+    {:ok, view, _} = live(conn, "/instances/#{inst.name}")
+
+    html = render(view)
+    assert html =~ "Memory provider"
+    assert html =~ ~s(<option value="builtin" selected)
+    assert html =~ ~s(<option value="mnemosyne")
+
+    view |> element("form[phx-change=set_memory_provider]") |> render_change(%{"memory_provider" => "mnemosyne"})
+    assert Repo.get_by!(Instance, name: inst.name).memory_provider == "mnemosyne"
+    Process.sleep(100)
+    refute Repo.get_by!(Instance, name: inst.name).active
+
+    view |> element("form[phx-change=set_memory_provider]") |> render_change(%{"memory_provider" => "builtin"})
+    assert Repo.get_by!(Instance, name: inst.name).memory_provider == "builtin"
+    stop(view)
+  end
+
   test "a migrated bot shows its ruoc balance, console link and priced catalog", %{conn: conn} do
     inst = create_instance(%{active: false, ruoc_account_id: "acct-77", ruoc_api_key: "ruoc_bot77", model: "ruoc-flash"})
 
