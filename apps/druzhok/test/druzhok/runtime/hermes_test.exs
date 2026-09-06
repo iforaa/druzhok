@@ -277,6 +277,49 @@ defmodule Druzhok.Runtime.HermesTest do
       assert YamlElixir.read_from_string!(content)["memory"]["mnemosyne"]["tools"] == ~w(mnemosyne_remember mnemosyne_recall mnemosyne_forget)
     end
 
+    test "a trailing mnemosyne mapping is dropped without eating the block's last newline", %{tmp_dir: tmp_dir} do
+      # Hermes's own dumper puts unknown keys last, so this is the shape it
+      # writes back; the next top-level key must survive both directions.
+      dumped = """
+      memory:
+        provider: mnemosyne
+        memory_enabled: true
+        user_profile_enabled: true
+        mnemosyne:
+          tools:
+          - mnemosyne_remember
+      terminal:
+        timeout: 30
+      """
+
+      for provider <- ["builtin", "mnemosyne"] do
+        File.write!(Path.join(tmp_dir, "config.yaml"), dumped)
+        assert :ok = Hermes.sync_config(%{name: "b", model: "x", tenant_key: "k", memory_provider: provider}, tmp_dir)
+        content = File.read!(Path.join(tmp_dir, "config.yaml"))
+        assert %{"memory" => %{"provider" => ^provider}, "terminal" => %{"timeout" => 30}} = YamlElixir.read_from_string!(content)
+      end
+    end
+
+    test "a memory block at the end of the file stays one block across syncs", %{tmp_dir: tmp_dir} do
+      File.write!(Path.join(tmp_dir, "config.yaml"), """
+      model:
+        default: "x"
+      memory:
+        provider: mnemosyne
+        mnemosyne:
+          tools:
+          - mnemosyne_remember
+      """)
+
+      inst = %{name: "b", model: "x", tenant_key: "k", memory_provider: "mnemosyne"}
+      assert :ok = Hermes.sync_config(inst, tmp_dir)
+      assert :ok = Hermes.sync_config(inst, tmp_dir)
+      content = File.read!(Path.join(tmp_dir, "config.yaml"))
+      assert String.ends_with?(content, "\n")
+      assert length(Regex.scan(~r/^  provider:/m, content)) == 1
+      assert YamlElixir.read_from_string!(content)["memory"]["provider"] == "mnemosyne"
+    end
+
     test "removes a stale honcho.json", %{tmp_dir: tmp_dir} do
       File.write!(Path.join(tmp_dir, "config.yaml"), "model:\n  default: \"x\"\n")
       File.write!(Path.join(tmp_dir, "honcho.json"), "{}")

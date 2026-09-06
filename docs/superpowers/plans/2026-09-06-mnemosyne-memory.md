@@ -41,7 +41,7 @@ druzhok (this repo):
 | `apps/druzhok_web/test/druzhok_web_web/controllers/embed_controller_test.exs` | Endpoint tests |
 | `apps/druzhok_web/lib/druzhok_web_web/controllers/llm_proxy/ruoc.ex` | `embeddings/2` ruoc leg |
 | `apps/druzhok_web/test/druzhok_web_web/controllers/llm_proxy/ruoc/embeddings_test.exs` | Proxy leg tests (replaces the OpenRouter one) |
-| `apps/druzhok/priv/repo/migrations/20260906000001_add_memory_provider_to_instances.exs` | `memory_provider` column |
+| `apps/druzhok/priv/repo/migrations/20260906000001_reset_stale_memory_providers.exs` | resets stale `memory_provider` rows (the column exists since the honcho migration) |
 | `apps/druzhok/lib/druzhok/instance.ex` | field + validation |
 | `apps/druzhok/lib/druzhok/runtime/hermes.ex` | memory block + env vars |
 | `apps/druzhok_web/lib/druzhok_web_web/live/components/settings_tab.ex` | Memory card select |
@@ -948,7 +948,7 @@ git commit -m "route /v1/embeddings through ruoc"
 ### Task 5: `memory_provider` on instances
 
 **Files:**
-- Create: `apps/druzhok/priv/repo/migrations/20260906000001_add_memory_provider_to_instances.exs`
+- Create: `apps/druzhok/priv/repo/migrations/20260906000001_reset_stale_memory_providers.exs`
 - Modify: `apps/druzhok/lib/druzhok/instance.ex:6-40`
 - Test: `apps/druzhok/test/druzhok/instance_test.exs` (create)
 
@@ -994,15 +994,17 @@ Expected: FAIL, unknown field / undefined function.
 - [ ] **Step 3: Migration, field, validation**
 
 ```elixir
-# apps/druzhok/priv/repo/migrations/20260906000001_add_memory_provider_to_instances.exs
-defmodule Druzhok.Repo.Migrations.AddMemoryProviderToInstances do
+# apps/druzhok/priv/repo/migrations/20260906000001_reset_stale_memory_providers.exs
+# `instances.memory_provider` already exists (20260427000001_add_honcho_to_instances);
+# adding it again fails with "duplicate column name". Only stale values are reset.
+defmodule Druzhok.Repo.Migrations.ResetStaleMemoryProviders do
   use Ecto.Migration
 
-  def change do
-    alter table(:instances) do
-      add :memory_provider, :string, null: false, default: "builtin"
-    end
+  def up do
+    execute "update instances set memory_provider = 'builtin' where memory_provider not in ('builtin', 'mnemosyne')"
   end
+
+  def down, do: :ok
 end
 ```
 
@@ -1028,8 +1030,8 @@ Expected: 3 pass.
 - [ ] **Step 5: Commit**
 
 ```bash
-git add apps/druzhok/priv/repo/migrations/20260906000001_add_memory_provider_to_instances.exs apps/druzhok/lib/druzhok/instance.ex apps/druzhok/test/druzhok/instance_test.exs
-git commit -m "add memory_provider to instances"
+git add apps/druzhok/priv/repo/migrations/20260906000001_reset_stale_memory_providers.exs apps/druzhok/lib/druzhok/instance.ex apps/druzhok/test/druzhok/instance_test.exs
+git commit -m "validate memory_provider on instances, reset stale honcho rows"
 ```
 
 ### Task 6: `Runtime.Hermes` memory block and env vars

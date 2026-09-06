@@ -1,14 +1,25 @@
 """Stand-in for the ONNX worker: same framing, deterministic 4-dim vectors,
 tokens = words. A text equal to "CRASH" exits the process (restart tests);
-"SLOW" sleeps 2 s (timeout tests); "BAD" answers embed_failed."""
+"SLOW" sleeps 2 s (timeout tests); "BAD" answers embed_failed. Like the real
+worker it announces {"ready": true} once "loaded"; a model dir named "die"
+exits before that (startup-failure tests)."""
 import json
 import struct
 import sys
 import time
 
 
+def write(stdout, reply):
+    payload = json.dumps(reply).encode()
+    stdout.write(struct.pack(">I", len(payload)) + payload)
+    stdout.flush()
+
+
 def main():
     stdin, stdout = sys.stdin.buffer, sys.stdout.buffer
+    if len(sys.argv) > 1 and sys.argv[1].rstrip("/").endswith("/die"):
+        sys.exit(4)
+    write(stdout, {"ready": True})
     while True:
         header = stdin.read(4)
         if len(header) < 4:
@@ -25,9 +36,7 @@ def main():
         else:
             reply = {"vectors": [[len(t) / 100.0, 0.5, 0.25, 0.125] for t in texts],
                      "tokens": sum(len(t.split()) for t in texts)}
-        payload = json.dumps(reply).encode()
-        stdout.write(struct.pack(">I", len(payload)) + payload)
-        stdout.flush()
+        write(stdout, reply)
 
 
 if __name__ == "__main__":

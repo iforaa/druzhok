@@ -282,6 +282,9 @@ defmodule DruzhokWebWeb.LlmProxy.Ruoc do
   # --- Embeddings ------------------------------------------------------------
 
   @embed_timeout 30_000
+  # ruoc's own limits, checked here so an oversized batch never costs a round trip.
+  @embed_max_texts 64
+  @embed_max_chars 8_000
 
   @doc """
   OpenAI `embeddings` in and out, over ruoc `POST /v1/embeddings`. Only
@@ -296,6 +299,12 @@ defmodule DruzhokWebWeb.LlmProxy.Ruoc do
     case embed_input(body["input"]) do
       :error ->
         json_error(conn, 400, "input must be a non-empty string or list of strings", "invalid_request_error")
+
+      {:error, :too_many_texts} ->
+        json_error(conn, 413, "input may hold at most #{@embed_max_texts} texts", "invalid_request_error")
+
+      {:error, :text_too_long} ->
+        json_error(conn, 413, "each text may be at most #{@embed_max_chars} characters", "invalid_request_error")
 
       {:ok, input} ->
         request = %{"model" => body["model"] || "ruoc-embed", "input" => input}
@@ -319,9 +328,21 @@ defmodule DruzhokWebWeb.LlmProxy.Ruoc do
     end
   end
 
-  defp embed_input(input) when is_binary(input) and input != "", do: {:ok, input}
-  defp embed_input([_ | _] = input), do: if(Enum.all?(input, &is_binary/1), do: {:ok, input}, else: :error)
+  defp embed_input(input) when is_binary(input) and input != "", do: embed_limits(input, [input])
+
+  defp embed_input([_ | _] = input) do
+    if Enum.all?(input, &is_binary/1), do: embed_limits(input, input), else: :error
+  end
+
   defp embed_input(_), do: :error
+
+  defp embed_limits(input, texts) do
+    cond do
+      length(texts) > @embed_max_texts -> {:error, :too_many_texts}
+      Enum.any?(texts, &(String.length(&1) > @embed_max_chars)) -> {:error, :text_too_long}
+      true -> {:ok, input}
+    end
+  end
 
   defp preview_of(input) when is_binary(input), do: String.slice(input, 0, 200)
   defp preview_of([first | _]), do: String.slice(first, 0, 200)

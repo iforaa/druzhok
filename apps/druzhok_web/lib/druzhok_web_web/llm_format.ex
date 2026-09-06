@@ -1,8 +1,8 @@
 defmodule DruzhokWebWeb.LlmFormat do
   @moduledoc """
-  OpenRouter request shaping and usage/cost extraction for the paths that
-  still go there directly (image generation, /v1/responses),
-  plus the message helpers the ruoc path shares.
+  OpenRouter request shaping and usage/cost extraction for the one path
+  that still goes there directly (/v1/responses), plus the message helpers
+  the ruoc path shares.
   """
 
   def provider_url do

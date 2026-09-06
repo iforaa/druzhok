@@ -1,7 +1,8 @@
 """Druzhok embed worker: texts in, unit vectors out, over an Erlang Port.
 
 Framing is {:packet, 4}: a 4-byte big-endian length then one JSON object.
-Request {"texts": [...]}; reply {"vectors": [[...], ...], "tokens": N} or
+The worker writes {"ready": true} once the model is loaded, then answers
+each request {"texts": [...]} with {"vectors": [[...], ...], "tokens": N} or
 {"error": "embed_failed"}. `tokens` is the number of tokens actually
 embedded after truncation, which is what ruoc bills. No network, no state
 beyond the loaded model; every limit is enforced on the Elixir side.
@@ -72,6 +73,7 @@ class Embedder:
 def main():
     embedder = Embedder(sys.argv[1])
     stdin, stdout = sys.stdin.buffer, sys.stdout.buffer
+    write_message(stdout, {"ready": True})
     while True:
         request = read_message(stdin)
         if request is None:

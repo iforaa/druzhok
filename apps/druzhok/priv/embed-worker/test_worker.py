@@ -14,12 +14,16 @@ def start(model_dir):
                             stdin=subprocess.PIPE, stdout=subprocess.PIPE)
 
 
+def read(proc):
+    (n,) = struct.unpack(">I", proc.stdout.read(4))
+    return json.loads(proc.stdout.read(n))
+
+
 def call(proc, obj):
     payload = json.dumps(obj).encode()
     proc.stdin.write(struct.pack(">I", len(payload)) + payload)
     proc.stdin.flush()
-    (n,) = struct.unpack(">I", proc.stdout.read(4))
-    return json.loads(proc.stdout.read(n))
+    return read(proc)
 
 
 def cos(a, b):
@@ -28,6 +32,7 @@ def cos(a, b):
 
 def main(model_dir):
     proc = start(model_dir)
+    assert read(proc) == {"ready": True}, "ready handshake"
     r = call(proc, {"texts": ["query: кошка", "passage: кот сидит на окне", "passage: квартальная бухгалтерская отчётность"]})
     vecs, tokens = r["vectors"], r["tokens"]
     assert len(vecs) == 3 and all(len(v) == 384 for v in vecs), "dim"

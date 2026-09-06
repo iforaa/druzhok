@@ -579,10 +579,15 @@ defmodule Druzhok.Runtime.Hermes do
 
     sync_yaml_block(content, "memory",
       upsert: fn body ->
+        # The body ends in a newline the block regex captured; split off that
+        # final "" before dropping keys, or a trailing mnemosyne mapping takes
+        # it along and the next top-level key lands on the block's last line.
+        {lines, tail} = body |> String.split("\n") |> Enum.split(-1)
+
         body =
-          body
-          |> String.split("\n")
+          lines
           |> drop_owned_keys(["mnemosyne"])
+          |> Kernel.++(tail)
           |> Enum.join("\n")
           |> upsert_indented_line("provider", provider)
           |> upsert_indented_line("memory_enabled", "true")

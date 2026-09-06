@@ -6,7 +6,7 @@ defmodule Druzhok.Embed.WorkerTest do
   @fake Path.expand("../../support/fake_embed_worker.py", __DIR__)
 
   defp start_fake(name) do
-    start_supervised!({Worker, name: name, bin: System.find_executable("python3"), script: @fake, model_dir: "fake"})
+    start_supervised!({Worker, name: name, bin: System.find_executable("python3"), script: @fake, model_dir: System.tmp_dir!()})
     name
   end
 
@@ -37,6 +37,18 @@ defmodule Druzhok.Embed.WorkerTest do
     server = start_fake(:embed_fake_5)
     assert {:error, :embed_failed} = Worker.embed(["SLOW"], server: server, timeout: 300)
     assert {:ok, %{tokens: 1}} = Worker.embed(["after"], server: server)
+  end
+
+  test "a missing model dir is worker_down, not a worker that dies on every call" do
+    start_supervised!({Worker, name: :embed_nodir, bin: System.find_executable("python3"), script: @fake, model_dir: "/nonexistent/model"})
+    assert {:error, :worker_down} = Worker.embed(["x"], server: :embed_nodir)
+  end
+
+  test "a worker that exits before it is ready is worker_down" do
+    dir = Path.join(System.tmp_dir!(), "die")
+    File.mkdir_p!(dir)
+    start_supervised!({Worker, name: :embed_die, bin: System.find_executable("python3"), script: @fake, model_dir: dir})
+    assert {:error, :worker_down} = Worker.embed(["x"], server: :embed_die)
   end
 
   test "no configured python means worker_down" do

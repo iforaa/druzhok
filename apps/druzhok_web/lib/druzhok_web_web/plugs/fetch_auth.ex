@@ -1,8 +1,9 @@
 defmodule DruzhokWebWeb.Plugs.FetchAuth do
   @moduledoc """
-  Guards `POST /internal/fetch`, which ruoc-gateway calls as the fetch
-  upstream: a bearer token compared in constant time against the shared
-  secret (Settings `fetch_secret`, env `FETCH_SECRET`). No secret configured
+  Guards the `/internal` endpoints ruoc-gateway calls back into —
+  `POST /internal/fetch` (page reader) and `POST /internal/embed` (embedder):
+  a bearer token compared in constant time against the shared secret
+  (Settings `fetch_secret`, env `FETCH_SECRET`). No secret configured
   means the endpoint is closed, not open.
   """
 

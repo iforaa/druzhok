@@ -13,6 +13,9 @@ defmodule Druzhok.Embed.Worker do
   require Logger
 
   @default_timeout 10_000
+  # Loading the ONNX model (~470 MB) happens once per worker start, outside
+  # any caller's budget; the worker announces `{"ready": true}` when done.
+  @load_timeout 60_000
 
   @type result :: {:ok, %{vectors: [[float]], tokens: non_neg_integer}} | {:error, :embed_failed | :worker_down}
 
@@ -46,17 +49,41 @@ defmodule Druzhok.Embed.Worker do
   defp open(%{bin: nil} = state), do: state
 
   defp open(%{bin: bin, script: script, model_dir: model_dir} = state) do
-    if File.exists?(bin) and File.exists?(script) and is_binary(model_dir) do
+    if File.exists?(bin) and File.exists?(script) and is_binary(model_dir) and File.dir?(model_dir) do
       port =
         Port.open({:spawn_executable, bin}, [:binary, {:packet, 4}, :exit_status, :use_stdio, args: [script, model_dir]])
 
-      %{state | port: port}
+      %{state | port: await_ready(port)}
     else
       unless state.warned do
         Logger.warning("[embed] worker not started: #{inspect(bin)}, #{script} or model dir #{inspect(model_dir)} is missing")
       end
 
       %{state | port: nil, warned: true}
+    end
+  end
+
+  defp await_ready(port) do
+    receive do
+      {^port, {:data, reply}} ->
+        case Jason.decode(reply) do
+          {:ok, %{"ready" => true}} ->
+            port
+
+          _ ->
+            Logger.warning("[embed] worker sent #{inspect(String.slice(reply, 0, 80))} instead of ready; killing it")
+            kill(port)
+            nil
+        end
+
+      {^port, {:exit_status, status}} ->
+        Logger.warning("[embed] worker exited with #{status} before it was ready (bad model dir or venv?)")
+        nil
+    after
+      @load_timeout ->
+        Logger.warning("[embed] worker not ready after #{@load_timeout} ms; killing it")
+        kill(port)
+        nil
     end
   end
 

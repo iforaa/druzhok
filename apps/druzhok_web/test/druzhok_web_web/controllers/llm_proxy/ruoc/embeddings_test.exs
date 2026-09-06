@@ -55,6 +55,14 @@ defmodule DruzhokWebWeb.LlmProxy.Ruoc.EmbeddingsTest do
     end
   end
 
+  test "over-limit input is refused before the gateway", %{conn: conn} do
+    conn1 = post(conn, "/v1/embeddings", %{"input" => List.duplicate("x", 65)})
+    assert json_response(conn1, 413)["error"]["message"] =~ "64"
+
+    conn2 = post(conn, "/v1/embeddings", %{"input" => [String.duplicate("я", 8_001)]})
+    assert json_response(conn2, 413)["error"]["message"] =~ "8000"
+  end
+
   test "an empty balance relays the 402 unchanged", %{conn: conn, bypass: bypass, instance: instance} do
     Bypass.expect_once(bypass, "POST", "/v1/embeddings", fn req ->
       gateway_error(req, 402, "insufficient_quota", "account balance is too low to embed this batch")

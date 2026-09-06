@@ -68,7 +68,7 @@ its environment. Mnemosyne adds the `query: ` / `passage: ` prefixes itself from
 - `POST /internal/embed`, behind the existing `FetchAuth` plug (bearer `fetch_secret`).
   `InternalEmbedController.create/2`: validate limits, call the worker, reply
   `{"vectors": [...], "tokens": N, "dim": 384, "model": "multilingual-e5-small"}`. Errors:
-  400 on a bad body, 413 over limits, 503 `{"error": "worker_down"}`, 500
+  400 on a bad body, 413 over limits, 503 `{"error": "worker_down"}`, 502
   `{"error": "embed_failed"}`.
 
 ### 4.3 ruoc-gateway
@@ -158,7 +158,7 @@ its environment. Mnemosyne adds the `query: ` / `passage: ` prefixes itself from
 
 | Failure | Behaviour |
 |---|---|
-| Worker missing or crashed | `/internal/embed` 503 → ruoc 502 → proxy 502. Mnemosyne retries 3× with backoff, then the turn runs on FTS recall only. Bot keeps answering. Supervisor restarts the worker. |
+| Worker missing or crashed | `/internal/embed` 503 → ruoc 502 → proxy 502. Mnemosyne retries 3× with backoff, then the turn runs on FTS recall only. Bot keeps answering. The GenServer stays up and respawns the Python process on the next call. |
 | ruoc down | proxy 502, same degradation. |
 | Balance empty (after pricing) | ruoc 402 → proxy 402 as is; Mnemosyne treats 4xx as permanent for that call and degrades. Can't happen at rate 0. |
 | Over limits | 413 from druzhok or ruoc; Mnemosyne logs a warning and degrades. Its batches are far below 64 texts. |
