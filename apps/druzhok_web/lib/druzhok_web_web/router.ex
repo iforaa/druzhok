@@ -45,8 +45,10 @@ defmodule DruzhokWebWeb.Router do
     post "/scrape", LlmProxyController, :firecrawl_scrape
   end
 
-  # The page fetcher ruoc-gateway routes POST /v1/fetch to. Shared secret,
-  # localhost in practice; see docs/superpowers/specs/2026-09-05-web-fetch-service-design.md.
+  # The page fetcher and the embedder ruoc-gateway routes POST /v1/fetch and
+  # POST /v1/embeddings to. Shared secret, localhost in practice; see
+  # docs/superpowers/specs/2026-09-05-web-fetch-service-design.md and
+  # docs/superpowers/specs/2026-09-06-mnemosyne-memory-design.md.
   pipeline :internal_api do
     plug DruzhokWebWeb.Plugs.FetchAuth
   end
@@ -55,6 +57,7 @@ defmodule DruzhokWebWeb.Router do
     pipe_through :internal_api
 
     post "/fetch", FetchController, :fetch
+    post "/embed", EmbedController, :embed
   end
 
   # Public routes
