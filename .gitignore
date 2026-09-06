@@ -36,3 +36,5 @@ data/
 .claude/settings.local.json
 /.fetch-venv/
 __pycache__/
+.embed-venv/
+.embed-model/
