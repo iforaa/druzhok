@@ -206,6 +206,7 @@ defmodule Druzhok.Runtime.Hermes do
           |> sync_telegram_extra(instance)
           |> sync_cron_block()
           |> sync_display_block()
+          |> sync_stt_block()
 
         if updated != content, do: File.write!(config_path, updated)
         :ok
@@ -244,6 +245,18 @@ defmodule Druzhok.Runtime.Hermes do
     sync_yaml_block(content, "display",
       upsert: &upsert_indented_line(&1, "memory_notifications", "off"),
       default: "display:\n  memory_notifications: off"
+    )
+  end
+
+  # Hermes trims silence from longer voice notes before a cloud STT upload
+  # and re-encodes them to m4a (`stt.cloud_trim_silence`, default true). The
+  # proxy's /v1/audio/transcriptions only carries wav/mp3/ogg to ruoc, so the
+  # trimmed upload gets a 400 and the note is never transcribed. Telegram
+  # voice notes are ogg/opus already; upload them as they are.
+  defp sync_stt_block(content) do
+    sync_yaml_block(content, "stt",
+      upsert: &upsert_indented_line(&1, "cloud_trim_silence", "false"),
+      default: "stt:\n  enabled: true\n  provider: \"openai\"\n  cloud_trim_silence: false\n  openai:\n    model: \"whisper-1\""
     )
   end
 
@@ -900,6 +913,7 @@ defmodule Druzhok.Runtime.Hermes do
     stt:
       enabled: true
       provider: "openai"
+      cloud_trim_silence: false
       openai:
         model: "whisper-1"
 

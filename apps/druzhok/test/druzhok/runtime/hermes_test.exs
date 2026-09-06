@@ -316,7 +316,7 @@ defmodule Druzhok.Runtime.HermesTest do
       assert :ok = Hermes.sync_config(inst, tmp_dir)
       content = File.read!(Path.join(tmp_dir, "config.yaml"))
       assert String.ends_with?(content, "\n")
-      assert length(Regex.scan(~r/^  provider:/m, content)) == 1
+      assert length(Regex.scan(~r/^  provider: mnemosyne$/m, content)) == 1
       assert YamlElixir.read_from_string!(content)["memory"]["provider"] == "mnemosyne"
     end
 
@@ -534,6 +534,41 @@ defmodule Druzhok.Runtime.HermesTest do
       assert {:ok, cfg} = YamlElixir.read_from_string(File.read!(Path.join(tmp_dir, "config.yaml")))
       assert cfg["cron"] == %{"wrap_response" => false, "timezone" => "UTC"}
       assert cfg["display"] == %{"tool_progress" => "all", "memory_notifications" => "off"}
+    end
+  end
+
+  describe "sync_config/2 — stt silence trim" do
+    setup do
+      tmp_dir = Path.join(System.tmp_dir!(), "hermes-stt-#{System.unique_integer([:positive])}")
+      File.mkdir_p!(Path.join(tmp_dir, "workspace"))
+      on_exit(fn -> File.rm_rf!(tmp_dir) end)
+      %{tmp_dir: tmp_dir}
+    end
+
+    test "turns cloud_trim_silence off inside an existing stt block and keeps the provider", %{tmp_dir: tmp_dir} do
+      File.write!(Path.join(tmp_dir, "config.yaml"), """
+      stt:
+        enabled: true
+        provider: openai
+        openai:
+          model: whisper-1
+      tts:
+        enabled: true
+      """)
+
+      assert :ok = Hermes.sync_config(%{name: "b", model: "x", tenant_key: "k"}, tmp_dir)
+      assert {:ok, cfg} = YamlElixir.read_from_string(File.read!(Path.join(tmp_dir, "config.yaml")))
+      assert cfg["stt"] == %{"enabled" => true, "provider" => "openai", "openai" => %{"model" => "whisper-1"}, "cloud_trim_silence" => false}
+      assert cfg["tts"] == %{"enabled" => true}
+    end
+
+    test "adds the stt block when absent and the seed template carries the key", %{tmp_dir: tmp_dir} do
+      File.write!(Path.join(tmp_dir, "config.yaml"), "model:\n  default: \"x\"\n")
+      assert :ok = Hermes.sync_config(%{name: "b", model: "x", tenant_key: "k"}, tmp_dir)
+      assert {:ok, cfg} = YamlElixir.read_from_string(File.read!(Path.join(tmp_dir, "config.yaml")))
+      assert cfg["stt"]["cloud_trim_silence"] == false
+      assert {:ok, seed} = YamlElixir.read_from_string(Hermes.build_config_yaml(@instance))
+      assert seed["stt"]["cloud_trim_silence"] == false
     end
   end
 
