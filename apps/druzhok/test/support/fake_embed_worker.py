@@ -2,7 +2,7 @@
 tokens = words. A text equal to "CRASH" exits the process (restart tests);
 "SLOW" sleeps 2 s (timeout tests); "BAD" answers embed_failed. Like the real
 worker it announces {"ready": true} once "loaded"; a model dir named "die"
-exits before that (startup-failure tests)."""
+exits before that and one named "slow" takes 2 s to load (startup tests)."""
 import json
 import struct
 import sys
@@ -17,8 +17,11 @@ def write(stdout, reply):
 
 def main():
     stdin, stdout = sys.stdin.buffer, sys.stdout.buffer
-    if len(sys.argv) > 1 and sys.argv[1].rstrip("/").endswith("/die"):
+    model_dir = sys.argv[1].rstrip("/") if len(sys.argv) > 1 else ""
+    if model_dir.endswith("/die"):
         sys.exit(4)
+    if model_dir.endswith("/slow"):
+        time.sleep(2)
     write(stdout, {"ready": True})
     while True:
         header = stdin.read(4)

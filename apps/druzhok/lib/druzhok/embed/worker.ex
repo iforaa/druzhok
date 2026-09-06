@@ -13,9 +13,13 @@ defmodule Druzhok.Embed.Worker do
   require Logger
 
   @default_timeout 10_000
-  # Loading the ONNX model (~470 MB) happens once per worker start, outside
-  # any caller's budget; the worker announces `{"ready": true}` when done.
+  # Loading the ONNX model (~470 MB) happens once per worker start, in this
+  # process but never inside `init/1` (the app would boot late) or a caller's
+  # call; the worker announces `{"ready": true}` when done. After a failed
+  # start the next attempt waits `@open_cooldown`, so a broken venv does not
+  # spawn a dying Python per request.
   @load_timeout 60_000
+  @open_cooldown 30_000
 
   @type result :: {:ok, %{vectors: [[float]], tokens: non_neg_integer}} | {:error, :embed_failed | :worker_down}
 
@@ -43,23 +47,37 @@ defmodule Druzhok.Embed.Worker do
     model_dir = Keyword.get(opts, :model_dir, Application.get_env(:druzhok, :embed_model_dir))
     script = Keyword.get(opts, :script, Path.join(Application.app_dir(:druzhok, "priv/embed-worker"), "worker.py"))
     Process.flag(:trap_exit, true)
-    {:ok, %{bin: bin, script: script, model_dir: model_dir, port: nil, warned: false} |> open()}
+    state = %{bin: bin, script: script, model_dir: model_dir, port: nil, warned: false, retry_at: nil}
+    {:ok, state, {:continue, :open}}
   end
 
+  @impl true
+  def handle_continue(:open, state), do: {:noreply, open(state)}
+
   defp open(%{bin: nil} = state), do: state
+  defp open(%{port: port} = state) when is_port(port), do: state
 
   defp open(%{bin: bin, script: script, model_dir: model_dir} = state) do
-    if File.exists?(bin) and File.exists?(script) and is_binary(model_dir) and File.dir?(model_dir) do
-      port =
-        Port.open({:spawn_executable, bin}, [:binary, {:packet, 4}, :exit_status, :use_stdio, args: [script, model_dir]])
+    cond do
+      # Monotonic time may be negative, so the "never tried" sentinel is nil.
+      state.retry_at != nil and System.monotonic_time(:millisecond) < state.retry_at ->
+        state
 
-      %{state | port: await_ready(port)}
-    else
-      unless state.warned do
-        Logger.warning("[embed] worker not started: #{inspect(bin)}, #{script} or model dir #{inspect(model_dir)} is missing")
-      end
+      File.exists?(bin) and File.exists?(script) and is_binary(model_dir) and File.dir?(model_dir) ->
+        port =
+          Port.open({:spawn_executable, bin}, [:binary, {:packet, 4}, :exit_status, :use_stdio, args: [script, model_dir]])
 
-      %{state | port: nil, warned: true}
+        case await_ready(port) do
+          nil -> %{state | port: nil, retry_at: System.monotonic_time(:millisecond) + @open_cooldown}
+          port -> %{state | port: port}
+        end
+
+      true ->
+        unless state.warned do
+          Logger.warning("[embed] worker not started: #{inspect(bin)}, #{script} or model dir #{inspect(model_dir)} is missing")
+        end
+
+        %{state | port: nil, warned: true}
     end
   end
 
@@ -87,12 +105,11 @@ defmodule Druzhok.Embed.Worker do
     end
   end
 
+  # No worker: answer now and (re)start one after the reply, so the model
+  # load is never charged to a caller.
   @impl true
-  def handle_call({:embed, texts, deadline}, from, %{port: nil} = state) do
-    case open(state) do
-      %{port: nil} = state -> {:reply, {:error, :worker_down}, state}
-      state -> handle_call({:embed, texts, deadline}, from, state)
-    end
+  def handle_call({:embed, _texts, _deadline}, _from, %{port: nil} = state) do
+    {:reply, {:error, :worker_down}, state, {:continue, :open}}
   end
 
   def handle_call({:embed, texts, deadline}, _from, %{port: port} = state) do
@@ -112,12 +129,12 @@ defmodule Druzhok.Embed.Worker do
 
         {^port, {:exit_status, status}} ->
           Logger.warning("[embed] worker exited with #{status} mid-request")
-          {:reply, {:error, :embed_failed}, %{state | port: nil}}
+          {:reply, {:error, :embed_failed}, %{state | port: nil}, {:continue, :open}}
       after
         remaining ->
           Logger.warning("[embed] worker took longer than #{remaining} ms; killing it")
           kill(port)
-          {:reply, {:error, :embed_failed}, %{state | port: nil}}
+          {:reply, {:error, :embed_failed}, %{state | port: nil}, {:continue, :open}}
       end
     end
   end
@@ -137,11 +154,11 @@ defmodule Druzhok.Embed.Worker do
 
   @impl true
   def handle_info({port, {:exit_status, status}}, %{port: port} = state) do
-    Logger.warning("[embed] worker exited with #{status}; it restarts on the next call")
-    {:noreply, %{state | port: nil}}
+    Logger.warning("[embed] worker exited with #{status}; restarting it")
+    {:noreply, %{state | port: nil}, {:continue, :open}}
   end
 
-  def handle_info({:EXIT, port, _reason}, %{port: port} = state), do: {:noreply, %{state | port: nil}}
+  def handle_info({:EXIT, port, _reason}, %{port: port} = state), do: {:noreply, %{state | port: nil}, {:continue, :open}}
   def handle_info(_msg, state), do: {:noreply, state}
 
   @impl true

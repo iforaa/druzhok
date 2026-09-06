@@ -51,6 +51,16 @@ defmodule Druzhok.Embed.WorkerTest do
     assert {:error, :worker_down} = Worker.embed(["x"], server: :embed_die)
   end
 
+  test "the model load blocks neither startup nor callers" do
+    dir = Path.join(System.tmp_dir!(), "slow")
+    File.mkdir_p!(dir)
+    {us, _} = :timer.tc(fn -> start_supervised!({Worker, name: :embed_slow, bin: System.find_executable("python3"), script: @fake, model_dir: dir}) end)
+    assert us < 500_000
+    assert {:error, :worker_down} = Worker.embed(["early"], server: :embed_slow, timeout: 200)
+    Process.sleep(2_500)
+    assert {:ok, %{tokens: 1}} = Worker.embed(["later"], server: :embed_slow)
+  end
+
   test "no configured python means worker_down" do
     start_supervised!({Worker, name: :embed_none, bin: nil})
     assert {:error, :worker_down} = Worker.embed(["x"], server: :embed_none)
