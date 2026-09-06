@@ -35,6 +35,10 @@ defmodule Druzhok.Host.SystemdTest do
     end)
   end
 
+  test "env_file keeps a trailing space inside the quotes" do
+    assert Systemd.env_file(%{"MNEMOSYNE_EMBEDDING_QUERY_PREFIX" => "query: "}) == ~s(MNEMOSYNE_EMBEDDING_QUERY_PREFIX="query: "\n)
+  end
+
   test "env_file serialises sorted, quoted, escaped" do
     assert Systemd.env_file(%{"B" => ~s(say "hi" \\ $X), "A" => "1"}) ==
              ~s(A="1"\nB="say \\"hi\\" \\\\ $X"\n)

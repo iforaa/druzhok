@@ -132,6 +132,36 @@ defmodule Druzhok.Runtime.Hermes do
       "FIRECRAWL_API_URL" => proxy_url |> String.replace_suffix("/v1", ""),
       "FIRECRAWL_API_KEY" => tenant_key
     }
+    |> Map.merge(mnemosyne_env(instance))
+  end
+
+  # Mnemosyne memory provider (docs/superpowers/specs/2026-09-06-mnemosyne-memory-design.md):
+  # embeddings go to the proxy's /v1/embeddings with the tenant key, e5 needs
+  # its two prefixes (trailing space included), and LLM consolidation stays
+  # off. `MNEMOSYNE_DATA_DIR` keeps the SQLite bank inside the tenant dir.
+  defp mnemosyne_env(instance) do
+    if memory_provider(instance) == "mnemosyne" do
+      %{
+        "MNEMOSYNE_DATA_DIR" => Path.join(data_root(instance), "mnemosyne"),
+        "MNEMOSYNE_EMBEDDING_API_URL" => Druzhok.Runtime.proxy_url(),
+        "MNEMOSYNE_EMBEDDING_API_KEY" => Map.get(instance, :tenant_key, "") || "",
+        "MNEMOSYNE_EMBEDDING_MODEL" => "ruoc-embed",
+        "MNEMOSYNE_EMBEDDING_DIM" => "384",
+        "MNEMOSYNE_EMBEDDING_QUERY_PREFIX" => "query: ",
+        "MNEMOSYNE_EMBEDDING_DOC_PREFIX" => "passage: ",
+        "MNEMOSYNE_LLM_ENABLED" => "false",
+        "MNEMOSYNE_HOST_LLM_ENABLED" => "false"
+      }
+    else
+      %{}
+    end
+  end
+
+  defp memory_provider(instance) do
+    case Map.get(instance, :memory_provider) do
+      "mnemosyne" -> "mnemosyne"
+      _ -> "builtin"
+    end
   end
 
   @impl true
@@ -167,7 +197,7 @@ defmodule Druzhok.Runtime.Hermes do
           |> sync_model_api_key()
           |> sync_auxiliary_vision(vision_model, tenant_key)
           |> sync_group_sessions_per_user(instance)
-          |> sync_memory_block()
+          |> sync_memory_block(instance)
           |> sync_image_gen_block(instance)
           |> sync_quick_commands()
           |> sync_streaming_block()
@@ -533,20 +563,38 @@ defmodule Druzhok.Runtime.Hermes do
     end
   end
 
-  # Druzhok pins the memory block to the builtin provider with legacy
-  # MEMORY.md/USER.md memory on. Char-limit fields are left alone so user
-  # edits survive.
-  defp sync_memory_block(content) do
+  # Druzhok owns `memory.provider` (builtin, or mnemosyne when the bot's
+  # memory_provider says so); legacy MEMORY.md/USER.md memory stays on in
+  # both cases (hermes runs one external provider alongside builtin).
+  # Char-limit fields are left alone so user edits survive.
+  #
+  # The mnemosyne sub-block is written as a flow mapping on one line. Hermes
+  # re-dumps config.yaml at runtime as a block mapping, so any existing
+  # `mnemosyne:` key is dropped with its body first and re-added; otherwise
+  # the one-line upsert would leave the old nested lines dangling.
+  @mnemosyne_tools ~w(mnemosyne_remember mnemosyne_recall mnemosyne_forget)
+
+  defp sync_memory_block(content, instance) do
+    provider = memory_provider(instance)
+
     sync_yaml_block(content, "memory",
       upsert: fn body ->
-        body
-        |> upsert_indented_line("provider", "builtin")
-        |> upsert_indented_line("memory_enabled", "true")
-        |> upsert_indented_line("user_profile_enabled", "true")
+        body =
+          body
+          |> String.split("\n")
+          |> drop_owned_keys(["mnemosyne"])
+          |> Enum.join("\n")
+          |> upsert_indented_line("provider", provider)
+          |> upsert_indented_line("memory_enabled", "true")
+          |> upsert_indented_line("user_profile_enabled", "true")
+
+        if provider == "mnemosyne", do: mnemosyne_line() <> "\n" <> body, else: body
       end,
-      default: default_memory_block()
+      default: default_memory_block(provider)
     )
   end
+
+  defp mnemosyne_line, do: "  mnemosyne: {tools: [#{Enum.join(@mnemosyne_tools, ", ")}]}"
 
   # When image_gen is enabled, point hermes at the OpenAI plugin (which the
   # `openai>=2.x` SDK auto-routes through `OPENAI_BASE_URL` → druzhok proxy).
@@ -600,12 +648,14 @@ defmodule Druzhok.Runtime.Hermes do
     end
   end
 
-  defp default_memory_block do
+  defp default_memory_block(provider) do
+    mnemosyne = if provider == "mnemosyne", do: "\n" <> mnemosyne_line(), else: ""
+
     """
     memory:
-      provider: builtin
+      provider: #{provider}
       memory_enabled: true
-      user_profile_enabled: true
+      user_profile_enabled: true#{mnemosyne}
       memory_char_limit: 2200
       user_char_limit: 1375\
     """

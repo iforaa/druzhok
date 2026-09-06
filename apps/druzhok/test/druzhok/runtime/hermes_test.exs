@@ -20,6 +20,23 @@ defmodule Druzhok.Runtime.HermesTest do
   }
 
   describe "env_vars/1" do
+    test "a builtin bot gets no MNEMOSYNE_ keys" do
+      refute Hermes.env_vars(@instance) |> Map.keys() |> Enum.any?(&String.starts_with?(&1, "MNEMOSYNE_"))
+    end
+
+    test "a mnemosyne bot points the provider at the proxy with e5 prefixes and no LLM" do
+      env = Hermes.env_vars(Map.put(@instance, :memory_provider, "mnemosyne"))
+      assert env["MNEMOSYNE_DATA_DIR"] == Path.join(Hermes.data_root(@instance), "mnemosyne")
+      assert env["MNEMOSYNE_EMBEDDING_API_URL"] == Druzhok.Runtime.proxy_url()
+      assert env["MNEMOSYNE_EMBEDDING_API_KEY"] == "dk-alice-token"
+      assert env["MNEMOSYNE_EMBEDDING_MODEL"] == "ruoc-embed"
+      assert env["MNEMOSYNE_EMBEDDING_DIM"] == "384"
+      assert env["MNEMOSYNE_EMBEDDING_QUERY_PREFIX"] == "query: "
+      assert env["MNEMOSYNE_EMBEDDING_DOC_PREFIX"] == "passage: "
+      assert env["MNEMOSYNE_LLM_ENABLED"] == "false"
+      assert env["MNEMOSYNE_HOST_LLM_ENABLED"] == "false"
+    end
+
     test "flips inference provider to custom so hermes routes via OPENAI_BASE_URL" do
       env = Hermes.env_vars(@instance)
       assert env["HERMES_INFERENCE_PROVIDER"] == "custom"
@@ -194,6 +211,70 @@ defmodule Druzhok.Runtime.HermesTest do
       assert content =~ ~r/^  memory_enabled: true$/m
       assert content =~ ~r/^  user_profile_enabled: true$/m
       assert content =~ ~r/^  memory_char_limit: 999$/m
+    end
+
+    test "switches the memory block to mnemosyne with the three tools, builtin flags still on", %{tmp_dir: tmp_dir} do
+      File.write!(Path.join(tmp_dir, "config.yaml"), """
+      model:
+        default: "x"
+      memory:
+        provider: builtin
+        memory_enabled: true
+        user_profile_enabled: true
+        memory_char_limit: 999
+      """)
+
+      inst = %{name: "b", model: "x", tenant_key: "k", memory_provider: "mnemosyne"}
+      assert :ok = Hermes.sync_config(inst, tmp_dir)
+      content = File.read!(Path.join(tmp_dir, "config.yaml"))
+      assert content =~ ~r/^  provider: mnemosyne$/m
+      assert content =~ ~r/^  memory_enabled: true$/m
+      assert content =~ ~r/^  user_profile_enabled: true$/m
+      assert content =~ ~r/^  mnemosyne: \{tools: \[mnemosyne_remember, mnemosyne_recall, mnemosyne_forget\]\}$/m
+      assert content =~ ~r/^  memory_char_limit: 999$/m
+      assert YamlElixir.read_from_string!(content)["memory"]["mnemosyne"]["tools"] == ~w(mnemosyne_remember mnemosyne_recall mnemosyne_forget)
+
+      # Idempotent: a second sync leaves the memory block as it is (other
+      # blocks have their own whitespace quirks, outside this test).
+      memory_block = fn c -> Regex.run(~r/^memory:\n(?:[ \t]+\S[^\n]*\n)*/m, c) end
+      assert :ok = Hermes.sync_config(inst, tmp_dir)
+      assert memory_block.(File.read!(Path.join(tmp_dir, "config.yaml"))) == memory_block.(content)
+    end
+
+    test "switching back to builtin drops the mnemosyne block hermes may have re-dumped as a mapping", %{tmp_dir: tmp_dir} do
+      File.write!(Path.join(tmp_dir, "config.yaml"), """
+      memory:
+        provider: mnemosyne
+        memory_enabled: true
+        user_profile_enabled: true
+        mnemosyne:
+          tools:
+          - mnemosyne_remember
+          - mnemosyne_recall
+        memory_char_limit: 999
+      """)
+
+      assert :ok = Hermes.sync_config(%{name: "b", model: "x", tenant_key: "k", memory_provider: "builtin"}, tmp_dir)
+      content = File.read!(Path.join(tmp_dir, "config.yaml"))
+      assert content =~ ~r/^  provider: builtin$/m
+      refute content =~ "mnemosyne"
+      assert content =~ ~r/^  memory_char_limit: 999$/m
+    end
+
+    test "a re-dumped mnemosyne mapping is replaced, not doubled", %{tmp_dir: tmp_dir} do
+      File.write!(Path.join(tmp_dir, "config.yaml"), """
+      memory:
+        provider: mnemosyne
+        mnemosyne:
+          tools:
+          - mnemosyne_remember
+        memory_enabled: true
+      """)
+
+      assert :ok = Hermes.sync_config(%{name: "b", model: "x", tenant_key: "k", memory_provider: "mnemosyne"}, tmp_dir)
+      content = File.read!(Path.join(tmp_dir, "config.yaml"))
+      assert length(Regex.scan(~r/mnemosyne:/, content)) == 1
+      assert YamlElixir.read_from_string!(content)["memory"]["mnemosyne"]["tools"] == ~w(mnemosyne_remember mnemosyne_recall mnemosyne_forget)
     end
 
     test "removes a stale honcho.json", %{tmp_dir: tmp_dir} do
