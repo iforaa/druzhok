@@ -57,7 +57,7 @@ defmodule DruzhokWebWeb.SettingsLive do
 
       <div class="max-w-2xl mx-auto p-5">
         <form phx-submit="save" class="space-y-4">
-          <.card title="OpenRouter (embeddings, image generation, /v1/responses)">
+          <.card title="OpenRouter (image generation, /v1/responses)">
             <.field name="openrouter_api_key" label="API Key" value={@openrouter_api_key} placeholder="Paste new key" mono />
           </.card>
 

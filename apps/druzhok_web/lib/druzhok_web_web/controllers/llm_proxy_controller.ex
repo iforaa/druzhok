@@ -157,44 +157,7 @@ defmodule DruzhokWebWeb.LlmProxyController do
     end
   end
 
-  def embeddings(conn, _params) do
-    body = conn.body_params
-    instance = conn.assigns.instance
-    started_at = System.monotonic_time(:millisecond)
-    url = LlmFormat.provider_url() <> "/embeddings"
-    headers = LlmFormat.request_headers(conn.req_headers)
-    request = Finch.build(:post, url, headers, Jason.encode!(body))
-
-    case Finch.request(request, Druzhok.Finch, receive_timeout: 60_000) do
-      {:ok, %Finch.Response{status: status, body: resp_body}} ->
-        if status == 200 do
-          case Jason.decode(resp_body) do
-            {:ok, %{"usage" => %{"total_tokens" => total} = u}} when is_integer(total) and total > 0 ->
-              Usage.log(%{
-                instance_id: instance.id,
-                model: body["model"] || "unknown",
-                prompt_tokens: u["prompt_tokens"] || total,
-                completion_tokens: 0,
-                total_tokens: total,
-                request_type: "embedding",
-                requested_model: body["model"],
-                resolved_model: body["model"],
-                provider: "openrouter",
-                latency_ms: System.monotonic_time(:millisecond) - started_at
-              })
-            _ -> :ok
-          end
-        end
-
-        conn
-        |> put_resp_content_type("application/json")
-        |> send_resp(status, resp_body)
-
-      {:error, reason} ->
-        Logger.error("Embeddings proxy error: #{inspect(reason)}")
-        json_error(conn, 502, "Embeddings provider unavailable", "server_error")
-    end
-  end
+  def embeddings(conn, _params), do: RuocProxy.embeddings(conn, conn.assigns.instance)
 
   def responses_proxy(conn, _params) do
     # OpenAI Responses API → convert to chat/completions format for OpenRouter

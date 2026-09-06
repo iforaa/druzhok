@@ -1,7 +1,8 @@
 defmodule DruzhokWebWeb.LlmProxy.Ruoc do
   @moduledoc """
-  The ruoc-gateway path of the LLM proxy: chat, web search, transcription
-  and image generation for a bot that has a `ruoc_api_key`.
+  The ruoc-gateway path of the LLM proxy: chat, web search, page fetch,
+  embeddings, transcription and image generation for a bot that has a
+  `ruoc_api_key`.
 
   Money lives in ruoc-gateway. Nothing here checks a budget or computes a
   cost; a 402 from the gateway is relayed to the bot as the answer. What
@@ -275,6 +276,60 @@ defmodule DruzhokWebWeb.LlmProxy.Ruoc do
         conn
         |> put_resp_content_type("application/json")
         |> send_resp(502, Jason.encode!(%{success: false, error: "fetch provider unavailable"}))
+    end
+  end
+
+  # --- Embeddings ------------------------------------------------------------
+
+  @embed_timeout 30_000
+
+  @doc """
+  OpenAI `embeddings` in and out, over ruoc `POST /v1/embeddings`. Only
+  `model` and `input` travel; the answer comes back unchanged, including a
+  402, which Mnemosyne treats as a permanent failure for that batch and
+  falls back to FTS recall.
+  """
+  def embeddings(conn, instance) do
+    body = conn.body_params
+    started_at = System.monotonic_time(:millisecond)
+
+    case embed_input(body["input"]) do
+      :error ->
+        json_error(conn, 400, "input must be a non-empty string or list of strings", "invalid_request_error")
+
+      {:ok, input} ->
+        request = %{"model" => body["model"] || "ruoc-embed", "input" => input}
+
+        case Client.post("/v1/embeddings", instance.ruoc_api_key, Jason.encode!(request), receive_timeout: @embed_timeout) do
+          {:ok, 200, headers, resp_body} ->
+            request_id = request_id(headers)
+            meter(instance, "embedding", "ruoc-embed", usage_of(resp_body), started_at, nil, nil, request_id, preview_of(input))
+
+            conn |> relay_headers(headers, request_id) |> send_resp(200, resp_body)
+
+          {:ok, status, headers, resp_body} ->
+            request_id = request_id(headers)
+            log(instance, "embedding", request_id, started_at, "HTTP #{status}")
+            conn |> relay_headers(headers, request_id) |> send_resp(status, resp_body)
+
+          {:error, reason} ->
+            Logger.error("[ruoc] #{instance.name} embeddings unreachable: #{inspect(reason)}")
+            json_error(conn, 502, "embeddings provider unavailable", "server_error")
+        end
+    end
+  end
+
+  defp embed_input(input) when is_binary(input) and input != "", do: {:ok, input}
+  defp embed_input([_ | _] = input), do: if(Enum.all?(input, &is_binary/1), do: {:ok, input}, else: :error)
+  defp embed_input(_), do: :error
+
+  defp preview_of(input) when is_binary(input), do: String.slice(input, 0, 200)
+  defp preview_of([first | _]), do: String.slice(first, 0, 200)
+
+  defp usage_of(resp_body) do
+    case Jason.decode(resp_body) do
+      {:ok, %{"usage" => %{"prompt_tokens" => n}}} when is_integer(n) -> %{prompt_tokens: n, completion_tokens: 0}
+      _ -> @no_usage
     end
   end
 
