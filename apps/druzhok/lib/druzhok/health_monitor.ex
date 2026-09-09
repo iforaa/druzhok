@@ -8,6 +8,12 @@ defmodule Druzhok.HealthMonitor do
   waits behind slow probes. The LLM ping is a real, metered completion on the
   bot's own model, so it only runs every `@llm_every` sweeps; in between the
   last LLM result is reused.
+
+  The watch list lives in this process, so it is seeded from the active
+  instances on boot: `BotManager.start/1` is the only other place that
+  registers, and a bot already running when druzhok restarts never passes
+  through it (a one-off `druzhok-run.sh` restart registers in its own
+  throwaway node, which then exits).
   """
   use GenServer
   require Logger
@@ -17,22 +23,33 @@ defmodule Druzhok.HealthMonitor do
   @probe_timeout 20_000
   @llm_every 5
 
-  def start_link(opts \\ []), do: GenServer.start_link(__MODULE__, opts, name: __MODULE__)
+  def start_link(opts \\ []),
+    do: GenServer.start_link(__MODULE__, opts, name: Keyword.get(opts, :name, __MODULE__))
+
   def register(name), do: GenServer.cast(__MODULE__, {:register, name})
   def unregister(name), do: GenServer.cast(__MODULE__, {:unregister, name})
-  def list, do: GenServer.call(__MODULE__, :list)
+  def list(server \\ __MODULE__), do: GenServer.call(server, :list)
 
   @impl true
   def init(_) do
     schedule()
-    {:ok, %{bots: %{}, tick: 0, sweep: nil}}
+    {:ok, %{bots: %{}, tick: 0, sweep: nil}, {:continue, :seed}}
+  end
+
+  # Out of `init/1` so a slow or not-yet-migrated Repo cannot hold up boot.
+  @impl true
+  def handle_continue(:seed, s) do
+    bots =
+      Druzhok.InstanceManager.list()
+      |> Enum.filter(& &1.active)
+      |> Map.new(&{&1.name, fresh()})
+
+    unless bots == %{}, do: Logger.info("HealthMonitor watching #{map_size(bots)} active bots")
+    {:noreply, %{s | bots: bots}}
   end
 
   @impl true
-  def handle_cast({:register, name}, s) do
-    entry = %{status: :healthy, reasons: [], failures: 0, llm: :ok}
-    {:noreply, put_in(s, [:bots, name], entry)}
-  end
+  def handle_cast({:register, name}, s), do: {:noreply, put_in(s, [:bots, name], fresh())}
 
   def handle_cast({:unregister, name}, s), do: {:noreply, %{s | bots: Map.delete(s.bots, name)}}
 
@@ -136,6 +153,10 @@ defmodule Druzhok.HealthMonitor do
       instance_name: name
     })
   end
+
+  # A bot enters the list trusted: a probe has to fail @max_failures times in
+  # a row before it counts as down, so a restart never fires off stale state.
+  defp fresh, do: %{status: :healthy, reasons: [], failures: 0, llm: :ok}
 
   defp schedule, do: Process.send_after(self(), :check, @interval)
 end
