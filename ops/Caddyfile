@@ -33,3 +33,11 @@ oldey.dev, *.oldey.dev {
   encode zstd gzip
   reverse_proxy 127.0.0.1:8787
 }
+
+# CleoCode landing on its own domain: the gateway serves the site to any host
+# it does not recognise, so this only needs to reach it. DNS is at reg.ru, no
+# Cloudflare token, so the certificate comes from the plain HTTP challenge.
+cleocode.ru, www.cleocode.ru {
+  encode zstd gzip
+  reverse_proxy 127.0.0.1:8787
+}
