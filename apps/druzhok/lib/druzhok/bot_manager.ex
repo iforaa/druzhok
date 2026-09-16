@@ -98,7 +98,6 @@ defmodule Druzhok.BotManager do
         case Druzhok.Host.start(name, env, data_root) do
           :ok ->
             Logger.info("Started bot #{name}")
-            Druzhok.HealthMonitor.register(name)
             Repo.update(Instance.changeset(instance, %{active: true}))
             {:ok, name}
 
@@ -116,7 +115,6 @@ defmodule Druzhok.BotManager do
 
       instance ->
         Druzhok.Host.stop(name)
-        Druzhok.HealthMonitor.unregister(name)
         instance |> Ecto.Changeset.change(%{active: false}) |> Repo.update!()
     end
 

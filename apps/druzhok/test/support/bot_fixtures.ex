@@ -22,7 +22,6 @@ defmodule Druzhok.BotFixtures do
   def cleanup_instance(name) do
     on_exit(fn ->
       Druzhok.Host.destroy(name)
-      Druzhok.HealthMonitor.unregister(name)
 
       case Druzhok.Repo.get_by(Druzhok.Instance, name: name) do
         nil -> :ok

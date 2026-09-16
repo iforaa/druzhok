@@ -23,7 +23,7 @@ Always use `/my-commit` for committing changes.
 ## Layout
 
 ```
-apps/druzhok/      core: BotManager, Host (Systemd|Process), Runtime.Hermes, HealthMonitor(+Probe), ManagerBot, Budget
+apps/druzhok/      core: BotManager, Host (Systemd|Process), Runtime.Hermes, ManagerBot, Budget
 apps/druzhok_web/  Phoenix dashboard + LLM proxy (LlmProxyController) + BotSite plug
 ops/               druzhok-ctl, hermes@.service, nftables, Caddyfile, bootstrap.sh, smoke.sh
 hermes-agent/      gitignored clone of the hermes fork (see update-hermes skill)
