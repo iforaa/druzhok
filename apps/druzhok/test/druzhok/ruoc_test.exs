@@ -11,7 +11,7 @@ defmodule Druzhok.RuocTest do
   describe "create_account/2" do
     test "posts label and grant with the admin token and Host header, returns the key", %{stub: stub} do
       assert {:ok, %{account_id: "acct-" <> _, api_key: "ruoc_key" <> _}} =
-               Ruoc.create_account("druzhok:bot1", "5")
+               Ruoc.create_account("druzhok:bot1", grant_rubles: "5")
 
       [call] = RuocStub.calls(stub, "POST /admin/accounts")
       assert call.params == %{"label" => "druzhok:bot1", "grant_rubles" => "5"}
@@ -19,10 +19,25 @@ defmodule Druzhok.RuocTest do
       assert {"host", "admin.test"} in call.headers
     end
 
-    test "omits grant_rubles when none given", %{stub: stub} do
+    test "omits grant_rubles and invite when none given", %{stub: stub} do
       assert {:ok, _} = Ruoc.create_account("druzhok:bot2")
       [call] = RuocStub.calls(stub, "POST /admin/accounts")
       refute Map.has_key?(call.params, "grant_rubles")
+      refute Map.has_key?(call.params, "invite")
+    end
+
+    test "sends the invite code and maps the three refusals", %{stub: stub} do
+      assert {:ok, _} = Ruoc.create_account("druzhok:kot", invite: "ABCD-EFGH")
+      [call] = RuocStub.calls(stub, "POST /admin/accounts")
+      assert call.params["invite"] == "ABCD-EFGH"
+
+      for {type, reason} <- [{"invite_invalid", :invalid}, {"invite_spent", :spent}, {"invite_expired", :expired}] do
+        Bypass.expect_once(stub.bypass, "POST", "/admin/accounts", fn conn ->
+          RuocStub.reply(conn, 409, %{"error" => %{"type" => type, "message" => "no"}})
+        end)
+
+        assert {:error, {:invite, ^reason}} = Ruoc.create_account("druzhok:kot", invite: "ABCD-EFGH")
+      end
     end
 
     test "surfaces the gateway's error message", %{stub: stub} do
@@ -163,4 +178,45 @@ defmodule Druzhok.RuocTest do
   end
 
   test "default_model/0 is ruoc-flash", do: assert(Ruoc.default_model() == "ruoc-flash")
+
+  describe "check_invite/1" do
+    test "asks the admin surface and returns the status as an atom", %{stub: stub} do
+      assert {:ok, :available} = Ruoc.check_invite("ABCD-EFGH")
+      [call] = RuocStub.calls(stub, "GET /admin/invites/check")
+      assert call.path == "/admin/invites/check"
+      assert {"host", "admin.test"} in call.headers
+
+      for status <- ["spent", "expired", "invalid"] do
+        Bypass.expect_once(stub.bypass, "GET", "/admin/invites/check", fn conn ->
+          RuocStub.reply(conn, 200, %{"status" => status})
+        end)
+
+        assert {:ok, String.to_atom(status)} == Ruoc.check_invite("x")
+      end
+    end
+
+    test "an unknown status or a failure is an error", %{stub: stub} do
+      Bypass.expect_once(stub.bypass, "GET", "/admin/invites/check", fn conn ->
+        RuocStub.reply(conn, 200, %{"status" => "weird"})
+      end)
+
+      assert {:error, _} = Ruoc.check_invite("x")
+      Bypass.down(stub.bypass)
+      assert {:error, _} = Ruoc.check_invite("x")
+    end
+  end
+
+  test "referrals/1 uses the bot key and decodes the codes", %{stub: stub} do
+    assert {:ok, [first, second]} = Ruoc.referrals("ruoc_bot")
+    [call] = RuocStub.calls(stub, "GET /v1/referrals")
+    assert {"authorization", "Bearer ruoc_bot"} in call.headers
+    assert %{code: "AAAA-BBBB", status: "available", redeemed_at: nil, friend_rub: "0.00", you_rub: "20.00"} = first
+    assert %{code: "CCCC-DDDD", status: "redeemed", redeemed_at: %DateTime{}} = second
+
+    Bypass.expect_once(stub.bypass, "GET", "/v1/referrals", fn conn ->
+      RuocStub.reply(conn, 503, %{"error" => %{"type" => "api_error", "message" => "referrals are not available"}})
+    end)
+
+    assert {:error, "HTTP 503: referrals are not available"} = Ruoc.referrals("ruoc_bot")
+  end
 end

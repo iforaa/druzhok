@@ -59,14 +59,44 @@ defmodule Druzhok.Ruoc do
   @doc """
   Create an account with one key. `{:ok, %{account_id, api_key}}`; the key
   is returned once by the gateway and stored on the instance by the caller.
+
+  Options: `grant_rubles` (decimal string) funds the account on top of its
+  plan; `invite` is a code the gateway redeems in the same commit — a refusal
+  is `{:error, {:invite, :invalid | :spent | :expired}}` and no account
+  exists.
   """
-  def create_account(label, grant_rubles \\ nil) do
-    body = %{"label" => label}
-    body = if grant_rubles, do: Map.put(body, "grant_rubles", to_string(grant_rubles)), else: body
+  def create_account(label, opts \\ []) when is_list(opts) do
+    body =
+      %{"label" => label}
+      |> put_present("grant_rubles", opts[:grant_rubles])
+      |> put_present("invite", opts[:invite])
 
     case admin_post("/admin/accounts", body) do
       {:ok, 201, %{"account_id" => id, "api_key" => key}} ->
         {:ok, %{account_id: id, api_key: key}}
+
+      {:ok, 409, %{"error" => %{"type" => "invite_" <> reason}}} when reason in ["invalid", "spent", "expired"] ->
+        {:error, {:invite, String.to_existing_atom(reason)}}
+
+      other ->
+        {:error, describe(other)}
+    end
+  end
+
+  defp put_present(map, _key, nil), do: map
+  defp put_present(map, _key, ""), do: map
+  defp put_present(map, key, value), do: Map.put(map, key, to_string(value))
+
+  @doc """
+  Whether `code` would be accepted right now, without spending it:
+  `{:ok, :available | :spent | :expired | :invalid}`. The gateway is the
+  authority at creation; this is only so a person is refused before naming
+  their bot rather than after the Telegram step.
+  """
+  def check_invite(code) do
+    case admin_get("/admin/invites/check?code=" <> URI.encode_www_form(code)) do
+      {:ok, 200, %{"status" => status}} when status in ["available", "spent", "expired", "invalid"] ->
+        {:ok, String.to_existing_atom(status)}
 
       other ->
         {:error, describe(other)}
@@ -125,6 +155,44 @@ defmodule Druzhok.Ruoc do
   end
 
   defp subscription(_), do: nil
+
+  @doc """
+  The referral codes on a bot's account, oldest first:
+  `%{code, status, redeemed_at, friend_rub, you_rub}`. `code` is nil when the
+  gateway reports it underivable (its secret changed). `status` is one of
+  available | redeemed | revoked | expired | underivable.
+  """
+  def referrals(api_key) do
+    case Client.get("/v1/referrals", api_key) do
+      {:ok, 200, _headers, body} ->
+        case Jason.decode(body) do
+          {:ok, %{"codes" => codes}} when is_list(codes) -> {:ok, Enum.map(codes, &to_referral/1)}
+          _ -> {:error, "unexpected referrals payload"}
+        end
+
+      {:ok, status, _headers, body} ->
+        {:error, describe({:ok, status, decode(body)})}
+
+      {:error, reason} ->
+        {:error, inspect(reason)}
+    end
+  end
+
+  defp to_referral(c) do
+    redeemed_at =
+      case DateTime.from_iso8601(c["redeemed_at"] || "") do
+        {:ok, dt, _} -> DateTime.truncate(dt, :second)
+        _ -> nil
+      end
+
+    %{
+      code: c["code"],
+      status: c["status"],
+      redeemed_at: redeemed_at,
+      friend_rub: format_rub(c["friend_gets_nanorub"] || 0),
+      you_rub: format_rub(c["you_get_nanorub"] || 0)
+    }
+  end
 
   # Nanorubles to a two-decimal string, rounding half up, without floats.
   defp format_rub(nano) do
@@ -289,6 +357,21 @@ defmodule Druzhok.Ruoc do
 
           {:error, reason} ->
             {:error, inspect(reason)}
+        end
+    end
+  end
+
+  defp admin_get(path) do
+    case admin_token() do
+      nil ->
+        {:error, "ruoc_admin_token is not set"}
+
+      token ->
+        headers = if host = admin_host(), do: [{"host", host}], else: []
+
+        case Client.get(path, token, headers: headers) do
+          {:ok, status, _headers, resp} -> {:ok, status, decode(resp)}
+          {:error, reason} -> {:error, inspect(reason)}
         end
     end
   end

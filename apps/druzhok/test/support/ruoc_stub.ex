@@ -75,6 +75,24 @@ defmodule Druzhok.RuocStub do
       conn = record(stub, "GET /v1/images/models", conn)
       reply(conn, 200, %{"models" => image_models()})
     end)
+
+    Bypass.stub(bypass, "GET", "/admin/invites/check", fn conn ->
+      conn = record(stub, "GET /admin/invites/check", conn)
+      reply(conn, 200, %{"status" => "available"})
+    end)
+
+    Bypass.stub(bypass, "GET", "/v1/referrals", fn conn ->
+      conn = record(stub, "GET /v1/referrals", conn)
+      reply(conn, 200, %{"codes" => referral_codes()})
+    end)
+  end
+
+  def referral_codes do
+    [
+      %{"code" => "AAAA-BBBB", "status" => "available", "friend_gets_nanorub" => 0, "you_get_nanorub" => 20_000_000_000},
+      %{"code" => "CCCC-DDDD", "status" => "redeemed", "redeemed_at" => "2026-10-05T09:00:00Z",
+        "friend_gets_nanorub" => 0, "you_get_nanorub" => 20_000_000_000}
+    ]
   end
 
   def image_models do
