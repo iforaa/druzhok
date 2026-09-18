@@ -76,7 +76,7 @@ defmodule Druzhok.Ruoc do
         {:ok, %{account_id: id, api_key: key}}
 
       {:ok, 409, %{"error" => %{"type" => "invite_" <> reason}}} when reason in ["invalid", "spent", "expired"] ->
-        {:error, {:invite, String.to_existing_atom(reason)}}
+        {:error, {:invite, invite_reason(reason)}}
 
       other ->
         {:error, describe(other)}
@@ -87,6 +87,10 @@ defmodule Druzhok.Ruoc do
   defp put_present(map, _key, ""), do: map
   defp put_present(map, key, value), do: Map.put(map, key, to_string(value))
 
+  defp invite_reason("invalid"), do: :invalid
+  defp invite_reason("spent"), do: :spent
+  defp invite_reason("expired"), do: :expired
+
   @doc """
   Whether `code` would be accepted right now, without spending it:
   `{:ok, :available | :spent | :expired | :invalid}`. The gateway is the
@@ -96,12 +100,17 @@ defmodule Druzhok.Ruoc do
   def check_invite(code) do
     case admin_get("/admin/invites/check?code=" <> URI.encode_www_form(code)) do
       {:ok, 200, %{"status" => status}} when status in ["available", "spent", "expired", "invalid"] ->
-        {:ok, String.to_existing_atom(status)}
+        {:ok, invite_status(status)}
 
       other ->
         {:error, describe(other)}
     end
   end
+
+  defp invite_status("available"), do: :available
+  defp invite_status("spent"), do: :spent
+  defp invite_status("expired"), do: :expired
+  defp invite_status("invalid"), do: :invalid
 
   @doc "Suspend the account so its key stops working; history stays."
   def suspend(account_id) do
