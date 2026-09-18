@@ -121,6 +121,71 @@ defmodule DruzhokWebWeb.Plugs.BotSiteTest do
     end
   end
 
+  # The bot owns its whole tenant dir and druzhok reads with
+  # CAP_DAC_READ_SEARCH, so a followed symlink would hand out any host file.
+  describe "symlinks" do
+    setup %{root: root} do
+      secret = Path.join(root, "host-secret.env")
+      File.write!(secret, "TOPSECRET")
+      secret_dir = Path.join(root, "host-secret-dir")
+      File.mkdir_p!(secret_dir)
+      File.write!(Path.join(secret_dir, "index.html"), "TOPSECRET")
+      File.write!(Path.join(secret_dir, "db.txt"), "TOPSECRET")
+      %{secret: secret, secret_dir: secret_dir}
+    end
+
+    defp refute_leak(conn) do
+      assert conn.status == 404
+      refute conn.resp_body =~ "TOPSECRET"
+    end
+
+    test "a symlinked file is not served", %{root: root, secret: secret} do
+      write_site(root, "igorhermes", "site/index.html", "x")
+      File.ln_s!(secret, Path.join([root, "igorhermes", "workspace", "sites", "site", "x.txt"]))
+
+      refute_leak(call("igorhermes.oldey.dev", "/site/x.txt"))
+    end
+
+    test "a symlink to a file inside the same site is not served either", %{root: root} do
+      real = write_site(root, "igorhermes", "site/real.txt", "TOPSECRET")
+      File.ln_s!(real, Path.join(Path.dirname(real), "alias.txt"))
+
+      refute_leak(call("igorhermes.oldey.dev", "/site/alias.txt"))
+    end
+
+    test "a symlinked index.html is not served for a directory request", %{root: root, secret: secret} do
+      write_site(root, "igorhermes", "site/other.html", "x")
+      File.ln_s!(secret, Path.join([root, "igorhermes", "workspace", "sites", "site", "index.html"]))
+
+      refute_leak(call("igorhermes.oldey.dev", "/site/"))
+    end
+
+    test "nothing is served through a symlinked directory", %{root: root, secret_dir: secret_dir} do
+      write_site(root, "igorhermes", "site/index.html", "x")
+      File.ln_s!(secret_dir, Path.join([root, "igorhermes", "workspace", "sites", "site", "d"]))
+
+      refute_leak(call("igorhermes.oldey.dev", "/site/d/db.txt"))
+      refute_leak(call("igorhermes.oldey.dev", "/site/d/"))
+    end
+
+    test "a symlinked sites dir is not served", %{root: root, secret_dir: secret_dir} do
+      File.mkdir_p!(Path.join([root, "igorhermes", "workspace"]))
+      File.ln_s!(secret_dir, Path.join([root, "igorhermes", "workspace", "sites"]))
+
+      refute_leak(call("igorhermes.oldey.dev", "/db.txt"))
+      refute_leak(call("igorhermes.oldey.dev", "/"))
+    end
+
+    test "a symlinked workspace is not served", %{root: root, secret_dir: secret_dir} do
+      File.mkdir_p!(Path.join(secret_dir, "sites"))
+      File.write!(Path.join([secret_dir, "sites", "db.txt"]), "TOPSECRET")
+      File.mkdir_p!(Path.join(root, "igorhermes"))
+      File.ln_s!(secret_dir, Path.join([root, "igorhermes", "workspace"]))
+
+      refute_leak(call("igorhermes.oldey.dev", "/db.txt"))
+    end
+  end
+
   describe "hidden files" do
     test "dotfiles are hidden", %{root: root} do
       write_site(root, "igorhermes", ".env", "SECRET=1")
