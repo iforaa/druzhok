@@ -9,12 +9,17 @@ defmodule Druzhok.ManagerBotTest do
   # No ':' — see TelegramStub.
   @token "111MANAGER"
   @owner 4242
+  @stranger 4343
 
   setup do
     ctx = with_tmp_data_root()
     stub = TelegramStub.start(@token)
     Druzhok.Settings.set("manager_bot_token", @token)
     on_exit(fn -> Druzhok.Settings.set("manager_bot_token", "") end)
+
+    # The gate is on for everyone; the owner is an old hand in most tests.
+    Druzhok.Admissions.admit(@owner, "test")
+    on_exit(fn -> Repo.delete_all(from(a in "admissions", where: a.telegram_id in [@owner, @stranger])) end)
 
     pid = TelegramStub.start_manager_bot()
 
@@ -99,13 +104,13 @@ defmodule Druzhok.ManagerBotTest do
     TelegramStub.await_call(stub, "getUpdates", &(&1["offset"] == 1001))
   end
 
-  test "/start replies with the welcome text and the two-button reply keyboard", %{stub: stub} do
+  test "/start replies with the welcome text and the create-only reply keyboard", %{stub: stub} do
     TelegramStub.push_update(stub, message("/start"))
 
     params = TelegramStub.await_call(stub, "sendMessage", &(&1["text"] =~ "Привет"))
     assert params["chat_id"] == @owner
     keyboard = Jason.decode!(params["reply_markup"])
-    assert keyboard["keyboard"] == [[%{"text" => "🤖 Создать бота"}, %{"text" => "📋 Мои боты"}]]
+    assert keyboard["keyboard"] == [[%{"text" => "🤖 Создать бота"}]]
     assert keyboard["resize_keyboard"] == true
   end
 
@@ -190,6 +195,13 @@ defmodule Druzhok.ManagerBotTest do
     assert done["text"] =~ "https://t.me/kot_1a2b_bot"
     refute Enum.any?(sent_texts(stub), &(&1 =~ "создан и запущен"))
 
+    menu = TelegramStub.await_call(stub, "sendMessage", &(&1["text"] == "Управление ботом — в меню внизу."), 5_000)
+
+    assert Jason.decode!(menu["reply_markup"])["keyboard"] == [
+             [%{"text" => "🤖 Мой бот"}, %{"text" => "🎨 Картинки"}],
+             [%{"text" => "🎁 Пригласить"}, %{"text" => "🗑 Удалить"}]
+           ]
+
     inst = Repo.get_by!(Instance, name: "kot_1a2b")
     assert inst.telegram_token == "555NEWBOT"
     assert inst.owner_telegram_id == @owner
@@ -237,7 +249,7 @@ defmodule Druzhok.ManagerBotTest do
     assert Repo.get_by(Instance, name: "ghost") == nil
   end
 
-  describe "with two existing bots" do
+  describe "with two existing bots (grandfathered)" do
     setup %{data_root: root} do
       for n <- ["own1", "own2"] do
         %Instance{}
@@ -259,8 +271,14 @@ defmodule Druzhok.ManagerBotTest do
 
     test "creating a third is refused", %{stub: stub} do
       TelegramStub.push_update(stub, message("🤖 Создать бота"))
-      assert TelegramStub.await_call(stub, "sendMessage", &(&1["text"] =~ "уже 2 бота"))
+      assert TelegramStub.await_call(stub, "sendMessage", &(&1["text"] =~ "уже есть бот"))
       refute "Как назовём бота?" in sent_texts(stub)
+    end
+
+    test "the keyboard is the list, and the list still works", %{stub: stub} do
+      TelegramStub.push_update(stub, message("/start"))
+      params = TelegramStub.await_call(stub, "sendMessage", &(&1["text"] =~ "Привет"))
+      assert Jason.decode!(params["reply_markup"])["keyboard"] == [[%{"text" => "📋 Мои боты"}]]
     end
 
     test "Мои боты lists them with balance and a delete button each", %{stub: stub} do
@@ -326,6 +344,168 @@ defmodule Druzhok.ManagerBotTest do
 
       TelegramStub.push_update(stub, callback("delyes:999999"))
       assert TelegramStub.await_call(stub, "editMessageText", &(&1["text"] == "Бот не найден."))
+    end
+  end
+
+  describe "with one bot" do
+    setup %{data_root: root} do
+      ruoc = Druzhok.RuocStub.start()
+
+      inst =
+        %Instance{}
+        |> Instance.changeset(%{
+          name: "solo",
+          model: "m",
+          workspace: Path.join([root, "solo", "workspace"]),
+          tenant_key: "dk-solo",
+          owner_telegram_id: @owner,
+          trigger_name: "solo_bot",
+          ruoc_api_key: "ruoc_solo"
+        })
+        |> Repo.insert!()
+
+      on_exit(fn -> Repo.delete_all(from(i in Instance, where: i.name == "solo")) end)
+      %{ruoc: ruoc, inst: inst}
+    end
+
+    test "/start shows the bot's controls and no create button", %{stub: stub} do
+      TelegramStub.push_update(stub, message("/start"))
+      params = TelegramStub.await_call(stub, "sendMessage", &(&1["text"] =~ "Привет"))
+
+      assert Jason.decode!(params["reply_markup"])["keyboard"] == [
+               [%{"text" => "🤖 Мой бот"}, %{"text" => "🎨 Картинки"}],
+               [%{"text" => "🎁 Пригласить"}, %{"text" => "🗑 Удалить"}]
+             ]
+    end
+
+    test "create is refused with the one-bot message", %{stub: stub} do
+      TelegramStub.push_update(stub, message("🤖 Создать бота"))
+      assert TelegramStub.await_call(stub, "sendMessage", &(&1["text"] == "У тебя уже есть бот. Удали его, чтобы создать нового."))
+      refute "Как назовём бота?" in sent_texts(stub)
+    end
+
+    test "Мой бот is the card with balance and a chat button", %{stub: stub} do
+      TelegramStub.push_update(stub, message("🤖 Мой бот"))
+      params = TelegramStub.await_call(stub, "sendMessage", &(&1["text"] =~ "*solo*"))
+      assert params["text"] == "🟢 *solo* — баланс 12.50 ₽"
+      [[open]] = Jason.decode!(params["reply_markup"])["inline_keyboard"]
+      assert open["url"] == "https://t.me/solo_bot"
+    end
+
+    test "Картинки opens the picture menu for the bot directly", %{stub: stub, inst: inst} do
+      TelegramStub.push_update(stub, message("🎨 Картинки"))
+      params = TelegramStub.await_call(stub, "sendMessage", &(&1["text"] =~ "Картинки для @solo_bot"))
+      rows = Jason.decode!(params["reply_markup"])["inline_keyboard"]
+      assert Enum.any?(List.flatten(rows), &(&1["callback_data"] == "imgoff:#{inst.id}"))
+
+      # «Назад» from there is the card, not a list.
+      TelegramStub.push_update(stub, callback("imgback"))
+      assert TelegramStub.await_call(stub, "editMessageText", &(&1["text"] =~ "*solo*"))
+    end
+
+    test "Удалить asks, deletes, and hands back the create keyboard", %{stub: stub, inst: inst} do
+      cleanup_instance("solo")
+      TelegramStub.push_update(stub, message("🗑 Удалить"))
+      ask = TelegramStub.await_call(stub, "sendMessage", &(&1["text"] =~ "Точно удалить @solo_bot"))
+      [[yes, _no]] = Jason.decode!(ask["reply_markup"])["inline_keyboard"]
+      assert yes["callback_data"] == "delyes:#{inst.id}"
+
+      TelegramStub.push_update(stub, callback("delyes:#{inst.id}"))
+      TelegramStub.await_call(stub, "editMessageText", &(&1["text"] == "✅ Бот @solo_bot удалён."), 10_000)
+      menu = TelegramStub.await_call(stub, "sendMessage", &(&1["text"] == "Можно создать нового бота."), 5_000)
+      assert Jason.decode!(menu["reply_markup"])["keyboard"] == [[%{"text" => "🤖 Создать бота"}]]
+      assert Repo.get(Instance, inst.id) == nil
+
+      # Admitted before, so a new bot needs no code.
+      TelegramStub.push_update(stub, message("🤖 Создать бота"))
+      assert TelegramStub.await_call(stub, "sendMessage", &(&1["text"] == "Как назовём бота?"))
+    end
+
+    test "Пригласить lists the codes from ruoc with share buttons", %{stub: stub} do
+      TelegramStub.push_update(stub, message("🎁 Пригласить"))
+      TelegramStub.await_call(stub, "sendMessage", &(&1["text"] =~ "Пригласи друга"))
+      share = TelegramStub.await_call(stub, "sendMessage", &(&1["text"] == "https://t.me/test_manager_bot?start=ref_AAAA-BBBB"))
+      [[button]] = Jason.decode!(share["reply_markup"])["inline_keyboard"]
+      assert button["text"] == "Поделиться"
+      assert button["url"] =~ "https://t.me/share/url?url="
+      assert TelegramStub.await_call(stub, "sendMessage", &(&1["text"] == "Использован 5 окт"))
+    end
+
+    test "Пригласить when ruoc fails", %{stub: stub, ruoc: ruoc} do
+      Bypass.down(ruoc.bypass)
+      TelegramStub.push_update(stub, message("🎁 Пригласить"))
+      assert TelegramStub.await_call(stub, "sendMessage", &(&1["text"] == "Не получилось загрузить приглашения, попробуй позже."))
+    end
+  end
+
+  describe "invite gate" do
+    setup do
+      %{ruoc: Druzhok.RuocStub.start()}
+    end
+
+    test "a stranger pressing create is asked for a code, and a good code starts naming", %{stub: stub, ruoc: ruoc} do
+      TelegramStub.push_update(stub, message("🤖 Создать бота", @stranger))
+      assert TelegramStub.await_call(stub, "sendMessage", &(&1["text"] == "Создание по приглашению. Введи код или открой ссылку от друга."))
+
+      TelegramStub.push_update(stub, message("ABCD-EFGH", @stranger))
+      assert TelegramStub.await_call(stub, "sendMessage", &(&1["text"] == "Как назовём бота?" and &1["chat_id"] == @stranger))
+      [call] = Druzhok.RuocStub.calls(ruoc, "GET /admin/invites/check")
+      assert call.path == "/admin/invites/check"
+    end
+
+    test "a spent code is refused and the menu returns", %{stub: stub, ruoc: ruoc} do
+      Bypass.stub(ruoc.bypass, "GET", "/admin/invites/check", fn conn ->
+        Druzhok.RuocStub.reply(conn, 200, %{"status" => "spent"})
+      end)
+
+      TelegramStub.push_update(stub, message("🤖 Создать бота", @stranger))
+      TelegramStub.await_call(stub, "sendMessage", &(&1["text"] =~ "по приглашению"))
+      TelegramStub.push_update(stub, message("ABCD-EFGH", @stranger))
+      assert TelegramStub.await_call(stub, "sendMessage", &(&1["text"] == "Этот код уже использован."))
+      refute "Как назовём бота?" in sent_texts(stub)
+    end
+
+    test "a deep link with a good code goes straight to naming", %{stub: stub} do
+      TelegramStub.push_update(stub, message("/start ref_ABCD-EFGH", @stranger))
+      welcome = TelegramStub.await_call(stub, "sendMessage", &(&1["text"] =~ "Привет" and &1["chat_id"] == @stranger))
+      assert Jason.decode!(welcome["reply_markup"])["keyboard"] == [[%{"text" => "🤖 Создать бота"}]]
+      assert TelegramStub.await_call(stub, "sendMessage", &(&1["text"] == "Как назовём бота?" and &1["chat_id"] == @stranger))
+    end
+
+    test "a deep link from an admitted person is just /start", %{stub: stub, ruoc: ruoc} do
+      TelegramStub.push_update(stub, message("/start ref_ABCD-EFGH"))
+      TelegramStub.await_call(stub, "sendMessage", &(&1["text"] =~ "Привет"))
+      Process.sleep(50)
+      refute "Как назовём бота?" in sent_texts(stub)
+      assert Druzhok.RuocStub.calls(ruoc, "GET /admin/invites/check") == []
+    end
+
+    test "the code reaches ruoc at creation, and a race is reported", %{stub: stub, ruoc: ruoc} do
+      TelegramStub.set_managed_bot_token(stub, "558NEWBOT")
+      cleanup_instance("gost_0001")
+
+      TelegramStub.push_update(stub, message("/start ref_ABCD-EFGH", @stranger))
+      TelegramStub.await_call(stub, "sendMessage", &(&1["text"] == "Как назовём бота?" and &1["chat_id"] == @stranger))
+      TelegramStub.push_update(stub, message("Гость", @stranger))
+      TelegramStub.await_call(stub, "sendMessage", &(&1["text"] == "Язык:" and &1["chat_id"] == @stranger))
+      TelegramStub.push_update(stub, callback("lang:ru", @stranger))
+      TelegramStub.await_call(stub, "editMessageText", &(&1["text"] =~ "Гость"))
+
+      Bypass.expect_once(ruoc.bypass, "POST", "/admin/accounts", fn conn ->
+        Druzhok.RuocStub.reply(conn, 409, %{"error" => %{"type" => "invite_spent", "message" => "used"}})
+      end)
+
+      TelegramStub.push_update(stub, managed_bot_update(558, "gost_0001_bot", @stranger))
+      assert TelegramStub.await_call(stub, "editMessageText", &(&1["text"] == "Код успели использовать. Попроси новый и создай бота заново."), 10_000)
+      assert Repo.get_by(Instance, name: "gost_0001") == nil
+      refute Druzhok.Admissions.admitted?(@stranger)
+    end
+
+    test "the operator creates without a code", %{stub: stub} do
+      Druzhok.Settings.set("operator_telegram_id", "777")
+      on_exit(fn -> Druzhok.Settings.set("operator_telegram_id", "") end)
+      TelegramStub.push_update(stub, message("🤖 Создать бота", 777))
+      assert TelegramStub.await_call(stub, "sendMessage", &(&1["text"] == "Как назовём бота?" and &1["chat_id"] == 777))
     end
   end
 

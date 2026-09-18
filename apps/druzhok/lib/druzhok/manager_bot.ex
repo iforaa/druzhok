@@ -12,11 +12,11 @@ defmodule Druzhok.ManagerBot do
 
   alias Druzhok.Telegram.API
   alias Druzhok.ManagerBot.{Onboarding, Provisioner}
-  alias Druzhok.{BotManager, Repo, Instance}
+  alias Druzhok.{Admissions, BotManager, Repo, Instance, Settings}
 
   @session_ttl_seconds 600
   @poll_timeout 30
-  @max_bots_per_user 2
+  @max_bots_per_user 1
 
   def start_link(opts \\ []) do
     GenServer.start_link(__MODULE__, opts, name: __MODULE__)
@@ -89,11 +89,17 @@ defmodule Druzhok.ManagerBot do
       text == "/start" ->
         show_main_menu(state, user_id, chat_id)
 
-      text in ["🤖 Создать бота", "📋 Мои боты"] ->
-        dispatch_input(state, user_id, chat_id, %{text: text})
+      String.starts_with?(text, "/start ref_") ->
+        handle_start_ref(state, user_id, chat_id, text |> String.trim_leading("/start ref_") |> String.trim())
+
+      String.starts_with?(text, "/start") ->
+        show_main_menu(state, user_id, chat_id)
+
+      text in Onboarding.menu_texts() ->
+        handle_menu(state, user_id, chat_id, text)
 
       Map.has_key?(state.sessions, user_id) and
-          state.sessions[user_id].step in [:name, :language, :confirm] ->
+          state.sessions[user_id].step in [:name, :language, :confirm, :invite] ->
         # Mid-onboarding: route stray text through the state machine (which
         # re-prompts) instead of resetting the session to the main menu.
         dispatch_input(state, user_id, chat_id, %{text: text})
@@ -140,7 +146,16 @@ defmodule Druzhok.ManagerBot do
             handle_image_off(state, user_id, chat_id, message_id, data)
 
           data == "imgback" ->
-            edit_my_bots(state, user_id, chat_id, message_id)
+            # One bot means there is no list to go back to: the card is «Назад».
+            case user_bots(user_id) do
+              [bot] ->
+                {text, rows} = Onboarding.my_bot_message(with_balance(bot))
+                edit_url_keyboard(state.token, chat_id, message_id, text, rows)
+
+              _ ->
+                edit_my_bots(state, user_id, chat_id, message_id)
+            end
+
             state
 
           true ->
@@ -164,10 +179,86 @@ defmodule Druzhok.ManagerBot do
   # --- Main menu ---
 
   defp show_main_menu(state, user_id, chat_id) do
-    menu = Onboarding.main_menu_keyboard()
-    API.send_message(state.token, chat_id, Onboarding.welcome_message(),
-      %{reply_markup: Jason.encode!(menu)})
+    send_menu(state, chat_id, user_id, Onboarding.welcome_message())
     put_in(state, [:sessions, user_id], Onboarding.new_session())
+  end
+
+  # Any message that should also (re)place the reply keyboard. The keyboard is
+  # computed from the bot count every time, never cached: creation and
+  # deletion change it, and both happen in tasks after this GenServer replied.
+  defp send_menu(state, chat_id, user_id, text) do
+    menu = Onboarding.main_menu_keyboard(user_bot_count(user_id))
+    API.send_message(state.token, chat_id, text, %{reply_markup: Jason.encode!(menu)})
+  end
+
+  defp handle_menu(state, user_id, chat_id, "🤖 Создать бота"),
+    do: dispatch_input(state, user_id, chat_id, %{text: "🤖 Создать бота"})
+
+  defp handle_menu(state, user_id, chat_id, "📋 Мои боты"),
+    do: dispatch_input(state, user_id, chat_id, %{text: "📋 Мои боты"})
+
+  defp handle_menu(state, user_id, chat_id, text) do
+    case user_bots(user_id) do
+      [bot] ->
+        one_bot_menu(state, chat_id, bot, text)
+
+      # The keyboard on their screen is stale (bot deleted or a second one
+      # appeared); the fresh one comes with the menu.
+      _ ->
+        show_main_menu(state, user_id, chat_id)
+    end
+  end
+
+  defp one_bot_menu(state, chat_id, bot, "🤖 Мой бот") do
+    {text, rows} = Onboarding.my_bot_message(with_balance(bot))
+    send_url_keyboard(state.token, chat_id, text, rows)
+    state
+  end
+
+  defp one_bot_menu(state, chat_id, bot, "🎨 Картинки") do
+    {text, rows} = Onboarding.image_menu(Map.from_struct(bot), Druzhok.Ruoc.image_models())
+    send_inline(state.token, chat_id, text, rows)
+    state
+  end
+
+  defp one_bot_menu(state, chat_id, bot, "🗑 Удалить") do
+    {text, rows} = Onboarding.delete_confirm(bot.id, bot_display_handle(bot))
+    send_inline(state.token, chat_id, text, rows)
+    state
+  end
+
+  defp one_bot_menu(state, chat_id, bot, "🎁 Пригласить") do
+    case bot.ruoc_api_key && Druzhok.Ruoc.referrals(bot.ruoc_api_key) do
+      {:ok, codes} ->
+        for {text, rows} <- Onboarding.referrals_messages(codes, state.bot_username) do
+          if rows == [],
+            do: API.send_message(state.token, chat_id, text),
+            else: send_url_keyboard_plain(state.token, chat_id, text, rows)
+        end
+
+      _ ->
+        API.send_message(state.token, chat_id, "Не получилось загрузить приглашения, попробуй позже.")
+    end
+
+    state
+  end
+
+  defp user_bots(user_id) do
+    import Ecto.Query
+
+    Repo.all(
+      from(i in Instance, where: i.owner_telegram_id == ^user_id, order_by: [desc: i.active, asc: i.name])
+    )
+  end
+
+  defp with_balance(inst) do
+    {balance, subscription} =
+      case inst.ruoc_api_key && Druzhok.Ruoc.balance(inst.ruoc_api_key) do
+        {:ok, %{balance_rub: rub, subscription: sub}} -> {rub, sub}
+        _ -> {nil, nil}
+      end
+
+    inst |> Map.from_struct() |> Map.put(:ruoc_balance_rub, balance) |> Map.put(:ruoc_subscription, subscription)
   end
 
   # --- Onboarding dispatch ---
@@ -175,59 +266,114 @@ defmodule Druzhok.ManagerBot do
   defp dispatch_input(state, user_id, chat_id, input) do
     session = state.sessions[user_id] || Onboarding.new_session()
 
-    # Check bot limit before starting creation
-    if input == %{text: "🤖 Создать бота"} and user_bot_count(user_id) >= @max_bots_per_user do
-      API.send_message(state.token, chat_id, Onboarding.limit_message())
-      state
-    else
-      case Onboarding.handle_input(session, input) do
-        {_status, session, {:my_bots}} ->
-          send_my_bots(state, user_id, chat_id)
-          put_in(state, [:sessions, user_id], session)
+    cond do
+      # Check bot limit before starting creation
+      input == %{text: "🤖 Создать бота"} and user_bot_count(user_id) >= @max_bots_per_user ->
+        API.send_message(state.token, chat_id, Onboarding.limit_message())
+        state
 
-        {_status, session, {:text, text}} ->
-          API.send_message(state.token, chat_id, text)
-          put_in(state, [:sessions, user_id], session)
+      input == %{text: "🤖 Создать бота"} and not may_create?(user_id, session) ->
+        {session, prompt} = Onboarding.ask_invite(session)
+        API.send_message(state.token, chat_id, prompt)
+        put_in(state, [:sessions, user_id], session)
 
-        {_status, session, {:keyboard, text, rows}} ->
-          # First inline keyboard — send new message, store its ID
-          case send_inline(state.token, chat_id, text, rows) do
-            {:ok, %{"message_id" => mid}} ->
-              session = %{session | message_id: mid}
-              put_in(state, [:sessions, user_id], session)
-            _ ->
-              put_in(state, [:sessions, user_id], session)
-          end
+      true ->
+        case Onboarding.handle_input(session, input) do
+          {_status, session, {:check_invite, code}} ->
+            handle_check_invite(state, user_id, chat_id, session, code)
 
-        {_status, session, {:edit, text, rows}} ->
-          # Edit existing inline message, or send a fresh one if we lost it
-          session =
-            if session.message_id do
-              edit_inline(state.token, chat_id, session.message_id, text, rows)
-              session
-            else
-              case send_inline(state.token, chat_id, text, rows) do
-                {:ok, %{"message_id" => mid}} -> %{session | message_id: mid}
-                _ -> session
-              end
+          {_status, session, {:my_bots}} ->
+            send_my_bots(state, user_id, chat_id)
+            put_in(state, [:sessions, user_id], session)
+
+          {_status, session, {:text, text}} ->
+            API.send_message(state.token, chat_id, text)
+            put_in(state, [:sessions, user_id], session)
+
+          {_status, session, {:keyboard, text, rows}} ->
+            # First inline keyboard — send new message, store its ID
+            case send_inline(state.token, chat_id, text, rows) do
+              {:ok, %{"message_id" => mid}} ->
+                session = %{session | message_id: mid}
+                put_in(state, [:sessions, user_id], session)
+              _ ->
+                put_in(state, [:sessions, user_id], session)
             end
 
-          put_in(state, [:sessions, user_id], session)
+          {_status, session, {:edit, text, rows}} ->
+            # Edit existing inline message, or send a fresh one if we lost it
+            session =
+              if session.message_id do
+                edit_inline(state.token, chat_id, session.message_id, text, rows)
+                session
+              else
+                case send_inline(state.token, chat_id, text, rows) do
+                  {:ok, %{"message_id" => mid}} -> %{session | message_id: mid}
+                  _ -> session
+                end
+              end
 
-        {_status, session, {:confirm, session}} ->
-          {text, keyboard, _link} = Onboarding.confirm_message(session, state.bot_username)
-          send_url_keyboard(state.token, chat_id, text, keyboard)
-          put_in(state, [:sessions, user_id], session)
+            put_in(state, [:sessions, user_id], session)
 
-        {_status, session, {:edit_confirm, session}} ->
-          {text, keyboard, _link} = Onboarding.confirm_message(session, state.bot_username)
-          if session.message_id do
-            edit_url_keyboard(state.token, chat_id, session.message_id, text, keyboard)
-          else
+          {_status, session, {:confirm, session}} ->
+            {text, keyboard, _link} = Onboarding.confirm_message(session, state.bot_username)
             send_url_keyboard(state.token, chat_id, text, keyboard)
-          end
-          put_in(state, [:sessions, user_id], session)
-      end
+            put_in(state, [:sessions, user_id], session)
+
+          {_status, session, {:edit_confirm, session}} ->
+            {text, keyboard, _link} = Onboarding.confirm_message(session, state.bot_username)
+            if session.message_id do
+              edit_url_keyboard(state.token, chat_id, session.message_id, text, keyboard)
+            else
+              send_url_keyboard(state.token, chat_id, text, keyboard)
+            end
+            put_in(state, [:sessions, user_id], session)
+        end
+    end
+  end
+
+  # --- Invite gate ---
+
+  # Admitted people, the operator, and a session already holding a checked
+  # code (the deep link path) skip the prompt.
+  defp may_create?(user_id, session) do
+    is_binary(session[:invite]) or operator?(user_id) or Admissions.admitted?(user_id)
+  end
+
+  defp operator?(user_id) do
+    case Settings.operator_telegram_id() do
+      nil -> false
+      id -> to_string(id) == to_string(user_id)
+    end
+  end
+
+  defp handle_check_invite(state, user_id, chat_id, session, code) do
+    case Druzhok.Ruoc.check_invite(code) do
+      {:ok, :available} ->
+        {session, text} = Onboarding.begin_create(session, code)
+        API.send_message(state.token, chat_id, text)
+        put_in(state, [:sessions, user_id], session)
+
+      {:ok, status} ->
+        API.send_message(state.token, chat_id, Onboarding.invite_status_message(status))
+        put_in(state, [:sessions, user_id], Onboarding.new_session())
+
+      {:error, reason} ->
+        Logger.warning("invite check failed for #{user_id}: #{inspect(reason)}")
+        API.send_message(state.token, chat_id, Onboarding.invite_status_message(:error))
+        put_in(state, [:sessions, user_id], Onboarding.new_session())
+    end
+  end
+
+  # /start ref_<code>: the welcome and keyboard first, as any /start, then —
+  # for somebody not yet admitted — the code is checked and naming begins.
+  defp handle_start_ref(state, user_id, chat_id, code) do
+    state = show_main_menu(state, user_id, chat_id)
+
+    if code == "" or may_create?(user_id, %{}) or user_bot_count(user_id) >= @max_bots_per_user do
+      state
+    else
+      handle_check_invite(state, user_id, chat_id, Onboarding.new_session(), code)
     end
   end
 
@@ -255,26 +401,7 @@ defmodule Druzhok.ManagerBot do
   end
 
   defp my_bots_payload(user_id) do
-    import Ecto.Query
-    bots = Druzhok.Repo.all(
-      from(i in Druzhok.Instance,
-        where: i.owner_telegram_id == ^user_id,
-        order_by: [desc: i.active, asc: i.name])
-    )
-    |> Enum.map(fn inst ->
-      {balance, subscription} =
-        case inst.ruoc_api_key && Druzhok.Ruoc.balance(inst.ruoc_api_key) do
-          {:ok, %{balance_rub: rub, subscription: sub}} -> {rub, sub}
-          _ -> {nil, nil}
-        end
-
-      inst
-      |> Map.from_struct()
-      |> Map.put(:ruoc_balance_rub, balance)
-      |> Map.put(:ruoc_subscription, subscription)
-    end)
-
-    Onboarding.my_bots_message(bots)
+    user_bots(user_id) |> Enum.map(&with_balance/1) |> Onboarding.my_bots_message()
   end
 
   # --- Picture menu (image generation on/off + model, owner-only) ---
@@ -401,14 +528,23 @@ defmodule Druzhok.ManagerBot do
         handle = bot_display_handle(instance)
         name = instance.name
         token = state.token
+        owner_id = user_id
 
         # Run the wipe async — stopping the unit can take a couple seconds and must
         # not block the poll loop.
         Task.start(fn ->
           try do
             case BotManager.delete(name) do
-              :ok -> edit_plain(token, chat_id, message_id, Onboarding.delete_done(handle))
-              _ -> edit_plain(token, chat_id, message_id, "Ошибка удаления, попробуй ещё раз.")
+              :ok ->
+                edit_plain(token, chat_id, message_id, Onboarding.delete_done(handle))
+                menu = Onboarding.main_menu_keyboard(user_bot_count(owner_id))
+
+                API.send_message(token, chat_id, Onboarding.after_delete_message(), %{
+                  reply_markup: Jason.encode!(menu)
+                })
+
+              _ ->
+                edit_plain(token, chat_id, message_id, "Ошибка удаления, попробуй ещё раз.")
             end
           rescue
             e ->
@@ -464,22 +600,37 @@ defmodule Druzhok.ManagerBot do
     Task.start(fn ->
       progress = start_progress(token, creator_id, bot_username)
 
-      text =
+      result =
         try do
-          case Provisioner.provision(token, bot_id, bot_username, session) do
-            {:ok, _name, username} ->
-              Onboarding.completion_message(username)
-
-            {:error, reason} ->
-              "Ошибка создания бота: #{inspect(reason)}\nПопробуй ещё раз."
-          end
+          Provisioner.provision(token, bot_id, bot_username, session)
         rescue
           e ->
             Logger.error("Provisioning crashed for @#{bot_username}: #{Exception.message(e)}")
-            "Ошибка создания бота. Попробуй ещё раз."
+            {:error, :crashed}
         end
 
+      text =
+        case result do
+          {:ok, _name, username} -> Onboarding.completion_message(username)
+          {:error, :crashed} -> "Ошибка создания бота. Попробуй ещё раз."
+          {:error, {:invite, _}} -> Onboarding.create_race_message()
+          {:error, reason} -> "Ошибка создания бота: #{inspect(reason)}\nПопробуй ещё раз."
+        end
+
+      # The result lands in the progress message first; the keyboard follows it.
       finish_progress(progress, token, creator_id, text)
+
+      case result do
+        {:ok, _name, _username} ->
+          menu = Onboarding.main_menu_keyboard(user_bot_count(creator_id))
+
+          API.send_message(token, creator_id, Onboarding.after_create_message(), %{
+            reply_markup: Jason.encode!(menu)
+          })
+
+        _ ->
+          :ok
+      end
     end)
 
     update_in(state, [:sessions], &Map.delete(&1, creator_id))
@@ -568,6 +719,13 @@ defmodule Druzhok.ManagerBot do
     keyboard = build_url_keyboard(rows)
     API.send_message(token, chat_id, text,
       %{reply_markup: Jason.encode!(keyboard), parse_mode: "Markdown"})
+  end
+
+  # Same, without Markdown: the invite links carry `start=ref_…`, and Markdown
+  # would eat the underscore.
+  defp send_url_keyboard_plain(token, chat_id, text, rows) do
+    keyboard = build_url_keyboard(rows)
+    API.send_message(token, chat_id, text, %{reply_markup: Jason.encode!(keyboard)})
   end
 
   defp edit_url_keyboard(token, chat_id, message_id, text, rows) do
