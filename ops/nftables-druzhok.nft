@@ -2,9 +2,9 @@
 # Egress policy for bot users. druzhok-ctl adds each bot's uid to @bot_uids.
 #
 # A bot may reach exactly three things: the druzhok proxy (LLM, search, page
-# fetch — everything metered), DNS, and Telegram. Everything else is dropped
-# and counted, so the model's terminal cannot curl the web around the proxy
-# and a prompt-injected exfiltration has nowhere to go. Page reading happens
+# fetch — everything metered), the local DNS stub, and Telegram. Everything
+# else is dropped and counted, so the model's terminal cannot curl the web
+# around the proxy and a prompt-injected exfiltration has nowhere to go. Page reading happens
 # in druzhok itself (docs/superpowers/specs/2026-09-05-web-fetch-service-design.md),
 # whose user is not in the set.
 #
@@ -12,6 +12,14 @@
 # long polling and file downloads both go to api.telegram.org inside them.
 table inet druzhok {
   set bot_uids { type uid; }
+
+  # systemd-resolved's stub listeners (/etc/resolv.conf -> 127.0.0.53). The
+  # upstream lookup is made by the systemd-resolve user, which is not a bot
+  # uid. Port 53 to anywhere else would be an open tunnel out of the box.
+  set resolvers4 {
+    type ipv4_addr
+    elements = { 127.0.0.53, 127.0.0.54 }
+  }
 
   set telegram4 {
     type ipv4_addr
@@ -33,9 +41,9 @@ table inet druzhok {
 
     # Druzhok proxy
     ip daddr 127.0.0.1 tcp dport 4000 accept
-    # DNS
-    udp dport 53 accept
-    tcp dport 53 accept
+    # DNS, local stub only
+    ip daddr @resolvers4 udp dport 53 accept
+    ip daddr @resolvers4 tcp dport 53 accept
     # Telegram, counted per uid
     ip daddr @telegram4 tcp dport 443 meter bot_tg { meta skuid counter } accept
     ip6 daddr @telegram6 tcp dport 443 meter bot_tg6 { meta skuid counter } accept
