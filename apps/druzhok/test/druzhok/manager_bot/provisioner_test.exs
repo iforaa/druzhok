@@ -37,5 +37,10 @@ defmodule Druzhok.ManagerBot.ProvisionerTest do
       opts = Provisioner.build_create_opts(%{token: "123:ABC", owner_id: 1})
       assert opts[:model] == "ruoc-flash"
     end
+
+    test "carries the invite code when the session had one" do
+      assert Provisioner.build_create_opts(%{token: "1", owner_id: 1, invite: "ABCD-EFGH"})[:invite] == "ABCD-EFGH"
+      refute Map.has_key?(Provisioner.build_create_opts(%{token: "1", owner_id: 1}), :invite)
+    end
   end
 end

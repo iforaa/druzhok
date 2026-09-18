@@ -25,12 +25,17 @@ defmodule Druzhok.BotManager do
       Druzhok.Ruoc.configured?() ->
         label = ruoc_label(name, opts[:owner_telegram_id])
 
-        case Druzhok.Ruoc.create_account(label) do
+        case Druzhok.Ruoc.create_account(label, invite: opts[:invite]) do
           {:ok, %{account_id: id, api_key: key}} ->
             {:ok,
              opts
              |> Map.merge(%{ruoc_account_id: id, ruoc_api_key: key})
              |> Map.update(:model, Druzhok.Ruoc.default_model(), &Druzhok.Ruoc.remap_model/1)}
+
+          {:error, {:invite, _} = refused} ->
+            # The gate held: no account, no row, and the person is told the
+            # code did not work. Not logged as an error — it is theirs to fix.
+            {:error, refused}
 
           {:error, reason} ->
             Logger.error("ruoc account for #{name} failed: #{reason}")
@@ -66,6 +71,7 @@ defmodule Druzhok.BotManager do
         case InstanceManager.create(name, config) do
           {:ok, instance} ->
             if token_record.id, do: TokenPool.claim(token_record, instance.id)
+            admit_owner(opts)
             start(name)
             {:ok, %{name: name, model: instance.model}}
 
@@ -174,6 +180,16 @@ defmodule Druzhok.BotManager do
   # known, the owner's Telegram id so a top-up request can be matched.
   def ruoc_label(name, nil), do: "druzhok:" <> name
   def ruoc_label(name, owner_id), do: "druzhok:#{name} tg:#{owner_id}"
+
+  # Creating a bot is what admission means. With a code the hint is its first
+  # characters; without one (the operator, a grandfathered owner, a recreate)
+  # the row says "owner" so the console can tell the two apart.
+  defp admit_owner(%{owner_telegram_id: owner} = opts) when is_integer(owner) do
+    hint = if code = opts[:invite], do: String.slice(code, 0, 4), else: "owner"
+    Druzhok.Admissions.admit(owner, hint)
+  end
+
+  defp admit_owner(_), do: :ok
 
   # The ruoc account is suspended, never deleted, so its usage keeps its
   # explanation. A failure here is logged and does not block the delete.

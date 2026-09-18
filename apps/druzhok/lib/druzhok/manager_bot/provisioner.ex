@@ -23,7 +23,8 @@ defmodule Druzhok.ManagerBot.Provisioner do
            token: token,
            model: Ruoc.default_model(),
            owner_id: session[:owner_id],
-           language: session[:language] || "ru"
+           language: session[:language] || "ru",
+           invite: session[:invite]
          }),
          {:ok, _result} <- BotManager.create(instance_name, opts) do
       # The owner is already in the allowlist via owner_telegram_id (see
@@ -47,14 +48,19 @@ defmodule Druzhok.ManagerBot.Provisioner do
   end
 
   def build_create_opts(params) do
-    %{
+    base = %{
       telegram_token: params[:token],
       model: params[:model] || Ruoc.default_model(),
       owner_telegram_id: params[:owner_id],
       language: params[:language] || "ru",
       mention_only: true,
-      allow_all_telegram_users: false,
+      allow_all_telegram_users: false
     }
+
+    case params[:invite] do
+      code when is_binary(code) and code != "" -> Map.put(base, :invite, code)
+      _ -> base
+    end
   end
 
   # --- Private ---

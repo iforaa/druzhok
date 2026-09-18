@@ -3,6 +3,7 @@ defmodule Druzhok.BotManagerLifecycleTest do
   use ExUnit.Case, async: false
 
   import Druzhok.BotFixtures
+  import Ecto.Query, only: [from: 2]
   alias Druzhok.{BotManager, Instance, Repo, TokenPool}
 
   setup do
@@ -231,6 +232,40 @@ defmodule Druzhok.BotManagerLifecycleTest do
       Bypass.down(stub.bypass)
       assert :ok = BotManager.delete(name)
       assert Repo.get_by(Instance, name: name) == nil
+    end
+
+    test "create sends the invite to ruoc and admits the owner", %{name: name, stub: stub} do
+      owner = System.unique_integer([:positive]) + 20_000_000
+      on_exit(fn -> Repo.delete_all(from(a in "admissions", where: a.telegram_id == ^owner)) end)
+      refute Druzhok.Admissions.admitted?(owner)
+
+      {:ok, _} = BotManager.create(name, %{model: "m", telegram_token: "1A", owner_telegram_id: owner, invite: "ABCD-EFGH"})
+
+      assert [%{params: params}] = Druzhok.RuocStub.calls(stub, "POST /admin/accounts")
+      assert params["invite"] == "ABCD-EFGH"
+      assert Druzhok.Admissions.admitted?(owner)
+      assert %{invite_hint: "ABCD"} = Repo.one(from(a in "admissions", where: a.telegram_id == ^owner, select: %{invite_hint: a.invite_hint}))
+    end
+
+    test "a refused invite leaves no row and no admission", %{name: name, stub: stub} do
+      owner = System.unique_integer([:positive]) + 20_000_000
+
+      Bypass.expect_once(stub.bypass, "POST", "/admin/accounts", fn conn ->
+        Druzhok.RuocStub.reply(conn, 409, %{"error" => %{"type" => "invite_spent", "message" => "used"}})
+      end)
+
+      assert {:error, {:invite, :spent}} =
+               BotManager.create(name, %{model: "m", telegram_token: "1A", owner_telegram_id: owner, invite: "ABCD-EFGH"})
+
+      assert Repo.get_by(Instance, name: name) == nil
+      refute Druzhok.Admissions.admitted?(owner)
+    end
+
+    test "create without a code still admits the owner", %{name: name} do
+      owner = System.unique_integer([:positive]) + 20_000_000
+      on_exit(fn -> Repo.delete_all(from(a in "admissions", where: a.telegram_id == ^owner)) end)
+      {:ok, _} = BotManager.create(name, %{model: "m", telegram_token: "1A", owner_telegram_id: owner})
+      assert Druzhok.Admissions.admitted?(owner)
     end
   end
 
