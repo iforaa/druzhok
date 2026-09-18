@@ -98,7 +98,9 @@ defmodule Druzhok.Ruoc do
   their bot rather than after the Telegram step.
   """
   def check_invite(code) do
-    case admin_get("/admin/invites/check?code=" <> URI.encode_www_form(code)) do
+    # A person is waiting on this one in the superbot's poll loop, so it gets a
+    # short leash rather than the client's two-minute default.
+    case admin_get("/admin/invites/check?code=" <> URI.encode_www_form(code), receive_timeout: 10_000) do
       {:ok, 200, %{"status" => status}} when status in ["available", "spent", "expired", "invalid"] ->
         {:ok, invite_status(status)}
 
@@ -370,7 +372,7 @@ defmodule Druzhok.Ruoc do
     end
   end
 
-  defp admin_get(path) do
+  defp admin_get(path, opts) do
     case admin_token() do
       nil ->
         {:error, "ruoc_admin_token is not set"}
@@ -378,7 +380,7 @@ defmodule Druzhok.Ruoc do
       token ->
         headers = if host = admin_host(), do: [{"host", host}], else: []
 
-        case Client.get(path, token, headers: headers) do
+        case Client.get(path, token, Keyword.put(opts, :headers, headers)) do
           {:ok, status, _headers, resp} -> {:ok, status, decode(resp)}
           {:error, reason} -> {:error, inspect(reason)}
         end

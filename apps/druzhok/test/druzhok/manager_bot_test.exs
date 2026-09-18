@@ -453,6 +453,24 @@ defmodule Druzhok.ManagerBotTest do
       assert call.path == "/admin/invites/check"
     end
 
+    test "pressing create again mid-naming asks for the code, never drops it", %{stub: stub, ruoc: ruoc} do
+      TelegramStub.push_update(stub, message("🤖 Создать бота", @stranger))
+      TelegramStub.await_call(stub, "sendMessage", &(&1["text"] =~ "по приглашению"))
+      TelegramStub.push_update(stub, message("ABCD-EFGH", @stranger))
+      TelegramStub.await_call(stub, "sendMessage", &(&1["text"] == "Как назовём бота?"))
+
+      # The session holds a checked code, but the button is still a create press:
+      # it re-prompts rather than starting a nameless, codeless creation.
+      TelegramStub.push_update(stub, message("🤖 Создать бота", @stranger))
+
+      assert eventually(fn ->
+               Enum.count(sent_texts(stub), &(&1 == "Создание по приглашению. Введи код или открой ссылку от друга.")) == 2
+             end)
+
+      assert Enum.count(sent_texts(stub), &(&1 == "Как назовём бота?")) == 1
+      assert length(Druzhok.RuocStub.calls(ruoc, "GET /admin/invites/check")) == 1
+    end
+
     test "a spent code is refused and the menu returns", %{stub: stub, ruoc: ruoc} do
       Bypass.stub(ruoc.bypass, "GET", "/admin/invites/check", fn conn ->
         Druzhok.RuocStub.reply(conn, 200, %{"status" => "spent"})

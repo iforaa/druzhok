@@ -209,15 +209,29 @@ defmodule Druzhok.ManagerBot do
     end
   end
 
+  # The three read-only cards each wait on a ruoc round trip. One GenServer
+  # serves everybody, so they run in a task: a hung gateway then keeps one
+  # person waiting instead of stopping the whole superbot. All three leave the
+  # state untouched, so there is nothing to carry back.
   defp one_bot_menu(state, chat_id, bot, "🤖 Мой бот") do
-    {text, rows} = Onboarding.my_bot_message(with_balance(bot))
-    send_url_keyboard(state.token, chat_id, text, rows)
+    token = state.token
+
+    Task.start(fn ->
+      {text, rows} = Onboarding.my_bot_message(with_balance(bot))
+      send_url_keyboard(token, chat_id, text, rows)
+    end)
+
     state
   end
 
   defp one_bot_menu(state, chat_id, bot, "🎨 Картинки") do
-    {text, rows} = Onboarding.image_menu(Map.from_struct(bot), Druzhok.Ruoc.image_models())
-    send_inline(state.token, chat_id, text, rows)
+    token = state.token
+
+    Task.start(fn ->
+      {text, rows} = Onboarding.image_menu(Map.from_struct(bot), Druzhok.Ruoc.image_models())
+      send_inline(token, chat_id, text, rows)
+    end)
+
     state
   end
 
@@ -228,17 +242,23 @@ defmodule Druzhok.ManagerBot do
   end
 
   defp one_bot_menu(state, chat_id, bot, "🎁 Пригласить") do
-    case bot.ruoc_api_key && Druzhok.Ruoc.referrals(bot.ruoc_api_key) do
-      {:ok, codes} ->
-        for {text, rows} <- Onboarding.referrals_messages(codes, state.bot_username) do
-          if rows == [],
-            do: API.send_message(state.token, chat_id, text),
-            else: send_url_keyboard_plain(state.token, chat_id, text, rows)
-        end
+    token = state.token
+    manager_username = state.bot_username
+    api_key = bot.ruoc_api_key
 
-      _ ->
-        API.send_message(state.token, chat_id, "Не получилось загрузить приглашения, попробуй позже.")
-    end
+    Task.start(fn ->
+      case api_key && Druzhok.Ruoc.referrals(api_key) do
+        {:ok, codes} ->
+          for {text, rows} <- Onboarding.referrals_messages(codes, manager_username) do
+            if rows == [],
+              do: API.send_message(token, chat_id, text),
+              else: send_url_keyboard_plain(token, chat_id, text, rows)
+          end
+
+        _ ->
+          API.send_message(token, chat_id, "Не получилось загрузить приглашения, попробуй позже.")
+      end
+    end)
 
     state
   end
@@ -272,7 +292,7 @@ defmodule Druzhok.ManagerBot do
         API.send_message(state.token, chat_id, Onboarding.limit_message())
         state
 
-      input == %{text: "🤖 Создать бота"} and not may_create?(user_id, session) ->
+      input == %{text: "🤖 Создать бота"} and not may_create?(user_id) ->
         {session, prompt} = Onboarding.ask_invite(session)
         API.send_message(state.token, chat_id, prompt)
         put_in(state, [:sessions, user_id], session)
@@ -334,10 +354,12 @@ defmodule Druzhok.ManagerBot do
 
   # --- Invite gate ---
 
-  # Admitted people, the operator, and a session already holding a checked
-  # code (the deep link path) skip the prompt.
-  defp may_create?(user_id, session) do
-    is_binary(session[:invite]) or operator?(user_id) or Admissions.admitted?(user_id)
+  # Admitted people and the operator skip the prompt; nobody else does. A code
+  # sitting on the session is never permission: the deep link checks it before
+  # naming begins, and pressing create again mid-naming drops it, so trusting
+  # it would create a bot whose code was never redeemed.
+  defp may_create?(user_id) do
+    operator?(user_id) or Admissions.admitted?(user_id)
   end
 
   defp operator?(user_id) do
@@ -370,7 +392,7 @@ defmodule Druzhok.ManagerBot do
   defp handle_start_ref(state, user_id, chat_id, code) do
     state = show_main_menu(state, user_id, chat_id)
 
-    if code == "" or may_create?(user_id, %{}) or user_bot_count(user_id) >= @max_bots_per_user do
+    if code == "" or may_create?(user_id) or user_bot_count(user_id) >= @max_bots_per_user do
       state
     else
       handle_check_invite(state, user_id, chat_id, Onboarding.new_session(), code)
