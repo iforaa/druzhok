@@ -243,13 +243,100 @@ defmodule Druzhok.ManagerBot.OnboardingTest do
     end
   end
 
-  describe "main_menu_keyboard/0" do
-    test "returns a reply keyboard with two buttons" do
-      menu = Onboarding.main_menu_keyboard()
-      assert menu.resize_keyboard == true
-      [[btn1, btn2]] = menu.keyboard
-      assert btn1.text == "🤖 Создать бота"
-      assert btn2.text == "📋 Мои боты"
+  describe "main_menu_keyboard/1" do
+    test "no bot: only create" do
+      assert %{keyboard: [[%{text: "🤖 Создать бота"}]], resize_keyboard: true} = Onboarding.main_menu_keyboard(0)
+      assert Onboarding.main_menu_keyboard() == Onboarding.main_menu_keyboard(0)
+    end
+
+    test "one bot: its controls, no create" do
+      assert %{keyboard: [[%{text: "🤖 Мой бот"}, %{text: "🎨 Картинки"}], [%{text: "🎁 Пригласить"}, %{text: "🗑 Удалить"}]]} =
+               Onboarding.main_menu_keyboard(1)
+    end
+
+    test "several bots (grandfathered): the list, no create" do
+      assert %{keyboard: [[%{text: "📋 Мои боты"}]]} = Onboarding.main_menu_keyboard(2)
+    end
+
+    test "menu_texts covers every label" do
+      for count <- [0, 1, 2], row <- Onboarding.main_menu_keyboard(count).keyboard, %{text: t} <- row do
+        assert t in Onboarding.menu_texts()
+      end
+    end
+  end
+
+  describe "invite step" do
+    test "ask_invite moves to :invite with the prompt" do
+      {session, text} = Onboarding.ask_invite(Onboarding.new_session())
+      assert session.step == :invite
+      assert text == "Создание по приглашению. Введи код или открой ссылку от друга."
+    end
+
+    test "a typed code is handed back for checking" do
+      {session, _} = Onboarding.ask_invite(Onboarding.new_session())
+      assert {:ok, %{step: :invite}, {:check_invite, "ABCD-EFGH"}} = Onboarding.handle_input(session, %{text: "  ABCD-EFGH \n"})
+    end
+
+    test "menu buttons during the invite step are not codes" do
+      {session, _} = Onboarding.ask_invite(Onboarding.new_session())
+      assert {:ok, _, {:my_bots}} = Onboarding.handle_input(session, %{text: "📋 Мои боты"})
+    end
+
+    test "begin_create keeps the code on the session" do
+      {session, text} = Onboarding.begin_create(Onboarding.new_session(), "ABCD-EFGH")
+      assert session.step == :name
+      assert session.invite == "ABCD-EFGH"
+      assert text == "Как назовём бота?"
+      assert {%{invite: nil}, _} = Onboarding.begin_create(Onboarding.new_session())
+    end
+
+    test "status messages" do
+      assert Onboarding.invite_status_message(:spent) == "Этот код уже использован."
+      assert Onboarding.invite_status_message(:expired) == "Срок этого кода истёк."
+      assert Onboarding.invite_status_message(:invalid) == "Код не найден. Проверь ссылку или попроси новый."
+      assert Onboarding.invite_status_message(:error) == "Не получилось проверить код, попробуй позже."
+      assert Onboarding.create_race_message() == "Код успели использовать. Попроси новый и создай бота заново."
+      assert Onboarding.limit_message() == "У тебя уже есть бот. Удали его, чтобы создать нового."
+    end
+  end
+
+  describe "my_bot_message/1" do
+    test "the bot line and a chat button" do
+      bot = %{id: 7, name: "Кот", active: true, trigger_name: "kot_bot", ruoc_balance_rub: "1.00", ruoc_subscription: nil}
+      {text, [[open]]} = Onboarding.my_bot_message(bot)
+      assert text == "🟢 *Кот* — баланс 1.00 ₽"
+      assert open == %{text: "💬 Написать", url: "https://t.me/kot_bot"}
+    end
+  end
+
+  describe "referrals_messages/2" do
+    test "an available code becomes a link with a share button; redeemed ones are listed" do
+      codes = [
+        %{code: "AAAA-BBBB", status: "available", redeemed_at: nil, friend_rub: "0.00", you_rub: "0.00"},
+        %{code: "CCCC-DDDD", status: "redeemed", redeemed_at: ~U[2026-10-05 09:00:00Z], friend_rub: "0.00", you_rub: "0.00"}
+      ]
+
+      [{intro, []}, {share, [[button]]}, {used, []}] = Onboarding.referrals_messages(codes, "druzhoksuperbot")
+      assert intro == "Пригласи друга — по этой ссылке он сможет создать своего бота:"
+      assert share == "https://t.me/druzhoksuperbot?start=ref_AAAA-BBBB"
+      assert button.text == "Поделиться"
+      assert button.url =~ "https://t.me/share/url?url=https%3A%2F%2Ft.me%2Fdruzhoksuperbot%3Fstart%3Dref_AAAA-BBBB&text="
+      assert used == "Использован 5 окт"
+    end
+
+    test "a bonus is mentioned in the share caption" do
+      codes = [%{code: "AAAA-BBBB", status: "available", redeemed_at: nil, friend_rub: "0.00", you_rub: "20.00"}]
+      [_, {_, [[button]]}] = Onboarding.referrals_messages(codes, "b")
+      assert URI.decode_www_form(button.url) =~ "20.00"
+    end
+
+    test "no codes" do
+      assert [{"У тебя пока нет приглашений.", []}] = Onboarding.referrals_messages([], "b")
+    end
+
+    test "only redeemed codes: no intro, just the list" do
+      codes = [%{code: "C", status: "redeemed", redeemed_at: ~U[2026-10-05 09:00:00Z], friend_rub: "0.00", you_rub: "0.00"}]
+      assert [{"Использован 5 окт", []}] = Onboarding.referrals_messages(codes, "b")
     end
   end
 end

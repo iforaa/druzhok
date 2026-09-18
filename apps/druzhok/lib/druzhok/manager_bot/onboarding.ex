@@ -14,6 +14,8 @@ defmodule Druzhok.ManagerBot.Onboarding do
       name: nil,
       language: nil,
       username: nil,
+      # The code the person came in with, until ruoc has redeemed it.
+      invite: nil,
       message_id: nil,
       started_at: System.system_time(:second)
     }
@@ -21,12 +23,30 @@ defmodule Druzhok.ManagerBot.Onboarding do
 
   # --- Main menu ---
 
-  def main_menu_keyboard do
-    %{
-      keyboard: [[%{text: "🤖 Создать бота"}, %{text: "📋 Мои боты"}]],
-      resize_keyboard: true,
-      one_time_keyboard: false
-    }
+  @create "🤖 Создать бота"
+  @my_bots "📋 Мои боты"
+  @my_bot "🤖 Мой бот"
+  @pictures "🎨 Картинки"
+  @invite "🎁 Пригласить"
+  @delete "🗑 Удалить"
+
+  @doc "Every label the reply keyboard can carry; none of them is ever a bot name or a code."
+  def menu_texts, do: [@create, @my_bots, @my_bot, @pictures, @invite, @delete]
+
+  @doc """
+  The reply keyboard for a person with `bot_count` bots. One bot is the rule;
+  the create button exists only until it is used, and a person with several
+  (only possible from before the rule) keeps the old list.
+  """
+  def main_menu_keyboard(bot_count \\ 0) do
+    rows =
+      case bot_count do
+        0 -> [[%{text: @create}]]
+        1 -> [[%{text: @my_bot}, %{text: @pictures}], [%{text: @invite}, %{text: @delete}]]
+        _ -> [[%{text: @my_bots}]]
+      end
+
+    %{keyboard: rows, resize_keyboard: true, one_time_keyboard: false}
   end
 
   def welcome_message do
@@ -36,15 +56,29 @@ defmodule Druzhok.ManagerBot.Onboarding do
   # --- Step handlers ---
 
   # Main menu buttons (text from reply keyboard)
-  def handle_input(%{step: step} = session, %{text: "🤖 Создать бота"})
+  def handle_input(%{step: step} = session, %{text: @create})
       when step in [:idle, :done] do
-    session = %{session | step: :name, started_at: System.system_time(:second)}
-    {:ok, session, {:text, "Как назовём бота?"}}
+    {session, text} = begin_create(session, session.invite)
+    {:ok, session, {:text, text}}
   end
 
-  def handle_input(_session, %{text: "📋 Мои боты"}) do
+  def handle_input(_session, %{text: @my_bots}) do
     {:ok, new_session(), {:my_bots}}
   end
+
+  # Invite step: the person has no admission; whatever they type is a code
+  # for ManagerBot to check with ruoc. Menu buttons keep working.
+  def handle_input(%{step: :invite} = session, %{text: text}) do
+    code = String.trim(text || "")
+
+    cond do
+      code in menu_texts() -> handle_input(new_session(), %{text: code})
+      code == "" -> {:retry, session, {:text, invite_prompt()}}
+      true -> {:ok, session, {:check_invite, code}}
+    end
+  end
+
+  def handle_input(%{step: :invite} = session, _input), do: {:retry, session, {:text, invite_prompt()}}
 
   # Name step
   def handle_input(%{step: :name} = session, %{text: text}) do
@@ -52,7 +86,7 @@ defmodule Druzhok.ManagerBot.Onboarding do
     cond do
       name == "" ->
         {:retry, session, {:text, "Имя не может быть пустым. Как назовём бота?"}}
-      name in ["🤖 Создать бота", "📋 Мои боты"] ->
+      name in menu_texts() ->
         # Re-dispatch menu buttons during name entry from a fresh session;
         # re-dispatching with step :name would loop forever.
         handle_input(new_session(), %{text: name})
@@ -87,6 +121,25 @@ defmodule Druzhok.ManagerBot.Onboarding do
   def handle_input(session, _input) do
     {:retry, session, {:text, "Используй кнопки меню внизу."}}
   end
+
+  @doc "Put the session at the invite step; ManagerBot sends the prompt."
+  def ask_invite(session), do: {%{session | step: :invite, started_at: System.system_time(:second)}, invite_prompt()}
+
+  def invite_prompt, do: "Создание по приглашению. Введи код или открой ссылку от друга."
+
+  def invite_status_message(:spent), do: "Этот код уже использован."
+  def invite_status_message(:expired), do: "Срок этого кода истёк."
+  def invite_status_message(:invalid), do: "Код не найден. Проверь ссылку или попроси новый."
+  def invite_status_message(_), do: "Не получилось проверить код, попробуй позже."
+
+  @doc "Start naming the bot, carrying the (checked) code to provisioning."
+  def begin_create(session, invite \\ nil) do
+    {%{session | step: :name, invite: invite, started_at: System.system_time(:second)}, "Как назовём бота?"}
+  end
+
+  def create_race_message, do: "Код успели использовать. Попроси новый и создай бота заново."
+  def after_create_message, do: "Управление ботом — в меню внизу."
+  def after_delete_message, do: "Можно создать нового бота."
 
   # --- Message builders ---
 
@@ -132,8 +185,53 @@ defmodule Druzhok.ManagerBot.Onboarding do
     "✅ Бот @#{bot_username} создан и запущен!\n→ Написать боту: https://t.me/#{bot_username}"
   end
 
-  def limit_message do
-    "У тебя уже 2 бота — это максимум. Удали один из существующих чтобы создать новый."
+  def limit_message, do: "У тебя уже есть бот. Удали его, чтобы создать нового."
+
+  @doc "The one-bot card: the bot line and a button into its chat."
+  def my_bot_message(bot) do
+    {bot_line(bot), [[%{text: "💬 Написать", url: "https://t.me/#{bot_handle(bot)}"}]]}
+  end
+
+  @doc """
+  What «🎁 Пригласить» sends, in order: an intro, one message per available
+  code with its deep link and a share button, then one message listing the
+  redeemed codes. `codes` is `Druzhok.Ruoc.referrals/1`'s list.
+  """
+  def referrals_messages(codes, manager_username) do
+    available = Enum.filter(codes, &(&1.status == "available" and is_binary(&1.code)))
+    redeemed = Enum.filter(codes, &(&1.status == "redeemed"))
+
+    shares =
+      Enum.map(available, fn c ->
+        link = "https://t.me/#{manager_username}?start=ref_#{c.code}"
+
+        caption =
+          if c.you_rub != "0.00",
+            do: "Создай своего AI-бота по моей ссылке — мне за это начислят #{c.you_rub} ₽",
+            else: "Создай своего AI-бота по моей ссылке"
+
+        share = "https://t.me/share/url?url=#{URI.encode_www_form(link)}&text=#{URI.encode_www_form(caption)}"
+        {link, [[%{text: "Поделиться", url: share}]]}
+      end)
+
+    intro = if shares == [], do: [], else: [{"Пригласи друга — по этой ссылке он сможет создать своего бота:", []}]
+
+    used =
+      case redeemed do
+        [] ->
+          []
+
+        list ->
+          line =
+            Enum.map_join(list, "\n", &String.trim("Использован " <> if(&1.redeemed_at, do: short_date(&1.redeemed_at), else: "")))
+
+          [{line, []}]
+      end
+
+    case intro ++ shares ++ used do
+      [] -> [{"У тебя пока нет приглашений.", []}]
+      messages -> messages
+    end
   end
 
   def my_bots_message(bots) do
