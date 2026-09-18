@@ -11,16 +11,12 @@ defmodule DruzhokWebWeb.DashboardLive do
   @valid_tabs %{"logs" => :logs, "files" => :files, "settings" => :settings, "usage" => :usage, "errors" => :errors}
 
   @impl true
-  def mount(_params, session, socket) do
+  # :current_user is assigned by the LiveAuth on_mount hook (see the router).
+  def mount(_params, _session, socket) do
     if connected?(socket) do
       :timer.send_interval(15_000, self(), :refresh)
       Druzhok.Events.subscribe_all()
       send(self(), :load_instances)
-    end
-
-    current_user = case session["user_id"] do
-      nil -> nil
-      id -> Druzhok.Repo.get(Druzhok.User, id)
     end
 
     models = Druzhok.Ruoc.models()
@@ -28,7 +24,6 @@ defmodule DruzhokWebWeb.DashboardLive do
     # Render immediately with lightweight instance list (no host stats).
     # Full stats load async via :load_instances message.
     {:ok, assign(socket,
-      current_user: current_user,
       instances: list_instances_fast(),
       models: models,
       create_form: %{"name" => "", "token" => "", "model" => Druzhok.Ruoc.default_model()},

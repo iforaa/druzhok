@@ -6,17 +6,10 @@ defmodule DruzhokWebWeb.SettingsLive do
   @secret ~w(openrouter_api_key openai_api_key manager_bot_token ruoc_admin_token ruoc_catalog_key fetch_secret)
 
   @impl true
-  def mount(_params, session, socket) do
-    current_user = case session["user_id"] do
-      nil -> nil
-      id -> Druzhok.Repo.get(Druzhok.User, id)
-    end
-
-    unless current_user && current_user.role == "admin" do
-      {:ok, redirect(socket, to: "/")}
-    else
-      {:ok, socket |> assign(current_user: current_user, saved: false) |> load_settings()}
-    end
+  # Admin-only: enforced by the router's :admin plug and the LiveAuth
+  # :require_admin on_mount hook, which also assigns :current_user.
+  def mount(_params, _session, socket) do
+    {:ok, socket |> assign(saved: false) |> load_settings()}
   end
 
   @impl true

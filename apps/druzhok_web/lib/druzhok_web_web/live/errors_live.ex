@@ -4,16 +4,10 @@ defmodule DruzhokWebWeb.ErrorsLive do
   import DruzhokWebWeb.Live.Components.ErrorsTab
 
   @impl true
-  def mount(_params, session, socket) do
+  def mount(_params, _session, socket) do
     if connected?(socket), do: :timer.send_interval(10_000, self(), :refresh)
 
-    current_user = case session["user_id"] do
-      nil -> nil
-      id -> Druzhok.Repo.get(Druzhok.User, id)
-    end
-
     {:ok, assign(socket,
-      current_user: current_user,
       errors: Druzhok.CrashLog.recent(200),
       expanded: nil
     )}

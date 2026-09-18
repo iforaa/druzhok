@@ -60,11 +60,18 @@ defmodule DruzhokWebWeb.Router do
     post "/embed", EmbedController, :embed
   end
 
+  # Each group of LiveViews gets its own live_session: live navigation skips
+  # the plug pipelines, so the on_mount hooks in LiveAuth are what keeps a
+  # websocket opened on /login out of the dashboard.
+
   # Public routes
   scope "/", DruzhokWebWeb do
     pipe_through :browser
 
-    live "/login", LoginLive
+    live_session :public do
+      live "/login", LoginLive
+    end
+
     post "/auth/session", AuthController, :create_session
     get "/auth/logout", AuthController, :logout
   end
@@ -73,17 +80,21 @@ defmodule DruzhokWebWeb.Router do
   scope "/", DruzhokWebWeb do
     pipe_through [:browser, :auth]
 
-    live "/", DashboardLive
-    live "/instances/:name", DashboardLive
-    live "/instances/:name/:tab", DashboardLive
+    live_session :authenticated, on_mount: {DruzhokWebWeb.LiveAuth, :require_user} do
+      live "/", DashboardLive
+      live "/instances/:name", DashboardLive
+      live "/instances/:name/:tab", DashboardLive
+    end
   end
 
   # Admin-only routes
   scope "/", DruzhokWebWeb do
     pipe_through [:browser, :auth, :admin]
 
-    live "/settings", SettingsLive
-    live "/errors", ErrorsLive
-    live "/usage", UsageLive
+    live_session :admin, on_mount: {DruzhokWebWeb.LiveAuth, :require_admin} do
+      live "/settings", SettingsLive
+      live "/errors", ErrorsLive
+      live "/usage", UsageLive
+    end
   end
 end

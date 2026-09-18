@@ -3,18 +3,12 @@ defmodule DruzhokWebWeb.UsageLive do
   import Ecto.Query, only: [from: 2]
 
   @impl true
-  def mount(_params, session, socket) do
+  def mount(_params, _session, socket) do
     if connected?(socket), do: :timer.send_interval(15_000, self(), :refresh)
-
-    current_user = case session["user_id"] do
-      nil -> nil
-      id -> Druzhok.Repo.get(Druzhok.User, id)
-    end
 
     instances = Druzhok.Repo.all(from(i in Druzhok.Instance, select: i.name))
 
     {:ok, assign(socket,
-      current_user: current_user,
       instances: instances,
       filter_instance: "",
       filter_model: "",
