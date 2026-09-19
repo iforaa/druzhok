@@ -76,6 +76,19 @@ defmodule Druzhok.ManagerBot do
     end
   end
 
+  # The answer to a check started in `start_invite_check/5`. A /start or a TTL
+  # prune in the meantime makes it stale, so the session has to still be the one
+  # waiting on this exact code.
+  def handle_info({:invite_result, user_id, chat_id, code, result}, state) do
+    case state.sessions[user_id] do
+      %{step: :checking, invite: ^code} = session ->
+        {:noreply, apply_invite_result(state, user_id, chat_id, session, code, result)}
+
+      _ ->
+        {:noreply, state}
+    end
+  end
+
   def handle_info(_msg, state), do: {:noreply, state}
 
   # --- Update processing ---
@@ -86,6 +99,12 @@ defmodule Druzhok.ManagerBot do
     text = msg["text"] || ""
 
     cond do
+      # A code of theirs is already with ruoc. Everything they send until the
+      # answer lands is dropped: that is what stops one person from spending a
+      # round trip of the shared poll loop per message.
+      checking?(state, user_id) ->
+        state
+
       text == "/start" ->
         show_main_menu(state, user_id, chat_id)
 
@@ -149,8 +168,14 @@ defmodule Druzhok.ManagerBot do
             # One bot means there is no list to go back to: the card is «Назад».
             case user_bots(user_id) do
               [bot] ->
-                {text, rows} = Onboarding.my_bot_message(with_balance(bot))
-                edit_url_keyboard(state.token, chat_id, message_id, text, rows)
+                # Same ruoc round trip as the «🤖 Мой бот» card, same reason to
+                # build it off the loop.
+                token = state.token
+
+                Task.start(fn ->
+                  {text, rows} = Onboarding.my_bot_message(with_balance(bot))
+                  edit_url_keyboard(token, chat_id, message_id, text, rows)
+                end)
 
               _ ->
                 edit_my_bots(state, user_id, chat_id, message_id)
@@ -287,8 +312,9 @@ defmodule Druzhok.ManagerBot do
     session = state.sessions[user_id] || Onboarding.new_session()
 
     cond do
-      # Check bot limit before starting creation
-      input == %{text: "🤖 Создать бота"} and user_bot_count(user_id) >= @max_bots_per_user ->
+      # Check bot limit before starting creation; the operator has no limit.
+      input == %{text: "🤖 Создать бота"} and not operator?(user_id) and
+          user_bot_count(user_id) >= @max_bots_per_user ->
         API.send_message(state.token, chat_id, Onboarding.limit_message())
         state
 
@@ -300,7 +326,7 @@ defmodule Druzhok.ManagerBot do
       true ->
         case Onboarding.handle_input(session, input) do
           {_status, session, {:check_invite, code}} ->
-            handle_check_invite(state, user_id, chat_id, session, code)
+            start_invite_check(state, user_id, chat_id, session, code)
 
           {_status, session, {:my_bots}} ->
             send_my_bots(state, user_id, chat_id)
@@ -369,8 +395,35 @@ defmodule Druzhok.ManagerBot do
     end
   end
 
-  defp handle_check_invite(state, user_id, chat_id, session, code) do
-    case Druzhok.Ruoc.check_invite(code) do
+  defp checking?(state, user_id) do
+    case state.sessions[user_id] do
+      %{step: :checking} -> true
+      _ -> false
+    end
+  end
+
+  # Asking ruoc about a code is a round trip, and it is the one ruoc call an
+  # unadmitted stranger can trigger at will. It runs in a task and answers this
+  # GenServer with a message; the session parks at :checking meanwhile.
+  defp start_invite_check(state, user_id, chat_id, session, code) do
+    server = self()
+
+    Task.start(fn ->
+      result =
+        try do
+          Druzhok.Ruoc.check_invite(code)
+        rescue
+          e -> {:error, Exception.message(e)}
+        end
+
+      send(server, {:invite_result, user_id, chat_id, code, result})
+    end)
+
+    put_in(state, [:sessions, user_id], Onboarding.begin_check(session, code))
+  end
+
+  defp apply_invite_result(state, user_id, chat_id, session, code, result) do
+    case result do
       {:ok, :available} ->
         {session, text} = Onboarding.begin_create(session, code)
         API.send_message(state.token, chat_id, text)
@@ -395,7 +448,7 @@ defmodule Druzhok.ManagerBot do
     if code == "" or may_create?(user_id) or user_bot_count(user_id) >= @max_bots_per_user do
       state
     else
-      handle_check_invite(state, user_id, chat_id, Onboarding.new_session(), code)
+      start_invite_check(state, user_id, chat_id, Onboarding.new_session(), code)
     end
   end
 
@@ -619,6 +672,25 @@ defmodule Druzhok.ManagerBot do
 
     token = state.token
 
+    cond do
+      not operator?(creator_id) and user_bot_count(creator_id) >= @max_bots_per_user ->
+        API.send_message(token, creator_id, Onboarding.limit_message())
+        state
+
+      # The public t.me/newbot link reaches here with no gate of its own, and a
+      # pruned session would otherwise create a bot whose code was never
+      # redeemed. A code on the session counts here, unlike in `may_create?/1`:
+      # this is the call site that forwards it to ruoc.
+      not (may_create?(creator_id) or is_binary(session[:invite])) ->
+        API.send_message(token, creator_id, Onboarding.invite_prompt())
+        state
+
+      true ->
+        provision_managed_bot(state, creator_id, bot_id, bot_username, session, token)
+    end
+  end
+
+  defp provision_managed_bot(state, creator_id, bot_id, bot_username, session, token) do
     Task.start(fn ->
       progress = start_progress(token, creator_id, bot_username)
 

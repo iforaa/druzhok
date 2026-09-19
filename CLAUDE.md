@@ -65,7 +65,12 @@ changes happen in the ruoc console; the manager bot and the settings tab only sh
 date from `GET /v1/balance` (`Druzhok.Ruoc.balance/1`). The model catalog is ruoc's
 `GET /v1/models` (`Druzhok.Ruoc.models/0`, default `ruoc-flash`).
 
-The superbot is invite-only: `admissions` (`Druzhok.Admissions`) records who may create a bot, written when ruoc accepted their code (`POST /admin/accounts` with `invite`); the operator issues referral codes to a bot's account from the ruoc console account page, and «🎁 Пригласить» reads them via `GET /v1/referrals`. One bot per person (`@max_bots_per_user 1`). Spec: `docs/superpowers/specs/2026-09-19-referral-invites-design.md`.
+The superbot is invite-only: `admissions` (`Druzhok.Admissions`) records who may create a bot,
+written when a bot is created with the code's first characters as the hint (or `owner` when no code
+was used), and the code itself is spent by ruoc in `POST /admin/accounts`. The operator issues
+referral codes to a bot's account from the ruoc console account page, and «🎁 Пригласить» reads them
+via `GET /v1/referrals`. One bot per person (`@max_bots_per_user 1`), the operator excepted. Spec:
+`docs/superpowers/specs/2026-09-19-referral-invites-design.md`.
 
 OpenRouter responses have leading whitespace — `String.trim()` before `Jason.decode()`.
 

@@ -92,7 +92,9 @@ defmodule Druzhok.ManagerBot.Onboarding do
         handle_input(new_session(), %{text: name})
       true ->
         username = generate_bot_username(name)
-        session = %{session | step: :language, name: name, username: username}
+        # Every transition restamps the clock, so the TTL measures idleness and
+        # not the whole flow: naming a bot in Telegram takes minutes.
+        session = %{session | step: :language, name: name, username: username, started_at: System.system_time(:second)}
         {:ok, session, {:keyboard, "Язык:", language_buttons()}}
     end
   end
@@ -100,7 +102,7 @@ defmodule Druzhok.ManagerBot.Onboarding do
   # Language step
   def handle_input(%{step: :language} = session, %{callback_data: "lang:" <> lang})
       when lang in ["ru", "en"] do
-    session = %{session | step: :confirm, language: lang}
+    session = %{session | step: :confirm, language: lang, started_at: System.system_time(:second)}
     {:ok, session, {:edit_confirm, session}}
   end
 
@@ -126,6 +128,13 @@ defmodule Druzhok.ManagerBot.Onboarding do
   def ask_invite(session), do: {%{session | step: :invite, started_at: System.system_time(:second)}, invite_prompt()}
 
   def invite_prompt, do: "Создание по приглашению. Введи код или открой ссылку от друга."
+
+  @doc """
+  Park the session while ruoc is asked about `code`. Nothing the person sends
+  counts until the answer lands, which is what keeps one user from spending
+  the poll loop on a round trip per message.
+  """
+  def begin_check(session, code), do: %{session | step: :checking, invite: code, started_at: System.system_time(:second)}
 
   def invite_status_message(:spent), do: "Этот код уже использован."
   def invite_status_message(:expired), do: "Срок этого кода истёк."

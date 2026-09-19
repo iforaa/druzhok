@@ -421,6 +421,20 @@ defmodule Druzhok.ManagerBotTest do
       assert TelegramStub.await_call(stub, "sendMessage", &(&1["text"] == "Как назовём бота?"))
     end
 
+    test "a managed_bot update from an owner at the limit creates nothing", %{stub: stub} do
+      TelegramStub.push_update(stub, managed_bot_update(562, "extra_bot"))
+
+      assert TelegramStub.await_call(
+               stub,
+               "sendMessage",
+               &(&1["text"] == "У тебя уже есть бот. Удали его, чтобы создать нового.")
+             )
+
+      Process.sleep(50)
+      assert Repo.get_by(Instance, name: "extra") == nil
+      assert TelegramStub.calls(stub, "getManagedBotToken") == []
+    end
+
     test "Пригласить lists the codes from ruoc with share buttons", %{stub: stub} do
       TelegramStub.push_update(stub, message("🎁 Пригласить"))
       TelegramStub.await_call(stub, "sendMessage", &(&1["text"] =~ "Пригласи друга"))
@@ -519,11 +533,67 @@ defmodule Druzhok.ManagerBotTest do
       refute Druzhok.Admissions.admitted?(@stranger)
     end
 
-    test "the operator creates without a code", %{stub: stub} do
+    test "the operator creates without a code, and with a bot already", %{stub: stub, data_root: root} do
       Druzhok.Settings.set("operator_telegram_id", "777")
       on_exit(fn -> Druzhok.Settings.set("operator_telegram_id", "") end)
       TelegramStub.push_update(stub, message("🤖 Создать бота", 777))
       assert TelegramStub.await_call(stub, "sendMessage", &(&1["text"] == "Как назовём бота?" and &1["chat_id"] == 777))
+
+      # The one-bot limit does not apply to the operator.
+      %Instance{}
+      |> Instance.changeset(%{
+        name: "opbot",
+        model: "m",
+        workspace: Path.join([root, "opbot", "workspace"]),
+        tenant_key: "dk-opbot",
+        owner_telegram_id: 777,
+        trigger_name: "opbot_bot"
+      })
+      |> Repo.insert!()
+
+      on_exit(fn -> Repo.delete_all(from(i in Instance, where: i.name == "opbot")) end)
+
+      TelegramStub.push_update(stub, message("🤖 Создать бота", 777))
+
+      assert eventually(fn -> Enum.count(sent_texts(stub), &(&1 == "Как назовём бота?")) == 2 end)
+      refute "У тебя уже есть бот. Удали его, чтобы создать нового." in sent_texts(stub)
+    end
+
+    test "a second message while the code is being checked is ignored", %{stub: stub, ruoc: ruoc} do
+      Bypass.expect_once(ruoc.bypass, "GET", "/admin/invites/check", fn conn ->
+        Process.sleep(200)
+        Druzhok.RuocStub.reply(conn, 200, %{"status" => "available"})
+      end)
+
+      TelegramStub.push_update(stub, message("🤖 Создать бота", @stranger))
+      TelegramStub.await_call(stub, "sendMessage", &(&1["text"] =~ "по приглашению"))
+
+      TelegramStub.push_update(stub, message("ABCD-EFGH", @stranger))
+      TelegramStub.push_update(stub, message("IJKL-MNOP", @stranger))
+
+      TelegramStub.await_call(stub, "sendMessage", &(&1["text"] == "Как назовём бота?"), 5_000)
+      Process.sleep(100)
+
+      # The second message drew no reply at all, and no second check.
+      assert Enum.count(sent_texts(stub), &(&1 == "Как назовём бота?")) == 1
+      refute Enum.any?(sent_texts(stub), &(&1 =~ "Код не найден"))
+      assert Enum.count(sent_texts(stub), &(&1 =~ "по приглашению")) == 1
+    end
+
+    test "a managed_bot update from a stranger with no session creates nothing", %{stub: stub} do
+      TelegramStub.push_update(stub, managed_bot_update(561, "sneaky_bot", @stranger))
+
+      assert TelegramStub.await_call(
+               stub,
+               "sendMessage",
+               &(&1["text"] == "Создание по приглашению. Введи код или открой ссылку от друга." and
+                   &1["chat_id"] == @stranger)
+             )
+
+      Process.sleep(50)
+      assert Repo.get_by(Instance, name: "sneaky") == nil
+      assert TelegramStub.calls(stub, "getManagedBotToken") == []
+      refute Druzhok.Admissions.admitted?(@stranger)
     end
   end
 
