@@ -186,6 +186,23 @@ defmodule Druzhok.Runtime.HermesTest do
     end
   end
 
+  describe "compression reasoning" do
+    @compression "  compression:\n    reasoning_effort: \"low\""
+
+    test "the seed caps summary reasoning at low" do
+      assert Hermes.build_config_yaml(@instance) =~ @compression
+    end
+
+    @tag :tmp_dir
+    test "sync_config/2 writes it into an existing auxiliary block", %{tmp_dir: tmp_dir} do
+      File.write!(Path.join(tmp_dir, "config.yaml"), "model: x\nauxiliary:\n  vision:\n    model: old\n")
+      assert :ok = Hermes.sync_config(%{name: "b", model: "x", tenant_key: "k"}, tmp_dir)
+      yaml = File.read!(Path.join(tmp_dir, "config.yaml"))
+      assert yaml =~ @compression
+      refute yaml =~ "model: old"
+    end
+  end
+
   describe "sync_config/2 — memory block" do
     setup do
       tmp_dir = Path.join(System.tmp_dir!(), "hermes-mem-#{System.unique_integer([:positive])}")

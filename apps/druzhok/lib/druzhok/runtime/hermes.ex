@@ -532,6 +532,15 @@ defmodule Druzhok.Runtime.Hermes do
     end
   end
 
+  # Compression summaries run on the bot's model. ruoc-flash (GLM) cannot turn
+  # reasoning off ("Reasoning is mandatory"), and at its default depth it spent
+  # a whole 32k output cap thinking over a 60k-token history and returned no
+  # summary, so the session could never compact. "low" keeps it short.
+  @compression_block """
+    compression:
+      reasoning_effort: "low"
+  """
+
   defp sync_auxiliary_vision(content, vision_model, tenant_key) do
     vision_block = """
 
@@ -541,6 +550,7 @@ defmodule Druzhok.Runtime.Hermes do
         base_url: "#{Druzhok.Runtime.proxy_url()}"
         api_key: "#{tenant_key}"
         model: "#{vision_model}"
+    #{@compression_block}
     """
     |> String.trim_trailing()
 
@@ -931,7 +941,7 @@ defmodule Druzhok.Runtime.Hermes do
         base_url: "#{url}"
         api_key: "#{tenant_key}"
         model: "#{vision_model}"
-
+    #{@compression_block}
     memory:
       provider: builtin
       memory_enabled: true
