@@ -2,7 +2,7 @@ defmodule DruzhokWebWeb.SettingsLive do
   use DruzhokWebWeb, :live_view
 
   @keys ~w(openrouter_api_key openai_api_key manager_bot_token operator_telegram_id
-           ruoc_url ruoc_admin_host ruoc_admin_token ruoc_catalog_key fetch_secret)
+           ruoc_url ruoc_admin_host ruoc_admin_token ruoc_catalog_key fetch_secret bot_creation)
   @secret ~w(openrouter_api_key openai_api_key manager_bot_token ruoc_admin_token ruoc_catalog_key fetch_secret)
 
   @impl true
@@ -32,7 +32,8 @@ defmodule DruzhokWebWeb.SettingsLive do
       ruoc_admin_host: Druzhok.Settings.get("ruoc_admin_host") || "",
       ruoc_admin_token: mask(Druzhok.Settings.get("ruoc_admin_token")),
       ruoc_catalog_key: mask(Druzhok.Settings.get("ruoc_catalog_key")),
-      fetch_secret: mask(Druzhok.Settings.get("fetch_secret"))
+      fetch_secret: mask(Druzhok.Settings.get("fetch_secret")),
+      bot_creation: if(Druzhok.Settings.bot_creation_closed?(), do: "closed", else: "open")
     )
   end
 
@@ -61,6 +62,12 @@ defmodule DruzhokWebWeb.SettingsLive do
           <.card title="Manager bot (Telegram)">
             <.field name="manager_bot_token" label="Bot token" value={@manager_bot_token} placeholder="123456:ABC…" mono />
             <p class="text-[10px] text-muted">Picked up within a minute, no restart needed.</p>
+          </.card>
+
+          <.card title="New bots (superbot)">
+            <.field name="bot_creation" label="Creating bots" value={@bot_creation} type="select"
+                    options={[{"Open — invite codes and admitted people", "open"}, {"Closed — operator only", "closed"}]} />
+            <p class="text-[10px] text-muted">Closed: everyone but the operator is told creation is closed — the create button, invite links and t.me/newbot alike. Existing bots keep running.</p>
           </.card>
 
           <.card title="Operator (Telegram)">

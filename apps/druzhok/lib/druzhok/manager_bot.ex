@@ -312,6 +312,10 @@ defmodule Druzhok.ManagerBot do
     session = state.sessions[user_id] || Onboarding.new_session()
 
     cond do
+      input == %{text: "🤖 Создать бота"} and closed?(user_id) ->
+        API.send_message(state.token, chat_id, Onboarding.closed_message())
+        state
+
       # Check bot limit before starting creation; the operator has no limit.
       input == %{text: "🤖 Создать бота"} and not operator?(user_id) and
           user_bot_count(user_id) >= @max_bots_per_user ->
@@ -388,6 +392,11 @@ defmodule Druzhok.ManagerBot do
     operator?(user_id) or Admissions.admitted?(user_id)
   end
 
+  # Creation closed from dashboard Settings. The operator is never shut out.
+  defp closed?(user_id) do
+    Settings.bot_creation_closed?() and not operator?(user_id)
+  end
+
   defp operator?(user_id) do
     case Settings.operator_telegram_id() do
       nil -> false
@@ -445,10 +454,16 @@ defmodule Druzhok.ManagerBot do
   defp handle_start_ref(state, user_id, chat_id, code) do
     state = show_main_menu(state, user_id, chat_id)
 
-    if code == "" or may_create?(user_id) or user_bot_count(user_id) >= @max_bots_per_user do
-      state
-    else
-      start_invite_check(state, user_id, chat_id, Onboarding.new_session(), code)
+    cond do
+      code == "" or may_create?(user_id) or user_bot_count(user_id) >= @max_bots_per_user ->
+        state
+
+      closed?(user_id) ->
+        API.send_message(state.token, chat_id, Onboarding.closed_message())
+        state
+
+      true ->
+        start_invite_check(state, user_id, chat_id, Onboarding.new_session(), code)
     end
   end
 
@@ -673,6 +688,12 @@ defmodule Druzhok.ManagerBot do
     token = state.token
 
     cond do
+      # Last line of defence: a flow started before the switch, or the public
+      # t.me/newbot link, both arrive here.
+      closed?(creator_id) ->
+        API.send_message(token, creator_id, Onboarding.closed_message())
+        state
+
       not operator?(creator_id) and user_bot_count(creator_id) >= @max_bots_per_user ->
         API.send_message(token, creator_id, Onboarding.limit_message())
         state

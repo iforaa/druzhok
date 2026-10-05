@@ -54,6 +54,12 @@ defmodule Druzhok.Settings do
     Application.get_env(:druzhok, :fetch_secret) || get("fetch_secret")
   end
 
+  @doc """
+  Whether the superbot has stopped making bots for anyone but the operator.
+  Set from dashboard Settings; unset is open. Bots that exist keep running.
+  """
+  def bot_creation_closed?, do: get("bot_creation") == "closed"
+
   @doc "Setting keys the ruoc-gateway integration reads (see `Druzhok.Ruoc`)."
   def ruoc_keys, do: ["ruoc_url", "ruoc_admin_host", "ruoc_admin_token", "ruoc_catalog_key"]
 end
