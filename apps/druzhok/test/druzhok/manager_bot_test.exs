@@ -597,6 +597,47 @@ defmodule Druzhok.ManagerBotTest do
     end
   end
 
+  describe "creation closed" do
+    setup do
+      Druzhok.Settings.set("bot_creation", "closed")
+      on_exit(fn -> Druzhok.Settings.set("bot_creation", "") end)
+      %{ruoc: Druzhok.RuocStub.start()}
+    end
+
+    @closed "Создание новых ботов сейчас закрыто. Уже созданные боты работают как обычно."
+
+    test "create is refused for a stranger and for an admitted person", %{stub: stub} do
+      TelegramStub.push_update(stub, message("🤖 Создать бота", @stranger))
+      assert TelegramStub.await_call(stub, "sendMessage", &(&1["text"] == @closed and &1["chat_id"] == @stranger))
+
+      TelegramStub.push_update(stub, message("🤖 Создать бота"))
+      assert TelegramStub.await_call(stub, "sendMessage", &(&1["text"] == @closed and &1["chat_id"] == @owner))
+      refute "Как назовём бота?" in sent_texts(stub)
+    end
+
+    test "an invite link checks no code", %{stub: stub, ruoc: ruoc} do
+      TelegramStub.push_update(stub, message("/start ref_ABCD-EFGH", @stranger))
+      assert TelegramStub.await_call(stub, "sendMessage", &(&1["text"] == @closed and &1["chat_id"] == @stranger))
+      assert Druzhok.RuocStub.calls(ruoc, "GET /admin/invites/check") == []
+      refute "Как назовём бота?" in sent_texts(stub)
+    end
+
+    test "a managed_bot update from an admitted person creates nothing", %{stub: stub} do
+      TelegramStub.push_update(stub, managed_bot_update(562, "late_bot"))
+      assert TelegramStub.await_call(stub, "sendMessage", &(&1["text"] == @closed and &1["chat_id"] == @owner))
+      Process.sleep(50)
+      assert Repo.get_by(Instance, name: "late") == nil
+      assert TelegramStub.calls(stub, "getManagedBotToken") == []
+    end
+
+    test "the operator still creates", %{stub: stub} do
+      Druzhok.Settings.set("operator_telegram_id", "777")
+      on_exit(fn -> Druzhok.Settings.set("operator_telegram_id", "") end)
+      TelegramStub.push_update(stub, message("🤖 Создать бота", 777))
+      assert TelegramStub.await_call(stub, "sendMessage", &(&1["text"] == "Как назовём бота?" and &1["chat_id"] == 777))
+    end
+  end
+
   describe "picture menu" do
     setup %{data_root: root} do
       ruoc = Druzhok.RuocStub.start()

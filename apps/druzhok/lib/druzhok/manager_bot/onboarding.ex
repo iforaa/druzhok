@@ -194,6 +194,8 @@ defmodule Druzhok.ManagerBot.Onboarding do
     "✅ Бот @#{bot_username} создан и запущен!\n→ Написать боту: https://t.me/#{bot_username}"
   end
 
+  def closed_message, do: "Создание новых ботов сейчас закрыто. Уже созданные боты работают как обычно."
+
   def limit_message, do: "У тебя уже есть бот. Удали его, чтобы создать нового."
 
   @doc "The one-bot card: the bot line and a button into its chat."
