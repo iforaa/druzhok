@@ -48,6 +48,17 @@ defmodule DruzhokWebWeb.LlmProxy.Ruoc.EmbeddingsTest do
     assert log.prompt_preview == "query: кошка"
   end
 
+  test "meters under the model the bot asked for", %{conn: conn, bypass: bypass, instance: instance} do
+    Bypass.expect_once(bypass, "POST", "/v1/embeddings", fn req ->
+      gateway_reply(req, 200, Map.put(@reply, "model", "ruoc-embed-e5-large"))
+    end)
+
+    post(conn, "/v1/embeddings", Map.put(@body, "model", "ruoc-embed-e5-large"))
+
+    assert [log] = usage_logs(instance)
+    assert log.model == "ruoc-embed-e5-large"
+  end
+
   test "a bad input is refused before the gateway", %{conn: conn} do
     for body <- [%{"model" => "ruoc-embed"}, %{"input" => [1]}, %{"input" => []}] do
       conn = post(conn, "/v1/embeddings", body)

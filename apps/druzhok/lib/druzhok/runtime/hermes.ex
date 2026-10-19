@@ -25,6 +25,9 @@ defmodule Druzhok.Runtime.Hermes do
   require Logger
   alias Druzhok.Instance
 
+  # ruoc catalogue entry Mnemosyne embeds through, and its vector width.
+  @embedding_model "ruoc-embed-e5-large"
+  @embedding_dim "1024"
 
   @agents_md_session_section """
   ## Каждая сессия
@@ -139,14 +142,18 @@ defmodule Druzhok.Runtime.Hermes do
   # embeddings go to the proxy's /v1/embeddings with the tenant key, e5 needs
   # its two prefixes (trailing space included), and LLM consolidation stays
   # off. `MNEMOSYNE_DATA_DIR` keeps the SQLite bank inside the tenant dir.
+  # Model and dimension name a ruoc catalogue entry; changing them means every
+  # bot runs `mnemosyne reindex` after its next restart (until then Mnemosyne
+  # falls back to keyword recall, nothing is lost). `ruoc-embed-e5-large` is
+  # multilingual-e5-large hosted upstream (R@5 0.97 on ops/embed-eval).
   defp mnemosyne_env(instance) do
     if memory_provider(instance) == "mnemosyne" do
       %{
         "MNEMOSYNE_DATA_DIR" => Path.join(data_root(instance), "mnemosyne"),
         "MNEMOSYNE_EMBEDDING_API_URL" => Druzhok.Runtime.proxy_url(),
         "MNEMOSYNE_EMBEDDING_API_KEY" => Map.get(instance, :tenant_key, "") || "",
-        "MNEMOSYNE_EMBEDDING_MODEL" => "ruoc-embed",
-        "MNEMOSYNE_EMBEDDING_DIM" => "384",
+        "MNEMOSYNE_EMBEDDING_MODEL" => @embedding_model,
+        "MNEMOSYNE_EMBEDDING_DIM" => @embedding_dim,
         "MNEMOSYNE_EMBEDDING_QUERY_PREFIX" => "query: ",
         "MNEMOSYNE_EMBEDDING_DOC_PREFIX" => "passage: ",
         "MNEMOSYNE_LLM_ENABLED" => "false",

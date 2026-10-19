@@ -312,7 +312,7 @@ defmodule DruzhokWebWeb.LlmProxy.Ruoc do
         case Client.post("/v1/embeddings", instance.ruoc_api_key, Jason.encode!(request), receive_timeout: @embed_timeout) do
           {:ok, 200, headers, resp_body} ->
             request_id = request_id(headers)
-            meter(instance, "embedding", "ruoc-embed", usage_of(resp_body), started_at, nil, nil, request_id, preview_of(input))
+            meter(instance, "embedding", request["model"], usage_of(resp_body), started_at, nil, nil, request_id, preview_of(input))
 
             conn |> relay_headers(headers, request_id) |> send_resp(200, resp_body)
 
