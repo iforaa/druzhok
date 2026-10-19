@@ -36,8 +36,6 @@ data/
 .claude/settings.local.json
 /.fetch-venv/
 __pycache__/
-.embed-venv/
-.embed-model/
 
 # revmux run archive (half a MB per round)
 .revmux/tasks/

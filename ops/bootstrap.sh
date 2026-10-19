@@ -63,15 +63,6 @@ python3 -m venv /opt/druzhok-fetch/.venv
 /opt/druzhok-fetch/.venv/bin/pip install -q -r "$OPS/../apps/druzhok/priv/fetch-worker/requirements.txt"
 grep -q '^FETCH_WORKER_BIN=' /etc/druzhok/druzhok.env 2>/dev/null || echo 'FETCH_WORKER_BIN=/opt/druzhok-fetch/.venv/bin/python' >> /etc/druzhok/druzhok.env
 
-step "embed worker venv + model (multilingual-e5-small for Mnemosyne memory)"
-python3 -m venv /opt/druzhok-embed/.venv
-/opt/druzhok-embed/.venv/bin/pip install -q -r "$OPS/../apps/druzhok/priv/embed-worker/requirements.txt"
-mkdir -p /data/opt/embed-models
-"$OPS/embed-model-fetch.sh" /data/opt/embed-models/multilingual-e5-small
-chmod -R a+rX /data/opt/embed-models
-grep -q '^EMBED_WORKER_BIN=' /etc/druzhok/druzhok.env 2>/dev/null || echo 'EMBED_WORKER_BIN=/opt/druzhok-embed/.venv/bin/python' >> /etc/druzhok/druzhok.env
-grep -q '^EMBED_MODEL_DIR=' /etc/druzhok/druzhok.env 2>/dev/null || echo 'EMBED_MODEL_DIR=/data/opt/embed-models/multilingual-e5-small' >> /etc/druzhok/druzhok.env
-
 step "druzhok-ctl + units + sudoers + nftables"
 install -m 0755 "$OPS/druzhok-ctl" /usr/local/sbin/druzhok-ctl
 install -m 0644 "$OPS/hermes@.service" /etc/systemd/system/hermes@.service

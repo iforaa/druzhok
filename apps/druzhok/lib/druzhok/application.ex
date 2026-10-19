@@ -15,7 +15,6 @@ defmodule Druzhok.Application do
       {Finch, name: Druzhok.Finch},
       {Finch, name: Druzhok.LocalFinch},
       Druzhok.Fetch.Worker,
-      Druzhok.Embed.Worker,
       Druzhok.ManagerBot
     ]
 

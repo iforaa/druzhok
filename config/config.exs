@@ -63,10 +63,7 @@ config :druzhok,
   data_root_default: Path.expand("../../data/tenants", __DIR__),
   hermes_bin: "hermes",
   # Python for the fetch worker (priv/fetch-worker); nil disables page reading.
-  fetch_worker_bin: nil,
-  # Python + model dir for the embed worker (priv/embed-worker); nil disables embeddings.
-  embed_worker_bin: nil,
-  embed_model_dir: nil
+  fetch_worker_bin: nil
 
 # Import environment specific config. This must remain at the bottom
 # of this file so it overrides the configuration defined above.

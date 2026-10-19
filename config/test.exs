@@ -29,6 +29,4 @@ config :druzhok,
 
 config :druzhok,
   hermes_bin: Path.expand("../apps/druzhok/test/support/fake_hermes.sh", __DIR__),
-  fetch_worker_bin: System.get_env("FETCH_WORKER_BIN") || Path.expand("../.fetch-venv/bin/python", __DIR__),
-  embed_worker_bin: System.get_env("EMBED_WORKER_BIN") || Path.expand("../.embed-venv/bin/python", __DIR__),
-  embed_model_dir: System.get_env("EMBED_MODEL_DIR") || Path.expand("../.embed-model", __DIR__)
+  fetch_worker_bin: System.get_env("FETCH_WORKER_BIN") || Path.expand("../.fetch-venv/bin/python", __DIR__)
