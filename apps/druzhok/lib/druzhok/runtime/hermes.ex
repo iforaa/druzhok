@@ -141,7 +141,11 @@ defmodule Druzhok.Runtime.Hermes do
   # Mnemosyne memory provider (docs/superpowers/specs/2026-09-06-mnemosyne-memory-design.md):
   # embeddings go to the proxy's /v1/embeddings with the tenant key, e5 needs
   # its two prefixes (trailing space included), and LLM consolidation stays
-  # off. `MNEMOSYNE_DATA_DIR` keeps the SQLite bank inside the tenant dir.
+  # off. `MNEMOSYNE_DATA_DIR` keeps the SQLite bank inside the tenant dir; it
+  # must be `<HERMES_HOME>/mnemosyne/data`, because the hermes plugin ignores
+  # the variable and opens exactly that path, while the `mnemosyne` CLI (reindex,
+  # doctor) opens `$MNEMOSYNE_DATA_DIR/mnemosyne.db` — any other value makes the
+  # CLI operate on a different database than the bot.
   # Model and dimension name a ruoc catalogue entry; changing them means every
   # bot runs `mnemosyne reindex` after its next restart (until then Mnemosyne
   # falls back to keyword recall, nothing is lost). `ruoc-embed-e5-large` is
@@ -149,7 +153,7 @@ defmodule Druzhok.Runtime.Hermes do
   defp mnemosyne_env(instance) do
     if memory_provider(instance) == "mnemosyne" do
       %{
-        "MNEMOSYNE_DATA_DIR" => Path.join(data_root(instance), "mnemosyne"),
+        "MNEMOSYNE_DATA_DIR" => Path.join([data_root(instance), "mnemosyne", "data"]),
         "MNEMOSYNE_EMBEDDING_API_URL" => Druzhok.Runtime.proxy_url(),
         "MNEMOSYNE_EMBEDDING_API_KEY" => Map.get(instance, :tenant_key, "") || "",
         "MNEMOSYNE_EMBEDDING_MODEL" => @embedding_model,

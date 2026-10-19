@@ -26,7 +26,7 @@ defmodule Druzhok.Runtime.HermesTest do
 
     test "a mnemosyne bot points the provider at the proxy with e5 prefixes and no LLM" do
       env = Hermes.env_vars(Map.put(@instance, :memory_provider, "mnemosyne"))
-      assert env["MNEMOSYNE_DATA_DIR"] == Path.join(Hermes.data_root(@instance), "mnemosyne")
+      assert env["MNEMOSYNE_DATA_DIR"] == Path.join([Hermes.data_root(@instance), "mnemosyne", "data"])
       assert env["MNEMOSYNE_EMBEDDING_API_URL"] == Druzhok.Runtime.proxy_url()
       assert env["MNEMOSYNE_EMBEDDING_API_KEY"] == "dk-alice-token"
       assert env["MNEMOSYNE_EMBEDDING_MODEL"] == "ruoc-embed-e5-large"
