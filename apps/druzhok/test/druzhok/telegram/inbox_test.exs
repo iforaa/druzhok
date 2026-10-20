@@ -17,6 +17,12 @@ defmodule Druzhok.Telegram.InboxTest do
     assert Inbox.next_pending(inst.id).payload == ~s({"update_id":7})
   end
 
+  test "nothing is stored for a bot that is not in webhook mode at the moment of the insert" do
+    polling = relay_instance()
+    assert {:error, :not_webhook} = Inbox.enqueue(polling.id, 1, "{}")
+    assert Inbox.pending_count(polling.id) == 0
+  end
+
   test "pending rows come out in update_id order, not arrival order", %{inst: inst} do
     for id <- [12, 10, 11], do: :ok = Inbox.enqueue(inst.id, id, ~s({"update_id":#{id}}))
 

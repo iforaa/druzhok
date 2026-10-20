@@ -22,8 +22,6 @@ defmodule Druzhok.Telegram.Relay.Worker do
   alias Druzhok.{Instance, Repo}
   alias Druzhok.Telegram.{Inbox, ListenerOwner, Webhook}
 
-  @housekeep_ms 60 * 60 * 1000
-
   def key(instance_id), do: {:telegram_relay, instance_id}
 
   def start_link(instance_id),
@@ -36,14 +34,7 @@ defmodule Druzhok.Telegram.Relay.Worker do
   def init(instance_id) do
     send(self(), :work)
 
-    {:ok,
-     %{
-       id: instance_id,
-       failing: false,
-       backoff: opt(:backoff_min_ms),
-       timer: nil,
-       housekept_at: nil
-     }}
+    {:ok, %{id: instance_id, failing: false, backoff: opt(:backoff_min_ms), timer: nil}}
   end
 
   @impl true
@@ -55,7 +46,7 @@ defmodule Druzhok.Telegram.Relay.Worker do
   defp step(state) do
     case Repo.get(Instance, state.id) do
       %Instance{telegram_mode: "webhook"} = instance ->
-        state |> housekeep(instance) |> deliver(instance)
+        deliver(state, instance)
 
       _ ->
         {:stop, :normal, state}
@@ -154,26 +145,6 @@ defmodule Druzhok.Telegram.Relay.Worker do
 
     next = min(state.backoff * 2, opt(:backoff_max_ms))
     schedule(%{state | failing: true, backoff: next}, state.backoff)
-  end
-
-  defp housekeep(%{housekept_at: at} = state, instance) do
-    now = System.monotonic_time(:millisecond)
-
-    if at == nil or now - at >= @housekeep_ms do
-      case Inbox.housekeep(instance.id) do
-        {0, _} ->
-          :ok
-
-        {expired, _} ->
-          Logger.warning(
-            "[relay] #{instance.name}: #{expired} update(s) expired after 24 h undelivered"
-          )
-      end
-
-      %{state | housekept_at: now}
-    else
-      state
-    end
   end
 
   defp schedule(state, ms) do

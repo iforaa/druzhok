@@ -91,7 +91,7 @@ refuses webhook mode with a clear error (ids are 9–26 today). Nothing on the b
   must be able to pause and resume the relay running inside druzhok.service.
 - `telegram_updates`: `id`, `instance_id`, `update_id` (Telegram's), `payload` (raw JSON text), `received_at`,
   `acked_at` (the bot answered 2xx; null = pending), `attempts`, `last_error`, `dropped_reason`
-  (null | `expired` | `rejected`). Unique index `(instance_id, update_id)`; index
+  (null | `expired` | `rejected` | `mode_switch`, the last from a forced switch back to polling). Unique index `(instance_id, update_id)`; index
   `(instance_id, acked_at, update_id)`.
 
 **Ingress** — `DruzhokWebWeb.TelegramWebhookController`, route `POST /telegram/webhook/:bot` in its own
@@ -100,8 +100,11 @@ pipeline (no session, no CSRF; JSON body):
 1. Look up the instance by name; unknown or not in webhook mode → 404 (visible in
    `getWebhookInfo.last_error_message`).
 2. `Plug.Crypto.secure_compare` of `x-telegram-bot-api-secret-token` with the stored secret; mismatch → 401.
-3. `INSERT … ON CONFLICT (instance_id, update_id) DO NOTHING` with the re-encoded body (Telegram redelivers
-   when an ack is late; the unique index makes that a no-op).
+3. `INSERT … SELECT … FROM instances WHERE id = ? AND telegram_mode = 'webhook' ON CONFLICT (instance_id,
+   update_id) DO NOTHING` with the re-encoded body (Telegram redelivers when an ack is late; the unique index
+   makes that a no-op). The mode check is in the insert itself, and the switch to polling is one
+   `UPDATE … WHERE NOT EXISTS (pending rows)`, so the two cannot interleave: a row is never stored for a bot
+   that already polls (that insert stores nothing → 404, Telegram keeps the update for the polling bot).
 4. 200 with an empty body, then `Relay.notify(instance_id)`. The handler never waits on the bot.
 
 A 200 only after the row is committed is what makes the queue durable: if the insert fails, Telegram gets a
@@ -135,9 +138,9 @@ pause every 2 s while paused.
     re-syncs the env) resumes delivery with nothing lost; the 24 h expiry still applies.
   - Any other 4xx (400 malformed payload) → this row is bad: set `dropped_reason = rejected`, `acked_at`,
     log, next row. A bad row cannot block the bot forever.
-- **Pause around planned stops.** `BotManager.stop/1` calls `Relay.pause(instance_id)` before stopping
+- **Pause around planned stops.** `BotManager.stop/1` calls `Webhook.pause(instance_id, :stopping)` (a DB write) before stopping
   hermes, so nothing is handed to a bot that is shutting down (its listener still answers 200 and then
-  rejects or drops new work). `BotManager.start/1` calls `Relay.resume/1` unconditionally — in an `after`
+  rejects or drops new work). `BotManager.start/1` calls `Webhook.resume/1` unconditionally — in an `after`
   around the start attempt, whatever its outcome, so the relay does not spend its backoff on a bot still
   coming up — so every path that starts a bot (dashboard Start, `restart/1`, which is `stop` + `start`)
   clears it. A pause also lifts by itself after 5 min, so a stop
@@ -145,7 +148,8 @@ pause every 2 s while paused.
   just gets connection-refused backoff with rows pending, as designed. A worker has one pause with a reason
   (`stopping`, `wrong_owner`, `rejected_config`); `resume/1` clears whichever is set, and a fault that is
   still there pauses it again on the next attempt, so a restart is also the retry for a config fault.
-- **Housekeeping, hourly.** Delete acked rows older than 3 days. Pending rows older than 24 h get
+- **Housekeeping, hourly** (`Relay.Housekeeper`, across every bot that has rows, whatever its mode now —
+  a bot switched back to polling has no worker but its old rows hold users' messages). Delete acked rows older than 3 days. Pending rows older than 24 h get
   `dropped_reason = expired` and `acked_at = now`, one log line per bot — Telegram's own 24 h retention.
 
 Item 6 hooks in here later: a worker whose bot is stopped asks `BotManager` to start it instead of only
@@ -220,7 +224,7 @@ Unchanged, keeps polling. It is one Elixir process, has no RAM to save and never
 - Dashboard settings tab: mode, pending count, oldest pending age, paused reason, last error. Read-only;
   switching mode is a `mix druzhok.telegram_mode <name> webhook|polling` task plus `BotManager.restart`, not
   a UI control (UI freeze, item 7).
-- `ops/smoke.sh <bot>`: for webhook bots, `getWebhookInfo` must show our URL, `pending_update_count` 0–small,
+- `ops/smoke.sh <bot>`: for webhook bots, `getWebhookInfo` must show our URL, `pending_update_count` at most 5,
   no `last_error_message` from the last 10 min; `telegram_updates` must have no pending row older than 60 s
   and the worker must not be paused; the listener on the bot's port must be owned by `bot-<name>`; the
   drop-in and the nft element must exist.

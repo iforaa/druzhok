@@ -23,7 +23,7 @@ defmodule Druzhok.Repo.Migrations.AddTelegramWebhookRelay do
       add(:acked_at, :utc_datetime_usec)
       add(:attempts, :integer, null: false, default: 0)
       add(:last_error, :string)
-      # null | "expired" | "rejected"
+      # null | "expired" | "rejected" | "mode_switch" (Druzhok.Telegram.Inbox)
       add(:dropped_reason, :string)
     end
 

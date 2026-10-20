@@ -24,6 +24,7 @@ defmodule Druzhok.Telegram.Relay do
   def init(_opts) do
     children = [
       {DynamicSupervisor, name: @sup, strategy: :one_for_one},
+      Druzhok.Telegram.Relay.Housekeeper,
       Supervisor.child_spec({Task, &start_all/0}, id: :boot, restart: :transient)
     ]
 

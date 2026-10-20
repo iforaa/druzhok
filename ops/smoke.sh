@@ -49,7 +49,9 @@ if [ "$mode" = webhook ]; then
   if [ -n "$err_at" ] && [ $(( $(date +%s) - err_at )) -lt 600 ]; then
     echo "Telegram reports a delivery error in the last 10 min: $(echo "$info" | sed -n 's/.*"last_error_message":"\([^"]*\)".*/\1/p')"; exit 1
   fi
-  owners=$(ss -ltnHe "sport = :$port" | grep -o 'uid:[0-9]*' | sort -u)
+  held=$(echo "$info" | sed -n 's/.*"pending_update_count":\([0-9]*\).*/\1/p')
+  [ "${held:-0}" -le 5 ] || { echo "Telegram holds $held update(s) it could not hand to druzhok"; exit 1; }
+  owners=$(ss -ltnHe "sport = :$port" | grep -o 'uid:[0-9]*' | sort -u || true)
   [ "$owners" = "uid:$uid" ] || { echo "listener on $port owned by '${owners:-nobody}', expected uid:$uid"; exit 1; }
   stale=$(sqlite3 "$db" "select count(*) from telegram_updates u join instances i on i.id = u.instance_id where i.name='$name' and u.acked_at is null and u.received_at < strftime('%Y-%m-%dT%H:%M:%f', 'now', '-60 seconds')")
   [ "$stale" = 0 ] || { echo "$stale update(s) pending for more than 60 s"; exit 1; }

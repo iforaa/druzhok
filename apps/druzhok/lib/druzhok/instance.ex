@@ -46,7 +46,7 @@ defmodule Druzhok.Instance do
     |> cast(attrs, [:name, :telegram_token, :model, :workspace, :active, :owner_telegram_id, :timezone, :api_key, :language, :tenant_key, :mention_only, :welcome_message, :allowed_telegram_ids, :allowed_telegram_chats, :allow_all_telegram_users, :trigger_name, :image_model, :group_sessions_per_user, :group_shared_memory, :website_hosting_enabled, :image_gen_enabled, :image_gen_model, :ruoc_account_id, :ruoc_api_key, :memory_provider, :telegram_mode, :telegram_webhook_secret, :telegram_relay_paused_until, :telegram_relay_pause_reason])
     |> validate_required([:name, :model, :workspace])
     |> validate_inclusion(:memory_provider, @memory_providers)
-    |> validate_inclusion(:telegram_mode, ~w(polling webhook))
+    |> validate_inclusion(:telegram_mode, Druzhok.Telegram.Webhook.modes())
     |> unique_constraint(:name)
   end
 

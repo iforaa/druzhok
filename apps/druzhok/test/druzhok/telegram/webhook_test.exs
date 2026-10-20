@@ -65,6 +65,12 @@ defmodule Druzhok.Telegram.WebhookTest do
       assert Inbox.pending_count(inst.id) == 0
     end
 
+    test "once switched to polling, the endpoint can no longer queue for the bot" do
+      inst = relay_instance(%{telegram_mode: "webhook", telegram_webhook_secret: "s"})
+      assert {:ok, %{telegram_mode: "polling"}, 0} = Webhook.set_mode(inst.name, "polling")
+      assert {:error, :not_webhook} = Inbox.enqueue(inst.id, 1, "{}")
+    end
+
     test "unknown bot" do
       assert {:error, :not_found} = Webhook.set_mode("no-such-bot", "webhook")
     end

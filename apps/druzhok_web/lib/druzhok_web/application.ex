@@ -31,12 +31,13 @@ defmodule DruzhokWeb.Application do
     Supervisor.start_link(children, opts)
   end
 
-  # The Telegram relay lives with the webhook endpoint, so a one-off
-  # `ops/druzhok-run.sh` (which starts only :druzhok) never runs a second one.
-  # Off in tests: the web tests run in the SQL sandbox, and the relay has its
-  # own tests in apps/druzhok.
+  # The Telegram relay runs only where the endpoint serves (druzhok.service,
+  # `mix phx.server`), never in a BEAM that merely boots the app — a one-off
+  # `ops/druzhok-run.sh`, `mix druzhok.migrate_ruoc`, `iex -S mix` — so there
+  # is never a second relay delivering the same rows. Off in tests too (no
+  # server); the relay has its own tests in apps/druzhok.
   defp relay do
-    if Application.get_env(:druzhok_web, :telegram_relay, true),
+    if Phoenix.Endpoint.server?(:druzhok_web, DruzhokWebWeb.Endpoint),
       do: [Druzhok.Telegram.Relay],
       else: []
   end

@@ -71,8 +71,11 @@ defmodule Druzhok.Telegram.RelayTest do
     seen: seen
   } do
     ptb(bypass, inst, seen)
+    # Queue all three before the relay looks: otherwise its idle poll may run
+    # between the inserts and hand over 30 first, which is arrival order.
+    stop_supervised!(Relay)
     enqueue(inst, [30, 10, 20])
-    Relay.notify(inst.id)
+    start_supervised!(Relay)
 
     assert eventually(fn -> seen(seen) == [10, 20, 30] end)
     assert Inbox.pending_count(inst.id) == 0

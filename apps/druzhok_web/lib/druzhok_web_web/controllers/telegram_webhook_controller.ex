@@ -44,6 +44,11 @@ defmodule DruzhokWebWeb.TelegramWebhookController do
           :ok ->
             Relay.notify(instance.id)
             send_resp(conn, 200, "")
+
+          # Switched to polling since the lookup above: Telegram keeps the
+          # update and the polling bot fetches it itself.
+          {:error, :not_webhook} ->
+            send_resp(conn, 404, "")
         end
 
       _ ->

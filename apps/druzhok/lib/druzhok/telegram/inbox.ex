@@ -3,14 +3,16 @@ defmodule Druzhok.Telegram.Inbox do
   The `telegram_updates` queue: what Telegram pushed to druzhok for a
   webhook-mode bot, waiting for (or already handed to) the bot.
 
-  A row is pending while `acked_at` is nil. The bot's 2xx sets it; a row the
-  bot rejected as malformed, or that waited past Telegram's own 24 h
-  retention, is set too, with `dropped_reason`.
+  A row is pending while `acked_at` is nil. The bot's 2xx sets it; a row that
+  is dropped instead gets it too, with `dropped_reason`: `"rejected"` (the bot
+  answered it with a 4xx other than 403/404/429), `"expired"` (waited past
+  Telegram's own 24 h retention) or `"mode_switch"` (dropped by a forced switch
+  back to polling).
   """
 
   use Ecto.Schema
   import Ecto.Query
-  alias Druzhok.Repo
+  alias Druzhok.{Instance, Repo}
 
   schema "telegram_updates" do
     field(:instance_id, :integer)
@@ -27,25 +29,44 @@ defmodule Druzhok.Telegram.Inbox do
   @prune_after_s 3 * 24 * 60 * 60
 
   @doc """
-  Store one update. A redelivery of an `update_id` already stored is a no-op,
-  so Telegram retrying a late ack cannot queue a message twice.
+  Store one update for a bot that is in webhook mode *at the moment of the
+  insert*: the mode check and the insert are one statement, so a concurrent
+  switch to polling (`Webhook.set_mode/3`, which refuses while rows are
+  pending) either sees this row or makes this insert a no-op. A row is never
+  queued for a bot that already polls.
+
+  A redelivery of an `update_id` already stored is a no-op, so Telegram
+  retrying a late ack cannot queue a message twice. Returns `:ok` or
+  `{:error, :not_webhook}`.
   """
   def enqueue(instance_id, update_id, payload)
       when is_integer(update_id) and is_binary(payload) do
-    row = %{
-      instance_id: instance_id,
-      update_id: update_id,
-      payload: payload,
-      received_at: DateTime.utc_now(),
-      attempts: 0
-    }
+    now = DateTime.utc_now()
 
-    case Repo.insert_all(__MODULE__, [row],
+    source =
+      from(i in Instance,
+        where: i.id == ^instance_id and i.telegram_mode == "webhook",
+        select: %{
+          instance_id: i.id,
+          update_id: type(^update_id, :integer),
+          payload: type(^payload, :string),
+          received_at: type(^now, :utc_datetime_usec),
+          attempts: 0
+        }
+      )
+
+    case Repo.insert_all(__MODULE__, source,
            on_conflict: :nothing,
            conflict_target: [:instance_id, :update_id]
          ) do
-      {n, _} when n in [0, 1] -> :ok
+      {1, _} -> :ok
+      {0, _} -> if stored?(instance_id, update_id), do: :ok, else: {:error, :not_webhook}
     end
+  end
+
+  defp stored?(instance_id, update_id) do
+    from(u in __MODULE__, where: u.instance_id == ^instance_id and u.update_id == ^update_id)
+    |> Repo.exists?()
   end
 
   @doc "The oldest pending row by Telegram's own order, or nil."
@@ -101,6 +122,11 @@ defmodule Druzhok.Telegram.Inbox do
   def drop_pending(instance_id, reason) do
     from(u in __MODULE__, where: u.instance_id == ^instance_id and is_nil(u.acked_at))
     |> Repo.update_all(set: [acked_at: DateTime.utc_now(), dropped_reason: reason])
+  end
+
+  @doc "Ids of the bots that have any rows, whatever their mode now."
+  def instance_ids do
+    from(u in __MODULE__, distinct: true, select: u.instance_id) |> Repo.all()
   end
 
   @doc """

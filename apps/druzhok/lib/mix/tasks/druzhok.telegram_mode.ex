@@ -15,15 +15,19 @@ defmodule Mix.Tasks.Druzhok.TelegramMode do
   @impl true
   def run(args) do
     case OptionParser.parse(args, strict: [force: :boolean]) do
-      {opts, [name, mode], []} when mode in ["webhook", "polling"] ->
-        # :druzhok only — starting :druzhok_web here would run a second relay.
+      {opts, [name, mode], []} ->
+        unless mode in Druzhok.Telegram.Webhook.modes(), do: usage()
+        # :druzhok only — the relay belongs to the serving druzhok_web BEAM.
         {:ok, _} = Application.ensure_all_started(:druzhok)
         switch(name, mode, opts)
 
       _ ->
-        Mix.raise("usage: mix druzhok.telegram_mode <bot-name> webhook|polling [--force]")
+        usage()
     end
   end
+
+  defp usage,
+    do: Mix.raise("usage: mix druzhok.telegram_mode <bot-name> webhook|polling [--force]")
 
   defp switch(name, mode, opts) do
     case Druzhok.Telegram.Webhook.set_mode(name, mode, force: Keyword.get(opts, :force, false)) do
@@ -42,6 +46,9 @@ defmodule Mix.Tasks.Druzhok.TelegramMode do
         Mix.raise(
           "#{name} has #{n} queued update(s); wait for the relay or pass --force to drop them"
         )
+
+      {:error, :busy} ->
+        Mix.raise("#{name} keeps receiving updates; try again")
 
       {:error, {:id_out_of_range, id}} ->
         Mix.raise("#{name} has id #{id}; webhook ports cover ids 1-999 only")

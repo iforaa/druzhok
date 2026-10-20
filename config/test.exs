@@ -7,9 +7,6 @@ config :druzhok_web, DruzhokWebWeb.Endpoint,
   secret_key_base: "dk6+68Q+SfukfdlWipXSF22+INXhmiKB/luzWJ3q57M7Ckfa6I4XYV6RWiFO2deE",
   server: false
 
-# The relay's workers outlive a test's SQL sandbox; it is tested in apps/druzhok.
-config :druzhok_web, :telegram_relay, false
-
 # Use a separate test database
 config :druzhok, Druzhok.Repo,
   database: Path.expand("../data/druzhok_test.db", __DIR__),

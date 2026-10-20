@@ -21,12 +21,15 @@ defmodule Druzhok.Telegram.Webhook do
   alias Druzhok.Telegram.Inbox
 
   @port_base 20_000
-  # The nftables `bot_webhook` set and the systemd drop-in cover 20000-20999.
+  # Ports 20000-20999: the block checked free on the box (spec, "Port"). The
+  # nft set and the systemd drop-in take any port, so raising this means
+  # checking the next block is free first.
   @max_id 999
   @path_prefix "/telegram/webhook/"
   @stop_pause_s 5 * 60
 
-  def modes, do: ~w(polling webhook)
+  @modes ~w(polling webhook)
+  def modes, do: @modes
 
   def webhook?(instance), do: Map.get(instance, :telegram_mode) == "webhook"
 
@@ -52,7 +55,7 @@ defmodule Druzhok.Telegram.Webhook do
   polling bot cannot be relayed to), so it is refused unless `force: true`,
   which drops them and reports how many.
   """
-  def set_mode(name, mode, opts \\ []) when mode in ["polling", "webhook"] do
+  def set_mode(name, mode, opts \\ []) when mode in @modes do
     case Repo.get_by(Instance, name: name) do
       nil -> {:error, :not_found}
       instance -> do_set_mode(instance, mode, Keyword.get(opts, :force, false))
@@ -71,18 +74,40 @@ defmodule Druzhok.Telegram.Webhook do
     end
   end
 
-  defp do_set_mode(instance, "polling", force) do
-    case {Inbox.pending_count(instance.id), force} do
-      {0, _} ->
-        with {:ok, inst} <- save(instance, %{telegram_mode: "polling"}), do: {:ok, inst, 0}
+  defp do_set_mode(instance, "polling", false) do
+    if to_polling_if_drained(instance.id),
+      do: {:ok, Repo.get!(Instance, instance.id), 0},
+      else: {:error, {:pending, Inbox.pending_count(instance.id)}}
+  end
 
-      {n, true} ->
-        Inbox.drop_pending(instance.id, "mode_switch")
-        with {:ok, inst} <- save(instance, %{telegram_mode: "polling"}), do: {:ok, inst, n}
+  # A row stored between the drop and the switch makes the switch a no-op;
+  # drop again. Inbox.enqueue/3 stores nothing once the mode is polling.
+  defp do_set_mode(instance, "polling", true), do: force_polling(instance.id, 0, 3)
 
-      {n, false} ->
-        {:error, {:pending, n}}
-    end
+  defp force_polling(_id, _dropped, 0), do: {:error, :busy}
+
+  defp force_polling(id, dropped, tries) do
+    {n, _} = Inbox.drop_pending(id, "mode_switch")
+
+    if to_polling_if_drained(id),
+      do: {:ok, Repo.get!(Instance, id), dropped + n},
+      else: force_polling(id, dropped + n, tries - 1)
+  end
+
+  # One statement, so it cannot interleave with Inbox.enqueue/3: either a row
+  # committed first and this changes nothing, or the mode is polling first and
+  # that insert stores nothing.
+  defp to_polling_if_drained(id) do
+    pending =
+      from(u in Inbox, where: u.instance_id == parent_as(:instance).id and is_nil(u.acked_at))
+
+    now = NaiveDateTime.utc_now() |> NaiveDateTime.truncate(:second)
+
+    {n, _} =
+      from(i in Instance, as: :instance, where: i.id == ^id and not exists(pending))
+      |> Repo.update_all(set: [telegram_mode: "polling", updated_at: now])
+
+    n == 1
   end
 
   defp save(instance, attrs), do: instance |> Instance.changeset(attrs) |> Repo.update()
