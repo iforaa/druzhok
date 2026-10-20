@@ -54,8 +54,12 @@ step "hermes → /opt/hermes"
 # The tree is normally rsynced from the operator's machine (update-hermes skill);
 # fall back to a clone only when nothing is there yet.
 if [ ! -f "$HERMES_DIR/pyproject.toml" ]; then git clone -q --depth 1 "$HERMES_REPO" "$HERMES_DIR"; fi
-( cd "$HERMES_DIR" && UV_CACHE_DIR=/data/opt/uv-cache UV_PYTHON_INSTALL_DIR=/data/opt/uv-python uv sync --frozen --python /usr/bin/python3 --extra all --extra messaging --extra firecrawl --extra mnemosyne 2>&1 | tail -2 )
-chown -R root:root "$HERMES_DIR"; chmod -R a+rX "$HERMES_DIR"
+# hermes >= 0.22 runs on Python 3.14 (its uv.lock resolves only for 3.14), which
+# uv installs under /data/opt/uv-python; Ubuntu's python3 is too old.
+( cd "$HERMES_DIR" && UV_CACHE_DIR=/data/opt/uv-cache UV_PYTHON_INSTALL_DIR=/data/opt/uv-python uv sync --frozen --python 3.14 --extra all --extra messaging --extra firecrawl --extra mnemosyne 2>&1 | tail -2 )
+# Bots run under ProtectSystem=strict and cannot write __pycache__: precompile.
+"$HERMES_DIR/.venv/bin/python" -m compileall -q -j0 -x '/(tests?|node_modules)/' "$HERMES_DIR" >/dev/null || true
+chown -R root:root "$HERMES_DIR"; chmod -R a+rX "$HERMES_DIR" /data/opt/uv-python
 
 step "fetch worker venv (trafilatura + pymupdf for druzhok's page reader)"
 apt-get install -y -q --no-install-recommends python3-venv >/dev/null
