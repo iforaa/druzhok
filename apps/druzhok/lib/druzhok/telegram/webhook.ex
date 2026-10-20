@@ -7,9 +7,10 @@ defmodule Druzhok.Telegram.Webhook do
   registers `public_url/1` with Telegram on every connect, and receives its
   updates from `Druzhok.Telegram.Relay` out of the `telegram_updates` queue.
 
-  Every bot gets a port (`20000 + id`), polling ones too: `druzhok-ctl` uses
-  it for the systemd bind lock and the nftables `uid . port` element, so no
-  bot can bind another bot's port whatever mode either is in.
+  Every bot gets a port (`20000 + id`), polling ones too: `druzhok-ctl` turns
+  it into the nftables `uid . port` element, so only the bot's own uid can
+  answer druzhok from that port, and `Druzhok.Telegram.ListenerOwner` checks
+  the listener's uid before the relay sends anything to it.
 
   The relay pause is a column, not process state, so a one-off
   `ops/druzhok-run.sh` BEAM can pause and resume the relay that runs inside

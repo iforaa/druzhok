@@ -2,8 +2,8 @@
 # druzhok-ctl — the single privileged entry point Druzhok uses to manage
 # per-bot Linux users + systemd units. Invoked as root via sudo.
 #
-#   create <name>      (env file on stdin)   useradd + data dir + env + nft + bind lock;
-#                                            idempotent, re-run before every start to refresh env
+#   create <name>      (env file on stdin)   useradd + data dir + env + nft; idempotent,
+#                                            re-run before every start to refresh env
 #   start|stop|restart|destroy <name>
 #   status <name>      → active|activating|inactive|failed|unknown
 #   stats <name>       → <mem_bytes>|<cpu_usec>
@@ -79,29 +79,15 @@ nft_webhook_del() {
   nft delete element "$NFT_FAMILY" "$NFT_TABLE" "$NFT_WEBHOOK_SET" "{ $uid . $port }" 2>/dev/null || true
 }
 
-# hermes and everything its terminal spawns share the unit's cgroup: they may
-# bind(2) the bot's own webhook port and nothing else, so no bot can take
-# another bot's port while that one restarts or sleeps. Written for every bot,
-# polling ones included, since any bot is a potential squatter.
-write_bind_lock() {
-  local port dir conf tmp
-  port=$(webhook_port)
-  dir="$UNIT_DIR/$unit.d"
-  conf="$dir/webhook.conf"
-  install -d -m 0755 "$dir"
-  tmp=$(mktemp "$dir/.webhook.XXXXXX")
-  {
-    echo "[Service]"
-    if [ -n "$port" ]; then echo "SocketBindAllow=tcp:$port"; fi
-    echo "SocketBindDeny=any"
-  } > "$tmp"
-  chmod 0644 "$tmp"
-  if cmp -s "$tmp" "$conf"; then
-    rm -f "$tmp"
-  else
-    mv -f "$tmp" "$conf"
-    systemctl daemon-reload
-  fi
+# Remove the systemd bind lock an earlier druzhok-ctl wrote: this box's
+# systemd is built without BPF_FRAMEWORK, so SocketBindAllow/Deny were never
+# enforced (webhook relay spec, "Port isolation").
+remove_bind_lock() {
+  local dir="$UNIT_DIR/$unit.d"
+  [ -f "$dir/webhook.conf" ] || return 0
+  rm -f "$dir/webhook.conf"
+  rmdir "$dir" 2>/dev/null || true
+  systemctl daemon-reload
 }
 
 case "$cmd" in
@@ -116,7 +102,7 @@ case "$cmd" in
     write_env
     nft_add
     nft_webhook_add
-    write_bind_lock
+    remove_bind_lock
     ;;
   start|restart)
     user_exists || die "no such bot: $name"
@@ -180,12 +166,8 @@ case "$cmd" in
       nft_webhook_del
       userdel "$user"
     fi
+    remove_bind_lock
     rm -f "$envf"
-    if [ -d "$UNIT_DIR/$unit.d" ]; then
-      rm -f "$UNIT_DIR/$unit.d/webhook.conf"
-      rmdir "$UNIT_DIR/$unit.d" 2>/dev/null || true
-      systemctl daemon-reload
-    fi
     ;;
   *)
     die "unknown command: $cmd"

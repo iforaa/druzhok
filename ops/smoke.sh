@@ -27,14 +27,11 @@ echo "uid $uid in bot_uids"
 echo "== webhook port isolation"
 envf=/etc/druzhok/$name.env
 port=$(sed -n 's/^TELEGRAM_WEBHOOK_PORT="\([0-9]\{1,5\}\)"$/\1/p' "$envf" | head -n 1)
-lock=/etc/systemd/system/hermes@$name.service.d/webhook.conf
-grep -qx 'SocketBindDeny=any' "$lock" || { echo "no bind lock in $lock"; exit 1; }
 if [ -n "$port" ]; then
-  grep -qx "SocketBindAllow=tcp:$port" "$lock" || { echo "bind lock does not allow port $port"; exit 1; }
   nft list set inet druzhok bot_webhook | grep -q "$uid . $port" || { echo "{ $uid . $port } not in bot_webhook"; exit 1; }
-  echo "port $port locked to uid $uid"
+  echo "only uid $uid may answer from port $port"
 else
-  echo "no webhook port (id out of range): bind lock denies all"
+  echo "no webhook port (id out of range): webhook mode unavailable"
 fi
 
 echo "== telegram delivery"

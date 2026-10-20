@@ -23,8 +23,9 @@ Always use `/my-commit` for committing changes.
   hermes's PTB server on `127.0.0.1:20000+id`). Switch with
   `sudo ops/druzhok-run.sh 'IO.inspect(Druzhok.Telegram.Webhook.set_mode("<bot>", "webhook"))'` then
   `BotManager.restart`; leaving webhook mode is refused while rows are queued (`force: true` drops them).
-  Every bot, whatever its mode, may `bind(2)` only its own port (systemd drop-in
-  `hermes@<bot>.service.d/webhook.conf` + nft `bot_webhook` `uid . port`, both written by `druzhok-ctl`).
+  Only a bot's own uid may answer druzhok from its port (nft `bot_webhook` `uid . port`, written by
+  `druzhok-ctl`), and the relay checks the listener's uid before every delivery. No systemd bind lock:
+  this box's systemd lacks BPF_FRAMEWORK, so `SocketBindAllow/Deny` are silently ignored.
   `BotManager.stop` pauses the bot's relay, `start` always resumes it. Spec:
   `docs/superpowers/specs/2026-10-20-telegram-webhook-relay-design.md`.
 - `hermes-agent/` is a separate, gitignored git repo (the hermes fork clone) — never `git add` it into druzhok.

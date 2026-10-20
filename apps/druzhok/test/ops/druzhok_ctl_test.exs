@@ -1,6 +1,6 @@
 defmodule Druzhok.Ops.DruzhokCtlTest do
   @moduledoc """
-  Runs the webhook port-isolation functions of `ops/druzhok-ctl` in bash with
+  Runs the webhook port functions of `ops/druzhok-ctl` in bash with
   `nft`, `systemctl` and `id` stubbed, since the script itself needs root.
   """
   use ExUnit.Case, async: true
@@ -21,7 +21,7 @@ defmodule Druzhok.Ops.DruzhokCtlTest do
     calls = Path.join(dir, "calls")
 
     functions =
-      for f <- ~w(uid_of webhook_port nft_webhook_add nft_webhook_del write_bind_lock),
+      for f <- ~w(uid_of webhook_port nft_webhook_add nft_webhook_del remove_bind_lock),
           into: "" do
         [fun] = Regex.run(~r/^#{f}\(\) \{.*?^\}\n|^#{f}\(\) +\{[^\n]*\}\n/ms, File.read!(@ctl))
         fun
@@ -47,21 +47,22 @@ defmodule Druzhok.Ops.DruzhokCtlTest do
     }
   end
 
-  test "the bind lock allows only the bot's own port, and reloads only on change", %{dir: dir} do
-    %{calls: calls, units: units} =
-      run(dir, ~s(TELEGRAM_WEBHOOK_PORT="20009"\nOTHER="x"\n), "write_bind_lock; write_bind_lock")
+  # The box's systemd ignores SocketBindAllow/Deny (no BPF_FRAMEWORK), so the
+  # drop-in an earlier druzhok-ctl wrote is removed rather than kept as a
+  # lock that only looks like one.
+  test "a leftover bind-lock drop-in is removed, with one daemon-reload", %{dir: dir} do
+    dropin = Path.join(dir, "units/hermes@kot.service.d")
+    File.mkdir_p!(dropin)
+    File.write!(Path.join(dropin, "webhook.conf"), "[Service]\nSocketBindDeny=any\n")
 
-    assert File.read!(Path.join(units, "hermes@kot.service.d/webhook.conf")) ==
-             "[Service]\nSocketBindAllow=tcp:20009\nSocketBindDeny=any\n"
+    %{calls: calls} = run(dir, ~s(TELEGRAM_WEBHOOK_PORT="20009"\n), "remove_bind_lock; remove_bind_lock")
 
+    refute File.exists?(dropin)
     assert calls == "systemctl daemon-reload\n"
   end
 
-  test "a bot without a port may bind nothing", %{dir: dir} do
-    %{units: units} = run(dir, ~s(OTHER="x"\n), "write_bind_lock")
-
-    assert File.read!(Path.join(units, "hermes@kot.service.d/webhook.conf")) ==
-             "[Service]\nSocketBindDeny=any\n"
+  test "no drop-in, nothing to do", %{dir: dir} do
+    assert %{calls: ""} = run(dir, ~s(OTHER="x"\n), "remove_bind_lock")
   end
 
   test "the nft element pairs the bot's uid with its port", %{dir: dir} do

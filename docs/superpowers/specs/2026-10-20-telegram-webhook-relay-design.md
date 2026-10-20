@@ -60,7 +60,7 @@ webhook mode when `TELEGRAM_WEBHOOK_URL` is set. It then:
   defaults to 0), tells the user, and marks the session `resume_pending`.
 
 Druzhok adds to `Runtime.Hermes.env_vars/1` (PORT and HOST for **every** bot — hermes reads them only in
-webhook mode, and `druzhok-ctl` needs the port for the bind lock below whatever the mode; URL and SECRET only
+webhook mode, and `druzhok-ctl` keeps each bot's nftables `uid . port` element in place before it is switched; URL and SECRET only
 for bots in webhook mode, which is what switches hermes over):
 
 | Var | Value |
@@ -174,27 +174,13 @@ writes its receipt at the same handoff and would drop a replayed update anyway.
 
 ### Port isolation
 
-Every bot can run arbitrary code as its own uid (the terminal tool), so the webhook port must be bound to
-its bot at three layers — otherwise bot A can bind B's port while B restarts or sleeps, receive B's private
-chats and B's secret, and then forge updates into B's queue as the operator.
+Every bot can run arbitrary code as its own uid (the terminal tool), and any local user can bind a free port
+above 1024. So bot A can bind B's port while B restarts or sleeps. What must never follow is A receiving B's
+private chats or B's secret (with which A could forge updates into B's queue as the operator). Two layers
+make sure it cannot:
 
-1. **systemd** — `druzhok-ctl create` writes a drop-in for **every** bot (polling ones are just as able to
-   squat),
-   `/etc/systemd/system/hermes@<name>.service.d/webhook.conf`:
-   ```
-   [Service]
-   SocketBindAllow=tcp:<port>
-   SocketBindDeny=any
-   ```
-   so a bot's processes (hermes and everything its terminal spawns, same cgroup) can `bind(2)` no port but
-   its own. systemd 255 on cgroup v2 (verified on the box) enforces this with a BPF cgroup hook. Outbound
-   connects (Telegram, the proxy, DNS) do not call `bind(2)` and are unaffected; the canary run must confirm
-   hermes's HTTP clients and DNS still work with the drop-in in place. The port is read from the bot's env
-   file (`TELEGRAM_WEBHOOK_PORT`), which druzhok writes before `create`/`start`; a bot with no port (id out
-   of range) gets `SocketBindDeny=any` alone. Hermes's own loop-tick witness binds an AF_UNIX socket on
-   Linux (`gateway/shutdown_watchdog.py`), which the lock does not cover.
-2. **nftables** — the reply rule is keyed on uid *and* port, so even a bound socket on someone else's port
-   cannot answer druzhok:
+1. **nftables** — the reply rule is keyed on uid *and* port, so a socket on someone else's port cannot
+   answer druzhok at all:
    ```
    set bot_webhook { type uid . inet_service; }
    …
@@ -205,8 +191,19 @@ chats and B's secret, and then forge updates into B's queue as the operator.
    in `destroy`; the bootstrap reload loop refills it from the env files. `ct direction reply` only matches
    packets of a connection someone else opened, so a bot cannot use the rule to reach other local services
    by choosing its source port.
-3. **druzhok** — the relay's owner check above, so a misconfigured box never sends a payload or a secret to
-   the wrong uid.
+2. **druzhok** — the relay's owner check above: before every POST it reads the listener's uid from
+   `/proc/net/tcp` and sends nothing, neither payload nor secret, unless it is `bot-<name>`. A wrong owner
+   pauses that bot (`wrong_owner`) with an error naming the squatting uid.
+
+**Not prevented: squatting as an outage.** A bot holding B's port keeps B's hermes from starting its
+listener, so B gets no updates until the squatter is stopped; they wait in druzhok's queue (24 h) and the
+relay logs the squatter's uid. This needs a malicious tenant aiming at another bot's restart window.
+
+A systemd bind lock (`SocketBindAllow=tcp:<port>` + `SocketBindDeny=any` per unit) would close that, but the
+box's systemd is built without `BPF_FRAMEWORK` (`systemctl --version` shows `-BPF_FRAMEWORK`): it accepts the
+options and enforces nothing (verified 2026-10-20 — a process inside the unit's cgroup bound another bot's
+port; `bpftool cgroup show` lists no bind program). `druzhok-ctl create` removes the drop-in an earlier
+version wrote. A Unix-socket listener (see Alternatives) is the way to close the outage case if it matters.
 
 The listener is still reachable by every local user, which is why the secret is required (hermes refuses
 to start without one).
@@ -226,8 +223,8 @@ Unchanged, keeps polling. It is one Elixir process, has no RAM to save and never
   a UI control (UI freeze, item 7).
 - `ops/smoke.sh <bot>`: for webhook bots, `getWebhookInfo` must show our URL, `pending_update_count` at most 5,
   no `last_error_message` from the last 10 min; `telegram_updates` must have no pending row older than 60 s
-  and the worker must not be paused; the listener on the bot's port must be owned by `bot-<name>`; the
-  drop-in and the nft element must exist.
+  and the worker must not be paused; the listener on the bot's port must be owned by `bot-<name>`; the nft
+  element must exist.
 - Log line per delivery failure streak (first failure, pause, recovery), not per retry.
 
 ## Rollout
@@ -237,15 +234,15 @@ Unchanged, keeps polling. It is one Elixir process, has no RAM to save and never
    `druzhok-ctl`, `ops/smoke.sh`.
 2. Deploy schema + code with every bot still `polling`, then restart the bots one by one through
    `BotManager.restart`, operator's bot first, `ops/smoke.sh` after each. Each restart brings
-   `drop_pending_on_cold_boot: false` (this alone fixes the restart bug for polling bots) and the bind lock
-   (`SocketBindDeny=any` + the bot's own port) — the step where an explicit `bind(2)` somewhere in hermes
-   would show up, so check a reply, a web search and a voice note on the operator's bot before the rest.
+   `drop_pending_on_cold_boot: false` (this alone fixes the restart bug for polling bots) and the bot's
+   `bot_webhook` nft element; check a reply, a web search and a voice note on the operator's bot before the
+   rest.
 3. Operator bot: `mix druzhok.telegram_mode igorhermes webhook`, `BotManager.restart`. Check:
    - hermes logs `Connected to Telegram (webhook mode)` and `Webhook server listening on 127.0.0.1:20009`;
      `getWebhookInfo.url` is ours;
-   - a DM, a group message, a voice note and a photo are answered; web search and an LLM reply still work
-     (outbound under `SocketBindDeny=any`);
-   - as `bot-igorhermes`, binding another port (e.g. 20010) fails with EPERM;
+   - a DM, a group message, a voice note and a photo are answered; web search and an LLM reply still work;
+   - a socket another uid binds on a stopped bot's port gets nothing: the relay pauses with `wrong_owner`
+     and logs that uid;
    - **planned:** `BotManager.restart` mid-conversation, a message sent during the restart is answered after;
    - **down:** `BotManager.stop`, send two messages, `BotManager.start`; both are answered, in order;
    - **dashboard Stop then Start** leaves the worker unpaused (`pending` drains within seconds).
@@ -275,9 +272,8 @@ Full: all bots to polling, then revert the code. The schema additions are inert.
 - **Secret rotation**: write the new secret, `BotManager.restart` the bot (hermes re-registers with Telegram
   and its listener takes the new value). Until the restart the bot answers 403, which pauses the worker —
   nothing is dropped.
-- **`SocketBindDeny=any` breaks something that binds explicitly** (a tool server, a library that binds
-  before connecting). The canary checks the common paths; if a tool needs a port, add it to that bot's
-  drop-in deliberately.
+- **Port squatting** by a malicious tenant's bot during another bot's restart is an outage for that bot, not
+  a leak (see Port isolation); the relay's `wrong_owner` error names the uid to stop.
 - **Hermes upgrades**: the update-hermes skill must grep `TELEGRAM_WEBHOOK_URL|_SECRET|_PORT|_HOST`,
   `drop_pending_on_cold_boot`, `_validate_post`'s status codes, where `update_admission.py` records receipts
   and `agent.restart_drain_timeout`'s default, like the other env vars and keys it checks.
@@ -291,8 +287,9 @@ Full: all bots to polling, then revert the code. The schema additions are inert.
 - **druzhok calls `setWebhook` itself and bots stay unaware.** Hermes in polling mode deletes any webhook at
   start, so this needs webhook mode on the bot side anyway.
 - **Unix socket in the tenant dir instead of a TCP port** (PTB supports `unix=`). Filesystem permissions
-  would replace layers 1–2 of the port isolation, but hermes does not expose the option, so it costs a fork
-  patch kept across every upgrade. Worth revisiting if upstream adds `TELEGRAM_WEBHOOK_UNIX`.
+  would replace both layers of the port isolation and close the squatting outage too, but hermes does not
+  expose the option, so it costs a fork patch kept across every upgrade. Worth revisiting if squatting ever
+  happens, or if upstream adds `TELEGRAM_WEBHOOK_UNIX`.
 
 ## Tests
 
@@ -308,6 +305,6 @@ Full: all bots to polling, then revert the code. The schema additions are inert.
 - Owner check: a parsed `/proc/net/tcp` fixture with the port owned by another uid → no POST, worker paused.
 - `Runtime.Hermes`: webhook vars present only in webhook mode, host is 127.0.0.1, port = 20000 + id, URL uses
   `PHX_HOST`; `drop_pending_on_cold_boot: false` written for both modes; id ≥ 1000 refused.
-- `druzhok-ctl` (shell test or bats): `create` writes the drop-in and the `uid . port` element from the env
-  file; `destroy` removes both.
+- `druzhok-ctl` (shell test or bats): `create` adds the `uid . port` element from the env file and removes a
+  leftover bind-lock drop-in; `destroy` removes both.
 - Mode task: refuses to leave webhook mode with pending rows; generates the secret once.

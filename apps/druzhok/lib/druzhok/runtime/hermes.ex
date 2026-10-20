@@ -148,10 +148,9 @@ defmodule Druzhok.Runtime.Hermes do
   end
 
   # Telegram webhook relay (docs/superpowers/specs/2026-10-20-telegram-webhook-relay-design.md).
-  # Hermes reads PORT and HOST only in webhook mode, so every bot carries its
-  # port: druzhok-ctl turns it into the systemd bind lock and the nftables
-  # `uid . port` element, which must hold for polling bots too. URL and SECRET
-  # are what switch hermes into webhook mode.
+  # Hermes reads PORT and HOST only in webhook mode; every bot carries them so
+  # druzhok-ctl has the nftables `uid . port` element in place before a bot is
+  # switched. URL and SECRET are what switch hermes into webhook mode.
   defp webhook_env(instance) do
     alias Druzhok.Telegram.Webhook
 
