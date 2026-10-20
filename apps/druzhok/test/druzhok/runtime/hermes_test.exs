@@ -60,6 +60,15 @@ defmodule Druzhok.Runtime.HermesTest do
       end
     end
 
+    test "a stopping bot lets a running turn finish, within the unit's stop timeout" do
+      drain = String.to_integer(Hermes.env_vars(@instance)["HERMES_RESTART_DRAIN_TIMEOUT"])
+      assert drain > 0
+      # hermes resolve_systemd_timeout_stop_sec: max(60, max(drain, 30 + 10) + 30),
+      # against hermes@.service's TimeoutStopSec (systemd default 90 s, unset in the unit).
+      refute File.read!(Path.expand("../../../../../ops/hermes@.service", __DIR__)) =~ "TimeoutStopSec"
+      assert max(60, max(drain, 40) + 30) <= 90
+    end
+
     test "every bot carries its loopback webhook port; only webhook mode gets URL and secret" do
       polling = Hermes.env_vars(Map.merge(@instance, %{id: 9, telegram_mode: "polling"}))
       assert polling["TELEGRAM_WEBHOOK_PORT"] == "20009"
