@@ -519,8 +519,7 @@ defmodule DruzhokWebWeb.LlmProxy.Ruoc do
       provider: "ruoc",
       latency_ms: System.monotonic_time(:millisecond) - started_at,
       prompt_preview: prompt_preview || (request_body && LlmFormat.prompt_preview(request_body)),
-      response_preview: response_preview && String.slice(response_preview, 0, 500),
-      request_body: request_body && Jason.encode!(request_body)
+      response_preview: response_preview && String.slice(response_preview, 0, 500)
     })
   end
 end

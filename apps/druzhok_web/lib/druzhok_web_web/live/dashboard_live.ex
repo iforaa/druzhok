@@ -40,7 +40,6 @@ defmodule DruzhokWebWeb.DashboardLive do
       usage_summary: [],
       usage_has_more: false,
       expanded_request: nil,
-      expanded_request_body: nil,
       palette_open: false,
       palette_query: "",
       palette_cursor: 0
@@ -172,8 +171,7 @@ defmodule DruzhokWebWeb.DashboardLive do
       usage_requests: reqs,
       usage_summary: Druzhok.Usage.daily_usage(instance[:id]),
       usage_has_more: has_more,
-      expanded_request: nil,
-      expanded_request_body: nil
+      expanded_request: nil
     }
   end
 
@@ -252,10 +250,9 @@ defmodule DruzhokWebWeb.DashboardLive do
     id = String.to_integer(id)
 
     if socket.assigns.expanded_request == id do
-      {:noreply, assign(socket, expanded_request: nil, expanded_request_body: nil)}
+      {:noreply, assign(socket, expanded_request: nil)}
     else
-      body = Druzhok.Usage.get_body(id)
-      {:noreply, assign(socket, expanded_request: id, expanded_request_body: body)}
+      {:noreply, assign(socket, expanded_request: id)}
     end
   end
 
@@ -534,7 +531,7 @@ defmodule DruzhokWebWeb.DashboardLive do
               pairing_requests={@pairing_requests}
               allowed_users={@allowed_users} />
 
-            <.usage_tab :if={@tab == :usage} requests={@usage_requests} summary={@usage_summary} tool_stats={[]} instance_name={@selected} expanded_request={@expanded_request} expanded_request_body={@expanded_request_body} has_more={@usage_has_more} />
+            <.usage_tab :if={@tab == :usage} requests={@usage_requests} summary={@usage_summary} tool_stats={[]} instance_name={@selected} expanded_request={@expanded_request} has_more={@usage_has_more} />
 
             <.errors_tab :if={@tab == :errors} errors={@instance_errors} instance_name={@selected} expanded={@expanded_error} />
           </div>

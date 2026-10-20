@@ -17,7 +17,6 @@ defmodule Druzhok.Usage do
     field :latency_ms, :integer
     field :prompt_preview, :string
     field :response_preview, :string
-    field :request_body, :string
     field :request_type, :string, default: "chat"
     field :audio_duration_ms, :integer
     timestamps(updated_at: false)
@@ -27,7 +26,7 @@ defmodule Druzhok.Usage do
     log
     |> cast(attrs, [:instance_id, :model, :prompt_tokens, :completion_tokens,
                     :total_tokens, :cost_cents, :requested_model, :resolved_model,
-                    :provider, :latency_ms, :prompt_preview, :response_preview, :request_body,
+                    :provider, :latency_ms, :prompt_preview, :response_preview,
                     :request_type, :audio_duration_ms])
     |> validate_required([:instance_id, :model, :prompt_tokens, :completion_tokens, :total_tokens])
   end
@@ -56,10 +55,7 @@ defmodule Druzhok.Usage do
     |> Repo.all()
   end
 
-  @doc """
-  List recent usage logs for a bot, newest first. Omits `request_body` because
-  it can be tens of kilobytes per row — fetch it on demand with `get_body/1`.
-  """
+  @doc "List recent usage logs for a bot, newest first."
   def recent(instance_id, limit \\ 20, offset \\ 0) do
     from(u in __MODULE__,
       where: u.instance_id == ^instance_id,
@@ -81,10 +77,5 @@ defmodule Druzhok.Usage do
       }
     )
     |> Repo.all()
-  end
-
-  def get_body(log_id) do
-    from(u in __MODULE__, where: u.id == ^log_id, select: u.request_body)
-    |> Repo.one()
   end
 end

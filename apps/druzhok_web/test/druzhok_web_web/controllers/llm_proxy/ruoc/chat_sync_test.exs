@@ -39,7 +39,8 @@ defmodule DruzhokWebWeb.LlmProxy.Ruoc.ChatSyncTest do
     assert log.cost_cents == 0
     assert log.prompt_preview == "ping"
     assert log.response_preview == "pong"
-    assert Jason.decode!(log.request_body)["messages"] == @body["messages"]
+    # The full request is not kept: it made up most of the database.
+    assert %{rows: [[nil]]} = Druzhok.Repo.query!("SELECT request_body FROM usage_logs WHERE id = ?", [log.id])
   end
 
   test "a bot without a ruoc key is refused with 503 before any upstream call", %{bypass: bypass} do

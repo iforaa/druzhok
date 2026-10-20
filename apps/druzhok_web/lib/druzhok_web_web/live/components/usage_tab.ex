@@ -6,7 +6,6 @@ defmodule DruzhokWebWeb.Live.Components.UsageTab do
   attr :tool_stats, :list, required: true
   attr :instance_name, :string, required: true
   attr :expanded_request, :any, default: nil
-  attr :expanded_request_body, :any, default: nil
   attr :has_more, :boolean, default: false
 
   def usage_tab(assigns) do
@@ -105,11 +104,7 @@ defmodule DruzhokWebWeb.Live.Components.UsageTab do
                       <div class="label mb-1">Response</div>
                       <pre class="text-[10px] bg-raised rounded p-2 overflow-x-auto whitespace-pre-wrap max-h-80 overflow-y-auto border border-line font-mono text-fg"><%= req.response_preview %></pre>
                     </div>
-                    <div :if={@expanded_request_body && @expanded_request_body != ""}>
-                      <div class="label mb-1">Full Request Body</div>
-                      <pre class="text-[10px] bg-raised rounded p-2 overflow-x-auto whitespace-pre-wrap max-h-[500px] overflow-y-auto border border-line font-mono text-fg"><%= format_json(@expanded_request_body) %></pre>
-                    </div>
-                    <div :if={(!req.prompt_preview || req.prompt_preview == "") && (!req.response_preview || req.response_preview == "") && (!@expanded_request_body || @expanded_request_body == "")}
+                    <div :if={(!req.prompt_preview || req.prompt_preview == "") && (!req.response_preview || req.response_preview == "")}
                          class="text-[10px] text-subtle italic">No preview available</div>
                   </div>
                 </td>
@@ -135,14 +130,6 @@ defmodule DruzhokWebWeb.Live.Components.UsageTab do
   defp format_number(nil), do: "0"
 
   defp format_time(dt), do: Calendar.strftime(dt, "%H:%M:%S")
-
-  defp format_json(json_string) when is_binary(json_string) do
-    case Jason.decode(json_string) do
-      {:ok, decoded} -> Jason.encode!(decoded, pretty: true)
-      _ -> json_string
-    end
-  end
-  defp format_json(_), do: ""
 
   defp format_elapsed(nil), do: "-"
   defp format_elapsed(ms) when ms >= 1000, do: "#{Float.round(ms / 1000, 1)}s"
