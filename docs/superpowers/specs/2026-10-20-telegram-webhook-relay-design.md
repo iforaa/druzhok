@@ -1,6 +1,6 @@
 # Telegram webhook relay
 
-Status: draft r2, 2026-10-20 (r1 reviewed by revmux `telegram-webhook-relay/01-initial`). Branch
+Status: draft r3, 2026-10-20 (reviewed by revmux `telegram-webhook-relay/01-initial`, `02-after-fix`). Branch
 `telegram-webhook-relay`. Block A item 5; item 6 (sleep/wake) builds on it.
 
 ## Goal
@@ -14,8 +14,8 @@ What this buys:
    `drop_pending_updates=true` (`platforms.telegram.extra.drop_pending_on_cold_boot` defaults to true; the
    prod logs show `Cold boot: dropping Telegram updates queued while offline` on every restart, including the
    0.22.2 rollout). A message sent during a deploy, an OOM restart or an upgrade is silently gone.
-   With the relay, druzhok holds those updates and delivers them when the bot is back (at least once, see
-   [Delivery guarantee](#delivery-guarantee)).
+   With the relay, druzhok holds every update the bot has not yet received and delivers it when the bot is
+   back (see [Delivery guarantee](#delivery-guarantee) for what a crash can still lose).
 2. **A queue druzhok owns.** This is the precondition for item 6: a stopped bot's messages wait in druzhok,
    which can then start the bot and deliver them. Without it, a sleeping bot either keeps a poller running
    (no RAM saved) or loses messages.
@@ -52,8 +52,12 @@ webhook mode when `TELEGRAM_WEBHOOK_URL` is set. It then:
   a path other than its `url_path`, and 200 as soon as the update is on PTB's in-memory queue;
 - on disconnect does **not** delete the webhook (only polling mode calls `deleteWebhook`, at start), so
   updates keep flowing to druzhok while the bot is stopped — exactly what item 6 needs;
-- records the `update_id` of every update it has *completed* in a per-bot receipt file under its home
-  (`update_admission.py`, 24 h TTL) and drops a redelivered update whose id is in it, across restarts.
+- records the `update_id` of every update its PTB handler has *accepted* in a per-bot receipt file under its
+  home (`update_admission.py` `_release_claim`, 24 h TTL) and drops a redelivered update whose id is in it,
+  across restarts. The receipt is written at handoff, before debounce, the busy queue and the agent turn,
+  so it is a dedupe of redeliveries, not a record of work done;
+- on a stop (SIGTERM from systemd) interrupts running chat turns at once (`agent.restart_drain_timeout`
+  defaults to 0), tells the user, and marks the session `resume_pending`.
 
 Druzhok adds to `Runtime.Hermes.env_vars/1`, only for bots in webhook mode:
 
@@ -107,9 +111,8 @@ started on boot for every such bot and on `notify/1`.
   restart update ids after a week of silence; any row that old has long expired, see housekeeping.)
 - **Owner check, before every POST.** The worker reads `/proc/net/tcp` for the listener on
   `127.0.0.1:<port>` and delivers only if its uid is the bot's own (`bot-<name>`). Wrong owner → the row
-  stays pending, the worker pauses, logs an error naming the owning uid, and retries in 30 s. The same read
-  yields the listening socket's inode, which changes on every hermes restart (see
-  [Delivery guarantee](#delivery-guarantee)). This is the in-process half of the port isolation below.
+  stays pending, the worker pauses, logs an error naming the owning uid, and retries in 30 s. This is the
+  in-process half of the port isolation below.
 - **Request.** `POST http://127.0.0.1:<port>/telegram/webhook/<name>`, headers exactly
   `content-type: application/json` and `x-telegram-bot-api-secret-token: <secret>`, body = payload, 10 s
   timeout (Finch, existing pool).
@@ -123,9 +126,15 @@ started on boot for every such bot and on `notify/1`.
     re-syncs the env) resumes delivery with nothing lost; the 24 h expiry still applies.
   - Any other 4xx (400 malformed payload) → this row is bad: set `dropped_reason = rejected`, `acked_at`,
     log, next row. A bad row cannot block the bot forever.
-- **Pause around planned stops.** `BotManager.stop/1` and `restart/1` call `Relay.pause(instance_id)`
-  before stopping hermes and `Relay.resume/1` after it is started, so nothing is handed to a bot that is
-  draining (hermes's drain still answers 200 and then rejects or drops new work).
+- **Pause around planned stops.** `BotManager.stop/1` calls `Relay.pause(instance_id)` before stopping
+  hermes, so nothing is handed to a bot that is shutting down (its listener still answers 200 and then
+  rejects or drops new work). `BotManager.start/1` calls `Relay.resume/1` unconditionally — before
+  starting, whatever the start's outcome — so every path that starts a bot (dashboard Start, `restart/1`,
+  which is `stop` + `start`, druzhok boot) clears it. A pause also lifts by itself after 5 min, so a stop
+  done outside `BotManager` that never sees a `start` cannot strand the queue; a bot that is really down then
+  just gets connection-refused backoff with rows pending, as designed. A worker has one pause with a reason
+  (`stopping`, `wrong_owner`, `rejected_config`); `resume/1` clears whichever is set, and a fault that is
+  still there pauses it again on the next attempt, so a restart is also the retry for a config fault.
 - **Housekeeping, hourly.** Delete acked rows older than 3 days. Pending rows older than 24 h get
   `dropped_reason = expired` and `acked_at = now`, one log line per bot — Telegram's own 24 h retention.
 
@@ -134,19 +143,20 @@ backing off. Not in this spec.
 
 ### Delivery guarantee
 
-**At least once, with hermes's receipts removing most duplicates.** PTB's 200 means "on an in-memory
-queue", not "handled", so an ack alone cannot be the end of a row's life:
+**Every update the bot has not acked is kept; an acked one is the bot's.** PTB's 200 means "on hermes's
+in-memory queue", and the relay treats it as the end of the row's life — there is no replay, because hermes
+writes its receipt at the same handoff and would drop a replayed update anyway.
 
-- **Planned stop** (deploy, `BotManager.restart`, upgrade): the relay is paused first, so nothing new
-  reaches the draining bot.
-- **Unplanned stop** (OOM, crash, `systemctl restart`, `druzhok-ctl restart`): the worker notices a new
-  listener inode on its next owner check — before its next delivery, and every 30 s while it holds rows
-  acked in the last 15 min. It then re-sends, in `update_id` order, every row acked in the 15 min before the
-  restart. Hermes drops the ones it had completed (receipt file); the ones it had only queued are handled
-  now.
-- **Residual:** an update hermes was in the middle of handling when it died may be answered twice (its reply
-  was sent, its receipt not yet written). That is the same at-least-once behaviour as polling, where
-  `getUpdates` confirms an update before it is processed — and strictly better than today's cold-boot drop.
+- **While a bot is down** (stopped, restarting, crashed, asleep later): updates queue in druzhok and are
+  delivered in order once it listens again. Nothing is lost. This is the case today's cold-boot drop loses.
+- **Planned stop** (deploy, `BotManager.stop`/`restart`, upgrade): the relay is paused first, so no update is
+  handed to a bot that is shutting down. A turn already running is interrupted by hermes's own stop path
+  (user told, session `resume_pending`) — hermes's behaviour, unchanged by the relay.
+- **Unplanned stop** (OOM, crash, `systemctl restart`/`druzhok-ctl restart` outside `BotManager`): an update
+  the bot had acked but not finished — in its debounce buffer, busy queue or running turn — is lost, exactly
+  as with polling today (`getUpdates` confirms before processing). Everything after it is queued in druzhok.
+- **Duplicates:** Telegram redelivering to druzhok is absorbed by the unique index; a relay retry after a
+  lost 2xx is absorbed by hermes's receipt file.
 
 ### Port isolation
 
@@ -217,8 +227,8 @@ Unchanged, keeps polling. It is one Elixir process, has no RAM to save and never
      (outbound under `SocketBindDeny=any`);
    - as `bot-igorhermes`, binding another port (e.g. 20010) fails with EPERM;
    - **planned:** `BotManager.restart` mid-conversation, a message sent during the restart is answered after;
-   - **unplanned:** `sudo systemctl kill -s KILL hermes@igorhermes` right after sending a message; the message
-     is answered after systemd restarts the bot (replay), and an earlier, completed one is not answered again.
+   - **down:** `BotManager.stop`, send two messages, `BotManager.start`; both are answered, in order;
+   - **dashboard Stop then Start** leaves the worker unpaused (`pending` drains within seconds).
 4. One day on the operator bot, then the other bots one at a time with `ops/smoke.sh`.
 
 ## Rollback
@@ -249,8 +259,8 @@ Full: all bots to polling, then revert the code. The schema additions are inert.
   before connecting). The canary checks the common paths; if a tool needs a port, add it to that bot's
   drop-in deliberately.
 - **Hermes upgrades**: the update-hermes skill must grep `TELEGRAM_WEBHOOK_URL|_SECRET|_PORT|_HOST`,
-  `drop_pending_on_cold_boot`, `_validate_post`'s status codes and the receipt file in `update_admission.py`,
-  like the other env vars and keys it checks.
+  `drop_pending_on_cold_boot`, `_validate_post`'s status codes, where `update_admission.py` records receipts
+  and `agent.restart_drain_timeout`'s default, like the other env vars and keys it checks.
 
 ## Alternatives considered
 
@@ -272,8 +282,9 @@ Full: all bots to polling, then revert the code. The schema additions are inert.
   `application/json` and the secret matches, 404 on another path): rows inserted out of order are delivered
   in `update_id` order; head-of-line retry with backoff on refused/5xx/429, then delivery; 403/404 pause the
   worker and keep every row pending, resume after the config is fixed; 400 marks only that row rejected;
-  acked rows are not resent after a worker restart unless the listener inode changed, then only the last
-  15 min are; pause/resume around `BotManager.restart`; expiry and pruning.
+  acked rows are never resent, including after a worker restart; `stop` pauses, `start` resumes even when
+  the start fails, and `stop`→`start` as separate calls (the dashboard) ends unpaused; a pause with no
+  `start` lifts after 5 min; expiry and pruning.
 - Owner check: a parsed `/proc/net/tcp` fixture with the port owned by another uid → no POST, worker paused.
 - `Runtime.Hermes`: webhook vars present only in webhook mode, host is 127.0.0.1, port = 20000 + id, URL uses
   `PHX_HOST`; `drop_pending_on_cold_boot: false` written for both modes; id ≥ 1000 refused.
