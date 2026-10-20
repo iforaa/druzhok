@@ -13,6 +13,11 @@
 table inet druzhok {
   set bot_uids { type uid; }
 
+  # Webhook relay: { bot uid . its webhook port (20000 + id) }, added by
+  # druzhok-ctl from the bot's env file. Only the owner may answer druzhok from
+  # that port (docs/superpowers/specs/2026-10-20-telegram-webhook-relay-design.md).
+  set bot_webhook { type uid . inet_service; }
+
   # systemd-resolved's stub listeners (/etc/resolv.conf -> 127.0.0.53). The
   # upstream lookup is made by the systemd-resolve user, which is not a bot
   # uid. Port 53 to anywhere else would be an open tunnel out of the box.
@@ -41,6 +46,9 @@ table inet druzhok {
 
     # Druzhok proxy
     ip daddr 127.0.0.1 tcp dport 4000 accept
+    # Webhook relay: replies from a bot's own PTB listener to druzhok. Reply
+    # direction only, so a bot cannot pick its source port to get out.
+    ip daddr 127.0.0.1 meta skuid . tcp sport @bot_webhook ct direction reply accept
     # DNS, local stub only
     ip daddr @resolvers4 udp dport 53 accept
     ip daddr @resolvers4 tcp dport 53 accept

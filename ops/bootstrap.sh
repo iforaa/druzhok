@@ -85,6 +85,13 @@ nft -f /etc/nftables.d/druzhok.nft
 for uid in $(getent passwd | awk -F: '/^bot-/ {print $3}'); do
   nft add element inet druzhok bot_uids "{ $uid }"
 done
+# ...and each bot's { uid . webhook port }, from the env file druzhok wrote.
+for envf in /etc/druzhok/*.env; do
+  name=$(basename "$envf" .env)
+  uid=$(id -u "bot-$name" 2>/dev/null) || continue
+  port=$(sed -n 's/^TELEGRAM_WEBHOOK_PORT="\([0-9]\{1,5\}\)"$/\1/p' "$envf" | head -n 1)
+  if [ -n "$port" ]; then nft add element inet druzhok bot_webhook "{ $uid . $port }"; fi
+done
 systemctl daemon-reload
 systemd-analyze verify /etc/systemd/system/hermes@.service /etc/systemd/system/druzhok.service || true
 

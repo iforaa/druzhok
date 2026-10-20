@@ -18,6 +18,15 @@ Always use `/my-commit` for committing changes.
 - Tenants get hermes's *user* slash tier (`/new /compress /status /voice`, plus `/help /whoami`); the operator
   (Settings `operator_telegram_id` / `OPERATOR_TELEGRAM_ID`) is admin on every bot. Enforced via upstream
   `platforms.telegram.extra` keys written by `Runtime.Hermes.sync_config/2` on each start — no fork patch.
+- **Telegram delivery is per bot** (`instances.telegram_mode`): `polling` (hermes long-polls) or `webhook`
+  (Telegram → `POST /telegram/webhook/<bot>` → `telegram_updates` queue → `Druzhok.Telegram.Relay` →
+  hermes's PTB server on `127.0.0.1:20000+id`). Switch with
+  `sudo ops/druzhok-run.sh 'IO.inspect(Druzhok.Telegram.Webhook.set_mode("<bot>", "webhook"))'` then
+  `BotManager.restart`; leaving webhook mode is refused while rows are queued (`force: true` drops them).
+  Every bot, whatever its mode, may `bind(2)` only its own port (systemd drop-in
+  `hermes@<bot>.service.d/webhook.conf` + nft `bot_webhook` `uid . port`, both written by `druzhok-ctl`).
+  `BotManager.stop` pauses the bot's relay, `start` always resumes it. Spec:
+  `docs/superpowers/specs/2026-10-20-telegram-webhook-relay-design.md`.
 - `hermes-agent/` is a separate, gitignored git repo (the hermes fork clone) — never `git add` it into druzhok.
 
 ## Layout

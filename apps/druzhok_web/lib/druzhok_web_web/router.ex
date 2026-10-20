@@ -57,6 +57,13 @@ defmodule DruzhokWebWeb.Router do
     post "/fetch", FetchController, :fetch
   end
 
+  # Telegram pushes webhook-mode bots' updates here. No pipeline: no session,
+  # no content negotiation; the controller checks the bot's own secret header
+  # (docs/superpowers/specs/2026-10-20-telegram-webhook-relay-design.md).
+  scope "/telegram", DruzhokWebWeb do
+    post "/webhook/:bot", TelegramWebhookController, :receive
+  end
+
   # Each group of LiveViews gets its own live_session: live navigation skips
   # the plug pipelines, so the on_mount hooks in LiveAuth are what keeps a
   # websocket opened on /login out of the dashboard.

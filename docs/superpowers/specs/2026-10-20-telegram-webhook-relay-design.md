@@ -59,7 +59,9 @@ webhook mode when `TELEGRAM_WEBHOOK_URL` is set. It then:
 - on a stop (SIGTERM from systemd) interrupts running chat turns at once (`agent.restart_drain_timeout`
   defaults to 0), tells the user, and marks the session `resume_pending`.
 
-Druzhok adds to `Runtime.Hermes.env_vars/1`, only for bots in webhook mode:
+Druzhok adds to `Runtime.Hermes.env_vars/1` (PORT and HOST for **every** bot — hermes reads them only in
+webhook mode, and `druzhok-ctl` needs the port for the bind lock below whatever the mode; URL and SECRET only
+for bots in webhook mode, which is what switches hermes over):
 
 | Var | Value |
 |---|---|
@@ -84,6 +86,9 @@ refuses webhook mode with a clear error (ids are 9–26 today). Nothing on the b
 - `instances.telegram_mode` — `"polling"` (default) | `"webhook"`. Per bot, so rollout and rollback are one bot
   at a time.
 - `instances.telegram_webhook_secret` — generated on the first switch to webhook, kept afterwards.
+- `instances.telegram_relay_paused_until`, `telegram_relay_pause_reason` — the relay pause. It is a column, not
+  process state, because `BotManager.stop/restart` usually runs in a one-off `ops/druzhok-run.sh` BEAM, which
+  must be able to pause and resume the relay running inside druzhok.service.
 - `telegram_updates`: `id`, `instance_id`, `update_id` (Telegram's), `payload` (raw JSON text), `received_at`,
   `acked_at` (the bot answered 2xx; null = pending), `attempts`, `last_error`, `dropped_reason`
   (null | `expired` | `rejected`). Unique index `(instance_id, update_id)`; index
@@ -103,7 +108,11 @@ A 200 only after the row is committed is what makes the queue durable: if the in
 5xx and retries (it keeps updates up to 24 h).
 
 **Relay** — `Druzhok.Telegram.Relay`: a `Registry` + `DynamicSupervisor`, one worker per webhook-mode bot,
-started on boot for every such bot and on `notify/1`.
+started on boot for every such bot and on `notify/1`. It is started by `DruzhokWeb.Application`, next to the
+endpoint, so the one-off `druzhok-run.sh` BEAM (which starts only `:druzhok`) never runs a second relay over
+the same rows; `notify/1` is a no-op where no relay runs. Each worker re-reads its instance row before every
+step, so a pause, a mode switch or a secret rotation written by another BEAM applies at once, and polls the
+pause every 2 s while paused.
 
 - **Order.** Delivers that bot's pending rows in `update_id` order, one in flight at a time. Telegram may
   push over parallel connections (hermes does not pass `max_connections`, PTB's default is 40), so arrival
@@ -128,9 +137,10 @@ started on boot for every such bot and on `notify/1`.
     log, next row. A bad row cannot block the bot forever.
 - **Pause around planned stops.** `BotManager.stop/1` calls `Relay.pause(instance_id)` before stopping
   hermes, so nothing is handed to a bot that is shutting down (its listener still answers 200 and then
-  rejects or drops new work). `BotManager.start/1` calls `Relay.resume/1` unconditionally — before
-  starting, whatever the start's outcome — so every path that starts a bot (dashboard Start, `restart/1`,
-  which is `stop` + `start`, druzhok boot) clears it. A pause also lifts by itself after 5 min, so a stop
+  rejects or drops new work). `BotManager.start/1` calls `Relay.resume/1` unconditionally — in an `after`
+  around the start attempt, whatever its outcome, so the relay does not spend its backoff on a bot still
+  coming up — so every path that starts a bot (dashboard Start, `restart/1`, which is `stop` + `start`)
+  clears it. A pause also lifts by itself after 5 min, so a stop
   done outside `BotManager` that never sees a `start` cannot strand the queue; a bot that is really down then
   just gets connection-refused backoff with rows pending, as designed. A worker has one pause with a reason
   (`stopping`, `wrong_owner`, `rejected_config`); `resume/1` clears whichever is set, and a fault that is
@@ -164,7 +174,8 @@ Every bot can run arbitrary code as its own uid (the terminal tool), so the webh
 its bot at three layers — otherwise bot A can bind B's port while B restarts or sleeps, receive B's private
 chats and B's secret, and then forge updates into B's queue as the operator.
 
-1. **systemd** — `druzhok-ctl create` writes a per-bot drop-in,
+1. **systemd** — `druzhok-ctl create` writes a drop-in for **every** bot (polling ones are just as able to
+   squat),
    `/etc/systemd/system/hermes@<name>.service.d/webhook.conf`:
    ```
    [Service]
@@ -175,7 +186,9 @@ chats and B's secret, and then forge updates into B's queue as the operator.
    its own. systemd 255 on cgroup v2 (verified on the box) enforces this with a BPF cgroup hook. Outbound
    connects (Telegram, the proxy, DNS) do not call `bind(2)` and are unaffected; the canary run must confirm
    hermes's HTTP clients and DNS still work with the drop-in in place. The port is read from the bot's env
-   file (`TELEGRAM_WEBHOOK_PORT`), which druzhok writes before `create`/`start`.
+   file (`TELEGRAM_WEBHOOK_PORT`), which druzhok writes before `create`/`start`; a bot with no port (id out
+   of range) gets `SocketBindDeny=any` alone. Hermes's own loop-tick witness binds an AF_UNIX socket on
+   Linux (`gateway/shutdown_watchdog.py`), which the lock does not cover.
 2. **nftables** — the reply rule is keyed on uid *and* port, so even a bound socket on someone else's port
    cannot answer druzhok:
    ```
@@ -215,11 +228,14 @@ Unchanged, keeps polling. It is one Elixir process, has no RAM to save and never
 
 ## Rollout
 
-1. Deploy schema + code with every bot still `polling`. The `drop_pending_on_cold_boot: false` change ships
-   now and reaches each bot on its next `BotManager.restart`; restart them one by one (this alone fixes the
-   restart bug for polling bots).
-2. nftables set + rule and the `druzhok-ctl` changes, loaded with the existing bootstrap path (reload
-   refills `bot_uids` and `bot_webhook`).
+1. Install the ops side first: `ops/nftables-druzhok.nft` (the `bot_webhook` set must exist before
+   `druzhok-ctl` adds elements to it; the bootstrap reload refills `bot_uids` and `bot_webhook`), the new
+   `druzhok-ctl`, `ops/smoke.sh`.
+2. Deploy schema + code with every bot still `polling`, then restart the bots one by one through
+   `BotManager.restart`, operator's bot first, `ops/smoke.sh` after each. Each restart brings
+   `drop_pending_on_cold_boot: false` (this alone fixes the restart bug for polling bots) and the bind lock
+   (`SocketBindDeny=any` + the bot's own port) — the step where an explicit `bind(2)` somewhere in hermes
+   would show up, so check a reply, a web search and a voice note on the operator's bot before the rest.
 3. Operator bot: `mix druzhok.telegram_mode igorhermes webhook`, `BotManager.restart`. Check:
    - hermes logs `Connected to Telegram (webhook mode)` and `Webhook server listening on 127.0.0.1:20009`;
      `getWebhookInfo.url` is ours;

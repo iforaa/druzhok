@@ -11,20 +11,34 @@ defmodule DruzhokWeb.Application do
       :ets.new(:auth_rate_limit, [:set, :public, :named_table])
     end
 
-    children = [
-      DruzhokWebWeb.Telemetry,
-      {DNSCluster, query: Application.get_env(:druzhok_web, :dns_cluster_query) || :ignore},
-      {Phoenix.PubSub, name: DruzhokWeb.PubSub},
-      # Start a worker by calling: DruzhokWeb.Worker.start_link(arg)
-      # {DruzhokWeb.Worker, arg},
-      # Start to serve requests, typically the last entry
-      DruzhokWebWeb.Endpoint
-    ]
+    children =
+      [
+        DruzhokWebWeb.Telemetry,
+        {DNSCluster, query: Application.get_env(:druzhok_web, :dns_cluster_query) || :ignore},
+        {Phoenix.PubSub, name: DruzhokWeb.PubSub}
+      ] ++
+        relay() ++
+        [
+          # Start a worker by calling: DruzhokWeb.Worker.start_link(arg)
+          # {DruzhokWeb.Worker, arg},
+          # Start to serve requests, typically the last entry
+          DruzhokWebWeb.Endpoint
+        ]
 
     # See https://hexdocs.pm/elixir/Supervisor.html
     # for other strategies and supported options
     opts = [strategy: :one_for_one, name: DruzhokWeb.Supervisor]
     Supervisor.start_link(children, opts)
+  end
+
+  # The Telegram relay lives with the webhook endpoint, so a one-off
+  # `ops/druzhok-run.sh` (which starts only :druzhok) never runs a second one.
+  # Off in tests: the web tests run in the SQL sandbox, and the relay has its
+  # own tests in apps/druzhok.
+  defp relay do
+    if Application.get_env(:druzhok_web, :telegram_relay, true),
+      do: [Druzhok.Telegram.Relay],
+      else: []
   end
 
   # Tell Phoenix to update the endpoint configuration

@@ -2,8 +2,8 @@
 # druzhok-ctl — the single privileged entry point Druzhok uses to manage
 # per-bot Linux users + systemd units. Invoked as root via sudo.
 #
-#   create <name>      (env file on stdin)   useradd + data dir + env + nft; idempotent,
-#                                            re-run before every start to refresh env
+#   create <name>      (env file on stdin)   useradd + data dir + env + nft + bind lock;
+#                                            idempotent, re-run before every start to refresh env
 #   start|stop|restart|destroy <name>
 #   status <name>      → active|activating|inactive|failed|unknown
 #   stats <name>       → <mem_bytes>|<cpu_usec>
@@ -17,6 +17,8 @@ HERMES_BIN_DIR=/opt/hermes/.venv/bin
 NFT_FAMILY=inet
 NFT_TABLE=druzhok
 NFT_SET=bot_uids
+NFT_WEBHOOK_SET=bot_webhook
+UNIT_DIR=/etc/systemd/system
 
 die() { echo "druzhok-ctl: $*" >&2; exit 1; }
 
@@ -55,6 +57,53 @@ nft_del() {
   nft delete element "$NFT_FAMILY" "$NFT_TABLE" "$NFT_SET" "{ $uid }" 2>/dev/null || true
 }
 
+# The bot's Telegram webhook port (20000 + id), written by druzhok into the env
+# file for every bot whatever its mode; empty when the id is out of range.
+webhook_port() {
+  sed -n 's/^TELEGRAM_WEBHOOK_PORT="\([0-9]\{1,5\}\)"$/\1/p' "$envf" 2>/dev/null | head -n 1
+}
+
+# Webhook relay port isolation (docs/superpowers/specs/2026-10-20-telegram-webhook-relay-design.md).
+# Only the bot's own uid may answer druzhok from its own port: { uid . port }.
+nft_webhook_add() {
+  local port
+  port=$(webhook_port)
+  [ -n "$port" ] || return 0
+  nft add element "$NFT_FAMILY" "$NFT_TABLE" "$NFT_WEBHOOK_SET" "{ $(uid_of) . $port }" 2>/dev/null || true
+}
+nft_webhook_del() {
+  local uid port
+  uid=$(uid_of) || return 0
+  port=$(webhook_port)
+  [ -n "$port" ] || return 0
+  nft delete element "$NFT_FAMILY" "$NFT_TABLE" "$NFT_WEBHOOK_SET" "{ $uid . $port }" 2>/dev/null || true
+}
+
+# hermes and everything its terminal spawns share the unit's cgroup: they may
+# bind(2) the bot's own webhook port and nothing else, so no bot can take
+# another bot's port while that one restarts or sleeps. Written for every bot,
+# polling ones included, since any bot is a potential squatter.
+write_bind_lock() {
+  local port dir conf tmp
+  port=$(webhook_port)
+  dir="$UNIT_DIR/$unit.d"
+  conf="$dir/webhook.conf"
+  install -d -m 0755 "$dir"
+  tmp=$(mktemp "$dir/.webhook.XXXXXX")
+  {
+    echo "[Service]"
+    if [ -n "$port" ]; then echo "SocketBindAllow=tcp:$port"; fi
+    echo "SocketBindDeny=any"
+  } > "$tmp"
+  chmod 0644 "$tmp"
+  if cmp -s "$tmp" "$conf"; then
+    rm -f "$tmp"
+  else
+    mv -f "$tmp" "$conf"
+    systemctl daemon-reload
+  fi
+}
+
 case "$cmd" in
   create)
     if ! user_exists; then
@@ -66,6 +115,8 @@ case "$cmd" in
     mkdir -p "$ENVDIR"; chmod 0755 "$ENVDIR"
     write_env
     nft_add
+    nft_webhook_add
+    write_bind_lock
     ;;
   start|restart)
     user_exists || die "no such bot: $name"
@@ -75,6 +126,7 @@ case "$cmd" in
     # The nft set is empty after an nftables reload (reboot, bootstrap): with
     # no uids in it every bot has open egress, so re-add on every start.
     nft_add
+    nft_webhook_add
     systemctl "$cmd" "$unit"
     ;;
   stop)
@@ -125,9 +177,15 @@ case "$cmd" in
       systemctl stop "$unit" 2>/dev/null || true
       systemctl reset-failed "$unit" 2>/dev/null || true
       nft_del
+      nft_webhook_del
       userdel "$user"
     fi
     rm -f "$envf"
+    if [ -d "$UNIT_DIR/$unit.d" ]; then
+      rm -f "$UNIT_DIR/$unit.d/webhook.conf"
+      rmdir "$UNIT_DIR/$unit.d" 2>/dev/null || true
+      systemctl daemon-reload
+    fi
     ;;
   *)
     die "unknown command: $cmd"

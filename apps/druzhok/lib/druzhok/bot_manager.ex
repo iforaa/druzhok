@@ -89,28 +89,41 @@ defmodule Druzhok.BotManager do
         {:error, :not_found}
 
       instance ->
-        runtime = Druzhok.Runtime.for_instance(instance)
-        env = Druzhok.Runtime.base_env(instance) |> Map.merge(runtime.env_vars(instance))
-        data_root = runtime.data_root(instance)
-
-        write_workspace_files(data_root, runtime.workspace_files(instance))
-        # The operator is the hermes slash-command admin on every bot
-        # (Runtime.Hermes.sync_config/2); the instance row does not carry it.
-        runtime.sync_config(
-          Map.put(instance, :operator_telegram_id, Druzhok.Settings.operator_telegram_id()),
-          data_root
-        )
-
-        case Druzhok.Host.start(name, env, data_root) do
-          :ok ->
-            Logger.info("Started bot #{name}")
-            Repo.update(Instance.changeset(instance, %{active: true}))
-            {:ok, name}
-
-          {:error, reason} ->
-            Logger.error("Failed to start bot #{name}: #{inspect(reason)}")
-            {:error, reason}
+        # stop/1 paused the Telegram relay; every start clears it, whatever
+        # the outcome, so no path (dashboard Stop then Start, a failed start)
+        # leaves the queue held. Cleared after the start so the relay does not
+        # spend its backoff on a bot that is still coming up.
+        try do
+          do_start(instance)
+        after
+          Druzhok.Telegram.Webhook.resume(instance.id)
+          Druzhok.Telegram.Relay.notify(instance.id)
         end
+    end
+  end
+
+  defp do_start(%Instance{name: name} = instance) do
+    runtime = Druzhok.Runtime.for_instance(instance)
+    env = Druzhok.Runtime.base_env(instance) |> Map.merge(runtime.env_vars(instance))
+    data_root = runtime.data_root(instance)
+
+    write_workspace_files(data_root, runtime.workspace_files(instance))
+    # The operator is the hermes slash-command admin on every bot
+    # (Runtime.Hermes.sync_config/2); the instance row does not carry it.
+    runtime.sync_config(
+      Map.put(instance, :operator_telegram_id, Druzhok.Settings.operator_telegram_id()),
+      data_root
+    )
+
+    case Druzhok.Host.start(name, env, data_root) do
+      :ok ->
+        Logger.info("Started bot #{name}")
+        Repo.update(Instance.changeset(instance, %{active: true}))
+        {:ok, name}
+
+      {:error, reason} ->
+        Logger.error("Failed to start bot #{name}: #{inspect(reason)}")
+        {:error, reason}
     end
   end
 
@@ -120,6 +133,10 @@ defmodule Druzhok.BotManager do
         :ok
 
       instance ->
+        # Hold Telegram delivery first: a stopping hermes still answers 200
+        # and then drops new work. start/1 resumes; the pause lifts by itself
+        # after 5 min otherwise.
+        Druzhok.Telegram.Webhook.pause(instance.id, :stopping)
         Druzhok.Host.stop(name)
         instance |> Ecto.Changeset.change(%{active: false}) |> Repo.update!()
     end

@@ -144,6 +144,31 @@ defmodule Druzhok.Runtime.Hermes do
       "FIRECRAWL_API_KEY" => tenant_key
     }
     |> Map.merge(mnemosyne_env(instance))
+    |> Map.merge(webhook_env(instance))
+  end
+
+  # Telegram webhook relay (docs/superpowers/specs/2026-10-20-telegram-webhook-relay-design.md).
+  # Hermes reads PORT and HOST only in webhook mode, so every bot carries its
+  # port: druzhok-ctl turns it into the systemd bind lock and the nftables
+  # `uid . port` element, which must hold for polling bots too. URL and SECRET
+  # are what switch hermes into webhook mode.
+  defp webhook_env(instance) do
+    alias Druzhok.Telegram.Webhook
+
+    port_env =
+      case Webhook.port(instance) do
+        nil -> %{}
+        port -> %{"TELEGRAM_WEBHOOK_PORT" => to_string(port), "TELEGRAM_WEBHOOK_HOST" => "127.0.0.1"}
+      end
+
+    if Webhook.webhook?(instance) and port_env != %{} do
+      Map.merge(port_env, %{
+        "TELEGRAM_WEBHOOK_URL" => Webhook.public_url(instance),
+        "TELEGRAM_WEBHOOK_SECRET" => Map.get(instance, :telegram_webhook_secret) || ""
+      })
+    else
+      port_env
+    end
   end
 
   # Mnemosyne memory provider (docs/superpowers/specs/2026-09-06-mnemosyne-memory-design.md):
@@ -295,7 +320,7 @@ defmodule Druzhok.Runtime.Hermes do
   # hermes checks the typed name against the policy, so it must be listed.
   @user_commands ~w(start new compress status voice)
   @menu_commands ~w(new compress status voice)
-  @telegram_extra_keys ~w(allow_admin_from user_allowed_commands group_allow_admin_from group_user_allowed_commands command_menu)
+  @telegram_extra_keys ~w(allow_admin_from user_allowed_commands group_allow_admin_from group_user_allowed_commands command_menu drop_pending_on_cold_boot)
 
   def user_commands, do: @user_commands
   def menu_commands, do: @menu_commands
@@ -313,7 +338,10 @@ defmodule Druzhok.Runtime.Hermes do
          {"priority_mode", "replace"},
          {"max_commands", to_string(length(@menu_commands))},
          {"priority", @menu_commands}
-       ]}
+       ]},
+      # Hermes's default (true) has Telegram discard every update sent while
+      # the bot was down, on every restart. Keep them.
+      {"drop_pending_on_cold_boot", "false"}
     ]
 
     lines = String.split(content, "\n")

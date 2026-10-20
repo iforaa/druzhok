@@ -24,6 +24,42 @@ uid=$(id -u "bot-$name")
 nft list set inet druzhok bot_uids | grep -qw "$uid" || { echo "uid $uid not in bot_uids: egress is open"; exit 1; }
 echo "uid $uid in bot_uids"
 
+echo "== webhook port isolation"
+envf=/etc/druzhok/$name.env
+port=$(sed -n 's/^TELEGRAM_WEBHOOK_PORT="\([0-9]\{1,5\}\)"$/\1/p' "$envf" | head -n 1)
+lock=/etc/systemd/system/hermes@$name.service.d/webhook.conf
+grep -qx 'SocketBindDeny=any' "$lock" || { echo "no bind lock in $lock"; exit 1; }
+if [ -n "$port" ]; then
+  grep -qx "SocketBindAllow=tcp:$port" "$lock" || { echo "bind lock does not allow port $port"; exit 1; }
+  nft list set inet druzhok bot_webhook | grep -q "$uid . $port" || { echo "{ $uid . $port } not in bot_webhook"; exit 1; }
+  echo "port $port locked to uid $uid"
+else
+  echo "no webhook port (id out of range): bind lock denies all"
+fi
+
+echo "== telegram delivery"
+mode=$(sqlite3 "$db" "select telegram_mode from instances where name='$name'")
+info=$(curl -s -m 20 "https://api.telegram.org/bot$token/getWebhookInfo")
+hook_url=$(echo "$info" | sed -n 's/.*"url":"\([^"]*\)".*/\1/p')
+echo "mode $mode, webhook url '${hook_url}'"
+if [ "$mode" = webhook ]; then
+  host=$(. /etc/druzhok/druzhok.env; echo "$PHX_HOST")
+  [ "$hook_url" = "https://$host/telegram/webhook/$name" ] || { echo "webhook not registered to druzhok"; exit 1; }
+  err_at=$(echo "$info" | sed -n 's/.*"last_error_date":\([0-9]*\).*/\1/p')
+  if [ -n "$err_at" ] && [ $(( $(date +%s) - err_at )) -lt 600 ]; then
+    echo "Telegram reports a delivery error in the last 10 min: $(echo "$info" | sed -n 's/.*"last_error_message":"\([^"]*\)".*/\1/p')"; exit 1
+  fi
+  owners=$(ss -ltnHe "sport = :$port" | grep -o 'uid:[0-9]*' | sort -u)
+  [ "$owners" = "uid:$uid" ] || { echo "listener on $port owned by '${owners:-nobody}', expected uid:$uid"; exit 1; }
+  stale=$(sqlite3 "$db" "select count(*) from telegram_updates u join instances i on i.id = u.instance_id where i.name='$name' and u.acked_at is null and u.received_at < strftime('%Y-%m-%dT%H:%M:%f', 'now', '-60 seconds')")
+  [ "$stale" = 0 ] || { echo "$stale update(s) pending for more than 60 s"; exit 1; }
+  paused=$(sqlite3 "$db" "select coalesce(telegram_relay_pause_reason, '') from instances where name='$name' and telegram_relay_paused_until > strftime('%Y-%m-%dT%H:%M:%S', 'now')")
+  [ -z "$paused" ] || { echo "relay paused: $paused"; exit 1; }
+  echo "webhook registered, listener owned by the bot, queue drained"
+else
+  [ -z "$hook_url" ] || { echo "polling bot still has a webhook registered"; exit 1; }
+fi
+
 echo "== page fetch (/v2/scrape via ruoc)"
 key=$(run "IO.puts(Druzhok.Repo.get_by!(Druzhok.Instance, name: \"$name\").tenant_key)" | tail -1)
 scrape=$(curl -s -m 60 -H "Authorization: Bearer $key" -H 'Content-Type: application/json' \

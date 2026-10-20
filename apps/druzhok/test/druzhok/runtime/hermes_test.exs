@@ -60,6 +60,26 @@ defmodule Druzhok.Runtime.HermesTest do
       end
     end
 
+    test "every bot carries its loopback webhook port; only webhook mode gets URL and secret" do
+      polling = Hermes.env_vars(Map.merge(@instance, %{id: 9, telegram_mode: "polling"}))
+      assert polling["TELEGRAM_WEBHOOK_PORT"] == "20009"
+      assert polling["TELEGRAM_WEBHOOK_HOST"] == "127.0.0.1"
+      refute Map.has_key?(polling, "TELEGRAM_WEBHOOK_URL")
+      refute Map.has_key?(polling, "TELEGRAM_WEBHOOK_SECRET")
+
+      webhook =
+        Hermes.env_vars(Map.merge(@instance, %{id: 9, telegram_mode: "webhook", telegram_webhook_secret: "abc"}))
+
+      assert webhook["TELEGRAM_WEBHOOK_URL"] =~ ~r{^https://[^/]+/telegram/webhook/alice$}
+      assert webhook["TELEGRAM_WEBHOOK_SECRET"] == "abc"
+      assert webhook["TELEGRAM_WEBHOOK_PORT"] == "20009"
+    end
+
+    test "an id outside the port range gets no webhook vars, even in webhook mode" do
+      env = Hermes.env_vars(Map.merge(@instance, %{id: 1000, telegram_mode: "webhook", telegram_webhook_secret: "abc"}))
+      refute Enum.any?(Map.keys(env), &String.starts_with?(&1, "TELEGRAM_WEBHOOK_"))
+    end
+
     test "allowlist is empty string when no owner and no allowed ids" do
       inst = %{@instance | owner_telegram_id: nil, allowed_telegram_ids: nil}
       env = Hermes.env_vars(inst)
@@ -472,6 +492,7 @@ defmodule Druzhok.Runtime.HermesTest do
                        - compress
                        - status
                        - voice
+                   drop_pending_on_cold_boot: false
                  enabled: true
                  observe_unmentioned_group_messages: false
 
@@ -483,6 +504,8 @@ defmodule Druzhok.Runtime.HermesTest do
 
       assert extra["allow_admin_from"] == ["4242"]
       assert extra["command_menu"] == %{"priority_mode" => "replace", "max_commands" => 4, "priority" => Hermes.menu_commands()}
+      # Hermes's default drops every update sent while the bot was down.
+      assert extra["drop_pending_on_cold_boot"] == false
     end
 
     test "rewrites its own keys and keeps what hermes wrote into extra", %{tmp_dir: tmp_dir} do

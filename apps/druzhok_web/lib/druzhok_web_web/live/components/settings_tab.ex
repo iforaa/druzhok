@@ -38,6 +38,7 @@ defmodule DruzhokWebWeb.Live.Components.SettingsTab do
      |> assign(:balance, balance)
      |> assign(:subscription, subscription)
      |> assign(:image_models, image_models(instance))
+     |> assign(:telegram_relay, telegram_relay(instance))
      |> assign(:console_url, migrated && Ruoc.console_url(instance[:ruoc_account_id]))
      |> assign(:can_migrate, !migrated && Ruoc.configured?())}
   end
@@ -212,6 +213,20 @@ defmodule DruzhokWebWeb.Live.Components.SettingsTab do
               </select>
               <p class="text-[10px] text-muted mt-1">builtin: MEMORY.md / USER.md only. mnemosyne: adds recall of past turns (embeddings via ruoc). Applies on restart.</p>
             </form>
+          </div>
+
+          <%!-- Card: Telegram delivery (read-only; switched with mix druzhok.telegram_mode) --%>
+          <div class="bg-raised/50 border border-line rounded-lg p-3 space-y-1.5">
+            <h3 class="label">Telegram delivery</h3>
+            <div class="text-[11px] text-fg">Mode: <code class="text-accent text-[10px]"><%= @telegram_relay.mode %></code></div>
+            <%= if @telegram_relay.mode == "webhook" do %>
+              <div class="text-[11px] text-fg">
+                Queued: <%= @telegram_relay.pending %><%= if @telegram_relay.oldest, do: " (oldest #{@telegram_relay.oldest})" %>
+              </div>
+              <div :if={@telegram_relay.paused} class="text-[11px] text-err">Paused: <%= @telegram_relay.paused %></div>
+              <div :if={@telegram_relay.last_error} class="text-[10px] text-muted">Last error: <%= @telegram_relay.last_error %></div>
+            <% end %>
+            <p class="text-[10px] text-muted">Switch with <code>mix druzhok.telegram_mode &lt;bot&gt; webhook|polling</code>, then restart.</p>
           </div>
 
           <%!-- Card: Image Generation --%>
@@ -580,6 +595,31 @@ defmodule DruzhokWebWeb.Live.Components.SettingsTab do
   defp restart_bot(name) do
     Task.start(fn -> BotManager.restart(name) end)
     :ok
+  end
+
+  defp telegram_relay(instance) do
+    mode = instance[:telegram_mode] || "polling"
+    base = %{mode: mode, pending: 0, oldest: nil, paused: nil, last_error: nil}
+
+    if mode == "webhook" and instance[:id] do
+      stats = Telegram.Inbox.stats(instance[:id])
+
+      paused =
+        case Telegram.Webhook.paused(instance) do
+          {reason, until} -> "#{reason} until #{Calendar.strftime(until, "%H:%M:%S")} UTC"
+          nil -> nil
+        end
+
+      oldest =
+        case stats.oldest_received_at do
+          nil -> nil
+          at -> "#{DateTime.diff(DateTime.utc_now(), at)} s ago"
+        end
+
+      %{base | pending: stats.pending, oldest: oldest, paused: paused, last_error: stats.last_error}
+    else
+      base
+    end
   end
 
   defp memory_provider_label("builtin"), do: "builtin (MEMORY.md)"

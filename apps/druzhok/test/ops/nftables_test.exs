@@ -46,6 +46,13 @@ defmodule Druzhok.Ops.NftablesTest do
            ]
   end
 
+  test "the webhook reply rule is keyed on uid and port and matches replies only" do
+    assert ["ip daddr 127.0.0.1 meta skuid . tcp sport @bot_webhook ct direction reply accept"] =
+             Enum.filter(bot_rules(), &(&1 =~ "bot_webhook"))
+
+    assert File.read!(@ruleset) =~ "set bot_webhook { type uid . inet_service; }"
+  end
+
   test "the resolver set holds loopback addresses only" do
     assert [_ | _] = resolvers = set_elements("resolvers4")
 
