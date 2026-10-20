@@ -1,7 +1,7 @@
 # Bot sleep/wake
 
-Status: draft r4, 2026-10-20 (r1–r3 reviewed by revmux `sleep-wake/01-initial`, `02-after-fix`,
-`03-controller`). Branch
+Status: draft r5, 2026-10-20 (r1–r4 reviewed by revmux `sleep-wake/01-initial`, `02-after-fix`,
+`03-controller`, `04-final`). Branch
 `sleep-wake`. Block A item 6. Builds on the Telegram webhook relay
 (`2026-10-20-telegram-webhook-relay-design.md`).
 
@@ -60,8 +60,10 @@ Checked on the box and in the hermes 0.22.2 source on 2026-10-20.
 - **nft elements are re-added only on start.** `druzhok-ctl start` adds the bot's `bot_uids` and
   `bot_webhook` elements; an nftables reload or reboot empties the sets until the next start.
 - **`druzhok-ctl status` hides `deactivating`.** It maps every systemd state other than `active`,
-  `activating`, `inactive` and `failed` to `inactive`, so a unit draining for 30 s reads as stopped. This
-  change adds `deactivating` → `stopping` (and `Host.status` → `:stopping`).
+  `activating`, `inactive` and `failed` to `inactive`, so a unit draining for 30 s reads as stopped. It
+  also reports systemd's restart loop as `activating` (ActiveState `activating`, SubState `auto-restart`).
+  This change adds `deactivating` → `stopping` and SubState `auto-restart` → `restarting` (`Host.status`
+  `:stopping`, `:restarting`).
 - **The relay worker is one GenServer per bot that runs each delivery step to completion**, so a
   `GenServer.call` to it is answered only between steps, never during a POST.
 - **The start code raises.** `write_workspace_files` and `sync_config` use `File.write!`/`mkdir_p!` into
@@ -83,7 +85,9 @@ which only the controller writes.
 | `delete_requested` (bool) | anyone | delete the bot (stop, destroy, wipe, release token, drop the row) |
 | `sleep_enabled` (bool, false) | anyone | per-bot opt-in |
 | `sleeping` (bool, false) | controller | the controller stopped this active bot because it was idle |
+| `stop_seq` (int, 0) | anyone | bumped by every stop request |
 | `applied_seq` (int, 0) | controller | `start_seq` as of the last successful start |
+| `stopped_seq` (int, 0) | controller | `stop_seq` acknowledged: unit confirmed inactive with `!active`, no action in flight |
 | `failed_seq` (int, 0) | controller | `start_seq` as read by the last failed start |
 | `started_at`, `started_mode` | controller | when the last start began, and the `telegram_mode` it used |
 | `woke_at` | controller | when the controller last began a wake (relay backoff hint) |
@@ -99,7 +103,7 @@ The public API becomes requests:
 - `BotManager.start(name)` and `restart(name)`: `SET active = true, start_seq = start_seq + 1`. Start and
   restart mean the same thing ("run it, freshly, with what is in the row now"); a Start on a running bot
   restarts it, as dashboard Start is only offered for a bot that is not running.
-- `BotManager.stop(name)`: `SET active = false`.
+- `BotManager.stop(name)`: `SET active = false, stop_seq = stop_seq + 1`.
 - `BotManager.delete(name)`: `SET active = false, delete_requested = true`. Every delete step is
   idempotent already (`druzhok-ctl destroy` skips a missing user, `TokenPool.release` is an update, a
   second ruoc suspend only logs a warning).
@@ -120,7 +124,7 @@ another BEAM it is a no-op and the controller sees the row within its 2 s poll).
 | call | without `wait` | with `wait: true` (polls the row, up to 120 s) |
 |---|---|---|
 | `start`, `restart` | `{:ok, name}` once recorded, `{:error, :not_found}` | `{:ok, name}` when `applied_seq >= my_seq`; `{:error, reason}` when `failed_seq >= my_seq` (a failure of an older seq is not mine); `{:error, :timeout}` |
-| `stop` | `:ok` | `:ok` once the unit is inactive; `{:error, :timeout}` |
+| `stop` | `:ok` | `:ok` once `stopped_seq >= my_stop_seq` (the controller's acknowledgement, never the unit state alone, which is briefly inactive in the middle of a restart or before a wake's `Host.start`); `{:error, :timeout}` |
 | `delete` | `:ok` | `:ok` once the row is gone; `{:error, :timeout}` |
 
 `{:error, :timeout}` carries no claim about why; the request stays in the row and is carried out whenever
@@ -153,8 +157,9 @@ checks once a minute, and on each pass takes the **first** rule that applies:
 3. **`delete_requested`** → if the unit is not inactive: [stop it](#stopping). Then `Host.destroy`, wipe
    the data dir, release the token, suspend the ruoc account, delete the row (today's `delete/1` body),
    exit.
-4. **`!active`** → if the unit is not inactive: [stop it](#stopping). Set `sleeping = false`. Nothing else
-   until `active` comes back.
+4. **`!active`** → if the unit is not inactive: [stop it](#stopping). Set `sleeping = false`. Once the
+   unit reads inactive and no action is in flight, write `stopped_seq = stop_seq` (the stop waiter's
+   acknowledgement). Nothing else until `active` comes back.
 5. **`active && sleeping`** → stay asleep unless a reason to wake holds:
    - an update is pending for it (`Inbox.pending_count > 0`),
    - `start_seq > applied_seq` (someone asked for a start or restart),
@@ -164,8 +169,16 @@ checks once a minute, and on each pass takes the **first** rule that applies:
 
    To wake: set `woke_at = now`, `sleeping = false`, then the [start action](#start-action).
 6. **`active && !sleeping`** → in order:
-   - the unit is activating → wait (systemd's `TimeoutStartSec=300` bounds it). A request that arrives
-     meanwhile is handled once the unit settles, by the next bullet;
+   - the unit is `restarting` (systemd's restart loop), or has read `activating` for longer than 330 s
+     (a controller deadline, since `TimeoutStartSec=300` bounds one attempt but not the loop) → a
+     **failed start**: [stop it](#stopping), record `start_error` (`"restart loop"` / `"start timeout"`),
+     `start_failed_at`, `start_failures += 1` (not `failed_seq`: no request of anyone's was attempted), and
+     back off as in [start action](#start-action) step 5. This covers loops the controller did not start
+     itself: a crash after READY whose restarts die, a druzhok restart during `Host.start`, a hand-run
+     `druzhok-ctl start`. A pending request is then applied by the normal start action after the backoff,
+     or at once if made after the failure;
+   - the unit is activating → wait. A request that arrives meanwhile is handled once the unit settles, by
+     the next bullet;
    - the unit is inactive or failed, or `start_seq > applied_seq` → the [start action](#start-action),
      [stopping](#stopping) first if the unit is active (a restart);
    - the bot is [idle](#falling-asleep) → the [sleep action](#falling-asleep);
@@ -194,9 +207,12 @@ Every stop, for any rule, is the same three steps:
    Record `started_at = now`, `started_mode = telegram_mode`, and remember `seq = start_seq`.
 2. If the unit is not inactive (failed included), [stop it](#stopping) first. This makes Restart work in
    dev, where `Host.Process.start` is a no-op while a crashed bot's wrapper is still registered.
-3. Run the extracted start body: workspace files, `sync_config`, `Host.start` (which runs `druzhok-ctl
-   start` and re-adds the nft elements). Unlike today's `do_start` it writes **no** desired-state column
-   (`active` is not set back to true, so a Stop made meanwhile wins).
+3. Run the extracted start body: workspace files, `sync_config`, then **re-read the row once more** and
+   stop here if `!active` or `delete_requested` (a Stop during step 2's drain or the file writes wins
+   before anything starts), then `Host.start` (which runs `druzhok-ctl start` and re-adds the nft
+   elements). Unlike today's `do_start` it writes **no** desired-state column (`active` is not set back
+   to true). A Stop that lands during `Host.start` itself is applied by rule 4 right after READY; the relay
+   already holds that bot's updates (`!active`), and the stop waiter is not acknowledged until then.
 4. Success (`Host.start` returned `:ok` and the unit now reads active): `applied_seq = seq`, clear
    `start_error`, `start_failures = 0`. Clear any pause except `wrong_owner`
    (`Webhook.resume_except(id, :wrong_owner)`): a restart is how an operator fixes what a 403/404
@@ -276,8 +292,8 @@ is resolved by the next pass of the rules:
 | any `Host.stop` (sleep, stop, restart, delete) | pause set, unit `stopping` | rule 2 waits; the pause is not touched while the unit drains, so nothing is delivered into it |
 | sleep, before `Host.stop` | `!sleeping`, unit active, `:sleeping` pause | rule 6's last bullet clears the pause; bot stays awake |
 | sleep, after `Host.stop`, before `sleeping = true` | `!sleeping`, unit inactive, `:sleeping` pause | rule 6 starts it (the start clears the pause): one extra start, no stuck bot |
-| a requested start, during `Host.start` | `!sleeping`, unit activating or active, `applied_seq < start_seq` | rule 6 waits while activating, then starts again because `start_seq > applied_seq`: one extra restart |
-| a wake (no request), during `Host.start` | `!sleeping`, unit activating or active, seqs equal, `started_at` fresh (written before `Host.start`) | rule 6 waits while activating, then nothing; the bot is awake and the update that woke it keeps it awake for a window |
+| a requested start, during `Host.start` | `!sleeping`, unit activating or active, `applied_seq < start_seq` | rule 6 waits while activating, then starts again because `start_seq > applied_seq`: one extra restart. If hermes dies before READY, the unit enters `restarting` (or exceeds 330 s) and rule 6 records a failed start and backs off |
+| a wake (no request), during `Host.start` | `!sleeping`, unit activating or active, seqs equal, `started_at` fresh (written before `Host.start`) | rule 6 waits while activating, then nothing; the bot is awake and the update that woke it keeps it awake for a window. A restart loop is handled as in the row above |
 | stop | `!active`, unit active or inactive | rule 4 stops it again (idempotent) |
 | delete, part way | `delete_requested`, some of the steps done | rule 3 re-runs every step; each is idempotent (`druzhok-ctl destroy` and `rm -rf` of a missing path succeed, `TokenPool.release` of a released token is a no-op) |
 
@@ -402,6 +418,10 @@ wait for rule 5), since the old code does not know `sleeping`.
   `rejected_config` and keeps `wrong_owner`; `create` returns once the row exists and the provisioner's
   `start` follows `SOUL.md`; the manager bot's image restart and delete report the real outcome and the
   menu skips `delete_requested` rows; dev `Host.Process`: restart of a crashed bot respawns it.
+- r5 additions: a unit in `restarting` (stubbed SubState `auto-restart`) or `activating` past 330 s is a
+  recorded failed start, is stopped and backs off, and a request is applied after; a Stop during a
+  restart's drain or the file writes prevents `Host.start`; `stop(wait: true)` returns only after
+  `stopped_seq` catches up, not in the inactive gap of a restart or wake.
 
 ## Docs this change updates
 
