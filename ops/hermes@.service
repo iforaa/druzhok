@@ -13,6 +13,9 @@ Group=bot-%i
 EnvironmentFile=/etc/druzhok/%i.env
 Environment=HOME=/data/tenants/%i/home
 Environment=PATH=/opt/hermes/.venv/bin:/usr/local/bin:/usr/bin:/bin
+# glibc gives each thread that mallocs its own 64 MB arena; hermes runs ~26
+# threads, so an idle bot's RSS creeps up for days. Two arenas cap that.
+Environment=MALLOC_ARENA_MAX=2
 WorkingDirectory=/data/tenants/%i/workspace
 ExecStart=/opt/hermes/.venv/bin/hermes gateway run
 Restart=always

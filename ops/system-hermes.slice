@@ -1,0 +1,16 @@
+# Shared memory ceiling for all hermes@ bots. systemd puts every instance of
+# a template unit into system-<template>.slice, so this file configures the
+# slice they already run in; no Slice= is needed in hermes@.service.
+#
+# The box also runs druzhok, ruoc-gateway, postgres, mysql, caddy and the
+# occasional `mix compile` (~1 GB): ~2.3 GB at worst stays outside the slice
+# on 8 GB RAM. MemoryHigh throttles and reclaims (page cache first) before the
+# hard MemoryMax, where the kernel OOM-kills inside the slice only and systemd
+# restarts that bot. Per-bot limits stay in hermes@.service.
+[Unit]
+Description=Hermes bots (shared memory ceiling)
+
+[Slice]
+MemoryAccounting=yes
+MemoryHigh=4608M
+MemoryMax=5G

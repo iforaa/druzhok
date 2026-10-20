@@ -97,6 +97,7 @@ sudo systemctl restart druzhok
 ```
 
 Bots: `sudo druzhok-ctl status|logs|restart <name>`; `journalctl -u hermes@<name> -f`.
+All bots share `system-hermes.slice` (`ops/system-hermes.slice`: MemoryHigh 4.5G, MemoryMax 5G; per-bot 800M/1G in `hermes@.service`). Changing it applies live on `daemon-reload`.
 Hermes install: `/opt/hermes` is a symlink to `/data/opt/hermes-<version>` (one dir per version, rsynced from `hermes-agent/`, not a git checkout; Python 3.14 from uv under `/data/opt/uv-python` since 0.22; recipe in the `update-hermes` skill). Bots move onto a new dir one at a time through druzhok (`BotManager.restart` via `druzhok-run.sh`, not `druzhok-ctl restart`, which skips config sync) — operator's bot first, `ops/smoke.sh`.
 
 Legacy Yandex VM (`ssh -l igor 10.129.0.19`, Docker-based) is kept only as a fallback during migration.

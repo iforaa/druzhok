@@ -70,6 +70,7 @@ grep -q '^FETCH_WORKER_BIN=' /etc/druzhok/druzhok.env 2>/dev/null || echo 'FETCH
 step "druzhok-ctl + units + sudoers + nftables"
 install -m 0755 "$OPS/druzhok-ctl" /usr/local/sbin/druzhok-ctl
 install -m 0644 "$OPS/hermes@.service" /etc/systemd/system/hermes@.service
+install -m 0644 "$OPS/system-hermes.slice" /etc/systemd/system/system-hermes.slice
 install -m 0644 "$OPS/druzhok.service" /etc/systemd/system/druzhok.service
 install -m 0440 "$OPS/sudoers-druzhok" /etc/sudoers.d/druzhok
 visudo -cf /etc/sudoers.d/druzhok

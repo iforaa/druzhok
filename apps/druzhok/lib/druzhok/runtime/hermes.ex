@@ -29,6 +29,13 @@ defmodule Druzhok.Runtime.Hermes do
   @embedding_model "ruoc-embed-e5-large"
   @embedding_dim "1024"
 
+  # Telegram API IPs the bot connects to. Without them hermes spends ~5 s on
+  # every start trying DNS-over-HTTPS, which bots can't reach (no internet),
+  # and then falls back to these same seeds (hermes SEED_FALLBACK_IPS,
+  # plugins/platforms/telegram/telegram_network.py). Must stay inside the
+  # Telegram CIDRs in ops/nftables-druzhok.nft.
+  @telegram_fallback_ips "149.154.166.110,149.154.167.220"
+
   @agents_md_session_section """
   ## Каждая сессия
 
@@ -101,6 +108,7 @@ defmodule Druzhok.Runtime.Hermes do
       # from the workspace, not from /root or /opt/hermes.
       "MESSAGING_CWD" => Path.join(data_root(instance), "workspace"),
       "TELEGRAM_BOT_TOKEN" => Map.get(instance, :telegram_token, "") || "",
+      "TELEGRAM_FALLBACK_IPS" => @telegram_fallback_ips,
       "TELEGRAM_ALLOWED_USERS" => build_allowlist(instance),
       "TELEGRAM_ALLOW_ALL_USERS" => to_string(Map.get(instance, :allow_all_telegram_users, false)),
       # Group chat trigger gating. `require_mention` forces groups to need

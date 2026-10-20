@@ -50,6 +50,16 @@ defmodule Druzhok.Runtime.HermesTest do
       assert allowed == ["100", "200", "42"]
     end
 
+    test "pins Telegram fallback IPs inside the nftables 149.154.160.0/20 allow range" do
+      ips = Hermes.env_vars(@instance)["TELEGRAM_FALLBACK_IPS"] |> String.split(",")
+      assert ips != []
+
+      for ip <- ips do
+        {:ok, {149, 154, third, _}} = :inet.parse_ipv4strict_address(String.to_charlist(ip))
+        assert third in 160..175, "#{ip} is outside the Telegram range bots may reach"
+      end
+    end
+
     test "allowlist is empty string when no owner and no allowed ids" do
       inst = %{@instance | owner_telegram_id: nil, allowed_telegram_ids: nil}
       env = Hermes.env_vars(inst)
