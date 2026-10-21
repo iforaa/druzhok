@@ -18,10 +18,11 @@ cover; `mix test --cover` thresholds are lowered only if a deletion drops covera
 
 1. **New bots get webhook mode.** All 6 active bots use `telegram_mode = webhook`, but `BotManager.create`
    inserts the default `polling`, so a bot made by the manager bot has no relay and cannot sleep until
-   the operator runs `mix druzhok.telegram_mode`. After the insert, `do_create` calls
-   `Telegram.Webhook.set_mode(name, "webhook")` (the row exists, so the id is known and in range, and no
-   updates are queued). A failure there is logged and leaves the bot on polling: it still works, and the
-   bot is not a creation error. The first start then registers the webhook as for any webhook bot.
+   the operator runs `mix druzhok.telegram_mode`. After a fresh insert (never on an existing row, see
+   1.3), `do_create` calls `Telegram.Webhook.set_mode(name, "webhook")`: the row exists, so the id is
+   known, and nothing is queued for it. A failure there (e.g. `{:error, {:id_out_of_range, id}}` once ids
+   pass 999) is logged and leaves the bot on polling: it still works, and the bot is not a creation
+   error. The first start then registers the webhook as for any webhook bot.
    Only when a public host is configured (`PHX_HOST` or `config :druzhok, :public_host`, i.e. prod; a
    `Webhook.public_host?/0` helper): without it `Webhook.public_url/1`
    is `https://localhost/...`, `set_mode` would still succeed, and a dev bot would stop getting updates.
@@ -31,8 +32,21 @@ cover; `mix test --cover` thresholds are lowered only if a deletion drops covera
    without allowing the user. `approve <bot> <id>` becomes: `allow_user` (DB allowlist + restart of a
    running bot), then the welcome message, and no `Events.broadcast`: `ops/druzhok` runs without
    `DruzhokWeb.PubSub`, so today's broadcast raises after the welcome is sent and the command exits 1.
-   Approving a hermes pairing code (`approve <bot> CODE`) is unchanged. The `pairing_codes` table goes in step 4: nothing has written it since 2026-03 (one row,
-   `vasa`, expired), so `pairings <bot>` is removed from the CLI.
+   Approving a hermes pairing code (`approve <bot> CODE`) is unchanged. The `pairing_codes` table goes
+   in step 4: nothing has written it since 2026-03 (one row, `vasa`, expired), so `pairings <bot>` is
+   removed from the CLI. `BotSettings.approve_pairing/2` becomes `allow_and_welcome/2`, taking the id as
+   a string (`allow_user` trims its input; the CLI has an integer from `Integer.parse`). Its doc and the
+   CLI help line say "allow a Telegram id and send the welcome, or approve a hermes pairing code".
+3. **Creating a bot under a taken name is refused.** `InstanceManager.save_to_db` treats an existing
+   name as an update (model only) and returns `{:ok, existing}`, and `Provisioner.derive_instance_name`
+   maps both `@foo_bot` and `@fooBot` to `foo`. A second owner's bot would then: get a ruoc account that
+   is orphaned (invite spent), drop its own token, overwrite the first bot's model and `SOUL.md`, restart
+   it, and be reported as created. `BotManager.create/2` checks the name first, before
+   `provision_ruoc`, and returns `{:error, :name_taken}`; the insert keeps the unique index as the
+   backstop (`{:error, changeset}`). The upsert branch goes, with the test pinning it
+   (`bot_manager_lifecycle_test.exs`, "Only model and active are touched on re-create"). The manager
+   bot tells the user the name is taken and to pick another username. Nothing calls `create` on an
+   existing bot on purpose (settings change through `BotSettings.update`).
 
 ### 2. Dead code (no schema change)
 
@@ -57,7 +71,8 @@ Core (`apps/druzhok/lib/druzhok`):
 - `I18n`: every key but `:welcome_default`, and `lang/1`.
 - `Instance.get_by_api_key/1`, `generate_api_key/0`; `Host.egress_check` and `Host.logs` (behaviour,
   both backends, stub; `logs` loses its only caller with `BotManager.logs`); `BotManager.stats/1`,
-  `logs/1`; `Telegram.Inbox.stats/1` (test-only; smoke.sh reads sqlite); `Ruoc.console_url/1`,
+  `logs/1`; `Telegram.Inbox.stats/1` (test-only; smoke.sh reads sqlite); `Lifecycle.Bot.next_attempt/1`
+  (dashboard-only; the controller uses its private `backoff_over?/1`); `Ruoc.console_url/1`,
   `price_label/1`; `Settings.ruoc_keys/0`; `BotSettings.restart_fields/0` and `api_key` in its
   `@secret`; `Druzhok.hello` and its test.
 - `Instance` schema fields `api_key` and `group_sessions_per_user`, out of `changeset/2` too, and
@@ -99,7 +114,9 @@ custom`). Removed: the route, the controller action and its helpers (`chunk_sse`
 setting key and `OPENROUTER_API_KEY`/`OPENROUTER_API_URL` in runtime.exs. In tests:
 `openrouter_api_url` in `config/test.exs`, the OpenRouter keys and Bypass wiring in
 `apps/druzhok_web/test/support/proxy_case.ex` (it keeps the OpenAI TTS part), and the
-`Settings.openrouter_api_key/0` test in `settings_test.exs`. `LlmFormat` keeps
+`Settings.openrouter_api_key/0` test in `settings_test.exs`, the `extract_cost_cents/2` describe block in
+`llm_format_test.exs`, and `"/v1/responses"` in `router_auth_test.exs` `@routes` (replaced by a 404
+assertion, so the route cannot come back unnoticed). `LlmFormat` keeps
 `extract_usage`, `strip_images`, `prompt_preview` (used by `LlmProxy.Ruoc`).
 
 `/v1/audio/speech` (OpenAI TTS, `openai_api_key`) stays: `/voice` uses it (67 calls, last 2026-09-16).
