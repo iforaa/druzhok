@@ -18,8 +18,9 @@ defmodule Druzhok.Telegram.Relay.Worker do
   mode switch or a pause written by another BEAM takes effect at once.
 
   Rows wait while the bot is stopped (`!active`), being deleted or asleep
-  (sleep/wake spec, "Relay changes"); for an asleep bot the worker pokes the
-  lifecycle controller, which wakes it. For a minute after a wake the retry
+  (sleep/wake spec, "Relay changes"); for an asleep bot with a row that
+  wakes it (`Inbox.next_waking/1`) the worker pokes the lifecycle controller,
+  which wakes it. For a minute after a wake the retry
   backoff is capped at 1 s, so the first update is delivered as soon as the
   listener is up, long before systemd reports the unit ready. `quiesce/1`
   answers between delivery steps only, so once it returns no POST is in
@@ -74,7 +75,8 @@ defmodule Druzhok.Telegram.Relay.Worker do
 
       instance.sleeping ->
         # notify/1 brings a new row's worker back here; the poke wakes the bot.
-        if Inbox.pending_count(instance.id) > 0 do
+        # Rows that do not wake it (Telegram.Addressed) wait for the next wake.
+        if Inbox.next_waking(instance.id) do
           Druzhok.Lifecycle.poke(instance.id)
           schedule(state, opt(:paused_poll_ms))
         else
@@ -170,7 +172,11 @@ defmodule Druzhok.Telegram.Relay.Worker do
       do: Logger.warning("[relay] #{instance.name}: cannot deliver (#{error}); retrying")
 
     cap = if just_woken?(instance), do: opt(:waking_backoff_ms), else: opt(:backoff_max_ms)
-    schedule(%{state | failing: true, backoff: min(state.backoff * 2, cap)}, min(state.backoff, cap))
+
+    schedule(
+      %{state | failing: true, backoff: min(state.backoff * 2, cap)},
+      min(state.backoff, cap)
+    )
   end
 
   defp just_woken?(%Instance{woke_at: %DateTime{} = at}),

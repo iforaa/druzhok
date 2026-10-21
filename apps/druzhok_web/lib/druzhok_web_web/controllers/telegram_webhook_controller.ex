@@ -12,7 +12,7 @@ defmodule DruzhokWebWeb.TelegramWebhookController do
   use DruzhokWebWeb, :controller
   require Logger
   alias Druzhok.{Instance, Repo}
-  alias Druzhok.Telegram.{Inbox, Relay, Webhook}
+  alias Druzhok.Telegram.{Addressed, Inbox, Relay, Webhook}
 
   def receive(conn, %{"bot" => name}) do
     with %Instance{} = instance <- Repo.get_by(Instance, name: name),
@@ -40,7 +40,9 @@ defmodule DruzhokWebWeb.TelegramWebhookController do
   defp store(conn, instance) do
     case conn.body_params do
       %{"update_id" => update_id} = update when is_integer(update_id) ->
-        case Inbox.enqueue(instance.id, update_id, Jason.encode!(update)) do
+        wakes = Addressed.wakes?(instance, update)
+
+        case Inbox.enqueue(instance.id, update_id, Jason.encode!(update), wakes: wakes) do
           :ok ->
             Relay.notify(instance.id)
             send_resp(conn, 200, "")

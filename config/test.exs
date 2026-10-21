@@ -37,3 +37,6 @@ config :druzhok,
 config :druzhok,
   hermes_bin: Path.expand("../apps/druzhok/test/support/fake_hermes.sh", __DIR__),
   fetch_worker_bin: System.get_env("FETCH_WORKER_BIN") || Path.expand("../.fetch-venv/bin/python", __DIR__)
+
+# Telegram.Addressed learns a bot's @username from getMe; tests set it per token.
+config :druzhok, :telegram_username_fun, {Druzhok.TestUsernames, :lookup}

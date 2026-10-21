@@ -17,7 +17,8 @@ Always use `/my-commit` for committing changes.
   `wait: true` to get the outcome (`{:ok, _}` / `{:error, reason}` / `{:error, :timeout}`). An active bot whose unit
   is down is started again (backoff 10 s → 15 min), so `druzhok-ctl stop` does not last: stop through
   `BotManager.stop`. Opt-in sleep (`sleep_enabled`, settings tab): a webhook bot idle for `sleep_idle_minutes`
-  (Settings, default 30) is stopped and woken by its next queued update.
+  (Settings, default 30) is stopped and woken by its next queued update that it would answer
+  (`Telegram.Addressed`: group chatter a mention-only bot skips waits, and is delivered on the next wake).
 - **Never set HTTP_PROXY/HTTPS_PROXY for bots** — breaks multipart uploads.
 - **Bot users have no internet**: `ops/nftables-druzhok.nft` allows only the proxy, DNS and Telegram's CIDRs. Anything a bot needs from the web goes through the proxy (search, `/v2/scrape`).
 - **One Telegram poller per token.** Stop a bot on the old host before starting it elsewhere.

@@ -85,6 +85,19 @@ defmodule Druzhok.LifecycleTest do
       assert HostStub.status(inst.name) == :active
     end
 
+    test "an update that does not wake it waits for the next wake", %{root: root} do
+      inst = idle_bot(root, %{sleeping: true, unit: :inactive})
+      :ok = Inbox.enqueue(inst.id, 1, ~s({"update_id":1}), wakes: false)
+      poke(inst)
+      Process.sleep(200)
+      assert reload(inst).sleeping
+      assert HostStub.calls(:start) == []
+
+      :ok = Inbox.enqueue(inst.id, 2, ~s({"update_id":2}))
+      poke(inst)
+      assert eventually(fn -> HostStub.calls(:start) == [inst.name] end)
+    end
+
     test "a restart of an asleep bot wakes it (a token change reaches it)", %{root: root} do
       inst = idle_bot(root, %{sleeping: true, unit: :inactive})
       assert {:ok, _} = BotManager.restart(inst.name, wait: true)

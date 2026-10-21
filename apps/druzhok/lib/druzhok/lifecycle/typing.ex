@@ -11,7 +11,7 @@ defmodule Druzhok.Lifecycle.Typing do
   alias Druzhok.Telegram.{API, Inbox}
 
   def start(%Instance{} = inst) do
-    with %Inbox{} = row <- Inbox.next_pending(inst.id),
+    with %Inbox{} = row <- Inbox.next_waking(inst.id),
          chat_id when not is_nil(chat_id) <- chat_id(row.payload),
          token when is_binary(token) and token != "" <- inst.telegram_token do
       Task.start(fn -> loop(token, chat_id, row.id, deadline()) end)

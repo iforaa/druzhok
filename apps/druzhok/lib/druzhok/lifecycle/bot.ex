@@ -20,7 +20,7 @@ defmodule Druzhok.Lifecycle.Bot do
   require Logger
   alias Druzhok.{BotManager, Host, Instance, Repo}
   alias Druzhok.Lifecycle.{Idle, Typing}
-  alias Druzhok.Telegram.{Inbox, Relay, Webhook}
+  alias Druzhok.Telegram.{Addressed, Inbox, Relay, Webhook}
 
   def key(instance_id), do: {:lifecycle, instance_id}
 
@@ -176,7 +176,7 @@ defmodule Druzhok.Lifecycle.Bot do
   end
 
   defp describe(:update, inst) do
-    case Inbox.next_pending(inst.id) do
+    case Inbox.next_waking(inst.id) do
       %Inbox{update_id: id} -> "update #{id}"
       _ -> "update"
     end
@@ -186,7 +186,7 @@ defmodule Druzhok.Lifecycle.Bot do
 
   defp wake_reason(inst) do
     cond do
-      Inbox.pending_count(inst.id) > 0 -> :update
+      Inbox.next_waking(inst.id) -> :update
       inst.start_seq > inst.applied_seq -> :requested
       not inst.sleep_enabled -> :sleep_disabled
       inst.telegram_mode != "webhook" or inst.telegram_mode != inst.started_mode -> :mode
@@ -302,6 +302,10 @@ defmodule Druzhok.Lifecycle.Bot do
           Host.stop(inst.name)
           set(inst, sleeping: true)
         end)
+
+      # Learn the @username now, so the first group message while asleep is
+      # judged by it rather than woken by any @mention (Telegram.Addressed).
+      Addressed.username(inst)
 
       Logger.info(
         "[life] #{inst.name}: asleep after #{div(Idle.window_s(), 60)} min idle#{rss(mem)}"

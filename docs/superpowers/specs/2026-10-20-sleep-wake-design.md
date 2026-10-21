@@ -275,6 +275,25 @@ READY (~26 s). Holding rows for `!active` means a Stop takes effect for delivery
 controller has stopped the unit. The worker never calls the controller synchronously (poke is a cast), so
 the controller's `quiesce` call cannot deadlock.
 
+### Waking only for addressed updates
+
+Added after rollout, when a group message woke igorhermes for a turn it skipped. The webhook controller
+marks each row `wakes` (`telegram_updates.wakes`, `Druzhok.Telegram.Addressed.wakes?/2`). Only a plain
+group or supergroup message (`message`/`edited_message`) to a `mention_only` bot can be `false`, and only
+when none of these hold: its chat is in `allowed_telegram_chats` (hermes's free-response chats), it
+replies to the bot (`reply_to_message.from.id` = the token's numeric id), it has a `bot_command` entity,
+a `text_mention` of the bot, a `mention` entity naming the bot's @username, or the trigger name as a whole
+word (case-insensitive) in text or caption. The username comes from `getMe`, cached per token, fetched in
+the background on a miss or when the bot falls asleep; until it is known every @mention counts. When in
+doubt the row wakes.
+
+Wake rule 5, the worker's poke and the typing indicator look only at `Inbox.next_waking/1`: the oldest
+pending row that is `wakes`, or any pending row older than 20 h. A row that does not wake is still held
+and delivered in order on the next wake, so a bot that observes group chatter sees it before the message
+that woke it; the 20 h rule delivers it before Telegram's 24 h expiry would drop it. A `mention_only`
+change made after a row was queued does not re-mark it; the restart that applies the change wakes the
+bot anyway.
+
 ### Typing indicator
 
 When the controller begins a wake because of a pending update, druzhok sends
@@ -385,8 +404,9 @@ wait for rule 5), since the old code does not know `sleeping`.
   with backoff (10 s, 1 min, 5 min, then 15 min) and shown as down with its error; the controller stops
   the unit after each failure so systemd's `Restart=always` does not retry it every 5 s in between. Stop
   ends the retries. A hermes that crashes *after* READY is still restarted by systemd, as today.
-- **Wake storms.** A group bot that observes every message wakes on each one. That bot is not idle, and
-  the idle window keeps it awake; it costs at most one start per window.
+- **Wake storms.** Only for a bot that answers every group message (`mention_only` off): it wakes on each
+  one. That bot is not idle, and the idle window keeps it awake; it costs at most one start per window.
+  A `mention_only` bot wakes only for messages it would answer ("Waking only for addressed updates").
 - **Session-end consolidation on every sleep**: an embeddings call per sleep, priced at 0 in ruoc today.
 - **First reply after a wake is slower**: 5–7 s best case, ~25 s if turns wait for READY. The typing
   indicator covers the wait. A bot whose owner minds stays opted out.

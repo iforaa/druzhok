@@ -45,6 +45,17 @@ defmodule DruzhokWebWeb.TelegramWebhookControllerTest do
     assert Jason.decode!(row.payload) == @update
   end
 
+  test "group chatter a mention-only bot skips is stored as not waking", %{conn: conn, bot: bot} do
+    Repo.update!(Instance.changeset(bot, %{mention_only: true}))
+    chatter = put_in(@update, ["message", "chat"], %{"id" => -100, "type" => "supergroup"})
+
+    assert response(push(conn, bot.name, chatter, "sekret"), 200) == ""
+    refute Inbox.next_pending(bot.id).wakes
+
+    assert response(push(build_conn(), bot.name, %{@update | "update_id" => 502}, "sekret"), 200)
+    assert Inbox.next_waking(bot.id).update_id == 502
+  end
+
   test "a wrong or missing secret is refused and stores nothing", %{conn: conn, bot: bot} do
     assert response(push(conn, bot.name, @update, "nope"), 401)
     assert response(push(build_conn(), bot.name, @update, nil), 401)

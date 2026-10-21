@@ -17,6 +17,18 @@ defmodule Druzhok.Telegram.InboxTest do
     assert Inbox.next_pending(inst.id).payload == ~s({"update_id":7})
   end
 
+  test "next_waking skips rows that do not wake, until they have waited 20 h", %{inst: inst} do
+    :ok = Inbox.enqueue(inst.id, 1, ~s({"update_id":1}), wakes: false)
+    assert Inbox.next_waking(inst.id) == nil
+    assert Inbox.pending_count(inst.id) == 1
+
+    assert %Inbox{update_id: 1} =
+             Inbox.next_waking(inst.id, DateTime.add(DateTime.utc_now(), 20 * 3600 + 1))
+
+    :ok = Inbox.enqueue(inst.id, 2, ~s({"update_id":2}))
+    assert %Inbox{update_id: 2} = Inbox.next_waking(inst.id)
+  end
+
   test "nothing is stored for a bot that is not in webhook mode at the moment of the insert" do
     polling = relay_instance()
     assert {:error, :not_webhook} = Inbox.enqueue(polling.id, 1, "{}")

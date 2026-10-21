@@ -23,10 +23,12 @@ defmodule Druzhok.Telegram.Inbox do
     field(:attempts, :integer, default: 0)
     field(:last_error, :string)
     field(:dropped_reason, :string)
+    field(:wakes, :boolean, default: true)
   end
 
   @expire_after_s 24 * 60 * 60
   @prune_after_s 3 * 24 * 60 * 60
+  @backlog_wake_s 20 * 60 * 60
 
   @doc """
   Store one update for a bot that is in webhook mode *at the moment of the
@@ -36,11 +38,13 @@ defmodule Druzhok.Telegram.Inbox do
   queued for a bot that already polls.
 
   A redelivery of an `update_id` already stored is a no-op, so Telegram
-  retrying a late ack cannot queue a message twice. Returns `:ok` or
-  `{:error, :not_webhook}`.
+  retrying a late ack cannot queue a message twice. `wakes: false` marks an
+  update that must not wake a sleeping bot (`Druzhok.Telegram.Addressed`).
+  Returns `:ok` or `{:error, :not_webhook}`.
   """
-  def enqueue(instance_id, update_id, payload)
+  def enqueue(instance_id, update_id, payload, opts \\ [])
       when is_integer(update_id) and is_binary(payload) do
+    wakes = Keyword.get(opts, :wakes, true)
     now = DateTime.utc_now()
 
     source =
@@ -51,7 +55,8 @@ defmodule Druzhok.Telegram.Inbox do
           update_id: type(^update_id, :integer),
           payload: type(^payload, :string),
           received_at: type(^now, :utc_datetime_usec),
-          attempts: 0
+          attempts: 0,
+          wakes: type(^wakes, :boolean)
         }
       )
 
@@ -78,6 +83,27 @@ defmodule Druzhok.Telegram.Inbox do
     )
     |> Repo.one()
   end
+
+  @doc """
+  The oldest pending row that may wake a sleeping bot, or nil: one marked
+  `wakes`, or any row once the oldest has waited `backlog_wake_s` (20 h), so
+  rows that never wake are still delivered before they expire at 24 h.
+  """
+  def next_waking(instance_id, now \\ DateTime.utc_now()) do
+    backlog_before = DateTime.add(now, -backlog_wake_s())
+
+    from(u in __MODULE__,
+      where:
+        u.instance_id == ^instance_id and is_nil(u.acked_at) and
+          (u.wakes or u.received_at < ^backlog_before),
+      order_by: [asc: u.update_id],
+      limit: 1
+    )
+    |> Repo.one()
+  end
+
+  defp backlog_wake_s,
+    do: Application.get_env(:druzhok, :telegram_backlog_wake_s, @backlog_wake_s)
 
   def ack(%__MODULE__{id: id}), do: set(id, acked_at: DateTime.utc_now())
 
