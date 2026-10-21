@@ -22,11 +22,16 @@ cover; `mix test --cover` thresholds are lowered only if a deletion drops covera
    `Telegram.Webhook.set_mode(name, "webhook")` (the row exists, so the id is known and in range, and no
    updates are queued). A failure there is logged and leaves the bot on polling: it still works, and the
    bot is not a creation error. The first start then registers the webhook as for any webhook bot.
+   Only when a public host is configured (`PHX_HOST` or `config :druzhok, :public_host`, i.e. prod; a
+   `Webhook.public_host?/0` helper): without it `Webhook.public_url/1`
+   is `https://localhost/...`, `set_mode` would still succeed, and a dev bot would stop getting updates.
+   Dev and test bots stay on polling.
 2. **`ops/druzhok approve <bot> <numeric id>` grants access.** `BotSettings.approve_pairing` calls
    `Runtime.Hermes.add_allowed_user`, which is a no-op, so it deletes the request and sends the welcome
    without allowing the user. `approve <bot> <id>` becomes: `allow_user` (DB allowlist + restart of a
-   running bot), then the welcome message. Approving a hermes pairing code (`approve <bot> CODE`) is
-   unchanged. The `pairing_codes` table goes in step 4: nothing has written it since 2026-03 (one row,
+   running bot), then the welcome message, and no `Events.broadcast`: `ops/druzhok` runs without
+   `DruzhokWeb.PubSub`, so today's broadcast raises after the welcome is sent and the command exits 1.
+   Approving a hermes pairing code (`approve <bot> CODE`) is unchanged. The `pairing_codes` table goes in step 4: nothing has written it since 2026-03 (one row,
    `vasa`, expired), so `pairings <bot>` is removed from the CLI.
 
 ### 2. Dead code (no schema change)
@@ -43,17 +48,24 @@ Core (`apps/druzhok/lib/druzhok`):
   `reject_group`, `get_pairing`, `get_groups`, `get_owner`.
 - `Druzhok.Events` and `Phoenix.PubSub` in `DruzhokWeb.Application`: no subscriber since the dashboard
   went, and `Events` writes logs under the old `data/instances/<bot>/logs`. The endpoint's
-  `pubsub_server` config goes with it (no channels, no LiveView).
+  `pubsub_server` config goes with it (no channels, no LiveView), and `phoenix_pubsub` leaves
+  `apps/druzhok/mix.exs` (it stays in druzhok_web as a Phoenix dependency).
 - `Druzhok.AllowedChat` module (table in step 4), `Druzhok.Pairing` (table in step 4).
 - `Telegram.Format` (no callers), `Telegram.API.send_document/send_photo/get_file/download_file/
   fetch_file_by_id` (test-only).
 - `SiteLister.list/1` and helpers; `sites_dir/1` stays (BotSite plug).
 - `I18n`: every key but `:welcome_default`, and `lang/1`.
-- `Instance.get_by_api_key/1`, `generate_api_key/0`; `Host.egress_check` (behaviour, both backends,
-  stub); `BotManager.stats/1`, `logs/1`; `Ruoc.console_url/1`, `price_label/1`; `Settings.ruoc_keys/0`;
-  `BotSettings.restart_fields/0` and `api_key` in its `@secret`; `Druzhok.hello` and its test.
-- `group_sessions_per_user` out of `BotSettings` `@restart`: hermes's value is derived from
-  `group_shared_memory`, so setting it only restarts the bot (column in step 4).
+- `Instance.get_by_api_key/1`, `generate_api_key/0`; `Host.egress_check` and `Host.logs` (behaviour,
+  both backends, stub; `logs` loses its only caller with `BotManager.logs`); `BotManager.stats/1`,
+  `logs/1`; `Telegram.Inbox.stats/1` (test-only; smoke.sh reads sqlite); `Ruoc.console_url/1`,
+  `price_label/1`; `Settings.ruoc_keys/0`; `BotSettings.restart_fields/0` and `api_key` in its
+  `@secret`; `Druzhok.hello` and its test.
+- `Instance` schema fields `api_key` and `group_sessions_per_user`, out of `changeset/2` too, and
+  `group_sessions_per_user` out of `BotSettings` `@restart` (hermes's value is derived from
+  `group_shared_memory`, so setting it only restarts the bot). The fields leave the schema here, one
+  deploy before step 4 drops the columns: Ecto selects every declared field, and the deploy migrates
+  while the old BEAM still runs, so dropping a column the running code still declares breaks every
+  `Repo.get(Instance, …)` until the restart.
 - `TokenPool` branch of `BotManager.do_create` and `TokenPool.release` in delete: the provisioner always
   passes a token. Without a token `create` returns `{:error, "telegram token required"}`. Module and
   table in step 4.
@@ -66,8 +78,13 @@ Web (`apps/druzhok_web`):
   `druzhok_web_web.ex`; the generator placeholder comments in the application.
 - Config nobody reads: `generators` (config.exs), `dev_routes` (dev.exs), `nebius_api_url` and
   `anthropic_api_url` (test.exs).
-- Stale comments naming the dashboard or `Druzhok.Budget` (config.exs, runtime.exs, llm_format.ex,
-  bot_site.ex, `ops/Caddyfile`), and the proxy controller's note that embeddings go to OpenRouter.
+- Stale comments, found by `grep -rni 'dashboard\|budget\|tokenpool\|token pool\|migrate_ruoc'
+  apps config ops` after the deletions rather than from a fixed list. Known today: config.exs,
+  runtime.exs, llm_format.ex, bot_site.ex, `ops/Caddyfile`, `runtime/hermes.ex` (the dashboard as
+  source of truth), `lifecycle.ex`, `telegram/inbox.ex`, `llm_proxy/ruoc.ex`, `ruoc.ex`, the proxy
+  controller's note that embeddings go to OpenRouter, and the ones this step makes stale:
+  `druzhok_web/application.ex` (`mix druzhok.migrate_ruoc`), the `BotManager.delete/1` doc and the
+  `do_create` comment (TokenPool).
 - Asset entries in `apps/druzhok_web/.gitignore`; the root `priv/default-page/` duplicate.
 - `README.md`: no budgets, no dashboard.
 
@@ -79,7 +96,10 @@ custom`). Removed: the route, the controller action and its helpers (`chunk_sse`
 `convert_*`, `meter_image`, `@default_image_model`), `responses_test.exs`, and the parts of
 `LlmFormat` only it used (`provider_url`, `provider_key`, `request_url`, `request_headers`,
 `extract_cost_cents`, `@fallback_prices`). Then `Settings.openrouter_api_key`, the `openrouter_api_key`
-setting key and `OPENROUTER_API_KEY`/`OPENROUTER_API_URL` in runtime.exs. `LlmFormat` keeps
+setting key and `OPENROUTER_API_KEY`/`OPENROUTER_API_URL` in runtime.exs. In tests:
+`openrouter_api_url` in `config/test.exs`, the OpenRouter keys and Bypass wiring in
+`apps/druzhok_web/test/support/proxy_case.ex` (it keeps the OpenAI TTS part), and the
+`Settings.openrouter_api_key/0` test in `settings_test.exs`. `LlmFormat` keeps
 `extract_usage`, `strip_images`, `prompt_preview` (used by `LlmProxy.Ruoc`).
 
 `/v1/audio/speech` (OpenAI TTS, `openai_api_key`) stays: `/voice` uses it (67 calls, last 2026-09-16).
@@ -91,12 +111,22 @@ Backup first (`/data/backups/druzhok-pre-legacy-cleanup-<date>.db`). One migrati
 - Drop tables `models` (11 rows of an old catalogue), `llm_requests`, `reminders`, `tool_executions`,
   `memory_embeddings`, `allowed_chats` (all 0 rows), `tokens` (1 unassigned row), `pairing_codes`
   (1 expired row).
-- Drop columns `instances.api_key` (always null) and `instances.group_sessions_per_user`.
+- Drop columns from `instances`: `api_key` (always null) and `group_sessions_per_user` (schema fields
+  removed in step 2), and the columns no schema field has mapped since the own-agent, OpenClaw, Docker
+  and honcho eras (migrations 2026-03-22 … 2026-04-27): `heartbeat_interval`, `sandbox`,
+  `daily_token_limit`, `dream_hour`, `bot_runtime`, `on_demand_model`, `reject_message`,
+  `audio_model`, `embedding_model`, `heartbeat_active_start`, `heartbeat_active_end`,
+  `heartbeat_target`, `fallback_models`, `dreaming`, `honcho_workspace`, `honcho_token` (2 rows still
+  hold a value; it goes with the column).
 - Delete settings rows `anthropic_api_key`, `nebius_api_key`, `openrouter_api_url`,
   `openrouter_api_key`.
 
-SQLite `DROP COLUMN` needs no table rebuild for these (no index, no constraint). `down` recreates the
-tables and columns empty; the data is in the backup. `allow_all_telegram_users` stays (true on
+`instances_api_key_index` (unique, from `20260325000001`, recreated by the `…0325000003` rebuild) is
+dropped before its column: SQLite refuses `DROP COLUMN` on an indexed column, and ecto_sqlite3 does
+not drop dependent indexes (`20260411000001_drop_pools.exs` does the same for `pool_id`). On prod the
+only other indexes on `instances` are `name` and `tenant_key`, which stay; the migration is tried on a
+copy of the prod DB before it runs there. `down` recreates the tables and columns empty, and the
+unique index on `api_key`; the data is in the backup. `allow_all_telegram_users` stays (true on
 igorhermes: the hermes group-auth bypass).
 
 ### 5. Docs and local files
@@ -107,7 +137,10 @@ igorhermes: the hermes group-auth bypass).
   webhook relay, sleep/wake, dashboard removal, this one).
 - The mnemosyne plan's references to `ops/embed-model-fetch.sh` and `.embed-model/` get a "retired" note.
 - `.embed-model/` (untracked, 465 MB, retired e5-small) is deleted locally.
-- CLAUDE.md: `migrate_ruoc` task line, anything naming removed modules.
+- CLAUDE.md: the `migrate_ruoc` task line, the `POST /v1/responses | OpenRouter` row and the
+  "OpenRouter responses have leading whitespace" note (step 3), `pairings` in the operator CLI line
+  (step 1.2), and anything naming removed modules. Each step updates CLAUDE.md in its own commit;
+  step 5 only checks nothing is left.
 
 ## Not in this spec (operator decisions)
 
