@@ -145,6 +145,11 @@ defmodule Druzhok.Runtime.Hermes do
       "BOT_SITE_BASE_URL" => build_bot_site_base_url(instance),
       "HERMES_INFERENCE_PROVIDER" => "custom",
       "OPENROUTER_API_KEY" => tenant_key,
+      # Anything hermes sends to "openrouter" goes to the proxy too. Bots have
+      # no internet, and the video tool's catalog fetch to openrouter.ai hung
+      # 2 × 10 s on every start (nftables drops), holding the first reply
+      # behind hermes's turn warm-up; the proxy answers it 404 at once.
+      "OPENROUTER_BASE_URL" => proxy_url,
       "HERMES_MODEL" => model,
       "STT_OPENAI_BASE_URL" => proxy_url,
       # Web search: firecrawl backend → druzhok /v2/search → perplexity/sonar

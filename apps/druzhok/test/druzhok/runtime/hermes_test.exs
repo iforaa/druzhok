@@ -42,6 +42,12 @@ defmodule Druzhok.Runtime.HermesTest do
       assert env["HERMES_INFERENCE_PROVIDER"] == "custom"
     end
 
+    # Bots have no internet: an openrouter.ai call hangs until its timeout
+    # (the video tool's catalog held every start for 20 s).
+    test "anything hermes sends to openrouter goes to the proxy" do
+      assert Hermes.env_vars(@instance)["OPENROUTER_BASE_URL"] == Druzhok.Runtime.proxy_url()
+    end
+
     test "sets telegram token and builds allowlist from owner + allowed ids" do
       env = Hermes.env_vars(@instance)
       assert env["TELEGRAM_BOT_TOKEN"] == "111:ABCDEF"
