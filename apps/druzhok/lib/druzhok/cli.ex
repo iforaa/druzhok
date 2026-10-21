@@ -18,8 +18,8 @@ defmodule Druzhok.CLI do
     users <bot>                   allowed Telegram ids
     allow <bot> <telegram id>     allow a user (restarts the bot)
     disallow <bot> <telegram id>  remove a user (restarts the bot)
-    pairings <bot>                pending pairing requests
-    approve <bot> <user id|CODE>  approve a pairing request or a hermes pairing code
+    approve <bot> <user id|CODE>  allow a Telegram id and send the welcome,
+                                  or approve a hermes pairing code
     clear-history <bot>           drop chat sessions (memory stays), restart
     migrate-ruoc <bot>            move an old bot onto its own ruoc account
     settings                      global settings (secrets masked)
@@ -94,18 +94,10 @@ defmodule Druzhok.CLI do
   defp run(["disallow", bot, id]),
     do: BotSettings.remove_user(bot, id) |> explain() |> done("removed")
 
-  defp run(["pairings", bot]) do
-    for p <- BotSettings.pending_pairings(bot) do
-      IO.puts("#{p.telegram_user_id} @#{p.username} #{p.display_name}")
-    end
-
-    :ok
-  end
-
   defp run(["approve", bot, who]) do
     case Integer.parse(who) do
       {user_id, ""} ->
-        BotSettings.approve_pairing(bot, user_id) |> explain() |> done("approved")
+        BotSettings.allow_and_welcome(bot, user_id) |> explain() |> done("approved")
 
       _ ->
         case BotSettings.approve_code(bot, String.upcase(who)) do

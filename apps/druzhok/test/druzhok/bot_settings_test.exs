@@ -97,7 +97,10 @@ defmodule Druzhok.BotSettingsTest do
     test "global settings: secrets masked, unknown keys refused" do
       on_exit(fn ->
         import Ecto.Query
-        Repo.delete_all(from(s in Settings, where: s.key in ["fetch_secret", "sleep_idle_minutes"]))
+
+        Repo.delete_all(
+          from(s in Settings, where: s.key in ["fetch_secret", "sleep_idle_minutes"])
+        )
       end)
 
       Settings.set("fetch_secret", "abcdefghijklmn")
@@ -114,6 +117,28 @@ defmodule Druzhok.BotSettingsTest do
 
       assert capture_io(:stderr, fn -> assert CLI.main(["settings", "set", "bogus=1"]) == 1 end) =~
                "unknown setting bogus"
+    end
+
+    test "approve <bot> <id> allows the id and sends the welcome" do
+      bypass = Bypass.open()
+      Application.put_env(:druzhok, :telegram_api_base, "http://localhost:#{bypass.port}")
+      on_exit(fn -> Application.delete_env(:druzhok, :telegram_api_base) end)
+      test_pid = self()
+
+      Bypass.expect_once(bypass, "POST", "/bot123abc/sendMessage", fn conn ->
+        {:ok, body, conn} = Plug.Conn.read_body(conn)
+        send(test_pid, {:sent, Jason.decode!(body)})
+        Plug.Conn.resp(conn, 200, ~s({"ok":true,"result":{}}))
+      end)
+
+      inst = relay_instance(%{active: false, telegram_token: "123abc", welcome_message: "привет"})
+
+      assert capture_io(fn -> assert CLI.main(["approve", inst.name, "777"]) == 0 end) =~
+               "approved"
+
+      assert "777" in Instance.get_allowed_ids(reload(inst))
+      assert_receive {:sent, %{"chat_id" => chat, "text" => "привет"}}
+      assert to_string(chat) == "777"
     end
 
     test "help lists the commands" do

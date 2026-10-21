@@ -732,6 +732,7 @@ defmodule Druzhok.ManagerBot do
           {:ok, _name, username} -> Onboarding.completion_message(username)
           {:error, :crashed} -> "Ошибка создания бота. Попробуй ещё раз."
           {:error, {:invite, _}} -> Onboarding.create_race_message()
+          {:error, :name_taken} -> Onboarding.name_taken_message()
           {:error, reason} -> "Ошибка создания бота: #{inspect(reason)}\nПопробуй ещё раз."
         end
 

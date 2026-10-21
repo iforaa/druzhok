@@ -9,7 +9,7 @@ defmodule Druzhok.BotSettings do
   druzhok itself apply at once.
   """
 
-  alias Druzhok.{BotManager, I18n, Instance, Pairing, Repo, Runtime, Telegram}
+  alias Druzhok.{BotManager, I18n, Instance, Repo, Runtime, Telegram}
 
   @restart ~w(model image_model language telegram_token mention_only group_sessions_per_user
               group_shared_memory website_hosting_enabled image_gen_enabled memory_provider
@@ -134,8 +134,6 @@ defmodule Druzhok.BotSettings do
     end
   end
 
-  def pending_pairings(name), do: Pairing.pending_for_instance(name)
-
   @doc "Allow a Telegram id (or @-less numeric input) to DM the bot; restarts it."
   def allow_user(name, input), do: mutate_allowlist(name, Runtime.parse_user_input(input), :add)
 
@@ -166,17 +164,14 @@ defmodule Druzhok.BotSettings do
     end
   end
 
-  @doc "Approve a pending pairing request and send the user the welcome message."
-  def approve_pairing(name, user_id) do
-    with {:ok, inst} <- fetch(name) do
-      runtime = Runtime.for_instance(inst)
-      runtime.add_allowed_user(runtime.data_root(inst), to_string(user_id))
-      Pairing.approve_request(name, user_id)
+  @doc "Allow a Telegram id (as `allow_user/2`) and send it the bot's welcome message."
+  def allow_and_welcome(name, user_id) do
+    user_id = to_string(user_id)
 
+    with :ok <- allow_user(name, user_id),
+         {:ok, inst} <- fetch(name) do
       welcome = inst.welcome_message || I18n.t(:welcome_default, inst.language || "ru")
       if inst.telegram_token, do: Telegram.API.send_message(inst.telegram_token, user_id, welcome)
-
-      Druzhok.Events.broadcast(name, %{type: :pairing_approved, user_id: to_string(user_id)})
       :ok
     end
   end

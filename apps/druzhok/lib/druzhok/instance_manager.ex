@@ -124,10 +124,10 @@ defmodule Druzhok.InstanceManager do
         })
         |> Repo.insert()
 
-      existing ->
-        existing
-        |> Instance.changeset(%{model: config.model})
-        |> Repo.update()
+      # BotManager.create/2 refuses a taken name; this is the race backstop
+      # (the unique index answers too).
+      _existing ->
+        {:error, :name_taken}
     end
   end
 

@@ -63,17 +63,42 @@ defmodule Druzhok.BotManagerLifecycleTest do
       assert Repo.get_by(Instance, name: name) == nil
     end
 
-    test "create on an existing name updates the model and keeps the row", %{name: name} do
+    test "create on a taken name is refused and leaves the row alone", %{name: name} do
       assert {:ok, _} = BotManager.create(name, %{model: "m", telegram_token: "1A"})
       first = Repo.get_by!(Instance, name: name)
 
-      assert {:ok, %{model: "m2"}} = BotManager.create(name, %{model: "m2", telegram_token: "1B"})
+      assert {:error, :name_taken} = BotManager.create(name, %{model: "m2", telegram_token: "1B"})
       again = Repo.get_by!(Instance, name: name)
-      assert again.id == first.id
-      assert again.model == "m2"
-      # Only model and active are touched on re-create.
+      assert again.model == "m"
       assert again.telegram_token == "1A"
-      assert again.tenant_key == first.tenant_key
+      assert again.updated_at == first.updated_at
+    end
+
+    test "a new bot is polling without a public host and webhook with one", %{name: name} do
+      assert {:ok, _} = BotManager.create(name, %{model: "m", telegram_token: "1A"})
+      assert Repo.get_by!(Instance, name: name).telegram_mode == "polling"
+
+      Application.put_env(:druzhok, :public_host, "druzhok.test")
+      on_exit(fn -> Application.delete_env(:druzhok, :public_host) end)
+      other = name <> "w"
+      cleanup_instance(other)
+
+      log =
+        ExUnit.CaptureLog.capture_log(fn ->
+          assert {:ok, _} = BotManager.create(other, %{model: "m", telegram_token: "1B"})
+        end)
+
+      inst = Repo.get_by!(Instance, name: other)
+
+      # The shared test DB's ids may be past the relay's port range; then the
+      # bot stays on polling and says why.
+      if Druzhok.Telegram.Webhook.port(inst) do
+        assert inst.telegram_mode == "webhook"
+        assert is_binary(inst.telegram_webhook_secret)
+      else
+        assert inst.telegram_mode == "polling"
+        assert log =~ "stays on polling: {:error, {:id_out_of_range"
+      end
     end
   end
 

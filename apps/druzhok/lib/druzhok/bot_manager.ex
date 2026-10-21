@@ -10,10 +10,22 @@ defmodule Druzhok.BotManager do
   alias Druzhok.{Instance, InstanceManager, TokenPool, Repo}
   require Logger
 
+  @doc """
+  Create a stopped bot. `{:error, :name_taken}` when the name exists: two
+  usernames can derive the same name (`@foo_bot`, `@fooBot`), and the check
+  comes before the ruoc account so a refusal spends no invite.
+  """
   def create(name, opts) do
-    with {:ok, opts} <- provision_ruoc(name, Map.new(opts)) do
+    with :ok <- name_free(name),
+         {:ok, opts} <- provision_ruoc(name, Map.new(opts)) do
       do_create(name, opts)
     end
+  end
+
+  defp name_free(name) do
+    if Repo.exists?(from(i in Instance, where: i.name == ^name)),
+      do: {:error, :name_taken},
+      else: :ok
   end
 
   # Once ruoc-gateway is configured every new bot gets its own account there
@@ -74,6 +86,7 @@ defmodule Druzhok.BotManager do
         case InstanceManager.create(name, config) do
           {:ok, instance} ->
             if token_record.id, do: TokenPool.claim(token_record, instance.id)
+            use_webhook(instance)
             admit_owner(opts)
             # The row is created stopped; the caller asks for the start once
             # it has written what the first start should see (SOUL.md), so a
@@ -248,6 +261,17 @@ defmodule Druzhok.BotManager do
   end
 
   defp admit_owner(_), do: :ok
+
+  # Every bot on prod is relayed (it can sleep only then). A failure leaves the
+  # new bot polling, which still works, so it is not a creation error.
+  defp use_webhook(instance) do
+    if Druzhok.Telegram.Webhook.public_host?() do
+      case Druzhok.Telegram.Webhook.set_mode(instance.name, "webhook") do
+        {:ok, _, _} -> :ok
+        error -> Logger.warning("#{instance.name} stays on polling: #{inspect(error)}")
+      end
+    end
+  end
 
   # The ruoc account is suspended, never deleted, so its usage keeps its
   # explanation. A failure here is logged and does not block the delete.

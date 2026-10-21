@@ -46,6 +46,15 @@ defmodule Druzhok.Telegram.Webhook do
   defp public_host,
     do: System.get_env("PHX_HOST") || Application.get_env(:druzhok, :public_host, "localhost")
 
+  @doc """
+  Whether Telegram can reach this druzhok (`PHX_HOST` or `:public_host` set).
+  Without it the webhook URL is `https://localhost/...`, so new bots poll.
+  """
+  def public_host?,
+    do:
+      System.get_env("PHX_HOST") not in [nil, ""] or
+        Application.get_env(:druzhok, :public_host) != nil
+
   def generate_secret, do: Base.encode16(:crypto.strong_rand_bytes(32), case: :lower)
 
   @doc """

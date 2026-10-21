@@ -29,7 +29,7 @@ Always use `/my-commit` for committing changes.
   `platforms.telegram.extra` keys written by `Runtime.Hermes.sync_config/2` on each start — no fork patch.
 - **Telegram delivery is per bot** (`instances.telegram_mode`): `polling` (hermes long-polls) or `webhook`
   (Telegram → `POST /telegram/webhook/<bot>` → `telegram_updates` queue → `Druzhok.Telegram.Relay` →
-  hermes's PTB server on `127.0.0.1:20000+id`). Switch with
+  hermes's PTB server on `127.0.0.1:20000+id`). New bots start in webhook mode when a public host is set (`PHX_HOST`; `BotManager.create`). Switch with
   `sudo ops/druzhok-run.sh 'IO.inspect(Druzhok.Telegram.Webhook.set_mode("<bot>", "webhook"))'` then
   `BotManager.restart`; leaving webhook mode is refused while rows are queued (`force: true` drops them).
   Only a bot's own uid may answer druzhok from its port (nft `bot_webhook` `uid . port`, written by
@@ -119,7 +119,7 @@ sudo systemctl restart druzhok
 Operator CLI (replaces the dashboard, spec `docs/superpowers/specs/2026-10-21-dashboard-removal-design.md`):
 `sudo ops/druzhok help` — `list`, `show <bot>`, `set <bot> key=value…` (restarts a running bot when the field
 needs it, `Druzhok.BotSettings`; `value=-` reads stdin for secrets), `start|stop|restart <bot>` (waits),
-`users|allow|disallow|pairings|approve`, `settings [set key=value…]`. Dev: `mix druzhok …`.
+`users|allow|disallow|approve`, `settings [set key=value…]`. Dev: `mix druzhok …`.
 Units: `sudo druzhok-ctl status|logs <name>`; `journalctl -u hermes@<name> -f`.
 All bots share `system-hermes.slice` (`ops/system-hermes.slice`: MemoryHigh 4.5G, MemoryMax 5G; per-bot 800M/1G in `hermes@.service`). Changing it applies live on `daemon-reload`.
 Hermes install: `/opt/hermes` is a symlink to `/data/opt/hermes-<version>` (one dir per version, rsynced from `hermes-agent/`, not a git checkout; Python 3.14 from uv under `/data/opt/uv-python` since 0.22; recipe in the `update-hermes` skill). Bots move onto a new dir one at a time through druzhok (`sudo ops/druzhok restart <bot>`, not `druzhok-ctl restart`, which skips config sync) — operator's bot first, `ops/smoke.sh`.

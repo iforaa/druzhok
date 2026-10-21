@@ -147,6 +147,7 @@ defmodule Druzhok.ManagerBot.Onboarding do
   end
 
   def create_race_message, do: "Код успели использовать. Попроси новый и создай бота заново."
+  def name_taken_message, do: "Бот с похожим именем уже есть. Создай бота с другим username."
   def after_create_message, do: "Управление ботом — в меню внизу."
   def after_delete_message, do: "Можно создать нового бота."
 
