@@ -1,5 +1,9 @@
 # Mnemosyne Memory Implementation Plan
 
+> **Retired parts (2026-10-20):** the local e5-small ONNX worker, `/internal/embed`, `ops/embed-model-fetch.sh`
+> and `.embed-model/` are gone. Embeddings are computed upstream by ruoc (`ruoc-embed-e5-large`, see CLAUDE.md);
+> the plan below is history for those tasks.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Give each hermes bot Mnemosyne episodic memory with Russian-capable embeddings served by one druzhok-side model and metered through ruoc-gateway.
