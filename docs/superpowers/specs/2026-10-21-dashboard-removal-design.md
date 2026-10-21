@@ -27,7 +27,7 @@ One step per commit, each deployed and smoke-tested (`ops/smoke.sh`) before the 
    Tailwind) and their deps; the `/` routes. Done: also `Druzhok.User` with `bcrypt_elixir` and the
    seeds file (a hard-coded admin password), `priv/static` and `cache_static_manifest` (the "could not
    find static manifest" error at every start), and `Druzhok.ErrorLogger`/`CrashLog`: errors stay in the
-   journal. Migration `20261022000002` drops `users` and `crash_logs`. `Druzhok.Events` stays (PubSub
+   journal. Migrations `20261022000002` and `…03` drop `users` and `crash_logs`. `Druzhok.Events` stays (PubSub
    broadcasts with no subscriber; cheap).
 
 ## Not changed
