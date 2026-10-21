@@ -188,9 +188,20 @@ defmodule Druzhok.Lifecycle.Bot do
     cond do
       Inbox.next_waking(inst.id) -> :update
       inst.start_seq > inst.applied_seq -> :requested
+      cron_due?(inst) -> :cron
       not inst.sleep_enabled -> :sleep_disabled
       inst.telegram_mode != "webhook" or inst.telegram_mode != inst.started_mode -> :mode
       true -> nil
+    end
+  end
+
+  # An unreadable jobs file wakes the bot: it cannot be asleep through a run
+  # no one can see.
+  defp cron_due?(inst) do
+    case Idle.cron_wake_at(inst) do
+      {:ok, nil} -> false
+      {:ok, at} -> DateTime.compare(at, DateTime.utc_now()) != :gt
+      :error -> true
     end
   end
 

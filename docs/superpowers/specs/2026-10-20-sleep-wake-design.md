@@ -27,7 +27,7 @@ What this buys:
 3. **One place for lifecycle.** Restart, stop and delete stop racing each other across BEAMs (today
    `{:bot_restart, name}` is a `:global` lock local to one BEAM and `stop/1`/`start/1` take none).
 
-Non-goals: waking for cron (v1 keeps bots that have cron jobs awake, see [Cron](#cron)), sleeping polling
+Non-goals: sleeping polling
 bots, multi-host placement (Block B, though the controller is where it would plug in), cutting hermes
 cold-start time.
 
@@ -163,8 +163,10 @@ checks once a minute, and on each pass takes the **first** rule that applies:
    unit reads inactive and no action is in flight, write `stopped_seq = stop_seq` (the stop waiter's
    acknowledgement). Nothing else until `active` comes back.
 5. **`active && sleeping`** → stay asleep unless a reason to wake holds:
-   - an update is pending for it (`Inbox.pending_count > 0`),
+   - an update that wakes it is pending (`Inbox.next_waking/1`, see [Waking only for addressed
+     updates](#waking-only-for-addressed-updates)),
    - `start_seq > applied_seq` (someone asked for a start or restart),
+   - a cron run is due within 3 min, or `cron/jobs.json` cannot be read ([Cron](#cron)),
    - `!sleep_enabled`, or `telegram_mode != "webhook"`, or `telegram_mode != started_mode`,
    - the unit is active or activating (someone ran `druzhok-ctl start` by hand): just set
      `sleeping = false` and go on to rule 6 next pass.
@@ -252,7 +254,8 @@ A bot awake under rule 6 is idle when all of these hold:
    not idle (fail awake, as hermes's own predicate does).
 6. The unit is `active` and its cgroup holds exactly one process (`druzhok-ctl procs <bot>`, a new
    subcommand printing the count of `cgroup.procs`).
-7. No enabled job in `cron/jobs.json`. Unreadable → not idle.
+7. No enabled job in `cron/jobs.json` runs within the next 8 min (the 3 min wake lead plus 5). Unreadable,
+   or an enabled job without an aware `next_run_at` → not idle.
 
 The sleep action:
 
@@ -351,10 +354,13 @@ clears `sleeping` on the next pass.
 
 ## Cron
 
-A bot with any enabled job in `cron/jobs.json` is never idle (check 7), so cron works exactly as today. A
-job is created only during a turn, so an asleep bot cannot gain one. v2, when a bot uses cron: rule 5 also
-wakes ~2 min before the earliest `next_run_at`. Not built now because no bot has a job and hermes's
-catch-up rules for a job overdue at boot would need their own testing.
+A job is created only during a turn, so an asleep bot cannot gain one. An enabled job keeps the bot awake
+only when its `next_run_at` is within 8 min (check 7); otherwise it sleeps and rule 5 wakes it 3 min before
+the earliest enabled job's `next_run_at` (`Idle.cron_wake_at/1`): hermes's ticker runs every 60 s, and a
+start takes 7–30 s. After the run the bot stays awake for the idle window like after any turn. A job whose
+`next_run_at` is missing, unparseable or naive (in the bot's zone, which hermes owns) keeps the bot awake,
+and an unreadable `jobs.json` wakes it: a run is never slept through on a guess. A wake that comes late (druzhok
+down) is covered by hermes's own catch-up: an overdue job runs once at start (`_classify_dispatch_lateness`). Added after rollout; no bot had a job then.
 
 ## Visibility
 
@@ -471,7 +477,6 @@ wait for rule 5), since the old code does not know `sleeping`.
 
 ## Follow-ups (not in this change)
 
-- Cron wake (v2 above).
 - ~~Side finding: one-off `druzhok-run.sh` BEAMs start their own `ManagerBot` poller, which fights the
   service's (`409 Conflict`).~~ Done: the script sets `config :druzhok, :manager_bot` to false before boot.
 - ~~Find the 20 s before READY.~~ Done: the `video_gen` OpenRouter catalog fetch; `OPENROUTER_BASE_URL`

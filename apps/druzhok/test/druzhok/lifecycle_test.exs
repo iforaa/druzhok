@@ -59,6 +59,12 @@ defmodule Druzhok.LifecycleTest do
   defp reload(inst), do: Repo.get!(Instance, inst.id)
   defp poke(inst), do: Lifecycle.poke(inst.id)
 
+  defp cron_file(inst) do
+    dir = Path.join(Path.dirname(inst.workspace), "cron")
+    File.mkdir_p!(dir)
+    Path.join(dir, "jobs.json")
+  end
+
   defp set(inst, changes),
     do: Repo.update_all(from(i in Instance, where: i.id == ^inst.id), set: changes)
 
@@ -96,6 +102,22 @@ defmodule Druzhok.LifecycleTest do
       :ok = Inbox.enqueue(inst.id, 2, ~s({"update_id":2}))
       poke(inst)
       assert eventually(fn -> HostStub.calls(:start) == [inst.name] end)
+    end
+
+    test "a cron run wakes it 3 min ahead, not before", %{root: root} do
+      inst = idle_bot(root, %{sleeping: true, unit: :inactive})
+      jobs = cron_file(inst)
+      at = fn s -> DateTime.utc_now() |> DateTime.add(s) |> DateTime.to_iso8601() end
+
+      File.write!(jobs, ~s({"jobs":[{"id":"a","next_run_at":"#{at.(600)}"}]}))
+      poke(inst)
+      Process.sleep(200)
+      assert reload(inst).sleeping
+
+      File.write!(jobs, ~s({"jobs":[{"id":"a","next_run_at":"#{at.(170)}"}]}))
+      poke(inst)
+      assert eventually(fn -> HostStub.calls(:start) == [inst.name] end)
+      refute reload(inst).sleeping
     end
 
     test "a restart of an asleep bot wakes it (a token change reaches it)", %{root: root} do
@@ -318,17 +340,25 @@ defmodule Druzhok.LifecycleTest do
       assert {:busy, {:procs, 2}} = check(inst)
     end
 
-    test "cron: an enabled job or an unreadable file is work, a disabled job is not", %{
-      inst: inst
-    } do
-      dir = Path.join(Path.dirname(inst.workspace), "cron")
-      File.mkdir_p!(dir)
-      jobs = Path.join(dir, "jobs.json")
+    test "cron: a job due soon, one without a time or an unreadable file is work", %{inst: inst} do
+      jobs = cron_file(inst)
+      at = fn s -> DateTime.utc_now() |> DateTime.add(s) |> DateTime.to_iso8601() end
 
       File.write!(jobs, ~s({"jobs":[{"id":"a","enabled":false}]}))
       assert check(inst) == :idle
-      File.write!(jobs, ~s({"jobs":[{"id":"a"}]}))
+      File.write!(jobs, ~s({"jobs":[{"id":"a","next_run_at":"#{at.(3600)}"}]}))
+      assert check(inst) == :idle
+
+      File.write!(
+        jobs,
+        ~s({"jobs":[{"id":"a","next_run_at":"#{at.(3600)}"},{"id":"b","next_run_at":"#{at.(300)}"}]})
+      )
+
       assert {:busy, :cron} = check(inst)
+      File.write!(jobs, ~s({"jobs":[{"id":"a"}]}))
+      assert {:busy, :cron_unreadable} = check(inst)
+      File.write!(jobs, ~s({"jobs":[{"id":"a","next_run_at":"2026-10-21T10:00:00"}]}))
+      assert {:busy, :cron_unreadable} = check(inst)
       File.write!(jobs, "{")
       assert {:busy, :cron_unreadable} = check(inst)
     end
