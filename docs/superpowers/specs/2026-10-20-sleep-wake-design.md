@@ -472,7 +472,7 @@ wait for rule 5), since the old code does not know `sleeping`.
 ## Follow-ups (not in this change)
 
 - Cron wake (v2 above).
-- Find the 20 s between `Gateway running` and READY (a blocker if rollout step 2 shows turns wait for it).
-- Side finding: one-off `druzhok-run.sh` BEAMs start their own `ManagerBot` poller, which fights the
-  service's (`409 Conflict: terminated by other getUpdates request` in the druzhok journal during every
-  run). The one-off BEAM should not start `ManagerBot`.
+- ~~Side finding: one-off `druzhok-run.sh` BEAMs start their own `ManagerBot` poller, which fights the
+  service's (`409 Conflict`).~~ Done: the script sets `config :druzhok, :manager_bot` to false before boot.
+- ~~Find the 20 s before READY.~~ Done: the `video_gen` OpenRouter catalog fetch; `OPENROUTER_BASE_URL`
+  now points at the proxy.
