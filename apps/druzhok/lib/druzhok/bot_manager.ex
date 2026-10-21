@@ -1,7 +1,9 @@
 defmodule Druzhok.BotManager do
   @moduledoc """
-  Top-level API for bot lifecycle. Generates env + config for the runtime,
-  keeps DB state, and delegates process control to `Druzhok.Host`.
+  Top-level API for bot lifecycle. `start/restart/stop/delete` record a
+  request in the instance row; `Druzhok.Lifecycle` (one controller per bot in
+  druzhok.service) carries it out, using `prepare_start/1` for the env and
+  config files and `destroy_instance/1` for a delete.
   """
 
   import Ecto.Query, only: [from: 2]
@@ -327,7 +329,7 @@ defmodule Druzhok.BotManager do
     |> Path.expand()
   end
 
-  @doc "Unit/process state as a string: active | activating | inactive | failed | unknown"
+  @doc "Unit/process state as a string: active | activating | restarting | stopping | inactive | failed | unknown"
   def status(name), do: name |> Druzhok.Host.status() |> Atom.to_string()
 
   @doc "`%{mem_bytes, cpu_usec}` for a running bot, or nil."

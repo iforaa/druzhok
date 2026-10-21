@@ -240,6 +240,9 @@ defmodule DruzhokWebWeb.Live.Components.SettingsTab do
             <div :if={@instance[:start_error]} class="text-[11px] text-err">
               Start failed (<%= @instance[:start_failures] %>×): <%= @instance[:start_error] %>
             </div>
+            <div :if={@instance[:start_error] && next_start_attempt(@instance)} class="text-[10px] text-muted">
+              Next try: <%= next_start_attempt(@instance) %>
+            </div>
           </div>
 
           <%!-- Card: Image Generation --%>
@@ -616,6 +619,13 @@ defmodule DruzhokWebWeb.Live.Components.SettingsTab do
   defp restart_bot(name) do
     Task.start(fn -> BotManager.restart(name) end)
     :ok
+  end
+
+  defp next_start_attempt(instance) do
+    case Druzhok.Lifecycle.Bot.next_attempt(struct(Druzhok.Instance, instance)) do
+      nil -> nil
+      at -> Calendar.strftime(at, "%Y-%m-%d %H:%M:%S UTC")
+    end
   end
 
   defp telegram_relay(instance) do

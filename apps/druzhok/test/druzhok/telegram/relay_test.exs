@@ -126,9 +126,10 @@ defmodule Druzhok.Telegram.RelayTest do
     assert Inbox.pending_count(inst.id) == 3
     assert seen(seen) == []
 
-    # What BotManager.restart does: the env is re-synced and start/1 resumes.
+    # What a successful start does: the env is re-synced and every pause but
+    # wrong_owner is lifted.
     inst |> reload() |> Instance.changeset(%{telegram_webhook_secret: "sekret"}) |> Repo.update!()
-    Webhook.resume(inst.id)
+    Webhook.resume_except(inst.id, :wrong_owner)
     assert eventually(fn -> seen(seen) == [1, 2, 3] end)
   end
 
@@ -246,11 +247,48 @@ defmodule Druzhok.Telegram.RelayTest do
       assert eventually(fn -> seen(seen) == [7] end)
     end
 
-    test "quiesce returns with no delivery in flight", %{bypass: bypass, inst: inst, seen: seen} do
-      ptb(bypass, inst, seen)
+    test "quiesce waits for a POST in flight", %{bypass: bypass, inst: inst} do
+      test = self()
+
+      Bypass.stub(bypass, "POST", "/telegram/webhook/#{inst.name}", fn conn ->
+        send(test, :posting)
+        Process.sleep(300)
+        send(test, :answered)
+        Plug.Conn.resp(conn, 200, "")
+      end)
+
+      enqueue(inst, [1])
       Relay.notify(inst.id)
+      assert_receive :posting, 2_000
+
       assert :ok = Relay.quiesce(inst.id)
+      # The worker answered only after the POST had its reply.
+      assert_received :answered
       assert :ok = Relay.quiesce(-1)
+    end
+
+    test "just after a wake the retry backoff is capped", %{bypass: bypass, inst: inst} do
+      Application.put_env(
+        :druzhok,
+        :telegram_relay,
+        Keyword.merge(Application.get_env(:druzhok, :telegram_relay),
+          backoff_min_ms: 200,
+          backoff_max_ms: 5_000,
+          waking_backoff_ms: 10
+        )
+      )
+
+      Bypass.down(bypass)
+      enqueue(inst, [1])
+
+      inst
+      |> Ecto.Changeset.change(%{woke_at: DateTime.utc_now() |> DateTime.truncate(:second)})
+      |> Repo.update!()
+
+      Relay.notify(inst.id)
+      Process.sleep(400)
+      # 200 ms then 400 ms backoff would allow 2 attempts; capped at 10 ms, many.
+      assert Inbox.next_pending(inst.id).attempts >= 5
     end
   end
 end

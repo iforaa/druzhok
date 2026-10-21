@@ -282,6 +282,17 @@ defmodule Druzhok.ManagerBotTest do
       assert Jason.decode!(params["reply_markup"])["keyboard"] == [[%{"text" => "📋 Мои боты"}]]
     end
 
+    test "Мои боты skips a bot being deleted and shows an asleep one as 💤", %{stub: stub} do
+      Druzhok.RuocStub.start()
+      Repo.update_all(from(i in Instance, where: i.name == "own2"), set: [delete_requested: true])
+      Repo.update_all(from(i in Instance, where: i.name == "own1"), set: [sleeping: true])
+
+      TelegramStub.push_update(stub, message("📋 Мои боты"))
+      params = TelegramStub.await_call(stub, "sendMessage", &(&1["text"] =~ "Твои боты"))
+      assert params["text"] =~ "💤 *own1*"
+      refute params["text"] =~ "own2"
+    end
+
     test "Мои боты lists them with balance and a delete button each", %{stub: stub} do
       ruoc = Druzhok.RuocStub.start()
 

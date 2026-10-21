@@ -81,9 +81,6 @@ nft_webhook_del() {
   nft delete element "$NFT_FAMILY" "$NFT_TABLE" "$NFT_WEBHOOK_SET" "{ $uid . $port }" 2>/dev/null || true
 }
 
-# Remove the systemd bind lock an earlier druzhok-ctl wrote: this box's
-# systemd is built without BPF_FRAMEWORK, so SocketBindAllow/Deny were never
-# enforced (webhook relay spec, "Port isolation").
 # systemd's restart loop (Restart=always after a hermes that died) is
 # ActiveState=activating with SubState=auto-restart, and a drain is
 # deactivating; the lifecycle controller must tell both from a normal start
@@ -110,6 +107,9 @@ unit_procs() {
   fi
 }
 
+# Remove the systemd bind lock an earlier druzhok-ctl wrote: this box's
+# systemd is built without BPF_FRAMEWORK, so SocketBindAllow/Deny were never
+# enforced (webhook relay spec, "Port isolation").
 remove_bind_lock() {
   local dir="$UNIT_DIR/$unit.d"
   [ -f "$dir/webhook.conf" ] || return 0

@@ -344,4 +344,178 @@ defmodule Druzhok.LifecycleTest do
     assert Typing.chat_id(~s({"callback_query":{"message":{"chat":{"id":7}}}})) == 7
     assert Typing.chat_id(~s({"my_chat_member":{}})) == nil
   end
+
+  describe "ordering and interleavings" do
+    test "every stop holds the relay before Host.stop", %{root: root} do
+      inst = idle_bot(root, %{sleep_enabled: false})
+      assert :ok = BotManager.stop(inst.name, wait: true)
+
+      sleeper = idle_bot(root)
+      poke(sleeper)
+      assert eventually(fn -> reload(sleeper).sleeping end)
+
+      assert HostStub.pauses_at_stop() == ["stopping", "sleeping"]
+    end
+
+    test "a Stop during a restart's drain wins: no start, and the stop waiter is answered after",
+         %{root: root} do
+      inst = idle_bot(root, %{sleep_enabled: false})
+      test = self()
+
+      HostStub.hook(:stop, fn name ->
+        Task.start(fn -> send(test, {:stopped, BotManager.stop(name, wait: true)}) end)
+        # Let the request land before the controller re-reads the row.
+        Process.sleep(100)
+      end)
+
+      BotManager.restart(inst.name)
+      assert_receive {:stopped, :ok}, 5_000
+      assert HostStub.calls(:start) == []
+      refute reload(inst).active
+      assert HostStub.status(inst.name) == :inactive
+    end
+
+    test "a Stop during a wake's Host.start ends stopped", %{root: root} do
+      inst = idle_bot(root, %{sleeping: true, unit: :inactive})
+      HostStub.hook(:start, fn name -> BotManager.stop(name) end)
+      :ok = Inbox.enqueue(inst.id, 1, ~s({"update_id":1}))
+      poke(inst)
+
+      assert eventually(fn ->
+               reload(inst).stop_seq > 0 and reload(inst).stopped_seq == reload(inst).stop_seq and
+                 HostStub.status(inst.name) == :inactive
+             end)
+
+      refute reload(inst).active
+    end
+
+    test "Stop then Start during a wake ends running", %{root: root} do
+      inst = idle_bot(root, %{sleeping: true, unit: :inactive})
+
+      HostStub.hook(:start, fn name ->
+        BotManager.stop(name)
+        BotManager.start(name)
+      end)
+
+      :ok = Inbox.enqueue(inst.id, 1, ~s({"update_id":1}))
+      poke(inst)
+
+      assert eventually(fn ->
+               r = reload(inst)
+               r.active and r.applied_seq == r.start_seq and HostStub.status(inst.name) == :active
+             end)
+    end
+
+    test "a request made before the first pass after deploy is carried out", %{root: root} do
+      inst = idle_bot(root, %{sleep_enabled: false, start_seq: 1, started_at: nil})
+      poke(inst)
+      assert eventually(fn -> reload(inst).applied_seq == 1 end)
+      assert HostStub.calls(:stop) == [inst.name]
+      assert HostStub.calls(:start) == [inst.name]
+    end
+
+    test "pokes do not multiply the controller's passes", %{root: root} do
+      inst = idle_bot(root, %{sleep_enabled: false})
+      {:ok, pid} = Lifecycle.ensure(inst.id)
+      for _ <- 1..20, do: send(pid, :poke)
+      Process.sleep(200)
+      timers = :sys.get_state(pid).timer
+      assert is_reference(timers)
+      {:messages, msgs} = Process.info(pid, :messages)
+      assert Enum.count(msgs, &(&1 == :tick)) <= 1
+    end
+  end
+
+  describe "crashes" do
+    test "a controller killed inside a sleep's Host.stop is replaced and finishes the job",
+         %{root: root} do
+      inst = idle_bot(root)
+      HostStub.hook(:stop, fn _ -> Process.exit(self(), :kill) end)
+      poke(inst)
+
+      # The unit was still up when the controller died; its successor sees an
+      # idle bot with its own leftover pause and puts it to sleep properly.
+      assert eventually(fn -> reload(inst).sleeping end, 100)
+      refute Webhook.paused(reload(inst))
+    end
+
+    test "a leftover sleeping pause on a running, busy bot is cleared", %{root: root} do
+      inst = idle_bot(root, %{sleep_enabled: false})
+      Webhook.pause(inst.id, :sleeping)
+      poke(inst)
+      assert eventually(fn -> is_nil(Webhook.paused(reload(inst))) end)
+      assert HostStub.calls(:start) == []
+    end
+
+    test "stopped after Host.stop but before it was marked asleep: started again", %{root: root} do
+      inst = idle_bot(root, %{sleep_enabled: false, unit: :inactive})
+      Webhook.pause(inst.id, :sleeping)
+      poke(inst)
+      assert eventually(fn -> HostStub.calls(:start) == [inst.name] end)
+      assert eventually(fn -> is_nil(Webhook.paused(reload(inst))) end)
+    end
+  end
+
+  describe "with the relay" do
+    setup do
+      Application.put_env(:druzhok, :telegram_relay,
+        paused_poll_ms: 20,
+        idle_poll_ms: 50,
+        backoff_min_ms: 10,
+        backoff_max_ms: 40
+      )
+
+      on_exit(fn -> Application.delete_env(:druzhok, :telegram_relay) end)
+      start_supervised!(Druzhok.Telegram.Relay)
+      :ok
+    end
+
+    test "an update for an asleep bot makes the relay wake it", %{root: root} do
+      inst = idle_bot(root, %{sleeping: true, unit: :inactive})
+      :ok = Inbox.enqueue(inst.id, 9, ~s({"update_id":9}))
+      Druzhok.Telegram.Relay.notify(inst.id)
+      assert eventually(fn -> HostStub.calls(:start) == [inst.name] end)
+    end
+  end
+
+  describe "typing indicator" do
+    setup do
+      bypass = Bypass.open()
+      Application.put_env(:druzhok, :telegram_api_base, "http://localhost:#{bypass.port}")
+      on_exit(fn -> Application.delete_env(:druzhok, :telegram_api_base) end)
+      {:ok, seen} = Agent.start(fn -> [] end)
+
+      Bypass.stub(bypass, "POST", "/botT1/sendChatAction", fn conn ->
+        {:ok, body, conn} = Plug.Conn.read_body(conn)
+        Agent.update(seen, &[body | &1])
+        Plug.Conn.resp(conn, 200, ~s({"ok":true,"result":true}))
+      end)
+
+      %{seen: seen}
+    end
+
+    test "shown in the waking update's chat until it is delivered", %{root: root, seen: seen} do
+      inst = idle_bot(root, %{sleeping: true, unit: :inactive, telegram_token: "T1"})
+      :ok = Inbox.enqueue(inst.id, 4, ~s({"update_id":4,"message":{"chat":{"id":555}}}))
+      poke(inst)
+
+      assert eventually(fn -> Agent.get(seen, &length/1) >= 2 end)
+      assert Agent.get(seen, &hd/1) =~ "555"
+
+      Inbox.next_pending(inst.id) |> Inbox.ack()
+      Process.sleep(150)
+      n = Agent.get(seen, &length/1)
+      Process.sleep(200)
+      assert Agent.get(seen, &length/1) == n
+    end
+
+    test "not sent for an update without a chat", %{root: root, seen: seen} do
+      inst = idle_bot(root, %{sleeping: true, unit: :inactive, telegram_token: "T1"})
+      :ok = Inbox.enqueue(inst.id, 5, ~s({"update_id":5,"my_chat_member":{}}))
+      poke(inst)
+      assert eventually(fn -> HostStub.calls(:start) == [inst.name] end)
+      Process.sleep(150)
+      assert Agent.get(seen, & &1) == []
+    end
+  end
 end

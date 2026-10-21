@@ -33,7 +33,7 @@ defmodule Druzhok.Lifecycle.Bot do
   @impl true
   def init(id) do
     send(self(), :poke)
-    {:ok, %{id: id, unit: nil, unit_at: nil, activating_since: nil, idle_at: nil}}
+    {:ok, %{id: id, unit: nil, unit_at: nil, activating_since: nil, idle_at: nil, timer: nil}}
   end
 
   @impl true
@@ -66,8 +66,9 @@ defmodule Druzhok.Lifecycle.Bot do
             {:stop, :normal, state}
 
           state ->
-            Process.send_after(self(), :tick, opt(:tick_ms))
-            {:noreply, state}
+            # One tick chain only: a poke's pass replaces the pending tick.
+            if state.timer, do: Process.cancel_timer(state.timer)
+            {:noreply, %{state | timer: Process.send_after(self(), :tick, opt(:tick_ms))}}
         end
     end
   end
@@ -119,7 +120,7 @@ defmodule Druzhok.Lifecycle.Bot do
         state
 
       reason = wake_reason(inst) ->
-        Logger.info("[life] #{inst.name}: waking (#{reason})")
+        Logger.info("[life] #{inst.name}: waking (#{describe(reason, inst)})")
         set(inst, sleeping: false, woke_at: now())
         if reason == :update, do: Typing.start(inst)
         start_action(state, inst)
@@ -174,6 +175,15 @@ defmodule Druzhok.Lifecycle.Bot do
     end
   end
 
+  defp describe(:update, inst) do
+    case Inbox.next_pending(inst.id) do
+      %Inbox{update_id: id} -> "update #{id}"
+      _ -> "update"
+    end
+  end
+
+  defp describe(reason, _inst), do: to_string(reason)
+
   defp wake_reason(inst) do
     cond do
       Inbox.pending_count(inst.id) > 0 -> :update
@@ -199,32 +209,37 @@ defmodule Druzhok.Lifecycle.Bot do
           do: state,
           else: act(state, fn -> stop_unit(inst, :stopping) end)
 
-      try do
-        {env, data_root} = BotManager.prepare_start(inst)
-        latest = Repo.get(Instance, inst.id)
-
-        if runnable?(latest) do
-          case Host.start(inst.name, env, data_root) do
-            :ok ->
-              case Host.status(inst.name) do
-                :active -> started(state, inst, seq, started)
-                other -> failed(state, inst, seq, "unit #{other} after start")
-              end
-
-            {:error, reason} ->
-              failed(state, inst, seq, inspect(reason))
-          end
-        else
-          refresh(state, inst)
-        end
-      rescue
-        e -> failed(state, inst, seq, Exception.message(e))
-      catch
-        :exit, reason -> failed(state, inst, seq, "exit: #{inspect(reason)}")
-      end
+      # A stop that did not take (it raised, or the unit still drains) is
+      # retried by the next pass; starting now would keep the old hermes.
+      if down?(state.unit), do: run_start(state, inst, seq, started), else: state
     else
       state
     end
+  end
+
+  defp run_start(state, inst, seq, started) do
+    {env, data_root} = BotManager.prepare_start(inst)
+    latest = Repo.get(Instance, inst.id)
+
+    # A Stop made during the drain or the file writes wins before Host.start.
+    if runnable?(latest) do
+      case Host.start(inst.name, env, data_root) do
+        :ok ->
+          case Host.status(inst.name) do
+            :active -> started(state, inst, seq, started)
+            other -> failed(state, inst, seq, "unit #{other} after start")
+          end
+
+        {:error, reason} ->
+          failed(state, inst, seq, inspect(reason))
+      end
+    else
+      refresh(state, inst)
+    end
+  rescue
+    e -> failed(state, inst, seq, Exception.message(e))
+  catch
+    :exit, reason -> failed(state, inst, seq, "exit: #{inspect(reason)}")
   end
 
   defp runnable?(%Instance{active: true, delete_requested: false}), do: true
@@ -386,6 +401,13 @@ defmodule Druzhok.Lifecycle.Bot do
       DateTime.diff(DateTime.utc_now(), inst.start_failed_at, :millisecond) >=
         backoff_ms(inst.start_failures)
   end
+
+  @doc "When a bot that failed to start is tried again (nil when it is not failing)."
+  def next_attempt(%Instance{start_failures: n, start_failed_at: %DateTime{} = at})
+      when is_integer(n) and n > 0,
+      do: DateTime.add(at, backoff_ms(n), :millisecond)
+
+  def next_attempt(_), do: nil
 
   defp backoff_ms(n) do
     case opt(:backoff_ms) do

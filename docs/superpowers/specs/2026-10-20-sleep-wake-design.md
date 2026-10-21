@@ -174,11 +174,13 @@ checks once a minute, and on each pass takes the **first** rule that applies:
    - the unit is `restarting` (systemd's restart loop), or has read `activating` for longer than 330 s
      (a controller deadline, since `TimeoutStartSec=300` bounds one attempt but not the loop) → a
      **failed start**: [stop it](#stopping), record `start_error` (`"restart loop"` / `"start timeout"`),
-     `start_failed_at`, `start_failures += 1` (not `failed_seq`: no request of anyone's was attempted), and
-     back off as in [start action](#start-action) step 5. This covers loops the controller did not start
-     itself: a crash after READY whose restarts die, a druzhok restart during `Host.start`, a hand-run
-     `druzhok-ctl start`. A pending request is then applied by the normal start action after the backoff,
-     or at once if made after the failure;
+     `start_failed_at`, `start_failures += 1`, and `failed_seq = max(failed_seq, applied_seq)`: no
+     waiter's request is failed by it (every waiter's seq is above `applied_seq`), and the backoff holds,
+     since `start_seq > failed_seq` would otherwise skip it on every tick. Then back off as in
+     [start action](#start-action) step 5. This covers loops the controller did not start itself: a crash
+     after READY whose restarts die, a druzhok restart during `Host.start`, a hand-run `druzhok-ctl
+     start`. A request still pending (`start_seq > failed_seq`) is tried at once by the normal start
+     action;
    - the unit is activating → wait. A request that arrives meanwhile is handled once the unit settles, by
      the next bullet;
    - the unit is inactive or failed, or `start_seq > applied_seq` → the [start action](#start-action),
@@ -190,8 +192,12 @@ checks once a minute, and on each pass takes the **first** rule that applies:
 Every action runs inside `try/rescue` (and `catch :exit`). An exception in the start action is recorded
 as a start failure ([below](#start-action)); in any other action it is logged and the pass ends, the next
 pass re-observing from scratch. The controller itself therefore does not crash on a bad tenant tree.
-`Lifecycle.Bot` children are `restart: :transient` under a supervisor with the default intensity; the
-2 s scanner recreates one that did exit abnormally, at most once per scan.
+`Lifecycle.Bot` children are `restart: :transient` under a `DynamicSupervisor` allowing 50 restarts in
+60 s, so a burst across many bots cannot take the endpoint's supervisor down; an abnormal exit is
+restarted at once by it (the 2 s scanner only covers rows that never had a controller). A controller
+keeps one pending tick: a poke's pass replaces it, so pokes never multiply the pass rate. A start whose
+preliminary stop did not take (it raised, or the unit still drains) is not attempted; the next pass
+retries the stop.
 
 ### Stopping
 
@@ -305,18 +311,24 @@ A druzhok deploy restarts druzhok.service, not the bots, so awake bots keep runn
 
 | `active` | `sleeping` | unit | dashboard / manager bot |
 |---|---|---|---|
-| true | false | active | running |
-| true | false | activating | starting (waking, if `woke_at` is recent) |
-| true | false | inactive / failed | down: retrying (with `start_error` and next attempt) |
-| true | true | inactive | 💤 sleeping / `💤 спит` |
-| true | true | active / activating | starting (rule 5 clears `sleeping` on the next pass) |
-| any | any | stopping | stopping |
-| false | any | active / activating | stopping |
-| false | false | inactive / failed | stopped |
-| any (`delete_requested`) | any | any | deleting |
+`Druzhok.Lifecycle.shown_status/2` gives the dashboard label: the unit state as `druzhok-ctl status`
+reports it (`active`, `activating`, `restarting`, `stopping`, `inactive`, `failed`, `unknown`), replaced
+in these cases:
+
+| row | unit | label |
+|---|---|---|
+| `delete_requested` | any | `deleting` |
+| `active && sleeping` | inactive / unknown | `sleeping` (manager bot: 💤) |
+| `!active` | active / activating | `stopping` |
+| `woke_at` < 2 min ago | activating | `waking` |
+
+A down active bot therefore shows `inactive`/`failed`, with `start_error`, the failure count and the next
+attempt in its settings card; `true | true | active` (a unit started by hand) shows `active` until rule 5
+clears `sleeping` on the next pass.
 
 `false | true` only exists between a Stop and the controller's next pass (rule 4 clears it). Whenever
-`start_error` is set, the card shows it and the next attempt time, whatever the row above.
+`start_error` is set, the settings card shows it, the failure count and the next attempt time
+(`Lifecycle.Bot.next_attempt/1`), whatever the label.
 
 ## Cron
 
@@ -331,12 +343,12 @@ catch-up rules for a job overdue at boot would need their own testing.
   delivery" (disabled with a hint for a polling bot), and `started_at`, `start_error` and next attempt in
   the delivery card. Start/Stop/Restart buttons are unchanged and now just record the request.
 - Manager bot: the owner's bot list shows `💤 спит` for an asleep bot.
-- `ops/smoke.sh` on an asleep bot prints `asleep since <ts>`, runs the checks that need no process
+- `ops/smoke.sh` on an asleep bot prints `asleep (last start <started_at>)`, runs the checks that need no process
   (webhook registered to druzhok, Telegram's `pending_update_count`, no row older than 24 h, no pause) and
   skips the unit, nft and listener-owner checks: a stopped bot has no egress or port to guard, and its
   elements come back on start. It exits 0 if those pass.
 - Logs, all from the controller: `[life] <bot>: asleep after <n> min idle (rss <mb> MB)`,
-  `[life] <bot>: waking (update <id> | restart | mode)`, `[life] <bot>: started in <s> s`,
+  `[life] <bot>: waking (update <id> | requested | sleep_disabled | mode)`, `[life] <bot>: started in <s> s`,
   `[life] <bot>: start failed (<n>): <reason>, next try in <t>`, `[life] <bot>: stopped`, `deleted`.
 
 ## Rollout
@@ -404,13 +416,15 @@ wait for rule 5), since the old code does not know `sleeping`.
   blocks.
 - Wake: each reason in rule 5 wakes; Stop then Start during a wake ends running; Stop during a wake ends
   stopped; a token change (restart) on an asleep bot starts it.
-- Crash table: each row, by killing the controller at that step and starting a new one.
+- Crash table: a controller killed inside a sleep's `Host.stop` is replaced and finishes the job; the
+  other rows as the state a dead controller leaves (a leftover `:sleeping` pause on a running bot, a
+  stopped unit of an awake row, a `stopping` unit), applied to a fresh controller.
 - Requests: `wait: true` returns on completion, on a recorded failure, and times out without a controller.
 - Relay worker: holds rows for `!active` and for `sleeping`, pokes the controller for `sleeping`, caps
   backoff at 1 s after `woke_at`.
 - Typing indicator: sent for a message update, not for an update without a chat; stops at ack.
 - `ops/druzhok_ctl_test`: `procs` prints the cgroup count, refuses an unknown bot.
-- smoke: an asleep bot passes; the skipped checks are named in the output.
+- smoke: not automated (it needs the box); rollout step 3 runs it asleep and awake.
 - Existing `BotManager` and relay tests move to the request API (`wait: true` in tests).
 - r4 additions: the unit `stopping` holds every rule and keeps the pause; `quiesce` waits out an in-flight
   POST; an exception in the start body (`write_workspace_files` raising) is a recorded failure with

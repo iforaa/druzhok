@@ -129,7 +129,11 @@ defmodule Druzhok.Telegram.Webhook do
     :ok
   end
 
-  @doc "Clear any pause; a fault that is still there pauses again on the next attempt."
+  @doc """
+  Clear any pause, `wrong_owner` included: a manual operator override
+  (`druzhok-run.sh`). A fault that is still there pauses again on the next
+  attempt. The lifecycle controller uses `resume_if/2` and `resume_except/2`.
+  """
   def resume(instance_id) do
     from(i in Instance, where: i.id == ^instance_id)
     |> Repo.update_all(set: [telegram_relay_paused_until: nil, telegram_relay_pause_reason: nil])
