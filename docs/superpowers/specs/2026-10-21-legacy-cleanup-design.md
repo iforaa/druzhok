@@ -1,6 +1,7 @@
 # Legacy cleanup (2026-10-21)
 
-Status: draft. Druzhok began as a platform for several bot runtimes (its own agent, OpenClaw, Docker
+Status: done (steps 1–5, 2026-10-21; prod backup `/data/backups/druzhok-pre-legacy-cleanup-20261021.db`;
+`Host.Process.logs/2` kept as a dev/test helper). Druzhok began as a platform for several bot runtimes (its own agent, OpenClaw, Docker
 sandboxes, honcho, money budgets, a dashboard). Today it runs only Hermes bots as systemd units, bills
 through ruoc-gateway and is operated through `ops/druzhok`. This spec removes what that history left
 behind, and fixes two defects the review found. Branch `legacy-cleanup`.
