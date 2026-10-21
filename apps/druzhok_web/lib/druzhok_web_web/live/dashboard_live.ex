@@ -1,14 +1,10 @@
 defmodule DruzhokWebWeb.DashboardLive do
   use DruzhokWebWeb, :live_view
 
-  import DruzhokWebWeb.Live.Components.EventLog
-  import DruzhokWebWeb.Live.Components.ErrorsTab
-  import DruzhokWebWeb.Live.Components.UsageTab
+  alias DruzhokWebWeb.Live.Components.SettingsTab
 
-  alias DruzhokWebWeb.Live.Components.{SettingsTab, FilesTab}
-
-  @max_events 200
-  @valid_tabs %{"logs" => :logs, "files" => :files, "settings" => :settings, "usage" => :usage, "errors" => :errors}
+  # The dashboard is being removed page by page; the CLI replaces it.
+  @valid_tabs %{"settings" => :settings}
 
   @impl true
   # :current_user is assigned by the LiveAuth on_mount hook (see the router).
@@ -30,16 +26,9 @@ defmodule DruzhokWebWeb.DashboardLive do
       selected: nil,
       tab: :settings,
       tab_loading: false,
-      events: [],
       show_create: false,
       pairing_requests: [],
       allowed_users: [],
-      instance_errors: [],
-      expanded_error: nil,
-      usage_requests: [],
-      usage_summary: [],
-      usage_has_more: false,
-      expanded_request: nil,
       palette_open: false,
       palette_query: "",
       palette_cursor: 0
@@ -58,15 +47,7 @@ defmodule DruzhokWebWeb.DashboardLive do
         socket = assign(socket, selected: name, tab: tab, tab_loading: true)
 
         if switched_instance do
-          socket = assign(socket,
-            events: [],
-            expanded_error: nil,
-            pairing_requests: [],
-            allowed_users: [],
-            instance_errors: [],
-            usage_requests: [],
-            usage_summary: []
-          )
+          socket = assign(socket, pairing_requests: [], allowed_users: [])
           send(self(), {:load_instance_data, name, tab})
           {:noreply, socket}
         else
@@ -79,7 +60,6 @@ defmodule DruzhokWebWeb.DashboardLive do
   def handle_params(_params, _uri, socket) do
     {:noreply, assign(socket,
       selected: nil,
-      events: [],
       pairing_requests: [],
       allowed_users: []
     )}
@@ -108,15 +88,6 @@ defmodule DruzhokWebWeb.DashboardLive do
     end
   end
 
-  def handle_info({:druzhok_event, instance_name, event}, socket) do
-    if socket.assigns.selected == instance_name do
-      events = [event | socket.assigns.events] |> Enum.take(@max_events)
-      {:noreply, assign(socket, events: events)}
-    else
-      {:noreply, socket}
-    end
-  end
-
   def handle_info({:load_instance_data, name, tab}, socket) do
     # Guard: user may have switched away
     if socket.assigns.selected == name do
@@ -131,16 +102,8 @@ defmodule DruzhokWebWeb.DashboardLive do
     end
   end
 
-  def handle_info({:load_tab_data, name, tab}, socket) do
-    if socket.assigns.selected == name and socket.assigns.tab == tab do
-      tab_assigns = load_tab_assigns(tab, name, get_instance(name, socket))
-      {:noreply, assign(socket, Map.put(tab_assigns, :tab_loading, false))}
-    else
-      {:noreply, assign(socket, tab_loading: false)}
-    end
-  rescue
-    _ -> {:noreply, assign(socket, tab_loading: false)}
-  end
+  def handle_info({:load_tab_data, _name, _tab}, socket),
+    do: {:noreply, assign(socket, tab_loading: false)}
 
   def handle_info(:settings_updated, socket) do
     # Refresh only the selected instance from the DB. Host status/stats
@@ -161,25 +124,6 @@ defmodule DruzhokWebWeb.DashboardLive do
   end
 
   def handle_info(_msg, socket), do: {:noreply, socket}
-
-  defp load_tab_assigns(:usage, _name, nil), do: %{}
-
-  defp load_tab_assigns(:usage, _name, instance) do
-    {reqs, has_more} = load_usage_page(instance, 0)
-
-    %{
-      usage_requests: reqs,
-      usage_summary: Druzhok.Usage.daily_usage(instance[:id]),
-      usage_has_more: has_more,
-      expanded_request: nil
-    }
-  end
-
-  defp load_tab_assigns(:errors, name, _instance) do
-    %{instance_errors: Druzhok.CrashLog.recent_for_instance(name, 100)}
-  end
-
-  defp load_tab_assigns(_, _name, _instance), do: %{}
 
   @impl true
   def handle_event("toggle_create", _, socket) do
@@ -232,7 +176,7 @@ defmodule DruzhokWebWeb.DashboardLive do
       _instance ->
         {:noreply,
          socket
-         |> assign(selected: name, tab: :settings, events: [])
+         |> assign(selected: name, tab: :settings)
          |> push_patch(to: "/instances/#{name}")}
     end
   end
@@ -245,52 +189,11 @@ defmodule DruzhokWebWeb.DashboardLive do
     end
   end
 
-  def handle_event("clear_events", _, socket) do
-    {:noreply, assign(socket, events: [])}
-  end
-
-  def handle_event("toggle_request", %{"id" => id}, socket) do
-    id = String.to_integer(id)
-
-    if socket.assigns.expanded_request == id do
-      {:noreply, assign(socket, expanded_request: nil)}
-    else
-      {:noreply, assign(socket, expanded_request: id)}
-    end
-  end
-
-  def handle_event("load_more_usage", _, socket) do
-    case get_instance(socket.assigns.selected, socket) do
-      nil ->
-        {:noreply, socket}
-
-      instance ->
-        offset = length(socket.assigns.usage_requests)
-        {more, has_more} = load_usage_page(instance, offset)
-
-        {:noreply,
-         assign(socket,
-           usage_requests: socket.assigns.usage_requests ++ more,
-           usage_has_more: has_more
-         )}
-    end
-  end
-
   def handle_event("back", _, socket) do
     {:noreply,
       socket
-      |> assign(selected: nil, events: [])
+      |> assign(selected: nil)
       |> push_patch(to: "/")}
-  end
-
-  def handle_event("toggle_error", %{"id" => id}, socket) do
-    expanded = if to_string(socket.assigns.expanded_error) == id, do: nil, else: id
-    {:noreply, assign(socket, expanded_error: expanded)}
-  end
-
-  def handle_event("clear_errors", _, socket) do
-    Druzhok.CrashLog.clear_all()
-    {:noreply, assign(socket, instance_errors: [])}
   end
 
   # --- Command palette (⌘K / Ctrl+K) -----------------------------------------
@@ -438,7 +341,6 @@ defmodule DruzhokWebWeb.DashboardLive do
             </button>
           </div>
           <div class="mt-3 flex gap-4 text-[10px] font-display uppercase tracking-wider2">
-            <a href="/errors" class="text-muted hover:text-err transition-colors">errors</a>
             <a :if={@current_user.role == "admin"} href="/settings"
                class="text-muted hover:text-accent transition-colors">settings</a>
             <a href="/auth/logout" class="ml-auto text-muted hover:text-fg transition-colors">logout</a>
@@ -505,27 +407,11 @@ defmodule DruzhokWebWeb.DashboardLive do
             </button>
           </div>
 
-          <%!-- Tabs --%>
-          <nav class="px-6 border-b border-line flex gap-0" role="tablist">
-            <.tab_btn tab={:settings} active={@tab} label="settings" />
-            <.tab_btn tab={:logs}   active={@tab} label="logs"     count={length(@events)} />
-            <.tab_btn tab={:files}  active={@tab} label="files" />
-            <.tab_btn tab={:usage}  active={@tab} label="usage" />
-            <.tab_btn tab={:errors} active={@tab} label="errors" count={length(@instance_errors)} color={:err} />
-          </nav>
-
           <%!-- Tab content --%>
           <div class="flex-1 overflow-y-auto relative">
             <div :if={@tab_loading} class="absolute inset-0 flex items-center justify-center bg-bg/80 z-10 backdrop-blur-sm">
               <div class="w-5 h-5 border border-faint border-t-accent rounded-full animate-spin"></div>
             </div>
-
-            <.event_log :if={@tab == :logs} events={@events} />
-
-            <.live_component :if={@tab == :files && @selected}
-              module={FilesTab}
-              id={"files-tab-#{@selected}"}
-              instance={Enum.find(@instances, &(&1.name == @selected))} />
 
             <.live_component :if={@tab == :settings && @selected}
               module={SettingsTab}
@@ -533,10 +419,6 @@ defmodule DruzhokWebWeb.DashboardLive do
               instance={Enum.find(@instances, &(&1.name == @selected))}
               pairing_requests={@pairing_requests}
               allowed_users={@allowed_users} />
-
-            <.usage_tab :if={@tab == :usage} requests={@usage_requests} summary={@usage_summary} tool_stats={[]} instance_name={@selected} expanded_request={@expanded_request} has_more={@usage_has_more} />
-
-            <.errors_tab :if={@tab == :errors} errors={@instance_errors} instance_name={@selected} expanded={@expanded_error} />
           </div>
         </div>
       </main>
@@ -613,34 +495,6 @@ defmodule DruzhokWebWeb.DashboardLive do
                    px-0 py-1.5 focus:outline-none focus:border-accent focus:ring-0 transition-colors">
       <%= render_slot(@inner_block) %>
     </select>
-    """
-  end
-
-  attr :tab, :atom, required: true
-  attr :active, :atom, required: true
-  attr :label, :string, required: true
-  attr :count, :integer, default: 0
-  attr :color, :atom, default: :accent
-
-  defp tab_btn(assigns) do
-    ~H"""
-    <button phx-click="tab" phx-value-tab={Atom.to_string(@tab)}
-            class={[
-              "relative px-4 py-3 font-display uppercase tracking-wider2 text-[11px] transition-colors",
-              (if @tab == @active, do: "text-fg", else: "text-muted hover:text-fg"),
-              "after:absolute after:left-3 after:right-3 after:bottom-0 after:h-[2px]",
-              "after:transition-transform after:duration-200 after:origin-left",
-              (if @tab == @active,
-                 do: "after:scale-x-100 " <> (if @color == :err, do: "after:bg-err", else: "after:bg-accent"),
-                 else: "after:scale-x-0 after:bg-accent")
-            ]}>
-      <%= @label %>
-      <span :if={@count > 0}
-            class={[
-              "ml-2 font-mono text-[10px]",
-              (if @color == :err, do: "text-err", else: "text-muted")
-            ]}><%= @count %></span>
-    </button>
     """
   end
 
@@ -729,32 +583,6 @@ defmodule DruzhokWebWeb.DashboardLive do
         |> Enum.uniq()
         |> Enum.sort()
     end
-  end
-
-  @usage_page_size 20
-
-  defp load_usage_page(instance, offset) do
-    # Fetch page_size + 1 to cheaply detect if there's a next page.
-    raw = Druzhok.Usage.recent(instance[:id], @usage_page_size + 1, offset)
-    has_more = length(raw) > @usage_page_size
-    requests = raw |> Enum.take(@usage_page_size) |> Enum.map(&usage_row/1)
-    {requests, has_more}
-  end
-
-  defp usage_row(r) do
-    %{
-      id: r.id,
-      inserted_at: r.inserted_at,
-      model: r.model,
-      input_tokens: r.prompt_tokens || 0,
-      output_tokens: r.completion_tokens || 0,
-      tool_calls_count: 0,
-      elapsed_ms: r.latency_ms,
-      prompt_preview: r.prompt_preview,
-      response_preview: r.response_preview,
-      request_type: r.request_type || "chat",
-      audio_duration_ms: r.audio_duration_ms
-    }
   end
 
   defp instance_to_map(inst), do: inst |> Map.from_struct() |> Map.drop([:__meta__])

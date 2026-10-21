@@ -25,28 +25,6 @@ defmodule Druzhok.CrashLog do
     result
   end
 
-  def recent(limit \\ 100) do
-    from(c in __MODULE__, order_by: [desc: c.inserted_at], limit: ^limit)
-    |> Druzhok.Repo.all()
-  end
-
-  def recent_for_instance(instance_name, limit \\ 100) do
-    from(c in __MODULE__,
-      where: c.instance_name == ^instance_name,
-      order_by: [desc: c.inserted_at],
-      limit: ^limit
-    )
-    |> Druzhok.Repo.all()
-  end
-
-  def clear_all do
-    Druzhok.Repo.delete_all(__MODULE__)
-  end
-
-  def count do
-    Druzhok.Repo.aggregate(__MODULE__, :count)
-  end
-
   defp cleanup_old do
     cutoff = DateTime.utc_now() |> DateTime.add(-7, :day)
     from(c in __MODULE__, where: c.inserted_at < ^cutoff)

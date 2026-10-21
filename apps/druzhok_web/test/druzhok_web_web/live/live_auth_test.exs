@@ -17,7 +17,7 @@ defmodule DruzhokWebWeb.LiveAuthTest do
   end
 
   describe "live navigation from the public login page" do
-    for path <- ["/", "/instances/some-bot", "/usage", "/errors", "/settings"] do
+    for path <- ["/", "/instances/some-bot", "/settings"] do
       test "an anonymous visitor cannot reach #{path}", %{conn: conn} do
         {:ok, view, _html} = live(conn, "/login")
 
@@ -27,7 +27,7 @@ defmodule DruzhokWebWeb.LiveAuthTest do
   end
 
   describe "live navigation from the dashboard" do
-    for path <- ["/usage", "/errors", "/settings"] do
+    for path <- ["/settings"] do
       test "a non-admin cannot reach #{path}", %{conn: conn} do
         %{conn: conn} = log_in_user(conn)
         {:ok, view, _html} = live(conn, "/")
@@ -41,8 +41,8 @@ defmodule DruzhokWebWeb.LiveAuthTest do
       {:ok, _admin} = user |> Ecto.Changeset.change(role: "admin") |> Druzhok.Repo.update()
       {:ok, view, _html} = live(conn, "/")
 
-      assert conn |> reload(view, "/usage") |> html_response(200)
-      assert {:ok, _usage, _html} = live(conn, "/usage")
+      assert conn |> reload(view, "/settings") |> html_response(200)
+      assert {:ok, _settings, _html} = live(conn, "/settings")
     end
   end
 
@@ -59,11 +59,11 @@ defmodule DruzhokWebWeb.LiveAuthTest do
     test "an admin demoted mid-session loses the admin pages", %{conn: conn} do
       %{conn: conn, user: user} = log_in_user(conn)
       {:ok, admin} = user |> Ecto.Changeset.change(role: "admin") |> Druzhok.Repo.update()
-      {:ok, view, _html} = live(conn, "/usage")
+      {:ok, view, _html} = live(conn, "/settings")
 
       {:ok, _} = admin |> Ecto.Changeset.change(role: "user") |> Druzhok.Repo.update()
 
-      assert {:error, {:redirect, %{to: "/"}}} = live_redirect(view, to: "/errors")
+      assert {:error, {:redirect, %{to: "/"}}} = live_redirect(view, to: "/settings")
     end
   end
 end

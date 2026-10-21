@@ -97,8 +97,6 @@ defmodule DruzhokWebWeb.Router do
 
     live_session :admin, on_mount: {DruzhokWebWeb.LiveAuth, :require_admin} do
       live "/settings", SettingsLive
-      live "/errors", ErrorsLive
-      live "/usage", UsageLive
     end
   end
 end

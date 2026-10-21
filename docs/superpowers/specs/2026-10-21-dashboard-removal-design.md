@@ -1,0 +1,28 @@
+# Removing the dashboard (2026-10-21)
+
+Status: step 1 done. Item 7 of the review plan ("UI freeze") became removal: the operator is the only
+dashboard user (one `users` row, `admin`) and does not use it. Every remaining operator action moves to the
+CLI; Phoenix stays for the proxy, the Telegram webhook, `/internal/fetch` and the BotSite plug.
+
+## Steps
+
+One step per commit, each deployed and smoke-tested (`ops/smoke.sh`) before the next.
+
+1. **Read-only views out.** Deleted `/usage`, `/errors`, the bot tabs logs, files, usage and errors, the
+   unreferenced `SecurityTab` and `SkillsTab`, and `Druzhok.SqliteBrowser` with the `Usage`/`CrashLog`
+   readers only they used. Replacements: `journalctl -u druzhok`, `sudo druzhok-ctl logs <bot>`,
+   `sudo sqlite3 /data/druzhok/druzhok.db` (`usage_logs`, `crash_logs`), files over SSH.
+2. **Settings into the core, then a CLI.** The bot settings tab knows which fields need a restart
+   (memory provider, image generation, mention-only…) and which do not (sleep). That moves into
+   `Druzhok.BotSettings.update(name, attrs)`, which writes the row and calls `BotManager.restart` when a
+   field needs it. On top: `ops/druzhok-run.sh`-friendly functions, or a `mix druzhok.bot` task, for
+   `show`, `set key=value…`, `start`, `stop`, approve/remove users and pairings, `migrate_to_ruoc`, and
+   the global `Druzhok.Settings` keys. Creating bots stays with the manager bot.
+3. **Settings pages and the shell out.** `DashboardLive`, `SettingsLive`, `SettingsTab`, `LoginLive`,
+   auth (`users`, `AuthController`, `LiveAuth`, plugs), LiveView, the assets pipeline (esbuild,
+   Tailwind) and their deps; the `/` routes. Then decide whether `crash_logs` (written by
+   `Druzhok.ErrorLogger`, read by nothing after step 1) and `Druzhok.Events` still earn their keep.
+
+## Not changed
+
+The manager bot (tenants' interface), the proxy endpoints, the webhook relay, the lifecycle controller.

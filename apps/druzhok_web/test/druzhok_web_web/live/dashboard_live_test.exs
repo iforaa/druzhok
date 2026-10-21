@@ -18,30 +18,9 @@ defmodule DruzhokWebWeb.DashboardLiveTest do
     assert {:error, {:redirect, %{to: "/login"}}} = live(conn, "/")
   end
 
-  test "tab switching to files works", %{conn: conn} do
+  test "a removed or invalid tab name does not crash", %{conn: conn} do
     {:ok, view, _html} = live(conn, "/")
-    # Tab switching only applies when an instance is selected,
-    # but the event handler should not crash regardless
-    html = render_click(view, "tab", %{"tab" => "files"})
-    assert is_binary(html)
-  end
-
-  test "tab switching to security works", %{conn: conn} do
-    {:ok, view, _html} = live(conn, "/")
-    html = render_click(view, "tab", %{"tab" => "security"})
-    assert is_binary(html)
-  end
-
-  test "tab switching to logs works", %{conn: conn} do
-    {:ok, view, _html} = live(conn, "/")
-    # Switch to files first, then back to logs
     render_click(view, "tab", %{"tab" => "files"})
-    html = render_click(view, "tab", %{"tab" => "logs"})
-    assert is_binary(html)
-  end
-
-  test "invalid tab name does not crash", %{conn: conn} do
-    {:ok, view, _html} = live(conn, "/")
     html = render_click(view, "tab", %{"tab" => "nonexistent"})
     # Should still render without crashing
     assert is_binary(html)
