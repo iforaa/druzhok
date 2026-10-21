@@ -17,7 +17,6 @@ defmodule DruzhokWebWeb.Router do
     post "/images/generations", LlmProxyController, :images_generations
     post "/audio/transcriptions", LlmProxyController, :audio_transcriptions
     post "/audio/speech", LlmProxyController, :audio_speech
-    post "/responses", LlmProxyController, :responses_proxy
   end
 
   # Firecrawl-compatible v2 API — hermes web_search and web_extract via

@@ -16,10 +16,10 @@ defmodule Druzhok.Settings do
     |> unique_constraint(:key)
   end
 
-  @keys ~w(openrouter_api_key openai_api_key manager_bot_token operator_telegram_id
+  @keys ~w(openai_api_key manager_bot_token operator_telegram_id
            ruoc_url ruoc_admin_host ruoc_admin_token ruoc_catalog_key fetch_secret bot_creation
            sleep_idle_minutes)
-  @secret ~w(openrouter_api_key openai_api_key manager_bot_token ruoc_admin_token ruoc_catalog_key
+  @secret ~w(openai_api_key manager_bot_token ruoc_admin_token ruoc_catalog_key
              fetch_secret)
 
   @doc "The keys an operator sets (`ops/druzhok settings set`)."
@@ -43,11 +43,6 @@ defmodule Druzhok.Settings do
       on_conflict: [set: [value: value, updated_at: DateTime.utc_now()]],
       conflict_target: :key
     )
-  end
-
-  @doc "OpenRouter key: env wins, otherwise the `ops/druzhok settings` value."
-  def openrouter_api_key do
-    Application.get_env(:druzhok, :openrouter_api_key) || get("openrouter_api_key")
   end
 
   @doc """

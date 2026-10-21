@@ -18,9 +18,6 @@ config :logger, level: :warning
 # Initialize plugs at runtime for faster test compilation
 config :phoenix, :plug_init_mode, :runtime
 
-config :druzhok,
-  openrouter_api_url: "https://openrouter.ai/api/v1"
-
 # Lifecycle controller timings scaled down for tests (sleep/wake spec).
 config :druzhok,
   lifecycle: [tick_ms: 50, unit_poll_ms: 0, idle_check_ms: 0, backoff_ms: [300, 600]],

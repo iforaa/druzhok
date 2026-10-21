@@ -2,9 +2,8 @@ defmodule DruzhokWebWeb.ProxyCase do
   @moduledoc """
   Case template for LLM proxy tests.
 
-  Starts a Bypass server and points both OpenRouter (`:openrouter_api_url`)
-  and OpenAI (`:openai_api_url`) at it, sets a fake OpenRouter key in app
-  env, inserts one instance with a tenant key (and a ruoc key, which LlmAuth
+  Starts a Bypass server and points OpenAI (`:openai_api_url`, the TTS
+  upstream) at it, inserts one instance with a tenant key (and a ruoc key, which LlmAuth
   requires) and returns a conn already carrying
   `Authorization: Bearer <tenant_key>`. For the ruoc-served endpoints use
   `RuocProxyCase`.
@@ -31,20 +30,13 @@ defmodule DruzhokWebWeb.ProxyCase do
     bypass = Bypass.open()
     base_url = "http://localhost:#{bypass.port}/v1"
 
-    prev = %{
-      openrouter_api_url: Application.get_env(:druzhok, :openrouter_api_url),
-      openrouter_api_key: Application.get_env(:druzhok, :openrouter_api_key),
-      openai_api_url: Application.get_env(:druzhok, :openai_api_url)
-    }
-
-    Application.put_env(:druzhok, :openrouter_api_url, base_url)
-    Application.put_env(:druzhok, :openrouter_api_key, "test-or-key")
+    prev = Application.get_env(:druzhok, :openai_api_url)
     Application.put_env(:druzhok, :openai_api_url, base_url)
 
     ExUnit.Callbacks.on_exit(fn ->
-      for {k, v} <- prev do
-        if v, do: Application.put_env(:druzhok, k, v), else: Application.delete_env(:druzhok, k)
-      end
+      if prev,
+        do: Application.put_env(:druzhok, :openai_api_url, prev),
+        else: Application.delete_env(:druzhok, :openai_api_url)
     end)
 
     instance = create_instance(%{})

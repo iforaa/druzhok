@@ -7,7 +7,6 @@ defmodule DruzhokWebWeb.RouterAuthTest do
     "/v1/images/generations",
     "/v1/audio/transcriptions",
     "/v1/audio/speech",
-    "/v1/responses",
     "/v2/search"
   ]
 
@@ -22,6 +21,15 @@ defmodule DruzhokWebWeb.RouterAuthTest do
       conn = conn |> put_req_header("authorization", "Bearer nope") |> post(unquote(route), %{})
       assert conn.status == 401
     end
+  end
+
+  test "the removed OpenRouter passthrough stays removed" do
+    conn =
+      build_conn()
+      |> put_req_header("authorization", "Bearer nope")
+      |> post("/v1/responses", %{})
+
+    assert conn.status == 404
   end
 
   test "no browser routes are left", %{conn: conn} do

@@ -86,8 +86,8 @@ if config_env() == :prod do
   # Check `Plug.SSL` for all available options in `force_ssl`.
 end
 
-# LLM provider credentials (used by the LLM proxy, not by bots)
-# Empty env vars (e.g. `OPENROUTER_API_KEY=` in an EnvironmentFile) must
+# Upstreams the LLM proxy calls (not bots)
+# Empty env vars (e.g. `RUOC_URL=` in an EnvironmentFile) must
 # behave like unset so the Settings row (`ops/druzhok settings`) is used instead.
 env_or_nil = fn name ->
   case System.get_env(name) do
@@ -98,8 +98,6 @@ env_or_nil = fn name ->
 end
 
 config :druzhok,
-  openrouter_api_key: env_or_nil.("OPENROUTER_API_KEY"),
-  openrouter_api_url: System.get_env("OPENROUTER_API_URL") || "https://openrouter.ai/api/v1",
   openai_api_url: System.get_env("OPENAI_API_URL") || "https://api.openai.com/v1",
   ruoc_url: env_or_nil.("RUOC_URL"),
   ruoc_admin_host: env_or_nil.("RUOC_ADMIN_HOST"),
