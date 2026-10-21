@@ -1,8 +1,7 @@
 defmodule Druzhok.BotSettings do
   @moduledoc """
   A bot's operator settings, and which of them need a restart to reach hermes
-  (dashboard removal spec, step 2). `Druzhok.CLI` and the dashboard's settings
-  tab both go through here.
+  (dashboard removal spec, step 2). `Druzhok.CLI` goes through here.
 
   A field that `Runtime.Hermes` reads at start (env, `config.yaml`) restarts
   the bot when it changes, but only a running bot: a restart is a start

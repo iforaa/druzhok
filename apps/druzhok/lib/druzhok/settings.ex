@@ -22,7 +22,7 @@ defmodule Druzhok.Settings do
   @secret ~w(openrouter_api_key openai_api_key manager_bot_token ruoc_admin_token ruoc_catalog_key
              fetch_secret)
 
-  @doc "The keys an operator sets (`Druzhok.CLI`, dashboard Settings)."
+  @doc "The keys an operator sets (`ops/druzhok settings set`)."
   def keys, do: @keys
 
   @doc "The keys whose values are never shown whole."
@@ -45,7 +45,7 @@ defmodule Druzhok.Settings do
     )
   end
 
-  @doc "OpenRouter key: env wins, otherwise the value entered in dashboard Settings."
+  @doc "OpenRouter key: env wins, otherwise the `ops/druzhok settings` value."
   def openrouter_api_key do
     Application.get_env(:druzhok, :openrouter_api_key) || get("openrouter_api_key")
   end
@@ -60,7 +60,7 @@ defmodule Druzhok.Settings do
 
   @doc """
   Shared secret ruoc-gateway presents to `POST /internal/fetch` (its
-  `FETCH_SECRET`): env wins, otherwise dashboard Settings. Nil closes the endpoint.
+  `FETCH_SECRET`): env wins, otherwise `ops/druzhok settings`. Nil closes the endpoint.
   """
   def fetch_secret do
     Application.get_env(:druzhok, :fetch_secret) || get("fetch_secret")
@@ -68,7 +68,7 @@ defmodule Druzhok.Settings do
 
   @doc """
   Whether the superbot has stopped making bots for anyone but the operator.
-  Set from dashboard Settings; unset is open. Bots that exist keep running.
+  Set with `ops/druzhok settings set bot_creation=closed`; unset is open. Bots that exist keep running.
   """
   def bot_creation_closed?, do: get("bot_creation") == "closed"
 

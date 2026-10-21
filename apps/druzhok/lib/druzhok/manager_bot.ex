@@ -395,7 +395,7 @@ defmodule Druzhok.ManagerBot do
     operator?(user_id) or Admissions.admitted?(user_id)
   end
 
-  # Creation closed from dashboard Settings. The operator is never shut out.
+  # Creation closed in Settings (`bot_creation`). The operator is never shut out.
   defp closed?(user_id) do
     Settings.bot_creation_closed?() and not operator?(user_id)
   end

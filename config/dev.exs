@@ -13,11 +13,7 @@ config :druzhok_web, DruzhokWebWeb.Endpoint,
   check_origin: false,
   code_reloader: System.get_env("PHX_SERVER") != "true",
   debug_errors: true,
-  secret_key_base: "budLET0+FELfTF3xYFxKm57uXu1heiL/UZGTgjc5oieYoKOOb2l2PTRn+g9jwihk",
-  watchers: [
-    esbuild: {Esbuild, :install_and_run, [:druzhok_web, ~w(--sourcemap=inline --watch)]},
-    tailwind: {Tailwind, :install_and_run, [:druzhok_web, ~w(--watch)]}
-  ]
+  secret_key_base: "budLET0+FELfTF3xYFxKm57uXu1heiL/UZGTgjc5oieYoKOOb2l2PTRn+g9jwihk"
 
 # ## SSL Support
 #
@@ -42,17 +38,6 @@ config :druzhok_web, DruzhokWebWeb.Endpoint,
 # configured to run both http and https servers on
 # different ports.
 
-# Watch static and templates for browser reloading (disabled when PHX_SERVER=true)
-if System.get_env("PHX_SERVER") != "true" do
-  config :druzhok_web, DruzhokWebWeb.Endpoint,
-    live_reload: [
-      patterns: [
-        ~r"priv/static/(?!uploads/).*(js|css|png|jpeg|jpg|gif|svg)$",
-        ~r"lib/druzhok_web_web/(controllers|live|components)/.*(ex|heex)$"
-      ]
-    ]
-end
-
 # Enable dev routes for dashboard and mailbox
 config :druzhok_web, dev_routes: true
 
@@ -65,9 +50,3 @@ config :phoenix, :stacktrace_depth, 20
 
 # Initialize plugs at runtime for faster development compilation
 config :phoenix, :plug_init_mode, :runtime
-
-config :phoenix_live_view,
-  # Include HEEx debug annotations as HTML comments in rendered markup
-  debug_heex_annotations: true,
-  # Enable helpful, but potentially expensive runtime checks
-  enable_expensive_runtime_checks: true

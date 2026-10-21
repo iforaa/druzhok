@@ -33,7 +33,6 @@ defmodule Druzhok.MixProject do
   # Run "mix help deps" to learn about dependencies.
   defp deps do
     [
-      {:bcrypt_elixir, "~> 3.0"},
       {:bypass, "~> 2.1", only: :test},
       {:yaml_elixir, "~> 2.11", only: :test},
       {:jason, "~> 1.4"},

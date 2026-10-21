@@ -24,11 +24,11 @@ defmodule DruzhokWebWeb.RouterAuthTest do
     end
   end
 
-  for path <- ["/settings"] do
-    test "GET #{path} as non-admin redirects to /", %{conn: conn} do
-      %{conn: conn} = log_in_user(conn, %{email: "u#{System.unique_integer([:positive])}@x.test"})
-      conn = get(conn, unquote(path))
-      assert redirected_to(conn) == "/"
+  test "no browser routes are left", %{conn: conn} do
+    for path <- ["/", "/login", "/settings", "/instances/x"] do
+      assert get(build_conn(), path).status == 404
     end
+
+    assert conn
   end
 end

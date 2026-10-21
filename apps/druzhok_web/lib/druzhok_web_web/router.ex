@@ -1,24 +1,8 @@
 defmodule DruzhokWebWeb.Router do
   use DruzhokWebWeb, :router
 
-  import DruzhokWebWeb.Auth, only: [require_admin: 2]
-
-  pipeline :browser do
-    plug :accepts, ["html"]
-    plug :fetch_session
-    plug :fetch_live_flash
-    plug :put_root_layout, html: {DruzhokWebWeb.Layouts, :root}
-    plug :protect_from_forgery
-    plug :put_secure_browser_headers
-  end
-
-  pipeline :auth do
-    plug DruzhokWebWeb.Auth
-  end
-
-  pipeline :admin do
-    plug :require_admin
-  end
+  # No browser routes: the dashboard is gone, the operator uses `ops/druzhok`
+  # (docs/superpowers/specs/2026-10-21-dashboard-removal-design.md).
 
   # LLM Proxy API (used by bots). Every route requires a tenant key.
   pipeline :llm_api do
@@ -62,41 +46,5 @@ defmodule DruzhokWebWeb.Router do
   # (docs/superpowers/specs/2026-10-20-telegram-webhook-relay-design.md).
   scope "/telegram", DruzhokWebWeb do
     post "/webhook/:bot", TelegramWebhookController, :receive
-  end
-
-  # Each group of LiveViews gets its own live_session: live navigation skips
-  # the plug pipelines, so the on_mount hooks in LiveAuth are what keeps a
-  # websocket opened on /login out of the dashboard.
-
-  # Public routes
-  scope "/", DruzhokWebWeb do
-    pipe_through :browser
-
-    live_session :public do
-      live "/login", LoginLive
-    end
-
-    post "/auth/session", AuthController, :create_session
-    get "/auth/logout", AuthController, :logout
-  end
-
-  # Protected routes
-  scope "/", DruzhokWebWeb do
-    pipe_through [:browser, :auth]
-
-    live_session :authenticated, on_mount: {DruzhokWebWeb.LiveAuth, :require_user} do
-      live "/", DashboardLive
-      live "/instances/:name", DashboardLive
-      live "/instances/:name/:tab", DashboardLive
-    end
-  end
-
-  # Admin-only routes
-  scope "/", DruzhokWebWeb do
-    pipe_through [:browser, :auth, :admin]
-
-    live_session :admin, on_mount: {DruzhokWebWeb.LiveAuth, :require_admin} do
-      live "/settings", SettingsLive
-    end
   end
 end

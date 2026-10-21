@@ -16,7 +16,7 @@ Always use `/my-commit` for committing changes.
   one `Lifecycle.Bot` per bot in druzhok.service starts/stops/sleeps/wakes/deletes it. From `druzhok-run.sh` pass
   `wait: true` to get the outcome (`{:ok, _}` / `{:error, reason}` / `{:error, :timeout}`). An active bot whose unit
   is down is started again (backoff 10 s → 15 min), so `druzhok-ctl stop` does not last: stop through
-  `BotManager.stop`. Opt-in sleep (`sleep_enabled`, settings tab): a webhook bot idle for `sleep_idle_minutes`
+  `BotManager.stop`. Opt-in sleep (`sleep_enabled`, `ops/druzhok set <bot> sleep_enabled=true`): a webhook bot idle for `sleep_idle_minutes`
   (Settings, default 30) is stopped and woken by its next queued update that it would answer
   (`Telegram.Addressed`: group chatter a mention-only bot skips waits, and is delivered on the next wake),
   or 3 min before its next cron run.
@@ -44,7 +44,7 @@ Always use `/my-commit` for committing changes.
 
 ```
 apps/druzhok/      core: BotManager, Host (Systemd|Process), Runtime.Hermes, ManagerBot, Budget
-apps/druzhok_web/  Phoenix dashboard + LLM proxy (LlmProxyController) + BotSite plug
+apps/druzhok_web/  Phoenix, no UI: LLM proxy (LlmProxyController), Telegram webhook, /internal/fetch, BotSite plug
 ops/               druzhok-ctl, hermes@.service, nftables, Caddyfile, bootstrap.sh, smoke.sh
 hermes-agent/      gitignored clone of the hermes fork (see update-hermes skill)
 (workspace seed: config.yaml + AGENTS.md come from Runtime.Hermes.workspace_files/1; SOUL.md from the provisioner)
@@ -72,16 +72,16 @@ Spec: `docs/superpowers/specs/2026-09-05-ruoc-gateway-migration-design.md`.
 | `POST /v2/search` | ruoc-gateway `/v1/search` (Tavily), Firecrawl-shaped reply |
 | `POST /v2/scrape` | ruoc-gateway `/v1/fetch`, which routes back to druzhok `POST /internal/fetch` (shared secret `fetch_secret` / `FETCH_SECRET`); `Druzhok.Fetch` reads the page (SSRF policy, 5 MiB, 30 s) and the Python worker at `FETCH_WORKER_BIN` (venv `/opt/druzhok-fetch`, `apps/druzhok/priv/fetch-worker`) turns it into markdown. Priced per page in ruoc (`ruocd fetch setup -rub 0`, free at launch) |
 | `POST /v1/images/generations` | ruoc-gateway `/v1/images` (per-image price, model = `instances.image_gen_model`, nil = ruoc default; catalogue from `GET /v1/images/models` via `Druzhok.Ruoc.image_models/0`) |
-| `POST /v1/embeddings` | ruoc-gateway `/v1/embeddings` (kind `embedding`, per 1M input tokens, free at launch), computed upstream by ruoc. Bots send entry `ruoc-embed-e5-large` (`Runtime.Hermes` `@embedding_model`/`@embedding_dim`, multilingual-e5-large 1024-d via OpenRouter, since 2026-10-20; the local e5-small ONNX worker and `ruoc-embed` were retired then). Changing the model = new ruoc entry + `@embedding_model`/`@embedding_dim` + `druzhok-ctl exec <bot> mnemosyne reindex --yes` per bot; a dimension mismatch makes Mnemosyne fall back to keyword recall, never corrupts. `MNEMOSYNE_DATA_DIR` must be `<tenant>/mnemosyne/data` (the plugin hardcodes that path, the CLI follows the variable). Used by the Mnemosyne memory provider (`instances.memory_provider`, settings tab); spec `docs/superpowers/specs/2026-09-06-mnemosyne-memory-design.md`, eval `ops/embed-eval` |
+| `POST /v1/embeddings` | ruoc-gateway `/v1/embeddings` (kind `embedding`, per 1M input tokens, free at launch), computed upstream by ruoc. Bots send entry `ruoc-embed-e5-large` (`Runtime.Hermes` `@embedding_model`/`@embedding_dim`, multilingual-e5-large 1024-d via OpenRouter, since 2026-10-20; the local e5-small ONNX worker and `ruoc-embed` were retired then). Changing the model = new ruoc entry + `@embedding_model`/`@embedding_dim` + `druzhok-ctl exec <bot> mnemosyne reindex --yes` per bot; a dimension mismatch makes Mnemosyne fall back to keyword recall, never corrupts. `MNEMOSYNE_DATA_DIR` must be `<tenant>/mnemosyne/data` (the plugin hardcodes that path, the CLI follows the variable). Used by the Mnemosyne memory provider (`instances.memory_provider`); spec `docs/superpowers/specs/2026-09-06-mnemosyne-memory-design.md`, eval `ops/embed-eval` |
 | `POST /v1/responses` | OpenRouter (unmetered for money) |
 | `POST /v1/audio/speech` | OpenAI TTS (unmetered for money) |
 
-ruoc-gateway settings (dashboard Settings page, or `RUOC_URL` / `RUOC_ADMIN_HOST` /
+ruoc-gateway settings (`ops/druzhok settings set`, or `RUOC_URL` / `RUOC_ADMIN_HOST` /
 `RUOC_ADMIN_TOKEN` / `RUOC_CATALOG_KEY` env): `BotManager.create/2` provisions a ruoc account
 per bot, which joins the **default plan** set on the ruoc console's Plans page (ruoc issues the
-plan's credit each period, no payment gateway yet); `BotManager.migrate_to_ruoc/1` (settings-tab
-button or `mix druzhok.migrate_ruoc <name>`) moves an old row, unfunded. Extra funding and plan
-changes happen in the ruoc console; the manager bot and the settings tab only show plan + renewal
+plan's credit each period, no payment gateway yet); `BotManager.migrate_to_ruoc/1` (`ops/druzhok
+migrate-ruoc <bot>` or `mix druzhok.migrate_ruoc <name>`) moves an old row, unfunded. Extra funding and plan
+changes happen in the ruoc console; the manager bot and `ops/druzhok show` only show plan + renewal
 date from `GET /v1/balance` (`Druzhok.Ruoc.balance/1`). The model catalog is ruoc's
 `GET /v1/models` (`Druzhok.Ruoc.models/0`, default `ruoc-flash`).
 

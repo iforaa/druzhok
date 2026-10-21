@@ -1,6 +1,6 @@
 # Removing the dashboard (2026-10-21)
 
-Status: steps 1 and 2 done. Item 7 of the review plan ("UI freeze") became removal: the operator is the only
+Status: done (steps 1–3, 2026-10-21). Item 7 of the review plan ("UI freeze") became removal: the operator is the only
 dashboard user (one `users` row, `admin`) and does not use it. Every remaining operator action moves to the
 CLI; Phoenix stays for the proxy, the Telegram webhook, `/internal/fetch` and the BotSite plug.
 
@@ -24,8 +24,11 @@ One step per commit, each deployed and smoke-tested (`ops/smoke.sh`) before the 
    the value from stdin.
 3. **Settings pages and the shell out.** `DashboardLive`, `SettingsLive`, `SettingsTab`, `LoginLive`,
    auth (`users`, `AuthController`, `LiveAuth`, plugs), LiveView, the assets pipeline (esbuild,
-   Tailwind) and their deps; the `/` routes. Then decide whether `crash_logs` (written by
-   `Druzhok.ErrorLogger`, read by nothing after step 1) and `Druzhok.Events` still earn their keep.
+   Tailwind) and their deps; the `/` routes. Done: also `Druzhok.User` with `bcrypt_elixir` and the
+   seeds file (a hard-coded admin password), `priv/static` and `cache_static_manifest` (the "could not
+   find static manifest" error at every start), and `Druzhok.ErrorLogger`/`CrashLog`: errors stay in the
+   journal. Migration `20261022000002` drops `users` and `crash_logs`. `Druzhok.Events` stays (PubSub
+   broadcasts with no subscriber; cheap).
 
 ## Not changed
 

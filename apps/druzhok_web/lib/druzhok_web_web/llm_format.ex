@@ -9,7 +9,7 @@ defmodule DruzhokWebWeb.LlmFormat do
     Application.get_env(:druzhok, :openrouter_api_url) || "https://openrouter.ai/api/v1"
   end
 
-  # OPENROUTER_API_KEY env wins; otherwise the key entered in dashboard Settings.
+  # OPENROUTER_API_KEY env wins; otherwise the `ops/druzhok settings` value.
   def provider_key do
     Druzhok.Settings.openrouter_api_key()
   end
