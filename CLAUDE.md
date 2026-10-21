@@ -2,7 +2,7 @@
 
 Multi-tenant Hermes bot hosting. Elixir/Phoenix orchestrator (umbrella at the repo root) runs
 one **systemd unit + Linux user per bot** on the KZ server; all LLM traffic goes
-through Druzhok's OpenAI-compatible proxy (budgets, metering). No Docker.
+through Druzhok's OpenAI-compatible proxy (forwarding to ruoc-gateway, metering). No Docker.
 
 ## Commits
 
@@ -43,7 +43,7 @@ Always use `/my-commit` for committing changes.
 ## Layout
 
 ```
-apps/druzhok/      core: BotManager, Host (Systemd|Process), Runtime.Hermes, ManagerBot, Budget
+apps/druzhok/      core: BotManager, Host (Systemd|Process), Runtime.Hermes, ManagerBot, Lifecycle, CLI
 apps/druzhok_web/  Phoenix, no UI: LLM proxy (LlmProxyController), Telegram webhook, /internal/fetch, BotSite plug
 ops/               druzhok-ctl, hermes@.service, nftables, Caddyfile, bootstrap.sh, smoke.sh
 hermes-agent/      gitignored clone of the hermes fork (see update-hermes skill)
@@ -80,7 +80,7 @@ ruoc-gateway settings (`ops/druzhok settings set`, or `RUOC_URL` / `RUOC_ADMIN_H
 `RUOC_ADMIN_TOKEN` / `RUOC_CATALOG_KEY` env): `BotManager.create/2` provisions a ruoc account
 per bot, which joins the **default plan** set on the ruoc console's Plans page (ruoc issues the
 plan's credit each period, no payment gateway yet); `BotManager.migrate_to_ruoc/1` (`ops/druzhok
-migrate-ruoc <bot>` or `mix druzhok.migrate_ruoc <name>`) moves an old row, unfunded. Extra funding and plan
+migrate-ruoc <bot>`) moves an old row, unfunded. Extra funding and plan
 changes happen in the ruoc console; the manager bot and `ops/druzhok show` only show plan + renewal
 date from `GET /v1/balance` (`Druzhok.Ruoc.balance/1`). The model catalog is ruoc's
 `GET /v1/models` (`Druzhok.Ruoc.models/0`, default `ruoc-flash`).

@@ -5,7 +5,7 @@ defmodule Druzhok.CLI do
   `mix druzhok <command> [args]`. `main/1` prints and returns the exit status.
   """
 
-  alias Druzhok.{BotManager, BotSettings, InstanceManager, Settings}
+  alias Druzhok.{BotManager, BotSettings, Settings}
 
   @help """
   usage: druzhok <command> [args]
@@ -43,7 +43,7 @@ defmodule Druzhok.CLI do
   defp run([h]) when h in ["help", "-h", "--help"], do: IO.write(@help)
 
   defp run(["list"]) do
-    for inst <- InstanceManager.list() do
+    for inst <- BotManager.list() do
       status = Druzhok.Lifecycle.shown_status(inst, BotManager.status(inst.name))
       sleep = if inst.sleep_enabled, do: " sleep-on", else: ""
       IO.puts("#{pad(inst.name, 28)} #{pad(status, 10)} #{inst.model}#{sleep}")

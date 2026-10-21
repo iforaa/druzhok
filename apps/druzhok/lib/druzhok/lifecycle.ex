@@ -69,7 +69,7 @@ defmodule Druzhok.Lifecycle do
   end
 
   @doc """
-  What the dashboard shows for a bot, from its row and the unit state
+  What `ops/druzhok list|show` shows for a bot, from its row and the unit state
   (`BotManager.status/1`): the unit state, except while the controller is
   between a request and the unit (sleep/wake spec, "States shown").
   """

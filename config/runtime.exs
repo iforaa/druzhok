@@ -38,8 +38,6 @@ if config_env() == :prod do
   host = System.get_env("PHX_HOST") || "example.com"
   port = String.to_integer(System.get_env("PORT") || "4000")
 
-  config :druzhok_web, :dns_cluster_query, System.get_env("DNS_CLUSTER_QUERY")
-
   config :druzhok_web, DruzhokWebWeb.Endpoint,
     url: [host: host, port: 443, scheme: "https"],
     http: [
@@ -90,7 +88,7 @@ end
 
 # LLM provider credentials (used by the LLM proxy, not by bots)
 # Empty env vars (e.g. `OPENROUTER_API_KEY=` in an EnvironmentFile) must
-# behave like unset so the dashboard Settings value is used instead.
+# behave like unset so the Settings row (`ops/druzhok settings`) is used instead.
 env_or_nil = fn name ->
   case System.get_env(name) do
     nil -> nil

@@ -195,5 +195,5 @@ defmodule Druzhok.Lifecycle.Idle do
   defp cron_lead_s,
     do: Keyword.get(Application.get_env(:druzhok, :lifecycle, []), :cron_lead_s, @cron_lead_s)
 
-  defp data_root(inst), do: Druzhok.Runtime.for_instance(inst).data_root(inst)
+  defp data_root(inst), do: Druzhok.Runtime.Hermes.data_root(inst)
 end

@@ -78,12 +78,6 @@ defmodule Druzhok.Telegram.InboxTest do
     assert Inbox.pending_count(inst.id) == 1
   end
 
-  test "stats report the queue", %{inst: inst} do
-    assert %{pending: 0, oldest_received_at: nil} = Inbox.stats(inst.id)
-    :ok = Inbox.enqueue(inst.id, 1, "{}")
-    assert %{pending: 1, oldest_received_at: %DateTime{}} = Inbox.stats(inst.id)
-  end
-
   defp age(instance_id, update_id, opts) do
     shift = fn s -> DateTime.add(DateTime.utc_now(), s) end
 

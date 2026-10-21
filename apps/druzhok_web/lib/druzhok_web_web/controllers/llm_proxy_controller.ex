@@ -8,10 +8,10 @@ defmodule DruzhokWebWeb.LlmProxyController do
   # Legacy-path vision default for /v1/responses; migrated bots set image_model.
   @default_image_model "google/gemini-2.5-flash-lite"
 
-  # Chat, search, transcription and image generation are served by
+  # Chat, search, transcription, image generation and embeddings are served by
   # ruoc-gateway with the bot's own account (`LlmProxy.Ruoc`). LlmAuth
-  # guarantees `ruoc_api_key` is set. Embeddings, TTS and /v1/responses still
-  # go to OpenRouter/OpenAI directly, unmetered for money, until ruoc sells them.
+  # guarantees `ruoc_api_key` is set. TTS and /v1/responses still go to
+  # OpenAI/OpenRouter directly, unmetered for money.
   def chat_completions(conn, _params), do: RuocProxy.chat(conn, conn.assigns.instance)
   def images_generations(conn, _params), do: RuocProxy.generate_image(conn, conn.assigns.instance)
 

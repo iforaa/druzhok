@@ -9,22 +9,21 @@ defmodule Druzhok.BotSettings do
   druzhok itself apply at once.
   """
 
-  alias Druzhok.{BotManager, I18n, Instance, Repo, Runtime, Telegram}
+  alias Druzhok.{BotManager, I18n, Instance, Repo, Telegram}
+  alias Druzhok.Runtime.Hermes
 
-  @restart ~w(model image_model language telegram_token mention_only group_sessions_per_user
-              group_shared_memory website_hosting_enabled image_gen_enabled memory_provider
-              trigger_name allowed_telegram_chats owner_telegram_id timezone)a
+  @restart ~w(model image_model language telegram_token mention_only group_shared_memory
+              website_hosting_enabled image_gen_enabled memory_provider trigger_name
+              allowed_telegram_chats owner_telegram_id timezone)a
 
   # Read per request (image_gen_model by the proxy), by the lifecycle
   # controller (sleep_enabled) or by druzhok (welcome_message).
   @live ~w(sleep_enabled image_gen_model welcome_message)a
 
-  @secret ~w(telegram_token api_key tenant_key ruoc_api_key telegram_webhook_secret)a
+  @secret ~w(telegram_token tenant_key ruoc_api_key telegram_webhook_secret)a
 
   @doc "The fields `update/2` takes."
   def fields, do: @restart ++ @live
-
-  def restart_fields, do: @restart
 
   @doc """
   The bot's settings and state as `[{field, value}]`, secrets masked.
@@ -122,20 +121,15 @@ defmodule Druzhok.BotSettings do
   @doc "Telegram ids allowed to DM the bot: the DB allowlist plus hermes's pairing file."
   def allowed_users(name) do
     with {:ok, inst} <- fetch(name) do
-      runtime = Runtime.for_instance(inst)
-
-      db =
-        if runtime.supports_feature?(:db_allowlist), do: Instance.get_allowed_ids(inst), else: []
-
       file =
-        runtime.read_allowed_users(runtime.data_root(inst)) |> Enum.reject(&(&1 == "__closed__"))
+        Hermes.read_allowed_users(Hermes.data_root(inst)) |> Enum.reject(&(&1 == "__closed__"))
 
-      {:ok, (db ++ file) |> Enum.uniq() |> Enum.sort()}
+      {:ok, (Instance.get_allowed_ids(inst) ++ file) |> Enum.uniq() |> Enum.sort()}
     end
   end
 
-  @doc "Allow a Telegram id (or @-less numeric input) to DM the bot; restarts it."
-  def allow_user(name, input), do: mutate_allowlist(name, Runtime.parse_user_input(input), :add)
+  @doc "Allow a Telegram id to DM the bot; restarts a running bot."
+  def allow_user(name, input), do: mutate_allowlist(name, String.trim(input), :add)
 
   def remove_user(name, user_id), do: mutate_allowlist(name, to_string(user_id), :remove)
 
@@ -143,20 +137,9 @@ defmodule Druzhok.BotSettings do
 
   defp mutate_allowlist(name, user_id, op) do
     with {:ok, inst} <- fetch(name) do
-      runtime = Runtime.for_instance(inst)
-
-      if runtime.supports_feature?(:db_allowlist) do
-        case op do
-          :add -> Instance.add_allowed_id(inst, user_id)
-          :remove -> Instance.remove_allowed_id(inst, user_id)
-        end
-      else
-        data_root = runtime.data_root(inst)
-
-        case op do
-          :add -> runtime.add_allowed_user(data_root, user_id)
-          :remove -> runtime.remove_allowed_user(data_root, user_id)
-        end
+      case op do
+        :add -> Instance.add_allowed_id(inst, user_id)
+        :remove -> Instance.remove_allowed_id(inst, user_id)
       end
 
       if inst.active, do: BotManager.restart(name)
@@ -183,7 +166,7 @@ defmodule Druzhok.BotSettings do
   """
   def approve_code(name, code) do
     {output, exit_code} =
-      BotManager.exec(name, [Runtime.Hermes.bin(), "pairing", "approve", "telegram", code])
+      BotManager.exec(name, [Hermes.bin(), "pairing", "approve", "telegram", code])
 
     output = String.trim(output)
 
@@ -198,8 +181,7 @@ defmodule Druzhok.BotSettings do
   @doc "Drop the bot's chat sessions (memory stays) and restart it."
   def clear_history(name) do
     with {:ok, inst} <- fetch(name) do
-      runtime = Runtime.for_instance(inst)
-      runtime.clear_sessions(runtime.data_root(inst))
+      Hermes.clear_sessions(Hermes.data_root(inst))
       if inst.active, do: BotManager.restart(name)
       :ok
     end

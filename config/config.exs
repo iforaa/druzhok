@@ -7,15 +7,11 @@
 # General application configuration
 import Config
 
-config :druzhok_web,
-  generators: [timestamp_type: :utc_datetime]
-
 # Configures the endpoint
 config :druzhok_web, DruzhokWebWeb.Endpoint,
   url: [host: "localhost"],
   adapter: Bandit.PhoenixAdapter,
-  render_errors: [formats: [json: DruzhokWebWeb.ErrorJSON], layout: false],
-  pubsub_server: DruzhokWeb.PubSub
+  render_errors: [formats: [json: DruzhokWebWeb.ErrorJSON], layout: false]
 
 # Configures Elixir's Logger
 config :logger, :console,
@@ -25,7 +21,7 @@ config :logger, :console,
 # Use Jason for JSON parsing in Phoenix
 config :phoenix, :json_library, Jason
 
-# Timezone database (used by Druzhok.Budget to reset at midnight in each bot's timezone)
+# Timezone database (DateTime.shift_zone!, e.g. ManagerBot.Onboarding renewal dates)
 config :elixir, :time_zone_database, Tz.TimeZoneDatabase
 
 config :druzhok, Druzhok.Repo,

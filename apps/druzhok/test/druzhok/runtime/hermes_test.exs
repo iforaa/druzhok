@@ -27,7 +27,7 @@ defmodule Druzhok.Runtime.HermesTest do
     test "a mnemosyne bot points the provider at the proxy with e5 prefixes and no LLM" do
       env = Hermes.env_vars(Map.put(@instance, :memory_provider, "mnemosyne"))
       assert env["MNEMOSYNE_DATA_DIR"] == Path.join([Hermes.data_root(@instance), "mnemosyne", "data"])
-      assert env["MNEMOSYNE_EMBEDDING_API_URL"] == Druzhok.Runtime.proxy_url()
+      assert env["MNEMOSYNE_EMBEDDING_API_URL"] == Hermes.proxy_url()
       assert env["MNEMOSYNE_EMBEDDING_API_KEY"] == "dk-alice-token"
       assert env["MNEMOSYNE_EMBEDDING_MODEL"] == "ruoc-embed-e5-large"
       assert env["MNEMOSYNE_EMBEDDING_DIM"] == "1024"
@@ -45,7 +45,7 @@ defmodule Druzhok.Runtime.HermesTest do
     # Bots have no internet: an openrouter.ai call hangs until its timeout
     # (the video tool's catalog held every start for 20 s).
     test "anything hermes sends to openrouter goes to the proxy" do
-      assert Hermes.env_vars(@instance)["OPENROUTER_BASE_URL"] == Druzhok.Runtime.proxy_url()
+      assert Hermes.env_vars(@instance)["OPENROUTER_BASE_URL"] == Hermes.proxy_url()
     end
 
     test "sets telegram token and builds allowlist from owner + allowed ids" do
@@ -139,7 +139,7 @@ defmodule Druzhok.Runtime.HermesTest do
       assert Hermes.env_vars(Map.put(@instance, :allow_all_telegram_users, false))["TELEGRAM_ALLOW_ALL_USERS"] == "false"
     end
 
-    test "does not duplicate keys from Runtime.base_env/1" do
+    test "does not duplicate keys from base_env/1" do
       # OPENAI_BASE_URL / OPENAI_API_KEY / TZ are the shared slot — base_env provides them.
       env = Hermes.env_vars(@instance)
       refute Map.has_key?(env, "OPENAI_BASE_URL")
@@ -202,21 +202,6 @@ defmodule Druzhok.Runtime.HermesTest do
     end
   end
 
-  describe "supports_feature?/1" do
-    test "owns :db_allowlist — allowlist lives in instance DB, rebuilt into env on restart" do
-      assert Hermes.supports_feature?(:db_allowlist)
-    end
-
-    test "returns false for features hermes doesn't support" do
-      refute Hermes.supports_feature?(:dreaming)
-      refute Hermes.supports_feature?(:heartbeat)
-      refute Hermes.supports_feature?(:fallback_models)
-    end
-
-    test "supports :group_chat_config — mention_only + trigger_name + allow_all + free_response_chats" do
-      assert Hermes.supports_feature?(:group_chat_config)
-    end
-  end
 
   describe "vision model" do
     test "without image_model the bot's own model reads images" do
@@ -380,13 +365,6 @@ defmodule Druzhok.Runtime.HermesTest do
       assert String.ends_with?(content, "\n")
       assert length(Regex.scan(~r/^  provider: mnemosyne$/m, content)) == 1
       assert YamlElixir.read_from_string!(content)["memory"]["provider"] == "mnemosyne"
-    end
-
-    test "removes a stale honcho.json", %{tmp_dir: tmp_dir} do
-      File.write!(Path.join(tmp_dir, "config.yaml"), "model:\n  default: \"x\"\n")
-      File.write!(Path.join(tmp_dir, "honcho.json"), "{}")
-      assert :ok = Hermes.sync_config(%{name: "b", model: "x", tenant_key: "k"}, tmp_dir)
-      refute File.exists?(Path.join(tmp_dir, "honcho.json"))
     end
 
     test "AGENTS.md memory section is the builtin text", %{tmp_dir: tmp_dir} do

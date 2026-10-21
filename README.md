@@ -1,8 +1,9 @@
 # Druzhok
 
 Multi-tenant hosting for [Hermes](https://github.com/iforaa/druzhok-hermes) Telegram bots:
-one systemd unit + Linux user per bot, an OpenAI-compatible LLM proxy with per-bot
-budgets, a LiveView dashboard, and a Telegram "manager bot" for self-service provisioning.
+one systemd unit + Linux user per bot, an OpenAI-compatible LLM proxy that forwards to
+ruoc-gateway (which does the billing), a Telegram "manager bot" for self-service
+provisioning, and an operator CLI (`ops/druzhok`).
 
 ```bash
 mix deps.get && mix compile && mix test

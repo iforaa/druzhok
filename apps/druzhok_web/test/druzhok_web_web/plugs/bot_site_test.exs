@@ -33,7 +33,7 @@ defmodule DruzhokWebWeb.Plugs.BotSiteTest do
   end
 
   describe "host matching" do
-    test "bare dashboard host passes through untouched" do
+    test "bare apex host passes through untouched" do
       conn = call("oldey.dev", "/")
       refute conn.halted
       assert conn.state == :unset

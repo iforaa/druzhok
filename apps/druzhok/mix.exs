@@ -36,7 +36,6 @@ defmodule Druzhok.MixProject do
       {:bypass, "~> 2.1", only: :test},
       {:yaml_elixir, "~> 2.11", only: :test},
       {:jason, "~> 1.4"},
-      {:phoenix_pubsub, "~> 2.1"},
       {:ecto_sql, "~> 3.12"},
       {:ecto_sqlite3, "~> 0.17"},
       {:finch, "~> 0.18"},

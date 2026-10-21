@@ -7,7 +7,8 @@ defmodule Druzhok.BotManager do
   """
 
   import Ecto.Query, only: [from: 2]
-  alias Druzhok.{Instance, InstanceManager, TokenPool, Repo}
+  alias Druzhok.{Instance, Repo}
+  alias Druzhok.Runtime.Hermes
   require Logger
 
   @doc """
@@ -63,43 +64,53 @@ defmodule Druzhok.BotManager do
   end
 
   defp do_create(name, opts) do
-    workspace = Path.join([data_root_base(), name, "workspace"])
-
-    # A pooled token can only be claimed once the instance row exists
-    # (tokens.instance_id is a foreign key), so pick first, claim after insert.
-    token_result = if opts[:telegram_token] do
-      {:ok, %{token: opts[:telegram_token], id: nil}}
+    if blank?(opts[:telegram_token]) do
+      {:error, "telegram token required"}
     else
-      TokenPool.peek_free()
-    end
+      workspace = Path.join([data_root_base(), name, "workspace"])
+      File.mkdir_p!(workspace)
 
-    case token_result do
-      {:ok, token_record} ->
-        tenant_key = Instance.generate_tenant_key(name)
+      case insert(name, opts, workspace) do
+        {:ok, instance} ->
+          use_webhook(instance)
+          admit_owner(opts)
+          # The row is created stopped; the caller asks for the start once
+          # it has written what the first start should see (SOUL.md), so a
+          # slow or failed first start is never a creation error.
+          {:ok, %{name: name, model: instance.model}}
 
-        config = Map.merge(Map.new(opts), %{
-          workspace: workspace,
-          telegram_token: token_record.token,
-          tenant_key: tenant_key
-        })
-
-        case InstanceManager.create(name, config) do
-          {:ok, instance} ->
-            if token_record.id, do: TokenPool.claim(token_record, instance.id)
-            use_webhook(instance)
-            admit_owner(opts)
-            # The row is created stopped; the caller asks for the start once
-            # it has written what the first start should see (SOUL.md), so a
-            # slow or failed first start is never a creation error.
-            {:ok, %{name: name, model: instance.model}}
-
-          error -> error
-        end
-
-      {:error, :no_tokens_available} ->
-        {:error, "No Telegram tokens available in pool"}
+        error ->
+          error
+      end
     end
   end
+
+  defp blank?(v), do: v in [nil, ""]
+
+  # Seed files (config.yaml, AGENTS.md) are written at start
+  # (`prepare_start/1`); here the row, stopped until a start is asked for.
+  # `name_free/1` ran first; the unique index answers a race.
+  defp insert(name, opts, workspace) do
+    %Instance{}
+    |> Instance.changeset(%{
+      name: name,
+      telegram_token: opts[:telegram_token],
+      model: opts[:model] || "default",
+      workspace: workspace,
+      tenant_key: Instance.generate_tenant_key(name),
+      language: opts[:language] || "ru",
+      owner_telegram_id: opts[:owner_telegram_id],
+      mention_only: opts[:mention_only] || false,
+      allow_all_telegram_users: opts[:allow_all_telegram_users] || false,
+      ruoc_account_id: opts[:ruoc_account_id],
+      ruoc_api_key: opts[:ruoc_api_key],
+      active: false
+    })
+    |> Repo.insert()
+  end
+
+  @doc "Every bot, running ones first."
+  def list, do: Repo.all(from(i in Instance, order_by: [desc: i.active, asc: i.name]))
 
   @doc """
   Ask for a fresh start with what is in the row now (also wakes an asleep
@@ -188,14 +199,13 @@ defmodule Druzhok.BotManager do
   # The start action's file work, run by the controller before Host.start:
   # workspace seed files and config.yaml. Returns `{env, data_root}`.
   def prepare_start(%Instance{} = instance) do
-    runtime = Druzhok.Runtime.for_instance(instance)
-    env = Druzhok.Runtime.base_env(instance) |> Map.merge(runtime.env_vars(instance))
-    data_root = runtime.data_root(instance)
+    env = Hermes.base_env(instance) |> Map.merge(Hermes.env_vars(instance))
+    data_root = Hermes.data_root(instance)
 
-    write_workspace_files(data_root, runtime.workspace_files(instance))
+    write_workspace_files(data_root, Hermes.workspace_files(instance))
     # The operator is the hermes slash-command admin on every bot
     # (Runtime.Hermes.sync_config/2); the instance row does not carry it.
-    runtime.sync_config(
+    Hermes.sync_config(
       Map.put(instance, :operator_telegram_id, Druzhok.Settings.operator_telegram_id()),
       data_root
     )
@@ -241,7 +251,6 @@ defmodule Druzhok.BotManager do
   def destroy_instance(%Instance{} = instance) do
     Druzhok.Host.destroy(instance.name)
     wipe_data_dir(instance)
-    TokenPool.release(instance.id)
     suspend_ruoc(instance)
     Repo.delete(instance, stale_error_field: :id)
     :ok
@@ -318,7 +327,7 @@ defmodule Druzhok.BotManager do
   end
 
   defp wipe_data_dir(instance) do
-    data_root = Druzhok.Runtime.for_instance(instance).data_root(instance)
+    data_root = Hermes.data_root(instance)
 
     if safe_to_wipe?(data_root) do
       case File.rm_rf(data_root) do
@@ -353,16 +362,18 @@ defmodule Druzhok.BotManager do
     |> Path.expand()
   end
 
+  @doc """
+  Absolute host path to a bot's published-sites directory:
+  `<data_root_base>/<bot_name>/workspace/sites`, as the BotSite plug serves it.
+  """
+  def sites_dir(bot_name) when is_binary(bot_name),
+    do: Path.join([data_root_base(), bot_name, "workspace", "sites"])
+
   @doc "Unit/process state as a string: active | activating | restarting | stopping | inactive | failed | unknown"
   def status(name), do: name |> Druzhok.Host.status() |> Atom.to_string()
 
-  @doc "`%{mem_bytes, cpu_usec}` for a running bot, or nil."
-  def stats(name), do: Druzhok.Host.stats(name)
-
   @doc "Run a command inside the bot's environment. Returns `{output, exit_code}`."
   def exec(name, args) when is_list(args), do: Druzhok.Host.exec(name, args)
-
-  def logs(name, lines \\ 200), do: Druzhok.Host.logs(name, lines)
 
   defp write_workspace_files(data_root, files) do
     for entry <- files do

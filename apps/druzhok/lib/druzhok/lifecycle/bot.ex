@@ -417,13 +417,6 @@ defmodule Druzhok.Lifecycle.Bot do
         backoff_ms(inst.start_failures)
   end
 
-  @doc "When a bot that failed to start is tried again (nil when it is not failing)."
-  def next_attempt(%Instance{start_failures: n, start_failed_at: %DateTime{} = at})
-      when is_integer(n) and n > 0,
-      do: DateTime.add(at, backoff_ms(n), :millisecond)
-
-  def next_attempt(_), do: nil
-
   defp backoff_ms(n) do
     case opt(:backoff_ms) do
       list when n <= length(list) -> Enum.at(list, n - 1)

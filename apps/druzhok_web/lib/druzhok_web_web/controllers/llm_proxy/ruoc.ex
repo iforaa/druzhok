@@ -7,8 +7,8 @@ defmodule DruzhokWebWeb.LlmProxy.Ruoc do
   Money lives in ruoc-gateway. Nothing here checks a budget or computes a
   cost; a 402 from the gateway is relayed to the bot as the answer. What
   stays on this side is the two dialects hermes speaks that the gateway does
-  not — Firecrawl-shaped search and OpenAI multipart audio — and the request
-  previews the dashboard shows.
+  not — Firecrawl-shaped search and OpenAI multipart audio — and the usage
+  rows (tokens, previews) the idle check reads.
 
   Every response carries the gateway's `X-Ruoc-Request-Id`, and every call
   logs it with the bot name, so a disputed charge is traceable in the ruoc

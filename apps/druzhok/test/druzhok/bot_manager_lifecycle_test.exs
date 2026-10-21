@@ -4,7 +4,7 @@ defmodule Druzhok.BotManagerLifecycleTest do
 
   import Druzhok.BotFixtures
   import Ecto.Query, only: [from: 2]
-  alias Druzhok.{BotManager, Instance, Repo, TokenPool}
+  alias Druzhok.{BotManager, Instance, Repo}
 
   setup do
     ctx = with_tmp_data_root()
@@ -12,14 +12,6 @@ defmodule Druzhok.BotManagerLifecycleTest do
     name = "lc#{System.unique_integer([:positive])}"
     cleanup_instance(name)
     Map.put(ctx, :name, name)
-  end
-
-  # Token strings are unique per test so an aborted earlier run cannot collide
-  # on the tokens.token unique index (core tests run outside a sandbox).
-  defp pooled_token(name, prefix) do
-    {:ok, pooled} = TokenPool.add("#{prefix}#{name}", "#{name}_bot")
-    on_exit(fn -> Repo.delete(pooled) end)
-    pooled
   end
 
   describe "create/2" do
@@ -43,23 +35,14 @@ defmodule Druzhok.BotManagerLifecycleTest do
       assert File.read!(Path.join([root, name, "config.yaml"])) =~ ~s(default: "z-ai/glm-5.3-flash")
 
       assert eventually(fn -> BotManager.status(name) == "active" end)
-      assert eventually(fn -> BotManager.logs(name, 5) =~ "TELEGRAM_BOT_TOKEN=1A" end)
-      assert %{mem_bytes: _, cpu_usec: _} = BotManager.stats(name)
+      assert eventually(fn -> Druzhok.Host.Process.logs(name, 5) =~ "TELEGRAM_BOT_TOKEN=1A" end)
+      assert %{mem_bytes: _, cpu_usec: _} = Druzhok.Host.stats(name)
       assert {out, 0} = BotManager.exec(name, ["sh", "-c", "echo $OPENAI_API_KEY"])
       assert String.trim(out) == inst.tenant_key
     end
 
-    test "takes a token from the pool when none is given", %{name: name} do
-      pooled = pooled_token(name, "2POOLED")
-
-      assert {:ok, _} = BotManager.create(name, %{model: "z-ai/glm-5.3-flash"})
-      inst = Repo.get_by!(Instance, name: name)
-      assert inst.telegram_token == pooled.token
-      assert Repo.reload!(pooled).instance_id == inst.id
-    end
-
-    test "fails cleanly when the pool is empty", %{name: name} do
-      assert {:error, "No Telegram tokens available in pool"} = BotManager.create(name, %{model: "m"})
+    test "a token is required", %{name: name} do
+      assert {:error, "telegram token required"} = BotManager.create(name, %{model: "m"})
       assert Repo.get_by(Instance, name: name) == nil
     end
 
@@ -312,9 +295,8 @@ defmodule Druzhok.BotManagerLifecycleTest do
   end
 
   describe "delete/1" do
-    test "wipes the data dir under the root, releases the token and drops the row", %{name: name, data_root: root} do
-      pooled = pooled_token(name, "3POOLED")
-      {:ok, _} = BotManager.create(name, %{model: "m"})
+    test "wipes the data dir under the root and drops the row", %{name: name, data_root: root} do
+      {:ok, _} = BotManager.create(name, %{model: "m", telegram_token: "1A"})
       dir = Path.join(root, name)
       assert File.dir?(dir)
 
@@ -322,7 +304,6 @@ defmodule Druzhok.BotManagerLifecycleTest do
 
       refute File.exists?(dir)
       assert Repo.get_by(Instance, name: name) == nil
-      assert Repo.reload!(pooled).instance_id == nil
       assert BotManager.status(name) == "inactive"
     end
 

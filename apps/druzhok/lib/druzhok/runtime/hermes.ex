@@ -1,6 +1,6 @@
 defmodule Druzhok.Runtime.Hermes do
   @moduledoc """
-  Runtime adapter for the Hermes agent (hermes-agent/ clone).
+  Env, config.yaml and workspace files for the Hermes agent (hermes-agent/ clone).
 
   One systemd unit (or dev process) per bot. `HERMES_HOME` is the tenant's
   data root on disk (`/data/tenants/<name>` in prod). All LLM traffic goes through druzhok's Elixir proxy via
@@ -12,15 +12,13 @@ defmodule Druzhok.Runtime.Hermes do
   at each start from `instance.owner_telegram_id +
   instance.allowed_telegram_ids`. Hermes's own pairing store under
   `<data_root>/platforms/pairing/telegram-approved.json` is left for the bot
-  to manage — we read it for the dashboard but don't write to it.
+  to manage — `ops/druzhok users` reads it, druzhok never writes it.
 
   `workspace/AGENTS.md` is seeded on first start and the druzhok-owned
   sections (`## Каждая сессия`, `## Память`, `## Стиль`, `## Публикация
   сайтов`) are rewritten on every start; everything else in it belongs to
   the bot.
   """
-
-  @behaviour Druzhok.Runtime
 
   require Logger
   alias Druzhok.Instance
@@ -84,7 +82,6 @@ defmodule Druzhok.Runtime.Hermes do
   Файлы в `sites/<имя>/` публичны. Не клади туда секреты, токены, файлы, начинающиеся с точки.
   """
 
-  @impl true
   def data_root(instance) do
     case Map.get(instance, :workspace) do
       ws when is_binary(ws) and ws != "" -> Path.dirname(ws)
@@ -95,7 +92,6 @@ defmodule Druzhok.Runtime.Hermes do
   @doc "Hermes CLI binary (`HERMES_BIN`); bare `hermes` resolves via PATH."
   def bin, do: Application.get_env(:druzhok, :hermes_bin, "hermes")
 
-  @impl true
   def env_vars(instance) do
     # base_env/1 already provides OPENAI_BASE_URL, OPENAI_API_KEY, TZ —
     # only add hermes-specific keys here.
@@ -106,7 +102,7 @@ defmodule Druzhok.Runtime.Hermes do
     # config.yaml's `stt:` section — see build_config_yaml/1.
     tenant_key = Map.get(instance, :tenant_key, "") || ""
     model = Map.get(instance, :model) || Druzhok.Ruoc.default_model()
-    proxy_url = Druzhok.Runtime.proxy_url()
+    proxy_url = proxy_url()
 
     %{
       "HERMES_HOME" => data_root(instance),
@@ -199,7 +195,7 @@ defmodule Druzhok.Runtime.Hermes do
     if memory_provider(instance) == "mnemosyne" do
       %{
         "MNEMOSYNE_DATA_DIR" => Path.join([data_root(instance), "mnemosyne", "data"]),
-        "MNEMOSYNE_EMBEDDING_API_URL" => Druzhok.Runtime.proxy_url(),
+        "MNEMOSYNE_EMBEDDING_API_URL" => proxy_url(),
         "MNEMOSYNE_EMBEDDING_API_KEY" => Map.get(instance, :tenant_key, "") || "",
         "MNEMOSYNE_EMBEDDING_MODEL" => @embedding_model,
         "MNEMOSYNE_EMBEDDING_DIM" => @embedding_dim,
@@ -220,7 +216,6 @@ defmodule Druzhok.Runtime.Hermes do
     end
   end
 
-  @impl true
   def workspace_files(instance) do
     # :create_only — write on fresh data root only. Hermes persists runtime
     # state (telegram thread IDs, etc.) back into config.yaml at runtime, so
@@ -232,13 +227,11 @@ defmodule Druzhok.Runtime.Hermes do
     ]
   end
 
-  @impl true
   def sync_config(instance, data_root) do
     sync_agents_md(instance, data_root)
-    _ = File.rm(Path.join(data_root, "honcho.json"))
 
-    # Patch dashboard-owned fields in config.yaml on every start so the
-    # dashboard stays the source of truth without clobbering hermes's
+    # Patch druzhok-owned fields in config.yaml on every start so the
+    # instance row stays the source of truth without clobbering hermes's
     # runtime writes (thread IDs etc).
     config_path = Path.join(data_root, "config.yaml")
     model = Map.get(instance, :model) || Druzhok.Ruoc.default_model()
@@ -606,7 +599,7 @@ defmodule Druzhok.Runtime.Hermes do
     auxiliary:
       vision:
         provider: custom
-        base_url: "#{Druzhok.Runtime.proxy_url()}"
+        base_url: "#{proxy_url()}"
         api_key: "#{tenant_key}"
         model: "#{vision_model}"
     #{@compression_block}
@@ -847,7 +840,6 @@ defmodule Druzhok.Runtime.Hermes do
     |> String.trim_trailing()
   end
 
-  @impl true
   def clear_sessions(data_root) do
     data_root
     |> Path.join("sessions")
@@ -856,7 +848,6 @@ defmodule Druzhok.Runtime.Hermes do
     :ok
   end
 
-  @impl true
   def read_allowed_users(data_root) do
     path = Path.join([data_root, "platforms", "pairing", "telegram-approved.json"])
 
@@ -868,18 +859,20 @@ defmodule Druzhok.Runtime.Hermes do
     end
   end
 
-  @impl true
-  def add_allowed_user(_data_root, _user_id), do: :ok
+  @doc "Base URL of druzhok's OpenAI-compatible proxy, as seen by bots and probes."
+  def proxy_url do
+    port = System.get_env("LLM_PROXY_PORT") || "4000"
+    "http://127.0.0.1:#{port}/v1"
+  end
 
-  @impl true
-  def remove_allowed_user(_data_root, _user_id), do: :ok
-
-  @impl true
-  def supports_feature?(:db_allowlist), do: true
-  def supports_feature?(:pairing_code_approval), do: true
-  def supports_feature?(:group_chat_config), do: true
-  def supports_feature?(:website_hosting), do: true
-  def supports_feature?(_), do: false
+  @doc "Env every bot gets: the proxy, its tenant key and its timezone."
+  def base_env(instance) do
+    %{
+      "OPENAI_BASE_URL" => proxy_url(),
+      "OPENAI_API_KEY" => Map.get(instance, :tenant_key, "") || "",
+      "TZ" => Map.get(instance, :timezone, "UTC") || "UTC"
+    }
+  end
 
   # --- Helpers ---
 
@@ -948,7 +941,7 @@ defmodule Druzhok.Runtime.Hermes do
     model = Map.get(instance, :model) || Druzhok.Ruoc.default_model()
     vision_model = vision_model_for(instance, model)
     tenant_key = Map.get(instance, :tenant_key, "") || ""
-    url = Druzhok.Runtime.proxy_url()
+    url = proxy_url()
     group_sessions_per_user = not Map.get(instance, :group_shared_memory, false)
     observe_unmentioned = Map.get(instance, :group_shared_memory, false)
 

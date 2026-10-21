@@ -7,13 +7,13 @@ defmodule DruzhokWebWeb.Plugs.BotSite do
   data dir (the hermes runtime `chmod 0700`s `HERMES_HOME` on every auth write).
   Phoenix runs as the data-dir owner, so it can always read the files.
 
-  This plug runs BEFORE the dashboard router. On a bot subdomain it serves the
+  This plug runs BEFORE the router. On a bot subdomain it serves the
   requested file and `halt/1`s, so bot subdomains can only ever reach files
-  under `<data_root>/<bot>/workspace/sites/` — never the dashboard, LiveView,
-  or the `/v1/*` proxy routes. Any non-bot host (incl. the bare `oldey.dev`
-  dashboard) passes through untouched.
+  under `<data_root>/<bot>/workspace/sites/` — never the `/v1/*` proxy, the
+  Telegram webhook or `/internal/fetch`. Any non-bot host (incl. the bare
+  `oldey.dev`) passes through untouched.
 
-  Sites live at `Druzhok.SiteLister.sites_dir/1`. The branded 404 page is the
+  Sites live at `Druzhok.BotManager.sites_dir/1`. The branded 404 page is the
   same "Nothing here yet" placeholder Caddy used to serve.
   """
 
@@ -25,7 +25,7 @@ defmodule DruzhokWebWeb.Plugs.BotSite do
   def init(opts), do: opts
 
   def call(%Plug.Conn{host: host} = conn, _opts) do
-    # The dashboard itself lives on a subdomain too (PHX_HOST, e.g.
+    # Druzhok itself lives on a subdomain too (PHX_HOST, e.g.
     # druzhok.oldey.dev) — never treat that host as a bot site.
     if host == DruzhokWebWeb.Endpoint.host() do
       conn
@@ -62,7 +62,7 @@ defmodule DruzhokWebWeb.Plugs.BotSite do
   @site_prefix ["workspace", "sites"]
 
   defp open_site_file(bot, segments) do
-    tenant_dir = bot |> Druzhok.SiteLister.sites_dir() |> Path.dirname() |> Path.dirname()
+    tenant_dir = bot |> Druzhok.BotManager.sites_dir() |> Path.dirname() |> Path.dirname()
 
     with :ok <- validate_segments(segments),
          {:ok, file, _stat} <- walk(tenant_dir, @site_prefix ++ segments),

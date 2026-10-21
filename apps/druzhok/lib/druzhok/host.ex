@@ -22,9 +22,6 @@ defmodule Druzhok.Host do
   @doc "Processes the bot runs right now (1 = hermes alone, at rest); nil if unknown."
   @callback procs(name) :: non_neg_integer() | nil
   @callback exec(name, args :: [String.t()]) :: {String.t(), integer()}
-  @callback logs(name, lines :: pos_integer()) :: String.t()
-  @doc "Can the bot reach a non-proxy local port? `:unenforced` when the host has no egress policy."
-  @callback egress_check(name) :: :open | :closed | :unenforced
 
   @name_re ~r/^[a-z0-9][a-z0-9_-]{0,30}$/
 
@@ -40,6 +37,4 @@ defmodule Druzhok.Host do
   def stats(name), do: impl().stats(name)
   def procs(name), do: impl().procs(name)
   def exec(name, args), do: impl().exec(name, args)
-  def logs(name, lines \\ 200), do: impl().logs(name, lines)
-  def egress_check(name), do: impl().egress_check(name)
 end

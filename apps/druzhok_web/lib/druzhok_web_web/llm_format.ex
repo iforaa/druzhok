@@ -38,7 +38,7 @@ defmodule DruzhokWebWeb.LlmFormat do
     %{prompt_tokens: usage["prompt_tokens"] || 0, completion_tokens: usage["completion_tokens"] || 0}
   end
 
-  @doc "Text of the last message, capped at 500 chars, for the dashboard's request list."
+  @doc "Text of the last message, capped at 500 chars, for `usage_logs.prompt_preview`."
   def prompt_preview(%{"messages" => [_ | _] = msgs}) do
     case msgs |> List.last() |> Map.get("content", "") do
       text when is_binary(text) ->

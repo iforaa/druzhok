@@ -98,11 +98,7 @@ defmodule Druzhok.Host.Process do
     end
   end
 
-  # No isolation in dev, so there is nothing to verify.
-  @impl Druzhok.Host
-  def egress_check(_name), do: :unenforced
-
-  @impl Druzhok.Host
+  @doc "The last `lines` of the process's output (dev and tests; prod uses `druzhok-ctl logs`)."
   def logs(name, lines) do
     case lookup(name) do
       nil -> ""

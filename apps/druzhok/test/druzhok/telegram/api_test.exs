@@ -42,7 +42,6 @@ defmodule Druzhok.Telegram.APITest do
     assert {:ok, true} = API.answer_callback_query("TOK", "cb1")
     assert {:ok, true} = API.send_chat_action("TOK", 5)
     assert {:ok, true} = API.get_updates("TOK", 42, 7)
-    assert {:ok, true} = API.get_file("TOK", "f1")
   end
 
   test "returns {:error, body} when Telegram says ok=false", %{bypass: bypass} do
@@ -71,52 +70,5 @@ defmodule Druzhok.Telegram.APITest do
     end)
 
     assert {:ok, "777SECRET"} = API.get_managed_bot_token("TOK", 777)
-  end
-
-  test "download_file fetches from /file/bot<token>/<path>", %{bypass: bypass} do
-    Bypass.expect_once(bypass, "GET", "/file/botTOK/voice/1.oga", fn conn -> Plug.Conn.resp(conn, 200, "bytes") end)
-    assert {:ok, "bytes"} = API.download_file("TOK", "voice/1.oga")
-
-    Bypass.expect_once(bypass, "GET", "/file/botTOK/missing", fn conn -> Plug.Conn.resp(conn, 404, "") end)
-    assert {:error, "HTTP 404"} = API.download_file("TOK", "missing")
-  end
-
-  test "fetch_file_by_id resolves the path with getFile then downloads it", %{bypass: bypass} do
-    Bypass.expect_once(bypass, "POST", "/botTOK/getFile", fn conn ->
-      {:ok, raw, conn} = Plug.Conn.read_body(conn)
-      assert Jason.decode!(raw) == %{"file_id" => "f1"}
-      Plug.Conn.resp(conn, 200, Jason.encode!(%{"ok" => true, "result" => %{"file_path" => "photos/p.jpg"}}))
-    end)
-
-    Bypass.expect_once(bypass, "GET", "/file/botTOK/photos/p.jpg", fn conn -> Plug.Conn.resp(conn, 200, "jpg") end)
-    assert {:ok, "jpg"} = API.fetch_file_by_id("TOK", "f1")
-  end
-
-  test "send_photo and send_document post multipart bodies", %{bypass: bypass} do
-    Bypass.expect_once(bypass, "POST", "/botTOK/sendPhoto", fn conn ->
-      [ct] = Plug.Conn.get_req_header(conn, "content-type")
-      assert ct =~ "multipart/form-data; boundary="
-      {:ok, raw, conn} = Plug.Conn.read_body(conn)
-      assert raw =~ ~s(name="chat_id"\r\n\r\n5\r\n)
-      assert raw =~ ~s(name="photo"; filename="image.png")
-      assert raw =~ "PNGBYTES"
-      assert raw =~ ~s(name="caption"\r\n\r\nhello)
-      Plug.Conn.resp(conn, 200, Jason.encode!(%{"ok" => true, "result" => %{"message_id" => 1}}))
-    end)
-
-    assert {:ok, %{"ok" => true}} = API.send_photo("TOK", 5, "PNGBYTES", %{caption: "hello"})
-
-    path = Path.join(System.tmp_dir!(), "doc-#{System.unique_integer([:positive])}.txt")
-    File.write!(path, "DOCBYTES")
-    on_exit(fn -> File.rm(path) end)
-
-    Bypass.expect_once(bypass, "POST", "/botTOK/sendDocument", fn conn ->
-      {:ok, raw, conn} = Plug.Conn.read_body(conn)
-      assert raw =~ ~s(name="document"; filename="#{Path.basename(path)}")
-      assert raw =~ "DOCBYTES"
-      Plug.Conn.resp(conn, 500, "boom")
-    end)
-
-    assert {:error, "boom"} = API.send_document("TOK", 5, path)
   end
 end

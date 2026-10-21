@@ -132,19 +132,6 @@ defmodule Druzhok.Telegram.Inbox do
     |> Repo.one()
   end
 
-  @doc "`%{pending, oldest_received_at, last_error}` for the dashboard and smoke."
-  def stats(instance_id) do
-    from(u in __MODULE__,
-      where: u.instance_id == ^instance_id and is_nil(u.acked_at),
-      select: %{
-        pending: count(),
-        oldest_received_at: type(min(u.received_at), :utc_datetime_usec),
-        last_error: max(u.last_error)
-      }
-    )
-    |> Repo.one()
-  end
-
   def drop_pending(instance_id, reason) do
     from(u in __MODULE__, where: u.instance_id == ^instance_id and is_nil(u.acked_at))
     |> Repo.update_all(set: [acked_at: DateTime.utc_now(), dropped_reason: reason])

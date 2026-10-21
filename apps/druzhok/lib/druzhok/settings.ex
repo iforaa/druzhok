@@ -71,7 +71,4 @@ defmodule Druzhok.Settings do
   Set with `ops/druzhok settings set bot_creation=closed`; unset is open. Bots that exist keep running.
   """
   def bot_creation_closed?, do: get("bot_creation") == "closed"
-
-  @doc "Setting keys the ruoc-gateway integration reads (see `Druzhok.Ruoc`)."
-  def ruoc_keys, do: ["ruoc_url", "ruoc_admin_host", "ruoc_admin_token", "ruoc_catalog_key"]
 end

@@ -19,9 +19,7 @@ config :logger, level: :warning
 config :phoenix, :plug_init_mode, :runtime
 
 config :druzhok,
-  nebius_api_url: "https://api.tokenfactory.us-central1.nebius.com/v1",
-  openrouter_api_url: "https://openrouter.ai/api/v1",
-  anthropic_api_url: "https://api.anthropic.com"
+  openrouter_api_url: "https://openrouter.ai/api/v1"
 
 # Lifecycle controller timings scaled down for tests (sleep/wake spec).
 config :druzhok,

@@ -87,25 +87,6 @@ defmodule Druzhok.Host.Systemd do
     end
   end
 
-  @impl true
-  def logs(name, lines) do
-    with :ok <- check_name(name),
-         {out, 0} <- ctl(["logs", name, to_string(lines)]) do
-      String.trim_trailing(out)
-    else
-      _ -> ""
-    end
-  end
-
-  @impl true
-  def egress_check(name) do
-    # nftables drops (not rejects), so a blocked connect only times out.
-    case exec(name, ["curl", "-m", "1", "-sS", "-o", "/dev/null", "http://127.0.0.1:22"]) do
-      {_, 0} -> :open
-      _ -> :closed
-    end
-  end
-
   @doc "Serialise env as a systemd EnvironmentFile (sorted, double-quoted, escaped)."
   def env_file(env) do
     env

@@ -141,7 +141,6 @@ defmodule Druzhok.RuocTest do
 
       assert [%{id: "ruoc-flash"}] = Ruoc.vision_models()
       assert %{name: "GLM 5.3"} = Ruoc.find_model("ruoc-standard")
-      assert Ruoc.price_label(Ruoc.find_model("ruoc-flash")) == "12/38 ₽/M"
 
       Ruoc.models()
       [call] = RuocStub.calls(stub, "GET /v1/models")
@@ -169,12 +168,6 @@ defmodule Druzhok.RuocTest do
       assert Ruoc.models() == []
       assert RuocStub.calls(stub, "GET /v1/models") == []
     end
-  end
-
-  test "console_url/1 needs the admin host" do
-    assert Ruoc.console_url("acct-1") == "https://admin.test/#/requests/acct-1"
-    RuocStub.unset(:ruoc_admin_host)
-    assert Ruoc.console_url("acct-1") == nil
   end
 
   test "default_model/0 is ruoc-flash", do: assert(Ruoc.default_model() == "ruoc-flash")

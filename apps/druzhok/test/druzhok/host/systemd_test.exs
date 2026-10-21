@@ -53,10 +53,6 @@ defmodule Druzhok.Host.SystemdTest do
     assert [{"create", "bot-a", _, ~s(K="v2")}, {"start", "bot-a", _, _}] = calls(log)
   end
 
-  test "egress_check maps curl exit code" do
-    assert Systemd.egress_check("bot-e") == :closed
-  end
-
   test "status maps words to atoms" do
     assert Systemd.status("bot-z") == :unknown
     assert :ok = Systemd.start("bot-z", %{}, "/x")
@@ -69,8 +65,7 @@ defmodule Druzhok.Host.SystemdTest do
     assert Systemd.stats("bot-a") == %{mem_bytes: 123_456, cpu_usec: 7_890}
   end
 
-  test "logs and exec pass through" do
-    assert Systemd.logs("bot-a", 2) == "line1\nline2"
+  test "exec passes through" do
     assert {"hello\n", 0} = Systemd.exec("bot-a", ["echo", "hello"])
   end
 

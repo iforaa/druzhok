@@ -95,8 +95,4 @@ defmodule Druzhok.HostStub do
   def stats(_name), do: %{mem_bytes: 230 * 1024 * 1024, cpu_usec: 0}
   @impl true
   def exec(_name, _args), do: {"", 0}
-  @impl true
-  def logs(_name, _lines), do: ""
-  @impl true
-  def egress_check(_name), do: :unenforced
 end

@@ -7,7 +7,7 @@ defmodule Druzhok.Ruoc do
   proxies the bot's traffic with it. Balance, prices and admission live over
   there; this module only asks.
 
-  Settings (dashboard rows); each is overridden by the app env of the same
+  Settings (`ops/druzhok settings set`); each is overridden by the app env of the same
   name, which `config/runtime.exs` fills from `RUOC_URL`, `RUOC_ADMIN_HOST`,
   `RUOC_ADMIN_TOKEN`, `RUOC_CATALOG_KEY`:
 
@@ -45,14 +45,6 @@ defmodule Druzhok.Ruoc do
   def configured?, do: admin_token() != nil
 
   def default_model, do: @default_model
-
-  @doc "Where an operator looks at this account in the ruoc console."
-  def console_url(account_id) do
-    case admin_host() do
-      nil -> nil
-      host -> "https://#{host}/#/requests/#{account_id}"
-    end
-  end
 
   # --- Admin API -----------------------------------------------------------
 
@@ -232,7 +224,7 @@ defmodule Druzhok.Ruoc do
           {:error, reason} ->
             Logger.warning("ruoc models fetch failed: #{reason}")
             # Keep serving the last good list (or nothing) and do not retry
-            # before the TTL: every dashboard render would otherwise hit the
+            # before the TTL: every model picker would otherwise hit the
             # gateway again.
             list = case stale do
               {_, list} -> list
@@ -278,10 +270,6 @@ defmodule Druzhok.Ruoc do
       end
     end
   end
-
-  @doc "Label for a picker: `name (in/out RUB/M)`."
-  def price_label(%{price: %{input: nil, output: nil}}), do: nil
-  def price_label(%{price: %{input: i, output: o}}), do: "#{i || "?"}/#{o || "?"} ₽/M"
 
   @doc """
   The image catalogue, in ruoc's order: `[%{id, name, description,

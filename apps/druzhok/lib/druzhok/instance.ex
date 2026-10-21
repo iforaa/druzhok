@@ -10,7 +10,6 @@ defmodule Druzhok.Instance do
     field :active, :boolean, default: true
     field :owner_telegram_id, :integer
     field :timezone, :string, default: "UTC"
-    field :api_key, :string
     field :language, :string, default: "ru"
     field :tenant_key, :string
     field :mention_only, :boolean, default: false
@@ -20,7 +19,6 @@ defmodule Druzhok.Instance do
     field :allow_all_telegram_users, :boolean, default: false
     field :trigger_name, :string
     field :image_model, :string
-    field :group_sessions_per_user, :boolean, default: true
     field :group_shared_memory, :boolean, default: false
     field :website_hosting_enabled, :boolean, default: false
     field :image_gen_enabled, :boolean, default: false
@@ -59,18 +57,11 @@ defmodule Druzhok.Instance do
 
   def changeset(instance, attrs) do
     instance
-    |> cast(attrs, [:name, :telegram_token, :model, :workspace, :active, :owner_telegram_id, :timezone, :api_key, :language, :tenant_key, :mention_only, :welcome_message, :allowed_telegram_ids, :allowed_telegram_chats, :allow_all_telegram_users, :trigger_name, :image_model, :group_sessions_per_user, :group_shared_memory, :website_hosting_enabled, :image_gen_enabled, :image_gen_model, :ruoc_account_id, :ruoc_api_key, :memory_provider, :telegram_mode, :telegram_webhook_secret, :telegram_relay_paused_until, :telegram_relay_pause_reason, :sleep_enabled])
+    |> cast(attrs, [:name, :telegram_token, :model, :workspace, :active, :owner_telegram_id, :timezone, :language, :tenant_key, :mention_only, :welcome_message, :allowed_telegram_ids, :allowed_telegram_chats, :allow_all_telegram_users, :trigger_name, :image_model, :group_shared_memory, :website_hosting_enabled, :image_gen_enabled, :image_gen_model, :ruoc_account_id, :ruoc_api_key, :memory_provider, :telegram_mode, :telegram_webhook_secret, :telegram_relay_paused_until, :telegram_relay_pause_reason, :sleep_enabled])
     |> validate_required([:name, :model, :workspace])
     |> validate_inclusion(:memory_provider, @memory_providers)
     |> validate_inclusion(:telegram_mode, Druzhok.Telegram.Webhook.modes())
     |> unique_constraint(:name)
-  end
-
-  def get_by_api_key(nil), do: nil
-  def get_by_api_key(key), do: Druzhok.Repo.get_by(__MODULE__, api_key: key)
-
-  def generate_api_key do
-    "dk_" <> Base.encode16(:crypto.strong_rand_bytes(16), case: :lower)
   end
 
   def generate_tenant_key(name) do
