@@ -1,6 +1,6 @@
 defmodule Druzhok.Lifecycle.Typing do
   @moduledoc """
-  While a bot wakes for an update, show "typing…" in that update's chat
+  While a bot wakes for an update in a private chat, show "typing…" there
   (sleep/wake spec, "Typing indicator"). Druzhok sends it with the bot's own
   token, every 4 s until the update is delivered or 60 s pass. Best effort:
   a failed call is ignored.
@@ -20,15 +20,22 @@ defmodule Druzhok.Lifecycle.Typing do
     :ok
   end
 
-  @doc "The chat an update belongs to, for the update types a user sends."
+  @doc """
+  The private chat an update belongs to, for the update types a user sends.
+  Groups get no indicator: the bot answers there only when mentioned, and a
+  "typing…" for a reply that never comes is shown to every member.
+  """
   def chat_id(payload) do
     case Jason.decode(payload) do
-      {:ok, %{"message" => %{"chat" => %{"id" => id}}}} -> id
-      {:ok, %{"edited_message" => %{"chat" => %{"id" => id}}}} -> id
-      {:ok, %{"callback_query" => %{"message" => %{"chat" => %{"id" => id}}}}} -> id
+      {:ok, %{"message" => %{"chat" => chat}}} -> private_id(chat)
+      {:ok, %{"edited_message" => %{"chat" => chat}}} -> private_id(chat)
+      {:ok, %{"callback_query" => %{"message" => %{"chat" => chat}}}} -> private_id(chat)
       _ -> nil
     end
   end
+
+  defp private_id(%{"type" => "private", "id" => id}), do: id
+  defp private_id(_), do: nil
 
   defp deadline,
     do: System.monotonic_time(:millisecond) + opt(:for_ms, 60_000)

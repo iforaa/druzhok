@@ -338,11 +338,19 @@ defmodule Druzhok.LifecycleTest do
     assert Lifecycle.shown_status(i, "failed") == "failed"
   end
 
-  test "Typing.chat_id reads the chat of a message, an edit or a callback" do
-    assert Typing.chat_id(~s({"message":{"chat":{"id":5}}})) == 5
-    assert Typing.chat_id(~s({"edited_message":{"chat":{"id":6}}})) == 6
-    assert Typing.chat_id(~s({"callback_query":{"message":{"chat":{"id":7}}}})) == 7
+  test "Typing.chat_id reads the private chat of a message, an edit or a callback" do
+    assert Typing.chat_id(~s({"message":{"chat":{"id":5,"type":"private"}}})) == 5
+    assert Typing.chat_id(~s({"edited_message":{"chat":{"id":6,"type":"private"}}})) == 6
+
+    assert Typing.chat_id(~s({"callback_query":{"message":{"chat":{"id":7,"type":"private"}}}})) ==
+             7
+
     assert Typing.chat_id(~s({"my_chat_member":{}})) == nil
+  end
+
+  test "Typing.chat_id ignores groups, where the bot may not answer" do
+    assert Typing.chat_id(~s({"message":{"chat":{"id":-100,"type":"supergroup"}}})) == nil
+    assert Typing.chat_id(~s({"message":{"chat":{"id":-101,"type":"group"}}})) == nil
   end
 
   describe "ordering and interleavings" do
@@ -496,7 +504,14 @@ defmodule Druzhok.LifecycleTest do
 
     test "shown in the waking update's chat until it is delivered", %{root: root, seen: seen} do
       inst = idle_bot(root, %{sleeping: true, unit: :inactive, telegram_token: "T1"})
-      :ok = Inbox.enqueue(inst.id, 4, ~s({"update_id":4,"message":{"chat":{"id":555}}}))
+
+      :ok =
+        Inbox.enqueue(
+          inst.id,
+          4,
+          ~s({"update_id":4,"message":{"chat":{"id":555,"type":"private"}}})
+        )
+
       poke(inst)
 
       assert eventually(fn -> Agent.get(seen, &length/1) >= 2 end)
