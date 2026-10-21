@@ -3,8 +3,8 @@ defmodule Druzhok.Settings do
   import Ecto.Changeset
 
   schema "settings" do
-    field :key, :string
-    field :value, :string
+    field(:key, :string)
+    field(:value, :string)
 
     timestamps()
   end
@@ -15,6 +15,18 @@ defmodule Druzhok.Settings do
     |> validate_required([:key])
     |> unique_constraint(:key)
   end
+
+  @keys ~w(openrouter_api_key openai_api_key manager_bot_token operator_telegram_id
+           ruoc_url ruoc_admin_host ruoc_admin_token ruoc_catalog_key fetch_secret bot_creation
+           sleep_idle_minutes)
+  @secret ~w(openrouter_api_key openai_api_key manager_bot_token ruoc_admin_token ruoc_catalog_key
+             fetch_secret)
+
+  @doc "The keys an operator sets (`Druzhok.CLI`, dashboard Settings)."
+  def keys, do: @keys
+
+  @doc "The keys whose values are never shown whole."
+  def secret_keys, do: @secret
 
   @doc "Setting value, or nil when unset or blank."
   def get(key) do

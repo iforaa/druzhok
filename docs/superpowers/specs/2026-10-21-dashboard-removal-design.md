@@ -1,6 +1,6 @@
 # Removing the dashboard (2026-10-21)
 
-Status: step 1 done. Item 7 of the review plan ("UI freeze") became removal: the operator is the only
+Status: steps 1 and 2 done. Item 7 of the review plan ("UI freeze") became removal: the operator is the only
 dashboard user (one `users` row, `admin`) and does not use it. Every remaining operator action moves to the
 CLI; Phoenix stays for the proxy, the Telegram webhook, `/internal/fetch` and the BotSite plug.
 
@@ -18,6 +18,10 @@ One step per commit, each deployed and smoke-tested (`ops/smoke.sh`) before the 
    field needs it. On top: `ops/druzhok-run.sh`-friendly functions, or a `mix druzhok.bot` task, for
    `show`, `set key=value…`, `start`, `stop`, approve/remove users and pairings, `migrate_to_ruoc`, and
    the global `Druzhok.Settings` keys. Creating bots stays with the manager bot.
+   Built as `Druzhok.CLI` behind `sudo ops/druzhok <command>` (prod: `druzhok-run.sh`'s env and caps, logs
+   at warning) and `mix druzhok <command>` (dev). A restart field restarts only a running bot: the tab
+   restarted any bot, which started a stopped one. Secrets are masked in `show`/`settings`; `key=-` reads
+   the value from stdin.
 3. **Settings pages and the shell out.** `DashboardLive`, `SettingsLive`, `SettingsTab`, `LoginLive`,
    auth (`users`, `AuthController`, `LiveAuth`, plugs), LiveView, the assets pipeline (esbuild,
    Tailwind) and their deps; the `/` routes. Then decide whether `crash_logs` (written by

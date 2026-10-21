@@ -1,0 +1,17 @@
+#!/usr/bin/env bash
+# druzhok <command> [args] — the operator CLI (Druzhok.CLI; `druzhok help`).
+# Runs like ops/druzhok-run.sh: prod env, file caps for 0700 tenant dirs, no
+# second manager bot poller. Logs below warning are kept off the output.
+#   sudo ops/druzhok show igorhermes
+#   echo "$TOKEN" | sudo ops/druzhok set mybot telegram_token=-
+set -euo pipefail
+[ "$(id -u)" -eq 0 ] || { echo "run with sudo" >&2; exit 1; }
+cd "$(dirname "$0")/.."
+# shellcheck disable=SC2016
+exec setpriv --reuid=ubuntu --regid=ubuntu --init-groups \
+  --inh-caps=+dac_override,+dac_read_search,+chown,+fowner \
+  --ambient-caps=+dac_override,+dac_read_search,+chown,+fowner \
+  env HOME=/home/ubuntu bash -lc '
+    set -a; . /etc/druzhok/druzhok.env; set +a
+    . ~/.asdf/asdf.sh
+    exec mix run --no-start -e "Application.put_env(:druzhok, :manager_bot, false); Application.ensure_all_started(:druzhok); Logger.configure(level: :warning); System.halt(Druzhok.CLI.main(System.argv()))" -- "$@"' druzhok "$@"
