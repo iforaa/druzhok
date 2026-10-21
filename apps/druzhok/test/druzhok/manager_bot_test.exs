@@ -13,6 +13,7 @@ defmodule Druzhok.ManagerBotTest do
 
   setup do
     ctx = with_tmp_data_root()
+    start_lifecycle()
     stub = TelegramStub.start(@token)
     Druzhok.Settings.set("manager_bot_token", @token)
     on_exit(fn -> Druzhok.Settings.set("manager_bot_token", "") end)

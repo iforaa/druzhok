@@ -119,16 +119,14 @@ defmodule Druzhok.InstanceManager do
           allow_all_telegram_users: config[:allow_all_telegram_users] || false,
           ruoc_account_id: config[:ruoc_account_id],
           ruoc_api_key: config[:ruoc_api_key],
-          active: true,
+          # Stopped until BotManager.start/1 asks for it (lifecycle spec).
+          active: false,
         })
         |> Repo.insert()
 
       existing ->
         existing
-        |> Instance.changeset(%{
-          model: config.model,
-          active: true,
-        })
+        |> Instance.changeset(%{model: config.model})
         |> Repo.update()
     end
   end

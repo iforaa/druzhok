@@ -5,8 +5,9 @@
 #   create <name>      (env file on stdin)   useradd + data dir + env + nft; idempotent,
 #                                            re-run before every start to refresh env
 #   start|stop|restart|destroy <name>
-#   status <name>      → active|activating|inactive|failed|unknown
+#   status <name>      → active|activating|restarting|stopping|inactive|failed|unknown
 #   stats <name>       → <mem_bytes>|<cpu_usec>
+#   procs <name>       → number of processes in the unit's cgroup (0 when stopped)
 #   logs <name> <n>
 #   exec <name> <cmd> [args…]                run as the bot user
 set -euo pipefail
@@ -19,6 +20,7 @@ NFT_TABLE=druzhok
 NFT_SET=bot_uids
 NFT_WEBHOOK_SET=bot_webhook
 UNIT_DIR=/etc/systemd/system
+CGROUP_ROOT=/sys/fs/cgroup
 
 die() { echo "druzhok-ctl: $*" >&2; exit 1; }
 
@@ -82,6 +84,32 @@ nft_webhook_del() {
 # Remove the systemd bind lock an earlier druzhok-ctl wrote: this box's
 # systemd is built without BPF_FRAMEWORK, so SocketBindAllow/Deny were never
 # enforced (webhook relay spec, "Port isolation").
+# systemd's restart loop (Restart=always after a hermes that died) is
+# ActiveState=activating with SubState=auto-restart, and a drain is
+# deactivating; the lifecycle controller must tell both from a normal start
+# and from stopped (sleep/wake spec, "Controller").
+unit_status() {
+  local active sub
+  active=$(systemctl show -p ActiveState --value "$unit" 2>/dev/null || true)
+  sub=$(systemctl show -p SubState --value "$unit" 2>/dev/null || true)
+  case "$active" in
+    activating) if [ "$sub" = auto-restart ]; then echo restarting; else echo activating; fi;;
+    deactivating) echo stopping;;
+    active|inactive|failed) echo "$active";;
+    *) echo inactive;;
+  esac
+}
+
+unit_procs() {
+  local cg
+  cg="$CGROUP_ROOT$(systemctl show -p ControlGroup --value "$unit" 2>/dev/null || true)"
+  if [ "$cg" != "$CGROUP_ROOT" ] && [ -r "$cg/cgroup.procs" ]; then
+    wc -l < "$cg/cgroup.procs" | tr -d ' '
+  else
+    echo 0
+  fi
+}
+
 remove_bind_lock() {
   local dir="$UNIT_DIR/$unit.d"
   [ -f "$dir/webhook.conf" ] || return 0
@@ -122,11 +150,11 @@ case "$cmd" in
     ;;
   status)
     if ! user_exists; then echo unknown; exit 0; fi
-    st=$(systemctl is-active "$unit" 2>/dev/null || true)
-    case "$st" in
-      active|activating|inactive|failed) echo "$st";;
-      *) echo inactive;;
-    esac
+    unit_status
+    ;;
+  procs)
+    user_exists || die "no such bot: $name"
+    unit_procs
     ;;
   stats)
     user_exists || die "no such bot: $name"

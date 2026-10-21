@@ -292,7 +292,10 @@ defmodule Druzhok.ManagerBot do
     import Ecto.Query
 
     Repo.all(
-      from(i in Instance, where: i.owner_telegram_id == ^user_id, order_by: [desc: i.active, asc: i.name])
+      from(i in Instance,
+        where: i.owner_telegram_id == ^user_id and not i.delete_requested,
+        order_by: [desc: i.active, asc: i.name]
+      )
     )
   end
 
@@ -553,7 +556,7 @@ defmodule Druzhok.ManagerBot do
     Task.start(fn ->
       text =
         try do
-          case BotManager.restart(name) do
+          case BotManager.restart(name, wait: true) do
             {:ok, _} ->
               model =
                 case change do
@@ -624,7 +627,7 @@ defmodule Druzhok.ManagerBot do
         # not block the poll loop.
         Task.start(fn ->
           try do
-            case BotManager.delete(name) do
+            case BotManager.delete(name, wait: true) do
               :ok ->
                 edit_plain(token, chat_id, message_id, Onboarding.delete_done(handle))
                 menu = Onboarding.main_menu_keyboard(user_bot_count(owner_id))
@@ -801,7 +804,7 @@ defmodule Druzhok.ManagerBot do
   defp user_bot_count(user_id) do
     import Ecto.Query
     Druzhok.Repo.aggregate(
-      from(i in Druzhok.Instance, where: i.owner_telegram_id == ^user_id),
+      from(i in Druzhok.Instance, where: i.owner_telegram_id == ^user_id and not i.delete_requested),
       :count
     )
   end

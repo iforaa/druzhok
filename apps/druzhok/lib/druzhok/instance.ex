@@ -33,6 +33,22 @@ defmodule Druzhok.Instance do
     field :telegram_webhook_secret, :string
     field :telegram_relay_paused_until, :utc_datetime
     field :telegram_relay_pause_reason, :string
+    # Lifecycle (sleep/wake spec, "Model"): requests, written by anyone...
+    field :start_seq, :integer, default: 0
+    field :stop_seq, :integer, default: 0
+    field :delete_requested, :boolean, default: false
+    field :sleep_enabled, :boolean, default: false
+    # ...and what the controller did, written only by Druzhok.Lifecycle.Bot.
+    field :sleeping, :boolean, default: false
+    field :applied_seq, :integer, default: 0
+    field :stopped_seq, :integer, default: 0
+    field :failed_seq, :integer, default: 0
+    field :started_at, :utc_datetime
+    field :started_mode, :string
+    field :woke_at, :utc_datetime
+    field :start_error, :string
+    field :start_failed_at, :utc_datetime_usec
+    field :start_failures, :integer, default: 0
 
     timestamps()
   end
@@ -43,7 +59,7 @@ defmodule Druzhok.Instance do
 
   def changeset(instance, attrs) do
     instance
-    |> cast(attrs, [:name, :telegram_token, :model, :workspace, :active, :owner_telegram_id, :timezone, :api_key, :language, :tenant_key, :mention_only, :welcome_message, :allowed_telegram_ids, :allowed_telegram_chats, :allow_all_telegram_users, :trigger_name, :image_model, :group_sessions_per_user, :group_shared_memory, :website_hosting_enabled, :image_gen_enabled, :image_gen_model, :ruoc_account_id, :ruoc_api_key, :memory_provider, :telegram_mode, :telegram_webhook_secret, :telegram_relay_paused_until, :telegram_relay_pause_reason])
+    |> cast(attrs, [:name, :telegram_token, :model, :workspace, :active, :owner_telegram_id, :timezone, :api_key, :language, :tenant_key, :mention_only, :welcome_message, :allowed_telegram_ids, :allowed_telegram_chats, :allow_all_telegram_users, :trigger_name, :image_model, :group_sessions_per_user, :group_shared_memory, :website_hosting_enabled, :image_gen_enabled, :image_gen_model, :ruoc_account_id, :ruoc_api_key, :memory_provider, :telegram_mode, :telegram_webhook_secret, :telegram_relay_paused_until, :telegram_relay_pause_reason, :sleep_enabled])
     |> validate_required([:name, :model, :workspace])
     |> validate_inclusion(:memory_provider, @memory_providers)
     |> validate_inclusion(:telegram_mode, Druzhok.Telegram.Webhook.modes())

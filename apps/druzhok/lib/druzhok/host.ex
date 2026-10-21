@@ -9,7 +9,8 @@ defmodule Druzhok.Host do
   """
 
   @type name :: String.t()
-  @type status :: :active | :activating | :inactive | :failed | :unknown
+  @type status ::
+          :active | :activating | :restarting | :stopping | :inactive | :failed | :unknown
   @type stats :: %{mem_bytes: non_neg_integer(), cpu_usec: non_neg_integer()} | nil
 
   @callback start(name, env :: %{String.t() => String.t()}, data_root :: String.t()) ::
@@ -18,6 +19,8 @@ defmodule Druzhok.Host do
   @callback destroy(name) :: :ok
   @callback status(name) :: status
   @callback stats(name) :: stats
+  @doc "Processes the bot runs right now (1 = hermes alone, at rest); nil if unknown."
+  @callback procs(name) :: non_neg_integer() | nil
   @callback exec(name, args :: [String.t()]) :: {String.t(), integer()}
   @callback logs(name, lines :: pos_integer()) :: String.t()
   @doc "Can the bot reach a non-proxy local port? `:unenforced` when the host has no egress policy."
@@ -35,6 +38,7 @@ defmodule Druzhok.Host do
   def destroy(name), do: impl().destroy(name)
   def status(name), do: impl().status(name)
   def stats(name), do: impl().stats(name)
+  def procs(name), do: impl().procs(name)
   def exec(name, args), do: impl().exec(name, args)
   def logs(name, lines \\ 200), do: impl().logs(name, lines)
   def egress_check(name), do: impl().egress_check(name)

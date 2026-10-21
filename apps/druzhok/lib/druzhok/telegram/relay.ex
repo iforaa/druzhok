@@ -43,6 +43,27 @@ defmodule Druzhok.Telegram.Relay do
     :ok
   end
 
+  @doc """
+  Return once no delivery to the bot is in flight (the lifecycle controller
+  calls it after writing a pause, before stopping the unit). No worker, or one
+  that does not answer within a minute, is nothing to wait for.
+  """
+  def quiesce(instance_id) do
+    case Registry.lookup(Druzhok.Registry, Worker.key(instance_id)) do
+      [{pid, _}] ->
+        try do
+          GenServer.call(pid, :quiesce, 60_000)
+        catch
+          :exit, _ -> :ok
+        end
+
+      [] ->
+        :ok
+    end
+
+    :ok
+  end
+
   defp running?, do: Process.whereis(@sup) != nil
 
   defp ensure_worker(instance_id) do

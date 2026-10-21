@@ -1,6 +1,6 @@
 # Bot sleep/wake
 
-Status: draft r5, 2026-10-20 (r1–r4 reviewed by revmux `sleep-wake/01-initial`, `02-after-fix`,
+Status: r5, implemented on `sleep-wake` 2026-10-21 (r1–r4 reviewed by revmux `sleep-wake/01-initial`, `02-after-fix`,
 `03-controller`, `04-final`). Branch
 `sleep-wake`. Block A item 6. Builds on the Telegram webhook relay
 (`2026-10-20-telegram-webhook-relay-design.md`).
@@ -110,7 +110,9 @@ The public API becomes requests:
 - `BotManager.create/2`: inserts the row as today but with `active = false`, and returns
   `{:ok, %{name:, model:}}` as soon as the row exists, whatever happens to the first start. Its callers
   then call `start(name)`: the provisioner after it has written `SOUL.md` (so the first start already
-  has it, which today's code does not guarantee), the dashboard right away. A slow or failed first start
+  has it, which today's code does not guarantee), with `wait: true` so its "created and started" reply
+  stays true in the common case (a failure or timeout is logged, not reported as a creation error); the
+  dashboard right away. A slow or failed first start
   is the controller's to retry and show, never a creation error (which today would make the owner retry
   after the invite code is spent).
 - `Webhook.set_mode/3`, settings saves and token changes are unchanged. Settings and token saves call

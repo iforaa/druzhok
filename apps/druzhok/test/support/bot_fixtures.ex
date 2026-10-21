@@ -54,6 +54,16 @@ defmodule Druzhok.BotFixtures do
     instance
   end
 
+  @doc """
+  Run the lifecycle controller for this test (it carries out BotManager's
+  requests). `scan: false`: it only looks after bots that are poked, never
+  the other rows of the shared test DB.
+  """
+  def start_lifecycle do
+    ExUnit.Callbacks.start_supervised!({Druzhok.Lifecycle, scan: false})
+    :ok
+  end
+
   @doc "Poll `fun` every 50 ms until it returns truthy or `tries` run out."
   def eventually(fun, tries \\ 40) do
     cond do

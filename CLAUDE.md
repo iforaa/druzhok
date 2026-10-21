@@ -10,7 +10,14 @@ Always use `/my-commit` for committing changes.
 
 ## Critical Rules
 
-- **Never wipe a bot's data dir** (`/data/tenants/<name>`) — it holds memory/identity. Only `BotManager.delete/1` may, and only on explicit user request.
+- **Never wipe a bot's data dir** (`/data/tenants/<name>`) — it holds memory/identity. Only the lifecycle controller may, carrying out a `BotManager.delete/1` request, and only on explicit user request.
+- **Bot lifecycle is requests + one controller** (`Druzhok.Lifecycle`, spec `docs/superpowers/specs/2026-10-20-sleep-wake-design.md`).
+  `BotManager.start/restart/stop/delete` only write the row (`active`, `start_seq`, `stop_seq`, `delete_requested`);
+  one `Lifecycle.Bot` per bot in druzhok.service starts/stops/sleeps/wakes/deletes it. From `druzhok-run.sh` pass
+  `wait: true` to get the outcome (`{:ok, _}` / `{:error, reason}` / `{:error, :timeout}`). An active bot whose unit
+  is down is started again (backoff 10 s → 15 min), so `druzhok-ctl stop` does not last: stop through
+  `BotManager.stop`. Opt-in sleep (`sleep_enabled`, settings tab): a webhook bot idle for `sleep_idle_minutes`
+  (Settings, default 30) is stopped and woken by its next queued update.
 - **Never set HTTP_PROXY/HTTPS_PROXY for bots** — breaks multipart uploads.
 - **Bot users have no internet**: `ops/nftables-druzhok.nft` allows only the proxy, DNS and Telegram's CIDRs. Anything a bot needs from the web goes through the proxy (search, `/v2/scrape`).
 - **One Telegram poller per token.** Stop a bot on the old host before starting it elsewhere.
@@ -26,7 +33,8 @@ Always use `/my-commit` for committing changes.
   Only a bot's own uid may answer druzhok from its port (nft `bot_webhook` `uid . port`, written by
   `druzhok-ctl`), and the relay checks the listener's uid before every delivery. No systemd bind lock:
   this box's systemd lacks BPF_FRAMEWORK, so `SocketBindAllow/Deny` are silently ignored.
-  `BotManager.stop` pauses the bot's relay, `start` always resumes it. Spec:
+  Every controller stop pauses the bot's relay first and waits out a delivery in flight; a successful start lifts
+  every pause but `wrong_owner`. The relay holds updates for a bot that is stopped or asleep. Spec:
   `docs/superpowers/specs/2026-10-20-telegram-webhook-relay-design.md`.
 - `hermes-agent/` is a separate, gitignored git repo (the hermes fork clone) — never `git add` it into druzhok.
 

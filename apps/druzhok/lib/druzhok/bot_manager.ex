@@ -4,6 +4,7 @@ defmodule Druzhok.BotManager do
   keeps DB state, and delegates process control to `Druzhok.Host`.
   """
 
+  import Ecto.Query, only: [from: 2]
   alias Druzhok.{Instance, InstanceManager, TokenPool, Repo}
   require Logger
 
@@ -72,7 +73,9 @@ defmodule Druzhok.BotManager do
           {:ok, instance} ->
             if token_record.id, do: TokenPool.claim(token_record, instance.id)
             admit_owner(opts)
-            start(name)
+            # The row is created stopped; the caller asks for the start once
+            # it has written what the first start should see (SOUL.md), so a
+            # slow or failed first start is never a creation error.
             {:ok, %{name: name, model: instance.model}}
 
           error -> error
@@ -83,26 +86,93 @@ defmodule Druzhok.BotManager do
     end
   end
 
-  def start(name) do
-    case Repo.get_by(Instance, name: name) do
-      nil ->
-        {:error, :not_found}
-
-      instance ->
-        # stop/1 paused the Telegram relay; every start clears it, whatever
-        # the outcome, so no path (dashboard Stop then Start, a failed start)
-        # leaves the queue held. Cleared after the start so the relay does not
-        # spend its backoff on a bot that is still coming up.
-        try do
-          do_start(instance)
-        after
-          Druzhok.Telegram.Webhook.resume(instance.id)
-          Druzhok.Telegram.Relay.notify(instance.id)
-        end
+  @doc """
+  Ask for a fresh start with what is in the row now (also wakes an asleep
+  bot). Start and restart are the same request: `active = true` and
+  `start_seq + 1`. The lifecycle controller in druzhok.service carries it out
+  (`Druzhok.Lifecycle`). With `wait: true`, returns once it is done:
+  `{:ok, name}`, `{:error, reason}` for a failed start of this request, or
+  `{:error, :timeout}`.
+  """
+  def start(name, opts \\ []) do
+    case bump(name, [set: [active: true], inc: [start_seq: 1]], :start_seq) do
+      nil -> {:error, :not_found}
+      {id, seq} -> if opts[:wait], do: wait_started(id, name, seq, opts), else: {:ok, name}
     end
   end
 
-  defp do_start(%Instance{name: name} = instance) do
+  def restart(name, opts \\ []), do: start(name, opts)
+
+  @doc """
+  Ask for the bot to stop and stay stopped (`active = false`). The relay
+  holds its updates at once; the controller pauses, drains and stops the unit.
+  With `wait: true`, returns `:ok` once the controller has acknowledged it.
+  """
+  def stop(name, opts \\ []) do
+    case bump(name, [set: [active: false], inc: [stop_seq: 1]], :stop_seq) do
+      nil -> :ok
+      {id, seq} -> if opts[:wait], do: wait_stopped(id, seq, opts), else: :ok
+    end
+  end
+
+  # One update, then a poke. Returns {id, value of `field` after it}.
+  defp bump(name, changes, field) do
+    query = from(i in Instance, where: i.name == ^name, select: {i.id, field(i, ^field)})
+
+    case Repo.update_all(query, changes) do
+      {1, [{id, seq}]} ->
+        Druzhok.Lifecycle.poke(id)
+        {id, seq}
+
+      _ ->
+        nil
+    end
+  end
+
+  defp wait_started(id, name, seq, opts) do
+    wait_for(id, opts, fn
+      nil -> {:error, :not_found}
+      %Instance{applied_seq: a} when a >= seq -> {:ok, name}
+      %Instance{failed_seq: f, start_error: err} when f >= seq -> {:error, err}
+      _ -> nil
+    end)
+  end
+
+  defp wait_stopped(id, seq, opts) do
+    wait_for(id, opts, fn
+      nil -> :ok
+      %Instance{stopped_seq: s} when s >= seq -> :ok
+      _ -> nil
+    end)
+  end
+
+  defp wait_for(id, opts, done) do
+    deadline = System.monotonic_time(:millisecond) + Keyword.get(opts, :timeout, wait_timeout())
+    poll(id, deadline, done)
+  end
+
+  defp poll(id, deadline, done) do
+    case done.(Repo.get(Instance, id)) do
+      nil ->
+        if System.monotonic_time(:millisecond) >= deadline do
+          {:error, :timeout}
+        else
+          Process.sleep(wait_poll_ms())
+          poll(id, deadline, done)
+        end
+
+      result ->
+        result
+    end
+  end
+
+  defp wait_timeout, do: Application.get_env(:druzhok, :lifecycle_wait_ms, 120_000)
+  defp wait_poll_ms, do: Application.get_env(:druzhok, :lifecycle_wait_poll_ms, 250)
+
+  @doc false
+  # The start action's file work, run by the controller before Host.start:
+  # workspace seed files and config.yaml. Returns `{env, data_root}`.
+  def prepare_start(%Instance{} = instance) do
     runtime = Druzhok.Runtime.for_instance(instance)
     env = Druzhok.Runtime.base_env(instance) |> Map.merge(runtime.env_vars(instance))
     data_root = runtime.data_root(instance)
@@ -115,33 +185,7 @@ defmodule Druzhok.BotManager do
       data_root
     )
 
-    case Druzhok.Host.start(name, env, data_root) do
-      :ok ->
-        Logger.info("Started bot #{name}")
-        Repo.update(Instance.changeset(instance, %{active: true}))
-        {:ok, name}
-
-      {:error, reason} ->
-        Logger.error("Failed to start bot #{name}: #{inspect(reason)}")
-        {:error, reason}
-    end
-  end
-
-  def stop(name) do
-    case Repo.get_by(Instance, name: name) do
-      nil ->
-        :ok
-
-      instance ->
-        # Hold Telegram delivery first: a stopping hermes still answers 200
-        # and then drops new work. start/1 resumes; the pause lifts by itself
-        # after 5 min otherwise.
-        Druzhok.Telegram.Webhook.pause(instance.id, :stopping)
-        Druzhok.Host.stop(name)
-        instance |> Ecto.Changeset.change(%{active: false}) |> Repo.update!()
-    end
-
-    :ok
+    {env, data_root}
   end
 
   @doc """
@@ -156,40 +200,35 @@ defmodule Druzhok.BotManager do
     end
   end
 
-  def restart(name) do
-    # Serialize per-bot: rapid UI clicks race on unit start. Losers
-    # no-op; the winner's start/1 re-reads DB state so no change is lost.
-    case :global.set_lock({{:bot_restart, name}, self()}, [node()], 0) do
-      true ->
-        try do
-          stop(name)
-          start(name)
-        after
-          :global.del_lock({{:bot_restart, name}, self()}, [node()])
-        end
+  @doc """
+  Ask for the bot to be deleted: stop and remove its unit and user, wipe its
+  on-disk data dir (config, SOUL, memory, history, logs), release its
+  Telegram token to the pool, suspend its ruoc account and drop the row.
+  Irreversible. The controller does it (`destroy_instance/1`); with
+  `wait: true`, returns `:ok` once the row is gone.
+  """
+  def delete(name, opts \\ []) do
+    query = from(i in Instance, where: i.name == ^name, select: i.id)
 
-      false ->
-        Logger.info("restart(#{name}): another restart already in progress, skipping")
+    case Repo.update_all(query, set: [active: false, delete_requested: true]) do
+      {1, [id]} ->
+        Druzhok.Lifecycle.poke(id)
+        if opts[:wait], do: wait_for(id, opts, fn nil -> :ok; _ -> nil end), else: :ok
+
+      _ ->
         :ok
     end
   end
 
-  @doc """
-  Fully delete a bot: stop+remove its unit and user, wipe its on-disk data dir
-  (config, SOUL, memory, history, logs), release its Telegram token back to
-  the pool, and delete the DB row. Irreversible.
-  """
-  def delete(name) do
-    stop(name)
-    case Repo.get_by(Instance, name: name) do
-      nil -> :ok
-      instance ->
-        Druzhok.Host.destroy(name)
-        wipe_data_dir(instance)
-        TokenPool.release(instance.id)
-        suspend_ruoc(instance)
-        Repo.delete(instance)
-    end
+  @doc false
+  # Rule 3 of the controller, once the unit is stopped. Every step is
+  # idempotent, so a controller that died part way simply runs it again.
+  def destroy_instance(%Instance{} = instance) do
+    Druzhok.Host.destroy(instance.name)
+    wipe_data_dir(instance)
+    TokenPool.release(instance.id)
+    suspend_ruoc(instance)
+    Repo.delete(instance, stale_error_field: :id)
     :ok
   end
 

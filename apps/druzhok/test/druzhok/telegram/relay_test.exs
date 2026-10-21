@@ -215,4 +215,42 @@ defmodule Druzhok.Telegram.RelayTest do
              Registry.lookup(Druzhok.Registry, {:telegram_relay, inst.id}) == []
            end)
   end
+
+  describe "sleep/wake" do
+    test "rows wait while the bot is stopped and go once it should run", %{
+      bypass: bypass,
+      inst: inst,
+      seen: seen
+    } do
+      ptb(bypass, inst, seen)
+      inst |> Ecto.Changeset.change(%{active: false}) |> Repo.update!()
+      enqueue(inst, [1])
+      Relay.notify(inst.id)
+      Process.sleep(150)
+      assert seen(seen) == []
+
+      inst |> reload() |> Ecto.Changeset.change(%{active: true}) |> Repo.update!()
+      Relay.notify(inst.id)
+      assert eventually(fn -> seen(seen) == [1] end)
+    end
+
+    test "an asleep bot's rows wait until it is awake", %{bypass: bypass, inst: inst, seen: seen} do
+      ptb(bypass, inst, seen)
+      inst |> Ecto.Changeset.change(%{sleeping: true}) |> Repo.update!()
+      enqueue(inst, [7])
+      Relay.notify(inst.id)
+      Process.sleep(150)
+      assert seen(seen) == []
+
+      inst |> reload() |> Ecto.Changeset.change(%{sleeping: false}) |> Repo.update!()
+      assert eventually(fn -> seen(seen) == [7] end)
+    end
+
+    test "quiesce returns with no delivery in flight", %{bypass: bypass, inst: inst, seen: seen} do
+      ptb(bypass, inst, seen)
+      Relay.notify(inst.id)
+      assert :ok = Relay.quiesce(inst.id)
+      assert :ok = Relay.quiesce(-1)
+    end
+  end
 end

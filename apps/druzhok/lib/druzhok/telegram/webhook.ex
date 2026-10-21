@@ -114,8 +114,9 @@ defmodule Druzhok.Telegram.Webhook do
   defp save(instance, attrs), do: instance |> Instance.changeset(attrs) |> Repo.update()
 
   @doc """
-  Hold delivery for a bot. `:stopping` (from `BotManager.stop/1`) lifts by
-  itself after 5 min; the relay's own faults pass their retry time.
+  Hold delivery for a bot. `:stopping` and `:sleeping` (set by the lifecycle
+  controller before it stops a unit) lift by themselves after 5 min if
+  nothing clears them first; the relay's own faults pass their retry time.
   """
   def pause(instance_id, reason, seconds \\ @stop_pause_s) do
     until = DateTime.utc_now() |> DateTime.add(seconds) |> DateTime.truncate(:second)
@@ -131,6 +132,34 @@ defmodule Druzhok.Telegram.Webhook do
   @doc "Clear any pause; a fault that is still there pauses again on the next attempt."
   def resume(instance_id) do
     from(i in Instance, where: i.id == ^instance_id)
+    |> Repo.update_all(set: [telegram_relay_paused_until: nil, telegram_relay_pause_reason: nil])
+
+    :ok
+  end
+
+  @doc """
+  Clear the pause only if it was set for `reason`: the lifecycle controller
+  lifts its own `:stopping`/`:sleeping` holds without touching one the relay
+  set meanwhile.
+  """
+  def resume_if(instance_id, reason) do
+    reason = to_string(reason)
+
+    from(i in Instance, where: i.id == ^instance_id and i.telegram_relay_pause_reason == ^reason)
+    |> Repo.update_all(set: [telegram_relay_paused_until: nil, telegram_relay_pause_reason: nil])
+
+    :ok
+  end
+
+  @doc "Clear any pause except one set for `reason` (a successful start keeps `:wrong_owner`)."
+  def resume_except(instance_id, reason) do
+    reason = to_string(reason)
+
+    from(i in Instance,
+      where:
+        i.id == ^instance_id and
+          (is_nil(i.telegram_relay_pause_reason) or i.telegram_relay_pause_reason != ^reason)
+    )
     |> Repo.update_all(set: [telegram_relay_paused_until: nil, telegram_relay_pause_reason: nil])
 
     :ok

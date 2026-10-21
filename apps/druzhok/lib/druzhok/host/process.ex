@@ -73,6 +73,14 @@ defmodule Druzhok.Host.Process do
   end
 
   @impl Druzhok.Host
+  def procs(name) do
+    case status(name) do
+      :active -> 1
+      _ -> 0
+    end
+  end
+
+  @impl Druzhok.Host
   def exec(name, args) do
     case lookup(name) do
       nil ->

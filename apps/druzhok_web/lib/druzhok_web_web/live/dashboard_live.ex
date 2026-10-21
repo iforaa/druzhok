@@ -196,6 +196,9 @@ defmodule DruzhokWebWeb.DashboardLive do
       token = if token == "", do: nil, else: token
       case Druzhok.BotManager.create(name, %{model: model, telegram_token: token}) do
         {:ok, _instance} ->
+          # Created stopped; the lifecycle controller carries out the start.
+          Druzhok.BotManager.start(name)
+
           {:noreply, assign(socket,
             instances: list_instances(),
             create_form: %{"name" => "", "token" => "", "model" => model},
@@ -653,6 +656,7 @@ defmodule DruzhokWebWeb.DashboardLive do
   defp status_dot_color("active"), do: "bg-ok"
   defp status_dot_color("failed"), do: "bg-err"
   defp status_dot_color("inactive"), do: "bg-idle"
+  defp status_dot_color("sleeping"), do: "bg-idle"
   defp status_dot_color("unknown"), do: "bg-idle"
   defp status_dot_color(_), do: "bg-warn"
 
@@ -799,7 +803,7 @@ defmodule DruzhokWebWeb.DashboardLive do
 
         inst
         |> instance_to_map()
-        |> Map.put(:container_status, Task.await(status_task, 4_000))
+        |> Map.put(:container_status, Druzhok.Lifecycle.shown_status(inst, Task.await(status_task, 4_000)))
         |> Map.put(:container_stats, Task.await(stats_task, 4_000))
       end,
       max_concurrency: 8,

@@ -81,4 +81,48 @@ defmodule Druzhok.Ops.DruzhokCtlTest do
   test "a port line that is not a plain number is ignored", %{dir: dir} do
     assert %{calls: ""} = run(dir, ~s(TELEGRAM_WEBHOOK_PORT="20009; reboot"\n), "nft_webhook_add")
   end
+
+  # systemctl show answers per property; everything else is the same stub.
+  defp status_of(dir, active, sub, procs \\ nil) do
+    cg = Path.join(dir, "cg")
+    File.mkdir_p!(cg)
+    if procs, do: File.write!(Path.join(cg, "cgroup.procs"), Enum.map_join(1..procs, "", &"#{&1}\n"))
+
+    functions =
+      for f <- ~w(unit_status unit_procs), into: "" do
+        [fun] = Regex.run(~r/^#{f}\(\) \{.*?^\}\n/ms, File.read!(@ctl))
+        fun
+      end
+
+    script = """
+    set -euo pipefail
+    unit=hermes@kot.service CGROUP_ROOT=""
+    systemctl() {
+      case "$3" in
+        ActiveState) echo #{active};;
+        SubState) echo #{sub};;
+        ControlGroup) echo #{cg};;
+      esac
+    }
+    #{functions}
+    echo "$(unit_status) $(unit_procs)"
+    """
+
+    {out, 0} = System.cmd("bash", ["-c", script], stderr_to_stdout: true)
+    String.trim(out)
+  end
+
+  test "status tells systemd's restart loop and a drain from a start and a stop", %{dir: dir} do
+    assert status_of(dir, "activating", "start") =~ ~r/^activating /
+    assert status_of(dir, "activating", "auto-restart") =~ ~r/^restarting /
+    assert status_of(dir, "deactivating", "stop-sigterm") =~ ~r/^stopping /
+    assert status_of(dir, "active", "running") =~ ~r/^active /
+    assert status_of(dir, "reloading", "x") =~ ~r/^inactive /
+  end
+
+  test "procs counts the unit's cgroup, 0 without one", %{dir: dir} do
+    assert status_of(dir, "active", "running", 1) == "active 1"
+    assert status_of(dir, "active", "running", 3) == "active 3"
+    assert status_of(dir <> "-none", "inactive", "dead") == "inactive 0"
+  end
 end

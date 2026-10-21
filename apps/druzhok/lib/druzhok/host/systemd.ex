@@ -43,6 +43,8 @@ defmodule Druzhok.Host.Systemd do
       case String.trim(out) do
         "active" -> :active
         "activating" -> :activating
+        "restarting" -> :restarting
+        "stopping" -> :stopping
         "inactive" -> :inactive
         "failed" -> :failed
         "created" -> :inactive
@@ -61,6 +63,17 @@ defmodule Druzhok.Host.Systemd do
          {m, ""} <- Integer.parse(mem),
          {c, ""} <- Integer.parse(cpu) do
       %{mem_bytes: m, cpu_usec: c}
+    else
+      _ -> nil
+    end
+  end
+
+  @impl true
+  def procs(name) do
+    with :ok <- check_name(name),
+         {out, 0} <- ctl(["procs", name]),
+         {n, ""} <- Integer.parse(String.trim(out)) do
+      n
     else
       _ -> nil
     end

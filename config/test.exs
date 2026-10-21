@@ -27,6 +27,13 @@ config :druzhok,
   openrouter_api_url: "https://openrouter.ai/api/v1",
   anthropic_api_url: "https://api.anthropic.com"
 
+# Lifecycle controller timings scaled down for tests (sleep/wake spec).
+config :druzhok,
+  lifecycle: [tick_ms: 50, unit_poll_ms: 0, idle_check_ms: 0, backoff_ms: [300, 600]],
+  lifecycle_wait_poll_ms: 20,
+  lifecycle_wait_ms: 15_000,
+  lifecycle_typing: [every_ms: 50, for_ms: 2_000]
+
 config :druzhok,
   hermes_bin: Path.expand("../apps/druzhok/test/support/fake_hermes.sh", __DIR__),
   fetch_worker_bin: System.get_env("FETCH_WORKER_BIN") || Path.expand("../.fetch-venv/bin/python", __DIR__)

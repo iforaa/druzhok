@@ -8,6 +8,7 @@ defmodule Druzhok.BotManagerLifecycleTest do
 
   setup do
     ctx = with_tmp_data_root()
+    start_lifecycle()
     name = "lc#{System.unique_integer([:positive])}"
     cleanup_instance(name)
     Map.put(ctx, :name, name)
@@ -22,9 +23,13 @@ defmodule Druzhok.BotManagerLifecycleTest do
   end
 
   describe "create/2" do
-    test "inserts the row, seeds the workspace and starts the process", %{name: name, data_root: root} do
+    test "inserts the row stopped; the start request seeds the workspace and starts the process",
+         %{name: name, data_root: root} do
       assert {:ok, %{name: ^name, model: "z-ai/glm-5.3-flash"}} =
                BotManager.create(name, %{model: "z-ai/glm-5.3-flash", telegram_token: "1A", owner_telegram_id: 42})
+
+      refute Repo.get_by!(Instance, name: name).active
+      assert {:ok, ^name} = BotManager.start(name, wait: true)
 
       inst = Repo.get_by!(Instance, name: name)
       assert inst.active
@@ -75,21 +80,21 @@ defmodule Druzhok.BotManagerLifecycleTest do
   describe "stop/1, start/1, restart/1" do
     setup %{name: name} do
       {:ok, _} = BotManager.create(name, %{model: "z-ai/glm-5.3-flash", telegram_token: "1A"})
-      assert eventually(fn -> BotManager.status(name) == "active" end)
+      assert {:ok, _} = BotManager.start(name, wait: true)
       :ok
     end
 
     test "stop marks inactive and kills the process", %{name: name} do
-      assert :ok = BotManager.stop(name)
+      assert :ok = BotManager.stop(name, wait: true)
       refute Repo.get_by!(Instance, name: name).active
       assert BotManager.status(name) == "inactive"
     end
 
     test "start after stop brings it back and re-syncs config from the DB", %{name: name, data_root: root} do
-      :ok = BotManager.stop(name)
+      :ok = BotManager.stop(name, wait: true)
       Repo.get_by!(Instance, name: name) |> Instance.changeset(%{model: "openai/gpt-5.4-nano"}) |> Repo.update!()
 
-      assert {:ok, ^name} = BotManager.start(name)
+      assert {:ok, ^name} = BotManager.start(name, wait: true)
       assert Repo.get_by!(Instance, name: name).active
       assert File.read!(Path.join([root, name, "config.yaml"])) =~ ~s(default: "openai/gpt-5.4-nano")
       assert eventually(fn -> BotManager.status(name) == "active" end)
@@ -98,30 +103,40 @@ defmodule Druzhok.BotManagerLifecycleTest do
     test "start makes the operator from Settings the slash-command admin", %{name: name, data_root: root} do
       Druzhok.Settings.set("operator_telegram_id", "777001")
       on_exit(fn -> Repo.get_by(Druzhok.Settings, key: "operator_telegram_id") |> Repo.delete() end)
-      assert {:ok, ^name} = BotManager.start(name)
+      assert {:ok, ^name} = BotManager.start(name, wait: true)
       content = File.read!(Path.join([root, name, "config.yaml"]))
       assert content =~ ~r/^      allow_admin_from:\n        - "777001"$/m
       assert content =~ ~r/^      user_allowed_commands:\n        - start\n        - new$/m
     end
 
     test "start keeps hermes's own edits to config.yaml", %{name: name, data_root: root} do
-      :ok = BotManager.stop(name)
+      :ok = BotManager.stop(name, wait: true)
       path = Path.join([root, name, "config.yaml"])
       File.write!(path, File.read!(path) <> "\ncustom_runtime_key: 42\n")
 
-      assert {:ok, ^name} = BotManager.start(name)
+      assert {:ok, ^name} = BotManager.start(name, wait: true)
       assert File.read!(path) =~ "custom_runtime_key: 42"
     end
 
-    test "restart is stop then start", %{name: name} do
-      assert {:ok, ^name} = BotManager.restart(name)
-      assert Repo.get_by!(Instance, name: name).active
-      assert eventually(fn -> BotManager.status(name) == "active" end)
+    test "restart is a fresh start of the running bot", %{name: name} do
+      %{start_seq: seq} = Repo.get_by!(Instance, name: name)
+
+      assert {:ok, ^name} = BotManager.restart(name, wait: true)
+      inst = Repo.get_by!(Instance, name: name)
+      assert inst.active
+      assert inst.applied_seq == seq + 1
+      assert BotManager.status(name) == "active"
     end
 
     test "start of an unknown name is an error" do
       assert {:error, :not_found} = BotManager.start("no-such-bot")
       assert :ok = BotManager.stop("no-such-bot")
+    end
+
+    test "a waiter for a start is not failed by an older start's failure", %{name: name} do
+      inst = Repo.get_by!(Instance, name: name)
+      Repo.update_all(Ecto.Query.from(i in Instance, where: i.id == ^inst.id), set: [failed_seq: inst.start_seq])
+      assert {:ok, ^name} = BotManager.restart(name, wait: true)
     end
   end
 
@@ -138,7 +153,7 @@ defmodule Druzhok.BotManagerLifecycleTest do
       |> Instance.changeset(%{ruoc_account_id: nil, ruoc_api_key: nil, model: "z-ai/glm-5.3-flash", image_model: "google/gemini-2.5-flash-lite"})
       |> Repo.update!()
 
-      assert eventually(fn -> BotManager.status(name) == "active" end)
+      assert {:ok, _} = BotManager.start(name, wait: true)
 
       assert {:ok, %{account_id: "acct-" <> _ = id, model: "ruoc-flash"}} = BotManager.migrate_to_ruoc(name)
 
@@ -152,8 +167,9 @@ defmodule Druzhok.BotManagerLifecycleTest do
       # Migration funds nothing; the owner already has a balance to move.
       refute Map.has_key?(call.params, "grant_rubles")
 
+      # The restart is a request; the controller re-syncs config.yaml.
+      assert eventually(fn -> File.read!(Path.join([root, name, "config.yaml"])) =~ ~s(default: "ruoc-flash") end, 200)
       assert eventually(fn -> BotManager.status(name) == "active" end)
-      assert File.read!(Path.join([root, name, "config.yaml"])) =~ ~s(default: "ruoc-flash")
 
       assert {:already_migrated, ^name} = BotManager.migrate_to_ruoc(name)
       assert {:error, :not_found} = BotManager.migrate_to_ruoc("no-such-bot")
@@ -180,6 +196,7 @@ defmodule Druzhok.BotManagerLifecycleTest do
 
     test "create provisions a ruoc account when the gateway is configured", %{name: name, stub: stub} do
       assert {:ok, %{model: "ruoc-flash"}} = BotManager.create(name, %{telegram_token: "1A"})
+      assert {:ok, _} = BotManager.start(name, wait: true)
       inst = Repo.get_by!(Instance, name: name)
       assert inst.ruoc_account_id =~ "acct-"
       assert inst.ruoc_api_key =~ "ruoc_key"
@@ -220,7 +237,7 @@ defmodule Druzhok.BotManagerLifecycleTest do
       {:ok, _} = BotManager.create(name, %{telegram_token: "1A"})
       id = Repo.get_by!(Instance, name: name).ruoc_account_id
 
-      assert :ok = BotManager.delete(name)
+      assert :ok = BotManager.delete(name, wait: true)
 
       assert [%{path: path}] = Druzhok.RuocStub.calls(stub, "POST /admin/accounts/:id/status")
       assert path == "/admin/accounts/#{id}/status"
@@ -230,7 +247,7 @@ defmodule Druzhok.BotManagerLifecycleTest do
     test "delete still succeeds when suspend fails", %{name: name, stub: stub} do
       {:ok, _} = BotManager.create(name, %{telegram_token: "1A"})
       Bypass.down(stub.bypass)
-      assert :ok = BotManager.delete(name)
+      assert :ok = BotManager.delete(name, wait: true)
       assert Repo.get_by(Instance, name: name) == nil
     end
 
@@ -276,7 +293,7 @@ defmodule Druzhok.BotManagerLifecycleTest do
       dir = Path.join(root, name)
       assert File.dir?(dir)
 
-      assert :ok = BotManager.delete(name)
+      assert :ok = BotManager.delete(name, wait: true)
 
       refute File.exists?(dir)
       assert Repo.get_by(Instance, name: name) == nil
@@ -294,7 +311,7 @@ defmodule Druzhok.BotManagerLifecycleTest do
       |> Instance.changeset(%{name: name, model: "m", workspace: Path.join(outside, "workspace"), tenant_key: "dk-x"})
       |> Repo.insert!()
 
-      assert :ok = BotManager.delete(name)
+      assert :ok = BotManager.delete(name, wait: true)
 
       assert File.read!(Path.join(outside, "keep.txt")) == "precious"
       assert Repo.get_by(Instance, name: name) == nil

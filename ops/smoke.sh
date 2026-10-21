@@ -8,26 +8,42 @@ name=${1:?bot name}; chat=${2:-}
 ops=$(cd "$(dirname "$0")" && pwd)
 run() { "$ops/druzhok-run.sh" "$1" 2>/dev/null; }
 
-echo "== unit"
-st=$(druzhok-ctl status "$name"); echo "$st"; [ "$st" = active ] || { echo "unit not active"; exit 1; }
-
 db=$(. /etc/druzhok/druzhok.env; echo "$DATABASE_PATH")
 token=$(sqlite3 "$db" "select telegram_token from instances where name='$name'")
+
+# An asleep bot has no process: its unit, nft elements and listener come
+# back with the start that wakes it (sleep/wake spec, "Visibility").
+asleep=$(sqlite3 "$db" "select active and sleeping from instances where name='$name'")
+
+echo "== unit"
+st=$(druzhok-ctl status "$name"); echo "$st"
+if [ "$asleep" = 1 ]; then
+  echo "asleep (last start $(sqlite3 "$db" "select coalesce(started_at, '?') from instances where name='$name'")); skipping unit, nft and listener checks"
+else
+  [ "$st" = active ] || { echo "unit not active"; exit 1; }
+fi
 
 echo "== telegram getMe"
 me=$(curl -s -m 20 "https://api.telegram.org/bot$token/getMe")
 echo "$me" | grep -q '"ok":true' || { echo "getMe failed"; exit 1; }
 echo "$me" | grep -o '"username":"[^"]*"'
 
-echo "== egress locked"
 uid=$(id -u "bot-$name")
-nft list set inet druzhok bot_uids | grep -qw "$uid" || { echo "uid $uid not in bot_uids: egress is open"; exit 1; }
-echo "uid $uid in bot_uids"
-
-echo "== webhook port isolation"
 envf=/etc/druzhok/$name.env
 port=$(sed -n 's/^TELEGRAM_WEBHOOK_PORT="\([0-9]\{1,5\}\)"$/\1/p' "$envf" | head -n 1)
-if [ -n "$port" ]; then
+
+echo "== egress locked"
+if [ "$asleep" = 1 ]; then
+  echo "skipped (asleep)"
+else
+  nft list set inet druzhok bot_uids | grep -qw "$uid" || { echo "uid $uid not in bot_uids: egress is open"; exit 1; }
+  echo "uid $uid in bot_uids"
+fi
+
+echo "== webhook port isolation"
+if [ "$asleep" = 1 ]; then
+  echo "skipped (asleep)"
+elif [ -n "$port" ]; then
   nft list set inet druzhok bot_webhook | grep -q "$uid . $port" || { echo "{ $uid . $port } not in bot_webhook"; exit 1; }
   echo "only uid $uid may answer from port $port"
 else
@@ -48,13 +64,22 @@ if [ "$mode" = webhook ]; then
   fi
   held=$(echo "$info" | sed -n 's/.*"pending_update_count":\([0-9]*\).*/\1/p')
   [ "${held:-0}" -le 5 ] || { echo "Telegram holds $held update(s) it could not hand to druzhok"; exit 1; }
-  owners=$(ss -ltnHe "sport = :$port" | grep -o 'uid:[0-9]*' | sort -u || true)
-  [ "$owners" = "uid:$uid" ] || { echo "listener on $port owned by '${owners:-nobody}', expected uid:$uid"; exit 1; }
-  stale=$(sqlite3 "$db" "select count(*) from telegram_updates u join instances i on i.id = u.instance_id where i.name='$name' and u.acked_at is null and u.received_at < strftime('%Y-%m-%dT%H:%M:%f', 'now', '-60 seconds')")
-  [ "$stale" = 0 ] || { echo "$stale update(s) pending for more than 60 s"; exit 1; }
-  paused=$(sqlite3 "$db" "select coalesce(telegram_relay_pause_reason, '') from instances where name='$name' and telegram_relay_paused_until > strftime('%Y-%m-%dT%H:%M:%S', 'now')")
-  [ -z "$paused" ] || { echo "relay paused: $paused"; exit 1; }
-  echo "webhook registered, listener owned by the bot, queue drained"
+  if [ "$asleep" = 1 ]; then
+    # Anything queued is waking the bot; only a day-old row is stuck.
+    stale=$(sqlite3 "$db" "select count(*) from telegram_updates u join instances i on i.id = u.instance_id where i.name='$name' and u.acked_at is null and u.received_at < strftime('%Y-%m-%dT%H:%M:%f', 'now', '-1 day')")
+    [ "$stale" = 0 ] || { echo "$stale update(s) pending for more than a day"; exit 1; }
+    paused=$(sqlite3 "$db" "select coalesce(telegram_relay_pause_reason, '') from instances where name='$name' and telegram_relay_paused_until > strftime('%Y-%m-%dT%H:%M:%S', 'now') and telegram_relay_pause_reason != 'sleeping'")
+    [ -z "$paused" ] || { echo "relay paused: $paused"; exit 1; }
+    echo "webhook registered to druzhok, nothing stuck in the queue"
+  else
+    owners=$(ss -ltnHe "sport = :$port" | grep -o 'uid:[0-9]*' | sort -u || true)
+    [ "$owners" = "uid:$uid" ] || { echo "listener on $port owned by '${owners:-nobody}', expected uid:$uid"; exit 1; }
+    stale=$(sqlite3 "$db" "select count(*) from telegram_updates u join instances i on i.id = u.instance_id where i.name='$name' and u.acked_at is null and u.received_at < strftime('%Y-%m-%dT%H:%M:%f', 'now', '-60 seconds')")
+    [ "$stale" = 0 ] || { echo "$stale update(s) pending for more than 60 s"; exit 1; }
+    paused=$(sqlite3 "$db" "select coalesce(telegram_relay_pause_reason, '') from instances where name='$name' and telegram_relay_paused_until > strftime('%Y-%m-%dT%H:%M:%S', 'now')")
+    [ -z "$paused" ] || { echo "relay paused: $paused"; exit 1; }
+    echo "webhook registered, listener owned by the bot, queue drained"
+  fi
 else
   [ -z "$hook_url" ] || { echo "polling bot still has a webhook registered"; exit 1; }
 fi

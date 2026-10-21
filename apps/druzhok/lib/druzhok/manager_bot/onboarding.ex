@@ -335,7 +335,12 @@ defmodule Druzhok.ManagerBot.Onboarding do
   def delete_cancelled, do: "Отменено."
 
   defp bot_line(bot) do
-    status = if bot[:active], do: "🟢", else: "🔴"
+    status =
+      cond do
+        bot[:active] && bot[:sleeping] -> "💤"
+        bot[:active] -> "🟢"
+        true -> "🔴"
+      end
 
     "#{status} *#{bot.name}* — #{format_balance(bot[:ruoc_balance_rub])}#{format_plan(bot[:ruoc_subscription])}"
   end

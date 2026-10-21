@@ -227,6 +227,19 @@ defmodule DruzhokWebWeb.Live.Components.SettingsTab do
               <div :if={@telegram_relay.last_error} class="text-[10px] text-muted">Last error: <%= @telegram_relay.last_error %></div>
             <% end %>
             <p class="text-[10px] text-muted">Switch with <code>mix druzhok.telegram_mode &lt;bot&gt; webhook|polling</code>, then restart.</p>
+            <label class={["flex items-center gap-2 select-none pt-1", if(@telegram_relay.mode == "webhook", do: "cursor-pointer", else: "opacity-50")]}>
+              <input type="checkbox" phx-click="toggle_sleep" phx-target={@myself}
+                     phx-throttle="1000" checked={@instance[:sleep_enabled]}
+                     disabled={@telegram_relay.mode != "webhook"}
+                     class="w-3 h-3 border border-line2 bg-panel accent-accent focus:ring-0 focus:ring-offset-0 rounded-sm" />
+              <span class="text-[11px] text-fg">Sleep when idle</span>
+            </label>
+            <p :if={@telegram_relay.mode != "webhook"} class="text-[10px] text-muted">Needs webhook mode: a sleeping bot is woken by its queued updates.</p>
+            <div :if={@instance[:sleeping]} class="text-[11px] text-fg">💤 Asleep; the next message wakes it.</div>
+            <div :if={@instance[:started_at]} class="text-[10px] text-muted">Last start: <%= @instance[:started_at] %></div>
+            <div :if={@instance[:start_error]} class="text-[11px] text-err">
+              Start failed (<%= @instance[:start_failures] %>×): <%= @instance[:start_error] %>
+            </div>
           </div>
 
           <%!-- Card: Image Generation --%>
@@ -394,6 +407,14 @@ defmodule DruzhokWebWeb.Live.Components.SettingsTab do
       {:error, reason} ->
         {:noreply, put_flash(socket, :error, "Migration failed: #{inspect(reason)}")}
     end
+  end
+
+  # No restart: sleep is the lifecycle controller's, which reads the row.
+  def handle_event("toggle_sleep", _params, socket) do
+    name = socket.assigns.instance.name
+    update_instance(name, %{sleep_enabled: !socket.assigns.instance[:sleep_enabled]})
+    notify_parent(socket)
+    {:noreply, socket}
   end
 
   def handle_event("toggle_image_gen", _params, socket) do

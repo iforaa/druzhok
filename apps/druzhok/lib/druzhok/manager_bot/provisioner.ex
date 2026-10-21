@@ -29,10 +29,17 @@ defmodule Druzhok.ManagerBot.Provisioner do
          {:ok, _result} <- BotManager.create(instance_name, opts) do
       # The owner is already in the allowlist via owner_telegram_id (see
       # runtime/hermes.ex build_allowlist/1), so no auto-pair + restart is
-      # needed. SOUL.md is read fresh per prompt-build, so writing it now —
-      # seconds after create, minutes before the bot finishes booting — is
-      # picked up on the owner's first message.
+      # needed. create/2 leaves the bot stopped, so SOUL.md is in place before
+      # the first start is asked for; a slow or failed start is the lifecycle
+      # controller's to retry, not a provisioning error. Waiting keeps the
+      # creator's "created and started" message true in the common case.
       write_soul(instance_name, session[:name])
+
+      case BotManager.start(instance_name, wait: true) do
+        {:ok, _} -> :ok
+        other -> Logger.warning("First start of #{instance_name} not done yet: #{inspect(other)}")
+      end
+
       {:ok, instance_name, bot_username}
     else
       {:error, reason} ->

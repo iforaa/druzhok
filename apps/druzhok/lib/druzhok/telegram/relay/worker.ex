@@ -10,11 +10,20 @@ defmodule Druzhok.Telegram.Relay.Worker do
     the same row with backoff, so the head of the line waits.
   - 403, 404: the secret, content type or path disagree with the bot's env.
     That is the same for every row, so the worker pauses (`rejected_config`)
-    instead of dropping the queue; a restart re-syncs the env and resumes it.
+    instead of dropping the queue; a successful start re-syncs the env and
+    lifts it (the lifecycle controller keeps only a `wrong_owner` pause).
   - any other 4xx: this row is malformed; rejected, next row.
 
   The instance row is re-read before every step, so a secret rotation, a
   mode switch or a pause written by another BEAM takes effect at once.
+
+  Rows wait while the bot is stopped (`!active`), being deleted or asleep
+  (sleep/wake spec, "Relay changes"); for an asleep bot the worker pokes the
+  lifecycle controller, which wakes it. For a minute after a wake the retry
+  backoff is capped at 1 s, so the first update is delivered as soon as the
+  listener is up, long before systemd reports the unit ready. `quiesce/1`
+  answers between delivery steps only, so once it returns no POST is in
+  flight.
   """
 
   use GenServer, restart: :transient
@@ -38,6 +47,11 @@ defmodule Druzhok.Telegram.Relay.Worker do
   end
 
   @impl true
+  # Answered only between steps: the caller knows no POST is in flight, and
+  # the next step reads the pause it has written.
+  def handle_call(:quiesce, _from, state), do: {:reply, :ok, state}
+
+  @impl true
   # A new update must not cut a backoff short: the bot is down either way.
   def handle_info(:notify, %{failing: true} = state), do: {:noreply, state}
   def handle_info(:notify, state), do: step(state)
@@ -55,6 +69,18 @@ defmodule Druzhok.Telegram.Relay.Worker do
 
   defp deliver(state, instance) do
     cond do
+      not instance.active or instance.delete_requested ->
+        schedule(state, opt(:paused_poll_ms))
+
+      instance.sleeping ->
+        # notify/1 brings a new row's worker back here; the poke wakes the bot.
+        if Inbox.pending_count(instance.id) > 0 do
+          Druzhok.Lifecycle.poke(instance.id)
+          schedule(state, opt(:paused_poll_ms))
+        else
+          schedule(state, opt(:idle_poll_ms))
+        end
+
       Webhook.paused(instance) ->
         schedule(state, opt(:paused_poll_ms))
 
@@ -143,9 +169,14 @@ defmodule Druzhok.Telegram.Relay.Worker do
     unless state.failing,
       do: Logger.warning("[relay] #{instance.name}: cannot deliver (#{error}); retrying")
 
-    next = min(state.backoff * 2, opt(:backoff_max_ms))
-    schedule(%{state | failing: true, backoff: next}, state.backoff)
+    cap = if just_woken?(instance), do: opt(:waking_backoff_ms), else: opt(:backoff_max_ms)
+    schedule(%{state | failing: true, backoff: min(state.backoff * 2, cap)}, min(state.backoff, cap))
   end
+
+  defp just_woken?(%Instance{woke_at: %DateTime{} = at}),
+    do: DateTime.diff(DateTime.utc_now(), at) < 60
+
+  defp just_woken?(_), do: false
 
   defp schedule(state, ms) do
     if state.timer, do: Process.cancel_timer(state.timer)
@@ -155,6 +186,7 @@ defmodule Druzhok.Telegram.Relay.Worker do
   @defaults [
     backoff_min_ms: 1_000,
     backoff_max_ms: 30_000,
+    waking_backoff_ms: 1_000,
     paused_poll_ms: 2_000,
     idle_poll_ms: 30_000,
     timeout_ms: 10_000,
