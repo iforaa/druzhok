@@ -7,7 +7,8 @@ defmodule Druzhok.Lifecycle.Bot do
 
   1. row gone → exit
   2. unit stopping → wait
-  3. `delete_requested` → stop, destroy, exit
+  3. `delete_requested` → stop, destroy, exit (a failed destroy is recorded
+     and retried on the backoff)
   4. `!active` → stop, acknowledge the stop
   5. asleep → wake when there is a reason
   6. awake → recover a restart loop, start when down or asked, sleep when idle
@@ -81,15 +82,23 @@ defmodule Druzhok.Lifecycle.Bot do
     state =
       if down?(state.unit), do: state, else: act(state, fn -> stop_unit(inst, :stopping) end)
 
-    if down?(state.unit) do
-      act(state, fn ->
-        BotManager.destroy_instance(inst)
-        Logger.info("[life] #{inst.name}: deleted")
-      end)
+    cond do
+      not down?(state.unit) ->
+        state
 
-      {:stop, state}
-    else
-      state
+      not delete_backoff_over?(inst) ->
+        state
+
+      true ->
+        case destroy(inst) do
+          :ok ->
+            Logger.info("[life] #{inst.name}: deleted")
+            {:stop, state}
+
+          {:error, reason} ->
+            record_delete_failure(inst, reason)
+            refresh(state, inst)
+        end
     end
   end
 
@@ -299,6 +308,30 @@ defmodule Druzhok.Lifecycle.Bot do
     )
   end
 
+  # Every step of destroy_instance is idempotent, so a failure (its own error
+  # or a raise) is retried whole after the backoff.
+  defp destroy(inst) do
+    BotManager.destroy_instance(inst)
+  rescue
+    e -> {:error, Exception.message(e)}
+  catch
+    :exit, reason -> {:error, "exit: #{inspect(reason)}"}
+  end
+
+  defp record_delete_failure(inst, reason) do
+    n = (inst.delete_failures || 0) + 1
+    reason = reason |> describe_error() |> String.slice(0, 500)
+    set(inst, delete_error: reason, delete_failed_at: DateTime.utc_now(), delete_failures: n)
+
+    Logger.error(
+      "[life] #{inst.name}: delete failed: #{reason}, next try in #{div(backoff_ms(n), 1000)} s"
+    )
+  end
+
+  defp describe_error({:ruoc_suspend, reason}), do: "ruoc suspend: #{reason}"
+  defp describe_error(reason) when is_binary(reason), do: reason
+  defp describe_error(reason), do: inspect(reason)
+
   defp sleep_action(state, inst) do
     hold(inst.id, :sleeping)
     Relay.quiesce(inst.id)
@@ -415,6 +448,15 @@ defmodule Druzhok.Lifecycle.Bot do
       is_nil(inst.start_failed_at) or
       DateTime.diff(DateTime.utc_now(), inst.start_failed_at, :millisecond) >=
         backoff_ms(inst.start_failures)
+  end
+
+  # The same curve for a failed delete; there is no newer request to go at once.
+  defp delete_backoff_over?(%Instance{delete_failures: n}) when n in [nil, 0], do: true
+
+  defp delete_backoff_over?(inst) do
+    is_nil(inst.delete_failed_at) or
+      DateTime.diff(DateTime.utc_now(), inst.delete_failed_at, :millisecond) >=
+        backoff_ms(inst.delete_failures)
   end
 
   defp backoff_ms(n) do

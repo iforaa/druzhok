@@ -47,6 +47,9 @@ defmodule Druzhok.Instance do
     field :start_error, :string
     field :start_failed_at, :utc_datetime_usec
     field :start_failures, :integer, default: 0
+    field :delete_error, :string
+    field :delete_failed_at, :utc_datetime_usec
+    field :delete_failures, :integer, default: 0
 
     timestamps()
   end
