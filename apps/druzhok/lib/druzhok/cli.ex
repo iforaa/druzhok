@@ -5,6 +5,7 @@ defmodule Druzhok.CLI do
   `mix druzhok <command> [args]`. `main/1` prints and returns the exit status.
   """
 
+  import Ecto.Query, only: [from: 2]
   alias Druzhok.{BotManager, BotSettings, Instance, Repo, Ruoc, Settings}
 
   @help """
@@ -209,13 +210,20 @@ defmodule Druzhok.CLI do
     cutoff = DateTime.add(DateTime.utc_now(), -@orphan_min_age_s)
 
     for {:orphan, a} <- findings do
-      if a.created_at && DateTime.compare(a.created_at, cutoff) == :lt do
-        case Ruoc.suspend(a.account_id) do
-          :ok -> IO.puts("suspended orphan #{a.account_id}")
-          {:error, reason} -> IO.puts("could not suspend orphan #{a.account_id}: #{reason}")
-        end
-      else
-        IO.puts("left orphan #{a.account_id}: created under an hour ago")
+      cond do
+        not (a.created_at && DateTime.compare(a.created_at, cutoff) == :lt) ->
+          IO.puts("left orphan #{a.account_id}: created under an hour ago")
+
+        # A create retried since the snapshot may have claimed it (409, then
+        # a reissued key): look again right before acting.
+        Repo.exists?(from(i in Instance, where: i.ruoc_account_id == ^a.account_id)) ->
+          IO.puts("left orphan #{a.account_id}: a bot holds it now")
+
+        true ->
+          case Ruoc.suspend(a.account_id) do
+            :ok -> IO.puts("suspended orphan #{a.account_id}")
+            {:error, reason} -> IO.puts("could not suspend orphan #{a.account_id}: #{reason}")
+          end
       end
     end
   end
