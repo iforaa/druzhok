@@ -60,7 +60,7 @@ Prod env (MIX_ENV, DATABASE_PATH, DRUZHOK_HOST, HEX/MIX homes, SECRET_KEY_BASE, 
 Chat, search, transcription and image generation go to **ruoc-gateway** (`Druzhok.Ruoc`, `LlmProxy.Ruoc`),
 one ruoc account per bot (`instances.ruoc_account_id` / `ruoc_api_key`); the balance there is
 the only spending limit (402 when empty). Druzhok records tokens and previews only, `cost_cents`
-is 0 on those rows. A bot without a ruoc key gets 503 from `LlmAuth` until migrated. A 402 (empty
+is 0 on those rows. A bot without a ruoc key gets 503 from `LlmAuth`. A 402 (empty
 balance) on chat is answered as a normal 200 completion carrying `LlmProxy.BalanceNotice` in the bot's
 language, because hermes's own 402 text tells tenants to add provider credits and switch `/model`.
 Spec: `docs/superpowers/specs/2026-09-05-ruoc-gateway-migration-design.md`.
@@ -75,18 +75,27 @@ Spec: `docs/superpowers/specs/2026-09-05-ruoc-gateway-migration-design.md`.
 | `POST /v1/embeddings` | ruoc-gateway `/v1/embeddings` (kind `embedding`, per 1M input tokens, free at launch), computed upstream by ruoc. Bots send entry `ruoc-embed-e5-large` (`Runtime.Hermes` `@embedding_model`/`@embedding_dim`, multilingual-e5-large 1024-d via OpenRouter, since 2026-10-20; the local e5-small ONNX worker and `ruoc-embed` were retired then). Changing the model = new ruoc entry + `@embedding_model`/`@embedding_dim` + `druzhok-ctl exec <bot> mnemosyne reindex --yes` per bot; a dimension mismatch makes Mnemosyne fall back to keyword recall, never corrupts. `MNEMOSYNE_DATA_DIR` must be `<tenant>/mnemosyne/data` (the plugin hardcodes that path, the CLI follows the variable). Used by the Mnemosyne memory provider (`instances.memory_provider`); spec `docs/superpowers/specs/2026-09-06-mnemosyne-memory-design.md`, eval `ops/embed-eval` |
 | `POST /v1/audio/speech` | OpenAI TTS (unmetered for money) |
 
-ruoc-gateway settings (`ops/druzhok settings set`, or `RUOC_URL` / `RUOC_ADMIN_HOST` /
-`RUOC_ADMIN_TOKEN` / `RUOC_CATALOG_KEY` env): `BotManager.create/2` provisions a ruoc account
-per bot, which joins the **default plan** set on the ruoc console's Plans page (ruoc issues the
-plan's credit each period, no payment gateway yet); `BotManager.migrate_to_ruoc/1` (`ops/druzhok
-migrate-ruoc <bot>`) moves an old row, unfunded. Extra funding and plan
+ruoc-gateway settings: `RUOC_URL` / `RUOC_CATALOG_KEY` env (or `ops/druzhok settings set`), and
+`RUOC_PARTNER_TOKEN` in `/etc/druzhok/druzhok.env` **only** (never a settings row). Druzhok is a ruoc
+*partner*: account calls go to ruoc's `/partner/*` routes (no admin token, no `Host` trick), which see
+only druzhok's own accounts. `BotManager.create/2` provisions a ruoc account per bot with
+`external_ref` `<name>:<owner tg id or ->` (a repeat gets 409 `account_exists` and the key is reissued;
+a lost reply is retried once; 429 `partner_quota` → «Сейчас создаётся слишком много ботов…», raise with
+`ruocd partner limit`), under a per-name lock. The account joins the partner's default plan
+(`ruocd partner plan`), else the global **default plan** on the ruoc console's Plans page (ruoc issues the
+plan's credit each period, no payment gateway yet). A delete suspends the account; if that fails the row
+stays (`delete_error`, `delete_failures`) and the controller retries on the start backoff.
+`sudo ops/druzhok ruoc-check [--suspend-orphans]` compares ruoc's partner accounts with `instances`
+(orphans, missing/suspended accounts, ref mismatches, stuck deletes; exit 1 when any). The old
+`ruoc_admin_*` settings rows are unused, kept for rollback only. Spec: ruoc-gateway
+`docs/superpowers/specs/2026-10-22-partner-access-design.md`. Extra funding and plan
 changes happen in the ruoc console; the manager bot and `ops/druzhok show` only show plan + renewal
 date from `GET /v1/balance` (`Druzhok.Ruoc.balance/1`). The model catalog is ruoc's
 `GET /v1/models` (`Druzhok.Ruoc.models/0`, default `ruoc-flash`).
 
 The superbot is invite-only: `admissions` (`Druzhok.Admissions`) records who may create a bot,
 written when a bot is created with the code's first characters as the hint (or `owner` when no code
-was used), and the code itself is spent by ruoc in `POST /admin/accounts`. The operator issues
+was used), and the code itself is spent by ruoc in `POST /partner/accounts`. The operator issues
 referral codes to a bot's account from the ruoc console account page, and «🎁 Пригласить» reads them
 via `GET /v1/referrals`. One bot per person (`@max_bots_per_user 1`), the operator excepted. Spec:
 `docs/superpowers/specs/2026-09-19-referral-invites-design.md`.
@@ -117,7 +126,7 @@ sudo systemctl restart druzhok
 Operator CLI (replaces the dashboard, spec `docs/superpowers/specs/2026-10-21-dashboard-removal-design.md`):
 `sudo ops/druzhok help` — `list`, `show <bot>`, `set <bot> key=value…` (restarts a running bot when the field
 needs it, `Druzhok.BotSettings`; `value=-` reads stdin for secrets), `start|stop|restart <bot>` (waits),
-`users|allow|disallow|approve`, `settings [set key=value…]`. Dev: `mix druzhok …`.
+`users|allow|disallow|approve`, `ruoc-check`, `settings [set key=value…]`. Dev: `mix druzhok …`.
 Units: `sudo druzhok-ctl status|logs <name>`; `journalctl -u hermes@<name> -f`.
 All bots share `system-hermes.slice` (`ops/system-hermes.slice`: MemoryHigh 4.5G, MemoryMax 5G; per-bot 800M/1G in `hermes@.service`). Changing it applies live on `daemon-reload`.
 Hermes install: `/opt/hermes` is a symlink to `/data/opt/hermes-<version>` (one dir per version, rsynced from `hermes-agent/`, not a git checkout; Python 3.14 from uv under `/data/opt/uv-python` since 0.22; recipe in the `update-hermes` skill). Bots move onto a new dir one at a time through druzhok (`sudo ops/druzhok restart <bot>`, not `druzhok-ctl restart`, which skips config sync) — operator's bot first, `ops/smoke.sh`.
