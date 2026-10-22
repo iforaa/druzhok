@@ -29,8 +29,8 @@ defmodule Druzhok.Runtime.HermesTest do
       assert env["MNEMOSYNE_DATA_DIR"] == Path.join([Hermes.data_root(@instance), "mnemosyne", "data"])
       assert env["MNEMOSYNE_EMBEDDING_API_URL"] == Hermes.proxy_url()
       assert env["MNEMOSYNE_EMBEDDING_API_KEY"] == "dk-alice-token"
-      assert env["MNEMOSYNE_EMBEDDING_MODEL"] == "ruoc-embed-e5-large"
-      assert env["MNEMOSYNE_EMBEDDING_DIM"] == "1024"
+      assert env["MNEMOSYNE_EMBEDDING_MODEL"] == "ruoc-embed-gemini"
+      assert env["MNEMOSYNE_EMBEDDING_DIM"] == "3072"
       assert env["MNEMOSYNE_EMBEDDING_QUERY_PREFIX"] == "query: "
       assert env["MNEMOSYNE_EMBEDDING_DOC_PREFIX"] == "passage: "
       assert env["MNEMOSYNE_LLM_ENABLED"] == "false"

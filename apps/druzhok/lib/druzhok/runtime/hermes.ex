@@ -24,8 +24,8 @@ defmodule Druzhok.Runtime.Hermes do
   alias Druzhok.Instance
 
   # ruoc catalogue entry Mnemosyne embeds through, and its vector width.
-  @embedding_model "ruoc-embed-e5-large"
-  @embedding_dim "1024"
+  @embedding_model "ruoc-embed-gemini"
+  @embedding_dim "3072"
 
   # Telegram API IPs the bot connects to. Without them hermes spends ~5 s on
   # every start trying DNS-over-HTTPS, which bots can't reach (no internet),
@@ -189,8 +189,10 @@ defmodule Druzhok.Runtime.Hermes do
   # CLI operate on a different database than the bot.
   # Model and dimension name a ruoc catalogue entry; changing them means every
   # bot runs `mnemosyne reindex` after its next restart (until then Mnemosyne
-  # falls back to keyword recall, nothing is lost). `ruoc-embed-e5-large` is
-  # multilingual-e5-large hosted upstream (R@5 0.97 on ops/embed-eval).
+  # falls back to keyword recall, nothing is lost). `ruoc-embed-gemini` is
+  # google/gemini-embedding-001 via OpenRouter (R@5 1.00 on ops/embed-eval with
+  # the prefixes, 0.99 without; since 2026-10-22, replacing e5-large, whose one
+  # provider hung for tens of seconds).
   defp mnemosyne_env(instance) do
     if memory_provider(instance) == "mnemosyne" do
       %{
