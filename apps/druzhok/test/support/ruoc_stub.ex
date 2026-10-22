@@ -1,7 +1,7 @@
 defmodule Druzhok.RuocStub do
   @moduledoc """
-  A fake ruoc-gateway on Bypass: admin account provisioning, status, balance
-  and the model catalog. Points `Druzhok.Ruoc` at it for the test and clears
+  A fake ruoc-gateway on Bypass: partner account provisioning, key reissue,
+  suspend and listing, balance and the model catalog. Points `Druzhok.Ruoc` at it for the test and clears
   the model cache and settings on exit.
 
   Configuration goes through app env, not settings rows, so the stub works
@@ -10,10 +10,10 @@ defmodule Druzhok.RuocStub do
 
   import ExUnit.Callbacks, only: [on_exit: 1]
 
-  @admin_token "test-admin-token"
+  @partner_token "ruoc_pk_test0000000000000000000000000000"
   @catalog_key "ruoc_catalog0000000000000000000000000000"
 
-  def admin_token, do: @admin_token
+  def partner_token, do: @partner_token
   def catalog_key, do: @catalog_key
 
   @doc "Start the stub and configure `Druzhok.Ruoc` to use it."
@@ -21,7 +21,7 @@ defmodule Druzhok.RuocStub do
     bypass = Bypass.open()
     base = "http://localhost:#{bypass.port}"
 
-    env = %{ruoc_url: base, ruoc_admin_token: @admin_token, ruoc_admin_host: "admin.test", ruoc_catalog_key: @catalog_key}
+    env = %{ruoc_url: base, ruoc_partner_token: @partner_token, ruoc_catalog_key: @catalog_key}
     prev = Map.new(env, fn {k, _} -> {k, Application.get_env(:druzhok, k)} end)
     for {k, v} <- env, do: Application.put_env(:druzhok, k, v)
     Druzhok.Ruoc.reset_cache()
@@ -43,15 +43,25 @@ defmodule Druzhok.RuocStub do
   end
 
   def default_routes(%{bypass: bypass} = stub) do
-    Bypass.stub(bypass, "POST", "/admin/accounts", fn conn ->
-      conn = record(stub, "POST /admin/accounts", conn)
+    Bypass.stub(bypass, "POST", "/partner/accounts", fn conn ->
+      conn = record(stub, "POST /partner/accounts", conn)
       n = System.unique_integer([:positive])
       reply(conn, 201, %{"account_id" => "acct-#{n}", "api_key" => "ruoc_key#{n}"})
     end)
 
-    Bypass.stub(bypass, "POST", "/admin/accounts/:id/status", fn conn ->
-      conn = record(stub, "POST /admin/accounts/:id/status", conn)
+    Bypass.stub(bypass, "POST", "/partner/accounts/:id/key", fn conn ->
+      conn = record(stub, "POST /partner/accounts/:id/key", conn)
+      reply(conn, 200, %{"api_key" => "ruoc_rekey#{System.unique_integer([:positive])}"})
+    end)
+
+    Bypass.stub(bypass, "POST", "/partner/accounts/:id/suspend", fn conn ->
+      conn = record(stub, "POST /partner/accounts/:id/suspend", conn)
       reply(conn, 200, %{"status" => "suspended"})
+    end)
+
+    Bypass.stub(bypass, "GET", "/partner/accounts", fn conn ->
+      conn = record(stub, "GET /partner/accounts", conn)
+      reply(conn, 200, [])
     end)
 
     Bypass.stub(bypass, "GET", "/v1/balance", fn conn ->
@@ -76,8 +86,8 @@ defmodule Druzhok.RuocStub do
       reply(conn, 200, %{"models" => image_models()})
     end)
 
-    Bypass.stub(bypass, "GET", "/admin/invites/check", fn conn ->
-      conn = record(stub, "GET /admin/invites/check", conn)
+    Bypass.stub(bypass, "GET", "/partner/invites/check", fn conn ->
+      conn = record(stub, "GET /partner/invites/check", conn)
       reply(conn, 200, %{"status" => "available"})
     end)
 
@@ -122,7 +132,7 @@ defmodule Druzhok.RuocStub do
   end
 
   @doc "Unset one ruoc setting for the rest of the test."
-  def unset(key) when key in [:ruoc_admin_token, :ruoc_admin_host, :ruoc_catalog_key] do
+  def unset(key) when key in [:ruoc_partner_token, :ruoc_catalog_key] do
     Application.put_env(:druzhok, key, "")
   end
 
@@ -138,10 +148,11 @@ defmodule Druzhok.RuocStub do
     end
   end
 
-  defp record(%{calls: calls}, route, conn) do
+  @doc "Record a call to `route` from a test's own handler (as the default routes do)."
+  def record(%{calls: calls}, route, conn) do
     {:ok, raw, conn} = Plug.Conn.read_body(conn)
     params = if raw == "", do: %{}, else: Jason.decode!(raw)
-    Agent.update(calls, &[%{route: route, params: params, headers: conn.req_headers, path: conn.request_path} | &1])
+    Agent.update(calls, &[%{route: route, params: params, headers: conn.req_headers, path: conn.request_path, query: conn.query_string} | &1])
     conn
   end
 

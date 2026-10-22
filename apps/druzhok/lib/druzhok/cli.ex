@@ -5,7 +5,7 @@ defmodule Druzhok.CLI do
   `mix druzhok <command> [args]`. `main/1` prints and returns the exit status.
   """
 
-  alias Druzhok.{BotManager, BotSettings, Settings}
+  alias Druzhok.{BotManager, BotSettings, Instance, Repo, Ruoc, Settings}
 
   @help """
   usage: druzhok <command> [args]
@@ -21,7 +21,10 @@ defmodule Druzhok.CLI do
     approve <bot> <user id|CODE>  allow a Telegram id and send the welcome,
                                   or approve a hermes pairing code
     clear-history <bot>           drop chat sessions (memory stays), restart
-    migrate-ruoc <bot>            move an old bot onto its own ruoc account
+    ruoc-check [--suspend-orphans]
+                                  compare ruoc's partner accounts with the bots;
+                                  exits 1 when anything is off. --suspend-orphans
+                                  suspends orphans created over an hour ago
     settings                      global settings (secrets masked)
     settings set key=value...     change global settings; value "-" reads stdin
 
@@ -110,16 +113,17 @@ defmodule Druzhok.CLI do
   defp run(["clear-history", bot]),
     do: BotSettings.clear_history(bot) |> explain() |> done("cleared")
 
-  defp run(["migrate-ruoc", bot]) do
-    case BotManager.migrate_to_ruoc(bot) do
-      {:ok, %{account_id: id, model: model}} ->
-        IO.puts("migrated: account #{id}, model #{model}; fund it in the ruoc console")
+  defp run(["ruoc-check" | flags]) when flags in [[], ["--suspend-orphans"]] do
+    with {:ok, accounts} <- Ruoc.list_accounts() |> explain() do
+      findings = ruoc_findings(accounts, Repo.all(Instance))
+      Enum.each(findings, &IO.puts(describe_finding(&1)))
 
-      {:already_migrated, _} ->
-        IO.puts("already migrated")
+      if flags == ["--suspend-orphans"], do: suspend_orphans(findings)
 
-      {:error, reason} ->
-        {:error, inspect(reason)}
+      case findings do
+        [] -> IO.puts("ok: #{length(accounts)} accounts, all matched")
+        list -> {:error, "#{length(list)} problem(s)"}
+      end
     end
   end
 
@@ -148,6 +152,73 @@ defmodule Druzhok.CLI do
   end
 
   defp run(args), do: {:error, "unknown command: #{Enum.join(args, " ")} (try: druzhok help)"}
+
+  # The reconcile report (partner access spec, `ruoc-check`). It reads both
+  # sides and changes nothing unless asked to suspend orphans.
+  @orphan_min_age_s 3600
+
+  @doc false
+  def ruoc_findings(accounts, instances) do
+    by_id = Map.new(accounts, &{&1.account_id, &1})
+    owned = MapSet.new(instances, & &1.ruoc_account_id)
+
+    orphans =
+      for a <- accounts, a.status == "active", not MapSet.member?(owned, a.account_id),
+          do: {:orphan, a}
+
+    per_bot =
+      Enum.flat_map(instances, fn inst ->
+        account = by_id[inst.ruoc_account_id]
+        ref = BotManager.external_ref(inst.name, inst.owner_telegram_id)
+
+        account_finding =
+          cond do
+            is_nil(account) -> [{:missing, inst}]
+            account.status != "active" -> [{:suspended, inst, account}]
+            account.external_ref != ref -> [{:ref_mismatch, inst, account, ref}]
+            true -> []
+          end
+
+        stuck =
+          if inst.delete_requested and is_binary(inst.delete_error),
+            do: [{:stuck_delete, inst}],
+            else: []
+
+        account_finding ++ stuck
+      end)
+
+    orphans ++ per_bot
+  end
+
+  defp describe_finding({:orphan, a}),
+    do: "orphan: account #{a.account_id} (#{a.label}, ref #{a.external_ref}, created #{format(a.created_at)}) has no bot"
+
+  defp describe_finding({:missing, inst}),
+    do: "missing: bot #{inst.name} has account #{format(inst.ruoc_account_id)}, not among the partner's accounts"
+
+  defp describe_finding({:suspended, inst, a}),
+    do: "suspended: bot #{inst.name} has account #{a.account_id}, which is #{a.status}"
+
+  defp describe_finding({:ref_mismatch, inst, a, ref}),
+    do: "ref mismatch: bot #{inst.name} account #{a.account_id} has ref #{format(a.external_ref)}, expected #{ref}"
+
+  defp describe_finding({:stuck_delete, inst}),
+    do: "stuck delete: bot #{inst.name} (#{inst.delete_failures} attempts): #{inst.delete_error}"
+
+  defp suspend_orphans(findings) do
+    cutoff = DateTime.add(DateTime.utc_now(), -@orphan_min_age_s)
+
+    for {:orphan, a} <- findings do
+      if a.created_at && DateTime.compare(a.created_at, cutoff) == :lt do
+        case Ruoc.suspend(a.account_id) do
+          :ok -> IO.puts("suspended orphan #{a.account_id}")
+          {:error, reason} -> IO.puts("could not suspend orphan #{a.account_id}: #{reason}")
+        end
+      else
+        IO.puts("left orphan #{a.account_id}: created under an hour ago")
+      end
+    end
+  end
 
   # key=value pairs; "-" reads the value from stdin, so a secret stays out of
   # the shell history and the process list.

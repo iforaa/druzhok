@@ -433,6 +433,28 @@ defmodule Druzhok.ManagerBotTest do
       assert TelegramStub.await_call(stub, "sendMessage", &(&1["text"] == "Как назовём бота?"))
     end
 
+    test "Удалить names a failed suspend; the bot stays", %{stub: stub, ruoc: ruoc, inst: inst} do
+      Repo.update_all(from(i in Instance, where: i.id == ^inst.id), set: [ruoc_account_id: "acct-solo"])
+
+      Bypass.stub(ruoc.bypass, "POST", "/partner/accounts/:id/suspend", fn conn ->
+        Druzhok.RuocStub.reply(conn, 502, %{"error" => %{"type" => "api_error", "message" => "upstream down"}})
+      end)
+
+      ExUnit.CaptureLog.capture_log(fn ->
+        TelegramStub.push_update(stub, callback("delyes:#{inst.id}"))
+
+        assert TelegramStub.await_call(
+                 stub,
+                 "editMessageText",
+                 &(&1["text"] == "Ошибка удаления: ruoc suspend: HTTP 502: upstream down\nПопробуй ещё раз."),
+                 10_000
+               )
+      end)
+
+      assert %Instance{delete_requested: true, delete_failures: n} = Repo.get(Instance, inst.id)
+      assert n >= 1
+    end
+
     test "a managed_bot update from an owner at the limit creates nothing", %{stub: stub} do
       TelegramStub.push_update(stub, managed_bot_update(562, "extra_bot"))
 
@@ -475,8 +497,8 @@ defmodule Druzhok.ManagerBotTest do
 
       TelegramStub.push_update(stub, message("ABCD-EFGH", @stranger))
       assert TelegramStub.await_call(stub, "sendMessage", &(&1["text"] == "Как назовём бота?" and &1["chat_id"] == @stranger))
-      [call] = Druzhok.RuocStub.calls(ruoc, "GET /admin/invites/check")
-      assert call.path == "/admin/invites/check"
+      [call] = Druzhok.RuocStub.calls(ruoc, "GET /partner/invites/check")
+      assert call.path == "/partner/invites/check"
     end
 
     test "pressing create again mid-naming asks for the code, never drops it", %{stub: stub, ruoc: ruoc} do
@@ -494,11 +516,11 @@ defmodule Druzhok.ManagerBotTest do
              end)
 
       assert Enum.count(sent_texts(stub), &(&1 == "Как назовём бота?")) == 1
-      assert length(Druzhok.RuocStub.calls(ruoc, "GET /admin/invites/check")) == 1
+      assert length(Druzhok.RuocStub.calls(ruoc, "GET /partner/invites/check")) == 1
     end
 
     test "a spent code is refused and the menu returns", %{stub: stub, ruoc: ruoc} do
-      Bypass.stub(ruoc.bypass, "GET", "/admin/invites/check", fn conn ->
+      Bypass.stub(ruoc.bypass, "GET", "/partner/invites/check", fn conn ->
         Druzhok.RuocStub.reply(conn, 200, %{"status" => "spent"})
       end)
 
@@ -521,7 +543,7 @@ defmodule Druzhok.ManagerBotTest do
       TelegramStub.await_call(stub, "sendMessage", &(&1["text"] =~ "Привет"))
       Process.sleep(50)
       refute "Как назовём бота?" in sent_texts(stub)
-      assert Druzhok.RuocStub.calls(ruoc, "GET /admin/invites/check") == []
+      assert Druzhok.RuocStub.calls(ruoc, "GET /partner/invites/check") == []
     end
 
     test "the code reaches ruoc at creation, and a race is reported", %{stub: stub, ruoc: ruoc} do
@@ -535,7 +557,7 @@ defmodule Druzhok.ManagerBotTest do
       TelegramStub.push_update(stub, callback("lang:ru", @stranger))
       TelegramStub.await_call(stub, "editMessageText", &(&1["text"] =~ "Гость"))
 
-      Bypass.expect_once(ruoc.bypass, "POST", "/admin/accounts", fn conn ->
+      Bypass.expect_once(ruoc.bypass, "POST", "/partner/accounts", fn conn ->
         Druzhok.RuocStub.reply(conn, 409, %{"error" => %{"type" => "invite_spent", "message" => "used"}})
       end)
 
@@ -543,6 +565,37 @@ defmodule Druzhok.ManagerBotTest do
       assert TelegramStub.await_call(stub, "editMessageText", &(&1["text"] == "Код успели использовать. Попроси новый и создай бота заново."), 10_000)
       assert Repo.get_by(Instance, name: "gost_0001") == nil
       refute Druzhok.Admissions.admitted?(@stranger)
+    end
+
+    test "the partner quota gets its own message", %{stub: stub, ruoc: ruoc} do
+      TelegramStub.set_managed_bot_token(stub, "559NEWBOT")
+      cleanup_instance("gost_0002")
+
+      TelegramStub.push_update(stub, message("/start ref_ABCD-EFGH", @stranger))
+      TelegramStub.await_call(stub, "sendMessage", &(&1["text"] == "Как назовём бота?" and &1["chat_id"] == @stranger))
+      TelegramStub.push_update(stub, message("Гость", @stranger))
+      TelegramStub.await_call(stub, "sendMessage", &(&1["text"] == "Язык:" and &1["chat_id"] == @stranger))
+      TelegramStub.push_update(stub, callback("lang:ru", @stranger))
+      TelegramStub.await_call(stub, "editMessageText", &(&1["text"] =~ "Гость"))
+
+      Bypass.expect_once(ruoc.bypass, "POST", "/partner/accounts", fn conn ->
+        Druzhok.RuocStub.reply(conn, 429, %{"error" => %{"type" => "partner_quota", "message" => "limit"}})
+      end)
+
+      log =
+        ExUnit.CaptureLog.capture_log(fn ->
+          TelegramStub.push_update(stub, managed_bot_update(559, "gost_0002_bot", @stranger))
+
+          assert TelegramStub.await_call(
+                   stub,
+                   "editMessageText",
+                   &(&1["text"] == "Сейчас создаётся слишком много ботов, попробуй позже"),
+                   10_000
+                 )
+        end)
+
+      assert log =~ "ruoc partner quota reached"
+      assert Repo.get_by(Instance, name: "gost_0002") == nil
     end
 
     test "the operator creates without a code, and with a bot already", %{stub: stub, data_root: root} do
@@ -572,7 +625,7 @@ defmodule Druzhok.ManagerBotTest do
     end
 
     test "a second message while the code is being checked is ignored", %{stub: stub, ruoc: ruoc} do
-      Bypass.expect_once(ruoc.bypass, "GET", "/admin/invites/check", fn conn ->
+      Bypass.expect_once(ruoc.bypass, "GET", "/partner/invites/check", fn conn ->
         Process.sleep(200)
         Druzhok.RuocStub.reply(conn, 200, %{"status" => "available"})
       end)
@@ -630,7 +683,7 @@ defmodule Druzhok.ManagerBotTest do
     test "an invite link checks no code", %{stub: stub, ruoc: ruoc} do
       TelegramStub.push_update(stub, message("/start ref_ABCD-EFGH", @stranger))
       assert TelegramStub.await_call(stub, "sendMessage", &(&1["text"] == @closed and &1["chat_id"] == @stranger))
-      assert Druzhok.RuocStub.calls(ruoc, "GET /admin/invites/check") == []
+      assert Druzhok.RuocStub.calls(ruoc, "GET /partner/invites/check") == []
       refute "Как назовём бота?" in sent_texts(stub)
     end
 

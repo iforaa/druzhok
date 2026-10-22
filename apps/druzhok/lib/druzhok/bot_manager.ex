@@ -15,12 +15,19 @@ defmodule Druzhok.BotManager do
   Create a stopped bot. `{:error, :name_taken}` when the name exists: two
   usernames can derive the same name (`@foo_bot`, `@fooBot`), and the check
   comes before the ruoc account so a refusal spends no invite.
+
+  One create per name at a time: the lock is held from the name check through
+  the insert, so a second create of the name waits, then sees `:name_taken`
+  and never calls ruoc (whose 409 + key reissue would revoke the first one's
+  key).
   """
   def create(name, opts) do
-    with :ok <- name_free(name),
-         {:ok, opts} <- provision_ruoc(name, Map.new(opts)) do
-      do_create(name, opts)
-    end
+    :global.trans({{:bot_create, name}, self()}, fn ->
+      with :ok <- name_free(name),
+           {:ok, opts} <- provision_ruoc(name, Map.new(opts)) do
+        do_create(name, opts)
+      end
+    end)
   end
 
   defp name_free(name) do
@@ -40,8 +47,9 @@ defmodule Druzhok.BotManager do
 
       Druzhok.Ruoc.configured?() ->
         label = ruoc_label(name, opts[:owner_telegram_id])
+        ref = external_ref(name, opts[:owner_telegram_id])
 
-        case Druzhok.Ruoc.create_account(label, invite: opts[:invite]) do
+        case Druzhok.Ruoc.create_account(label, ref, invite: opts[:invite]) do
           {:ok, %{account_id: id, api_key: key}} ->
             {:ok,
              opts
@@ -52,6 +60,10 @@ defmodule Druzhok.BotManager do
             # The gate held: no account, no row, and the person is told the
             # code did not work. Not logged as an error — it is theirs to fix.
             {:error, refused}
+
+          {:error, :ruoc_quota} ->
+            # Druzhok.Ruoc logged it for the operator; the superbot says so.
+            {:error, :ruoc_quota}
 
           {:error, reason} ->
             Logger.error("ruoc account for #{name} failed: #{reason}")
@@ -230,36 +242,56 @@ defmodule Druzhok.BotManager do
   on-disk data dir (config, SOUL, memory, history, logs), release its
   Telegram token to the pool, suspend its ruoc account and drop the row.
   Irreversible. The controller does it (`destroy_instance/1`); with
-  `wait: true`, returns `:ok` once the row is gone.
+  `wait: true`, returns `:ok` once the row is gone, or `{:error, reason}`
+  at the first failed attempt after this request (the controller retries it
+  on its backoff).
   """
   def delete(name, opts \\ []) do
-    query = from(i in Instance, where: i.name == ^name, select: i.id)
+    query = from(i in Instance, where: i.name == ^name, select: {i.id, i.delete_failures})
 
     case Repo.update_all(query, set: [active: false, delete_requested: true]) do
-      {1, [id]} ->
+      {1, [{id, failures}]} ->
         Druzhok.Lifecycle.poke(id)
-        if opts[:wait], do: wait_for(id, opts, fn nil -> :ok; _ -> nil end), else: :ok
+        if opts[:wait], do: wait_deleted(id, failures || 0, opts), else: :ok
 
       _ ->
         :ok
     end
   end
 
+  defp wait_deleted(id, failures, opts) do
+    wait_for(id, opts, fn
+      nil -> :ok
+      %Instance{delete_failures: n, delete_error: err} when n > failures -> {:error, err}
+      _ -> nil
+    end)
+  end
+
   @doc false
   # Rule 3 of the controller, once the unit is stopped. Every step is
-  # idempotent, so a controller that died part way simply runs it again.
+  # idempotent, so a controller that died part way, or a retry after a failed
+  # suspend, simply runs it again. A suspend that fails keeps the row, so the
+  # live account stays visible and the delete is retried.
   def destroy_instance(%Instance{} = instance) do
     Druzhok.Host.destroy(instance.name)
     wipe_data_dir(instance)
-    suspend_ruoc(instance)
-    Repo.delete(instance, stale_error_field: :id)
-    :ok
+
+    with :ok <- suspend_ruoc(instance) do
+      Repo.delete(instance, stale_error_field: :id)
+      :ok
+    end
   end
 
   # What the ruoc console shows for the account: the bot name and, when
   # known, the owner's Telegram id so a top-up request can be matched.
   def ruoc_label(name, nil), do: "druzhok:" <> name
   def ruoc_label(name, owner_id), do: "druzhok:#{name} tg:#{owner_id}"
+
+  @doc """
+  The partner reference of a bot's ruoc account: deterministic, the same rule
+  as `ruocd partner adopt`. At most one active account holds it.
+  """
+  def external_ref(name, owner_id), do: "#{name}:#{owner_id || "-"}"
 
   # Creating a bot is what admission means. With a code the hint is its first
   # characters; without one (the operator, a grandfathered owner, a recreate)
@@ -283,48 +315,15 @@ defmodule Druzhok.BotManager do
   end
 
   # The ruoc account is suspended, never deleted, so its usage keeps its
-  # explanation. A failure here is logged and does not block the delete.
-  defp suspend_ruoc(%Instance{ruoc_account_id: id, name: name}) when is_binary(id) and id != "" do
+  # explanation.
+  defp suspend_ruoc(%Instance{ruoc_account_id: id}) when is_binary(id) and id != "" do
     case Druzhok.Ruoc.suspend(id) do
       :ok -> :ok
-      {:error, reason} -> Logger.warning("could not suspend ruoc account #{id} for #{name}: #{reason}")
+      {:error, reason} -> {:error, {:ruoc_suspend, reason}}
     end
   end
 
   defp suspend_ruoc(_), do: :ok
-
-  @doc """
-  Move a legacy bot onto ruoc-gateway: create its account, store the key,
-  remap its models to ruoc ids and restart it so config.yaml is re-synced.
-  Idempotent — a bot that already has a key is left alone.
-
-  Funding is a separate operator action in the ruoc console.
-  """
-  def migrate_to_ruoc(name) do
-    case Repo.get_by(Instance, name: name) do
-      nil ->
-        {:error, :not_found}
-
-      %Instance{ruoc_api_key: key} when is_binary(key) and key != "" ->
-        {:already_migrated, name}
-
-      instance ->
-        with {:ok, %{account_id: id, api_key: key}} <-
-               Druzhok.Ruoc.create_account(ruoc_label(name, instance.owner_telegram_id)) do
-          changes = %{
-            ruoc_account_id: id,
-            ruoc_api_key: key,
-            model: Druzhok.Ruoc.remap_model(instance.model),
-            image_model: Druzhok.Ruoc.remap_image_model(instance.image_model)
-          }
-
-          {:ok, updated} = instance |> Instance.changeset(changes) |> Repo.update()
-          if updated.active, do: restart(name)
-          Logger.info("Migrated #{name} to ruoc account #{id} (model #{updated.model})")
-          {:ok, %{account_id: id, model: updated.model}}
-        end
-    end
-  end
 
   defp wipe_data_dir(instance) do
     data_root = Hermes.data_root(instance)

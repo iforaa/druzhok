@@ -8,65 +8,193 @@ defmodule Druzhok.RuocTest do
     %{stub: RuocStub.start()}
   end
 
-  describe "create_account/2" do
-    test "posts label and grant with the admin token and Host header, returns the key", %{stub: stub} do
-      assert {:ok, %{account_id: "acct-" <> _, api_key: "ruoc_key" <> _}} =
-               Ruoc.create_account("druzhok:bot1", grant_rubles: "5")
+  # The client's own Host (the URL's) is all that reaches the gateway.
+  defp host_override?(call, stub),
+    do: List.keyfind(call.headers, "host", 0) not in [nil, {"host", "localhost:#{stub.bypass.port}"}]
 
-      [call] = RuocStub.calls(stub, "POST /admin/accounts")
-      assert call.params == %{"label" => "druzhok:bot1", "grant_rubles" => "5"}
-      assert {"authorization", "Bearer " <> RuocStub.admin_token()} in call.headers
-      assert {"host", "admin.test"} in call.headers
+  describe "create_account/3" do
+    test "posts label and ref with the partner token, no Host override, returns the key", %{stub: stub} do
+      assert {:ok, %{account_id: "acct-" <> _, api_key: "ruoc_key" <> _}} =
+               Ruoc.create_account("druzhok:bot1 tg:7", "bot1:7")
+
+      [call] = RuocStub.calls(stub, "POST /partner/accounts")
+      assert call.params == %{"label" => "druzhok:bot1 tg:7", "external_ref" => "bot1:7"}
+      assert {"authorization", "Bearer " <> RuocStub.partner_token()} in call.headers
+      refute host_override?(call, stub)
     end
 
-    test "omits grant_rubles and invite when none given", %{stub: stub} do
-      assert {:ok, _} = Ruoc.create_account("druzhok:bot2")
-      [call] = RuocStub.calls(stub, "POST /admin/accounts")
-      refute Map.has_key?(call.params, "grant_rubles")
+    test "omits the invite when none given", %{stub: stub} do
+      assert {:ok, _} = Ruoc.create_account("druzhok:bot2", "bot2:-")
+      [call] = RuocStub.calls(stub, "POST /partner/accounts")
       refute Map.has_key?(call.params, "invite")
+      refute Map.has_key?(call.params, "grant_rubles")
     end
 
     test "sends the invite code and maps the three refusals", %{stub: stub} do
-      assert {:ok, _} = Ruoc.create_account("druzhok:kot", invite: "ABCD-EFGH")
-      [call] = RuocStub.calls(stub, "POST /admin/accounts")
+      assert {:ok, _} = Ruoc.create_account("druzhok:kot", "kot:-", invite: "ABCD-EFGH")
+      [call] = RuocStub.calls(stub, "POST /partner/accounts")
       assert call.params["invite"] == "ABCD-EFGH"
 
       for {type, reason} <- [{"invite_invalid", :invalid}, {"invite_spent", :spent}, {"invite_expired", :expired}] do
-        Bypass.expect_once(stub.bypass, "POST", "/admin/accounts", fn conn ->
+        Bypass.expect_once(stub.bypass, "POST", "/partner/accounts", fn conn ->
           RuocStub.reply(conn, 409, %{"error" => %{"type" => type, "message" => "no"}})
         end)
 
-        assert {:error, {:invite, ^reason}} = Ruoc.create_account("druzhok:kot", invite: "ABCD-EFGH")
+        assert {:error, {:invite, ^reason}} = Ruoc.create_account("druzhok:kot", "kot:-", invite: "ABCD-EFGH")
       end
+
+      assert RuocStub.calls(stub, "POST /partner/accounts/:id/key") == []
+    end
+
+    test "409 account_exists reissues the key of that account", %{stub: stub} do
+      Bypass.expect_once(stub.bypass, "POST", "/partner/accounts", fn conn ->
+        RuocStub.reply(conn, 409, %{"error" => %{"type" => "account_exists", "message" => "exists"}, "account_id" => "acct-old"})
+      end)
+
+      assert {:ok, %{account_id: "acct-old", api_key: "ruoc_rekey" <> _}} = Ruoc.create_account("druzhok:x", "x:-")
+      [call] = RuocStub.calls(stub, "POST /partner/accounts/:id/key")
+      assert call.path == "/partner/accounts/acct-old/key"
+      assert {"authorization", "Bearer " <> RuocStub.partner_token()} in call.headers
+    end
+
+    test "the account id of a 409 may sit inside the error", %{stub: stub} do
+      Bypass.expect_once(stub.bypass, "POST", "/partner/accounts", fn conn ->
+        RuocStub.reply(conn, 409, %{"error" => %{"type" => "invalid_request_error", "code" => "account_exists", "account_id" => "acct-in"}})
+      end)
+
+      assert {:ok, %{account_id: "acct-in"}} = Ruoc.create_account("druzhok:x", "x:-")
+    end
+
+    test "a failed reissue is an error", %{stub: stub} do
+      Bypass.expect_once(stub.bypass, "POST", "/partner/accounts", fn conn ->
+        RuocStub.reply(conn, 409, %{"error" => %{"type" => "account_exists"}, "account_id" => "acct-old"})
+      end)
+
+      Bypass.expect_once(stub.bypass, "POST", "/partner/accounts/:id/key", fn conn ->
+        RuocStub.reply(conn, 404, %{"error" => %{"type" => "not_found", "message" => "no such account"}})
+      end)
+
+      assert {:error, "HTTP 404: no such account"} = Ruoc.create_account("druzhok:x", "x:-")
+    end
+
+    test "a timeout is retried once with the same ref" do
+      # A raw server: Bypass fails a test whose handler the client gave up on.
+      # The first connection gets no answer; the second a 201.
+      {:ok, listen} = :gen_tcp.listen(0, [:binary, active: false, reuseaddr: true])
+      {:ok, port} = :inet.port(listen)
+      test = self()
+
+      server =
+        spawn(fn ->
+          {:ok, first} = :gen_tcp.accept(listen)
+          send(test, {:request, read_request(first)})
+          {:ok, second} = :gen_tcp.accept(listen)
+          send(test, {:request, read_request(second)})
+          body = Jason.encode!(%{"account_id" => "acct-t", "api_key" => "ruoc_t"})
+
+          :gen_tcp.send(
+            second,
+            "HTTP/1.1 201 Created\r\ncontent-type: application/json\r\ncontent-length: #{byte_size(body)}\r\n\r\n" <> body
+          )
+
+          receive do
+            :done -> :gen_tcp.close(first)
+          end
+        end)
+
+      Application.put_env(:druzhok, :ruoc_url, "http://127.0.0.1:#{port}")
+      Application.put_env(:druzhok, :ruoc_partner_timeout_ms, 200)
+      on_exit(fn -> Application.delete_env(:druzhok, :ruoc_partner_timeout_ms) end)
+
+      assert {:ok, %{account_id: "acct-t", api_key: "ruoc_t"}} = Ruoc.create_account("druzhok:t tg:5", "t:5")
+      assert_received {:request, first}
+      assert_received {:request, second}
+      assert first =~ ~s("external_ref":"t:5")
+      assert request_body(first) == request_body(second)
+      send(server, :done)
+    end
+
+    test "a second transport failure gives up", %{stub: stub} do
+      Bypass.down(stub.bypass)
+      assert {:error, msg} = Ruoc.create_account("x", "x:-")
+      assert msg =~ "TransportError"
+    end
+
+    test "429 partner_quota is :ruoc_quota, logged for the operator", %{stub: stub} do
+      Bypass.expect_once(stub.bypass, "POST", "/partner/accounts", fn conn ->
+        RuocStub.reply(conn, 429, %{"error" => %{"type" => "partner_quota", "message" => "limit"}})
+      end)
+
+      log =
+        ExUnit.CaptureLog.capture_log(fn ->
+          assert {:error, :ruoc_quota} = Ruoc.create_account("x", "x:-")
+        end)
+
+      assert log =~ "ruoc partner quota reached"
     end
 
     test "surfaces the gateway's error message", %{stub: stub} do
-      Bypass.expect_once(stub.bypass, "POST", "/admin/accounts", fn conn ->
-        RuocStub.reply(conn, 401, %{"error" => %{"type" => "invalid_request_error", "message" => "invalid admin token"}})
+      Bypass.expect_once(stub.bypass, "POST", "/partner/accounts", fn conn ->
+        RuocStub.reply(conn, 401, %{"error" => %{"type" => "invalid_request_error", "message" => "invalid partner token"}})
       end)
 
-      assert {:error, "HTTP 401: invalid admin token"} = Ruoc.create_account("x")
+      assert {:error, "HTTP 401: invalid partner token"} = Ruoc.create_account("x", "x:-")
     end
 
-    test "fails without an admin token and without reaching the gateway", %{stub: stub} do
-      RuocStub.unset(:ruoc_admin_token)
+    test "fails without a partner token and without reaching the gateway", %{stub: stub} do
+      RuocStub.unset(:ruoc_partner_token)
       refute Ruoc.configured?()
-      assert {:error, "ruoc_admin_token is not set"} = Ruoc.create_account("x")
-      assert RuocStub.calls(stub, "POST /admin/accounts") == []
+      assert {:error, "RUOC_PARTNER_TOKEN is not set"} = Ruoc.create_account("x", "x:-")
+      assert RuocStub.calls(stub, "POST /partner/accounts") == []
     end
 
-    test "network failure is an error, not a crash", %{stub: stub} do
-      Bypass.down(stub.bypass)
-      assert {:error, msg} = Ruoc.create_account("x")
-      assert msg =~ "TransportError"
+    test "the partner token never comes from the settings table", %{stub: _stub} do
+      RuocStub.unset(:ruoc_partner_token)
+      Druzhok.Settings.set("ruoc_partner_token", "ruoc_pk_from_settings")
+      on_exit(fn -> Druzhok.Repo.get_by(Druzhok.Settings, key: "ruoc_partner_token") |> Druzhok.Repo.delete() end)
+      refute Ruoc.configured?()
+      assert Ruoc.partner_token() == nil
     end
   end
 
-  test "suspend/1 posts the status change", %{stub: stub} do
+  test "suspend/1 posts to the partner suspend route", %{stub: stub} do
     assert :ok = Ruoc.suspend("acct-9")
-    [call] = RuocStub.calls(stub, "POST /admin/accounts/:id/status")
-    assert call.path == "/admin/accounts/acct-9/status"
-    assert call.params == %{"status" => "suspended"}
+    [call] = RuocStub.calls(stub, "POST /partner/accounts/:id/suspend")
+    assert call.path == "/partner/accounts/acct-9/suspend"
+    assert {"authorization", "Bearer " <> RuocStub.partner_token()} in call.headers
+    refute host_override?(call, stub)
+
+    Bypass.expect_once(stub.bypass, "POST", "/partner/accounts/:id/suspend", fn conn ->
+      RuocStub.reply(conn, 404, %{"error" => %{"type" => "not_found", "message" => "no such account"}})
+    end)
+
+    assert {:error, "HTTP 404: no such account"} = Ruoc.suspend("acct-9")
+  end
+
+  describe "list_accounts/1" do
+    test "lists the partner's accounts with filters", %{stub: stub} do
+      Bypass.expect_once(stub.bypass, "GET", "/partner/accounts", fn conn ->
+        conn = RuocStub.record(stub, "GET /partner/accounts", conn)
+
+        RuocStub.reply(conn, 200, [
+          %{"account_id" => "a1", "external_ref" => "bot:7", "label" => "druzhok:bot tg:7", "status" => "active",
+            "plan" => "Старт", "created_at" => "2026-10-22T10:00:00Z"}
+        ])
+      end)
+
+      assert {:ok, [%{account_id: "a1", external_ref: "bot:7", status: "active", plan: "Старт", created_at: ~U[2026-10-22 10:00:00Z]}]} =
+               Ruoc.list_accounts(status: "active", ref: "bot:7")
+
+      [call] = RuocStub.calls(stub, "GET /partner/accounts")
+      assert URI.decode_query(call.query) == %{"status" => "active", "ref" => "bot:7"}
+      assert {"authorization", "Bearer " <> RuocStub.partner_token()} in call.headers
+      refute host_override?(call, stub)
+    end
+
+    test "a failure is an error", %{stub: stub} do
+      Bypass.down(stub.bypass)
+      assert {:error, _} = Ruoc.list_accounts()
+    end
   end
 
   test "balance/1 uses the bot key", %{stub: stub} do
@@ -173,14 +301,16 @@ defmodule Druzhok.RuocTest do
   test "default_model/0 is ruoc-flash", do: assert(Ruoc.default_model() == "ruoc-flash")
 
   describe "check_invite/1" do
-    test "asks the admin surface and returns the status as an atom", %{stub: stub} do
+    test "asks the partner surface and returns the status as an atom", %{stub: stub} do
       assert {:ok, :available} = Ruoc.check_invite("ABCD-EFGH")
-      [call] = RuocStub.calls(stub, "GET /admin/invites/check")
-      assert call.path == "/admin/invites/check"
-      assert {"host", "admin.test"} in call.headers
+      [call] = RuocStub.calls(stub, "GET /partner/invites/check")
+      assert call.path == "/partner/invites/check"
+      assert URI.decode_query(call.query) == %{"code" => "ABCD-EFGH"}
+      assert {"authorization", "Bearer " <> RuocStub.partner_token()} in call.headers
+      refute host_override?(call, stub)
 
       for status <- ["spent", "expired", "invalid"] do
-        Bypass.expect_once(stub.bypass, "GET", "/admin/invites/check", fn conn ->
+        Bypass.expect_once(stub.bypass, "GET", "/partner/invites/check", fn conn ->
           RuocStub.reply(conn, 200, %{"status" => status})
         end)
 
@@ -189,7 +319,7 @@ defmodule Druzhok.RuocTest do
     end
 
     test "an unknown status or a failure is an error", %{stub: stub} do
-      Bypass.expect_once(stub.bypass, "GET", "/admin/invites/check", fn conn ->
+      Bypass.expect_once(stub.bypass, "GET", "/partner/invites/check", fn conn ->
         RuocStub.reply(conn, 200, %{"status" => "weird"})
       end)
 
@@ -212,4 +342,19 @@ defmodule Druzhok.RuocTest do
 
     assert {:error, "HTTP 503: referrals are not available"} = Ruoc.referrals("ruoc_bot")
   end
+
+  defp read_request(socket, acc \\ "") do
+    {:ok, data} = :gen_tcp.recv(socket, 0, 2_000)
+    acc = acc <> data
+
+    with [head, body] <- String.split(acc, "\r\n\r\n", parts: 2),
+         [_, len] <- Regex.run(~r/content-length: (\d+)/i, head),
+         true <- byte_size(body) >= String.to_integer(len) do
+      acc
+    else
+      _ -> read_request(socket, acc)
+    end
+  end
+
+  defp request_body(raw), do: raw |> String.split("\r\n\r\n", parts: 2) |> List.last()
 end

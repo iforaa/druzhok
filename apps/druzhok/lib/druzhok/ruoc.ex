@@ -7,15 +7,19 @@ defmodule Druzhok.Ruoc do
   proxies the bot's traffic with it. Balance, prices and admission live over
   there; this module only asks.
 
-  Settings (`ops/druzhok settings set`); each is overridden by the app env of the same
-  name, which `config/runtime.exs` fills from `RUOC_URL`, `RUOC_ADMIN_HOST`,
-  `RUOC_ADMIN_TOKEN`, `RUOC_CATALOG_KEY`:
+  Account calls go to the gateway's `/partner/*` routes with druzhok's
+  partner token, which reaches only the accounts druzhok made (partner access
+  spec, ruoc-gateway `docs/superpowers/specs/2026-10-22-partner-access-design.md`).
 
-    * `ruoc_url`         — base for `/v1/*` and `/admin/*` (default loopback :8787)
-    * `ruoc_admin_host`  — `Host` header on admin calls; the gateway serves
-                           its admin surface only on that hostname
-    * `ruoc_admin_token` — bearer for `/admin/*`
-    * `ruoc_catalog_key` — a never-funded bot-style key for `GET /v1/models`
+    * `ruoc_url`           — base for `/v1/*` and `/partner/*` (default loopback
+                             :8787); app env from `RUOC_URL`, else the settings row
+    * `ruoc_partner_token` — bearer for `/partner/*`; app env from
+                             `RUOC_PARTNER_TOKEN` only, never the settings table
+    * `ruoc_catalog_key`   — a never-funded bot-style key for `GET /v1/models`;
+                             app env from `RUOC_CATALOG_KEY`, else the settings row
+
+  The old `ruoc_admin_token` / `ruoc_admin_host` settings rows are left in
+  place for a rollback to the previous druzhok; nothing here reads them.
   """
 
   require Logger
@@ -26,11 +30,18 @@ defmodule Druzhok.Ruoc do
   @default_model "ruoc-flash"
   @cache_ttl_ms 60_000
   @cache_key {__MODULE__, :models}
+  @partner_timeout_ms 15_000
 
   def url, do: setting("ruoc_url") || @default_url
-  def admin_host, do: setting("ruoc_admin_host")
-  def admin_token, do: setting("ruoc_admin_token")
   def catalog_key, do: setting("ruoc_catalog_key")
+
+  @doc "The partner token, from `RUOC_PARTNER_TOKEN` (via app env) only."
+  def partner_token do
+    case Application.get_env(:druzhok, :ruoc_partner_token) do
+      v when is_binary(v) and v != "" -> v
+      _ -> nil
+    end
+  end
 
   # App env (from RUOC_* env vars or a test's put_env) wins over the settings
   # row; a blank in either place counts as unset.
@@ -41,39 +52,78 @@ defmodule Druzhok.Ruoc do
     end
   end
 
-  @doc "True when druzhok can provision accounts, i.e. the admin token is set."
-  def configured?, do: admin_token() != nil
+  @doc "True when druzhok can provision accounts, i.e. the partner token is set."
+  def configured?, do: partner_token() != nil
 
   def default_model, do: @default_model
 
-  # --- Admin API -----------------------------------------------------------
+  # --- Partner API -----------------------------------------------------------
 
   @doc """
-  Create an account with one key. `{:ok, %{account_id, api_key}}`; the key
-  is returned once by the gateway and stored on the instance by the caller.
+  Create the account for `ref` with one key. `{:ok, %{account_id, api_key}}`;
+  the key is returned once by the gateway and stored on the instance by the
+  caller.
 
-  Options: `grant_rubles` (decimal string) funds the account on top of its
-  plan; `invite` is a code the gateway redeems in the same commit — a refusal
-  is `{:error, {:invite, :invalid | :spent | :expired}}` and no account
-  exists.
+  `ref` is the partner reference (`BotManager.external_ref/2`): at most one
+  active account holds it, so a repeat is answered 409 `account_exists` and
+  the key is reissued (`POST /partner/accounts/{id}/key`) instead, and a lost
+  reply is retried once with the same ref. `invite` is a code the gateway
+  redeems in the same commit; a refusal is
+  `{:error, {:invite, :invalid | :spent | :expired}}` and no account exists.
+  Past the partner's daily limit: `{:error, :ruoc_quota}`.
   """
-  def create_account(label, opts \\ []) when is_list(opts) do
+  def create_account(label, ref, opts \\ []) when is_binary(ref) and is_list(opts) do
     body =
-      %{"label" => label}
-      |> put_present("grant_rubles", opts[:grant_rubles])
+      %{"label" => label, "external_ref" => ref}
       |> put_present("invite", opts[:invite])
 
-    case admin_post("/admin/accounts", body) do
+    case partner_post_retry("/partner/accounts", body) do
       {:ok, 201, %{"account_id" => id, "api_key" => key}} ->
         {:ok, %{account_id: id, api_key: key}}
 
-      {:ok, 409, %{"error" => %{"type" => "invite_" <> reason}}} when reason in ["invalid", "spent", "expired"] ->
-        {:error, {:invite, invite_reason(reason)}}
+      {:ok, 409, %{} = resp} ->
+        case error_type(resp) do
+          "account_exists" -> reissue_key(resp)
+          "invite_" <> reason when reason in ["invalid", "spent", "expired"] -> {:error, {:invite, invite_reason(reason)}}
+          _ -> {:error, describe({:ok, 409, resp})}
+        end
+
+      {:ok, 429, %{} = resp} = other ->
+        if error_type(resp) == "partner_quota" do
+          Logger.error("ruoc partner quota reached")
+          {:error, :ruoc_quota}
+        else
+          {:error, describe(other)}
+        end
 
       other ->
         {:error, describe(other)}
     end
   end
+
+  # The account was made by an earlier attempt whose reply was lost: a new key
+  # for it, which revokes the one nobody received.
+  defp reissue_key(resp) do
+    case resp["account_id"] || get_in(resp, ["error", "account_id"]) do
+      id when is_binary(id) and id != "" ->
+        case partner_post("/partner/accounts/#{URI.encode(id)}/key", %{}) do
+          {:ok, 200, %{"api_key" => key}} -> {:ok, %{account_id: id, api_key: key}}
+          other -> {:error, describe(other)}
+        end
+
+      _ ->
+        {:error, describe({:ok, 409, resp})}
+    end
+  end
+
+  @refusals ~w(account_exists partner_quota invite_invalid invite_spent invite_expired)
+
+  # The refusal's name is the error's type, or its `code` beside a generic
+  # type (the gateway's `writeErrorCode`).
+  defp error_type(%{"error" => %{} = err}),
+    do: Enum.find([err["type"], err["code"]], &(&1 in @refusals))
+
+  defp error_type(_), do: nil
 
   defp put_present(map, _key, nil), do: map
   defp put_present(map, _key, ""), do: map
@@ -92,7 +142,7 @@ defmodule Druzhok.Ruoc do
   def check_invite(code) do
     # A person is waiting on this one in the superbot's poll loop, so it gets a
     # short leash rather than the client's two-minute default.
-    case admin_get("/admin/invites/check?code=" <> URI.encode_www_form(code), receive_timeout: 10_000) do
+    case partner_get("/partner/invites/check?code=" <> URI.encode_www_form(code), receive_timeout: 10_000) do
       {:ok, 200, %{"status" => status}} when status in ["available", "spent", "expired", "invalid"] ->
         {:ok, invite_status(status)}
 
@@ -106,12 +156,50 @@ defmodule Druzhok.Ruoc do
   defp invite_status("expired"), do: :expired
   defp invite_status("invalid"), do: :invalid
 
-  @doc "Suspend the account so its key stops working; history stays."
+  @doc "Suspend the account so its key stops working; history stays. Already suspended is `:ok`."
   def suspend(account_id) do
-    case admin_post("/admin/accounts/#{account_id}/status", %{"status" => "suspended"}) do
+    case partner_post("/partner/accounts/#{URI.encode(account_id)}/suspend", %{}) do
       {:ok, 200, _} -> :ok
       other -> {:error, describe(other)}
     end
+  end
+
+  @doc """
+  The partner's own accounts: `{:ok, [%{account_id, external_ref, label,
+  status, plan, created_at}]}`, `created_at` a `DateTime` or nil. Options
+  `status` and `ref` filter on the gateway.
+  """
+  def list_accounts(opts \\ []) do
+    query =
+      [status: opts[:status], ref: opts[:ref]]
+      |> Enum.reject(fn {_, v} -> v in [nil, ""] end)
+      |> URI.encode_query()
+
+    path = if query == "", do: "/partner/accounts", else: "/partner/accounts?" <> query
+
+    case partner_get(path, receive_timeout: @partner_timeout_ms) do
+      {:ok, 200, list} when is_list(list) -> {:ok, Enum.map(list, &to_account/1)}
+      {:ok, 200, %{"accounts" => list}} when is_list(list) -> {:ok, Enum.map(list, &to_account/1)}
+      {:ok, 200, other} -> {:error, "unexpected accounts payload: #{inspect(other) |> String.slice(0, 200)}"}
+      other -> {:error, describe(other)}
+    end
+  end
+
+  defp to_account(a) do
+    created_at =
+      case DateTime.from_iso8601(a["created_at"] || "") do
+        {:ok, dt, _} -> DateTime.truncate(dt, :second)
+        _ -> nil
+      end
+
+    %{
+      account_id: a["account_id"],
+      external_ref: a["external_ref"],
+      label: a["label"],
+      status: a["status"],
+      plan: a["plan"],
+      created_at: created_at
+    }
   end
 
   # --- Bot-facing API --------------------------------------------------------
@@ -260,17 +348,6 @@ defmodule Druzhok.Ruoc do
     end
   end
 
-  @doc "The vision model for a migrated bot: keep a ruoc id, else the first vision-capable entry."
-  def remap_image_model(id) do
-    case find_model(id) do
-      %{capabilities: %{"attachment" => true}} -> id
-      _ -> case vision_models() do
-        [%{id: first} | _] -> first
-        [] -> nil
-      end
-    end
-  end
-
   @doc """
   The image catalogue, in ruoc's order: `[%{id, name, description,
   rub_per_image, default}]`. Not cached: it is read when a picker opens, and
@@ -342,38 +419,40 @@ defmodule Druzhok.Ruoc do
     }
   end
 
-  defp admin_post(path, body) do
-    case admin_token() do
-      nil ->
-        {:error, "ruoc_admin_token is not set"}
-
-      token ->
-        headers = if host = admin_host(), do: [{"host", host}], else: []
-
-        case Client.post(path, token, Jason.encode!(body), headers: headers) do
-          {:ok, status, _headers, resp} ->
-            {:ok, status, decode(resp)}
-
-          {:error, reason} ->
-            {:error, inspect(reason)}
-        end
+  # A create is safe to send twice (the ref), so a transport error or a
+  # timeout gets one more try before it is given up.
+  defp partner_post_retry(path, body) do
+    case partner_post(path, body) do
+      {:error, {:transport, _}} -> partner_post(path, body)
+      other -> other
     end
   end
 
-  defp admin_get(path, opts) do
-    case admin_token() do
-      nil ->
-        {:error, "ruoc_admin_token is not set"}
-
-      token ->
-        headers = if host = admin_host(), do: [{"host", host}], else: []
-
-        case Client.get(path, token, Keyword.put(opts, :headers, headers)) do
-          {:ok, status, _headers, resp} -> {:ok, status, decode(resp)}
-          {:error, reason} -> {:error, inspect(reason)}
-        end
+  defp partner_post(path, body) do
+    with {:ok, token} <- require_token() do
+      Client.post(path, token, Jason.encode!(body), receive_timeout: partner_timeout())
+      |> partner_reply()
     end
   end
+
+  defp partner_get(path, opts) do
+    with {:ok, token} <- require_token() do
+      Client.get(path, token, Keyword.put_new(opts, :receive_timeout, partner_timeout()))
+      |> partner_reply()
+    end
+  end
+
+  defp partner_reply({:ok, status, _headers, resp}), do: {:ok, status, decode(resp)}
+  defp partner_reply({:error, reason}), do: {:error, {:transport, reason}}
+
+  defp require_token do
+    case partner_token() do
+      nil -> {:error, "RUOC_PARTNER_TOKEN is not set"}
+      token -> {:ok, token}
+    end
+  end
+
+  defp partner_timeout, do: Application.get_env(:druzhok, :ruoc_partner_timeout_ms, @partner_timeout_ms)
 
   defp decode(body) do
     case Jason.decode(body) do
@@ -382,6 +461,7 @@ defmodule Druzhok.Ruoc do
     end
   end
 
+  defp describe({:error, {:transport, reason}}), do: inspect(reason)
   defp describe({:error, reason}), do: reason
   defp describe({:ok, status, %{"error" => %{"message" => msg}}}), do: "HTTP #{status}: #{msg}"
   defp describe({:ok, status, body}), do: "HTTP #{status}: #{inspect(body) |> String.slice(0, 200)}"

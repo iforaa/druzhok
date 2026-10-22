@@ -16,7 +16,7 @@ defmodule DruzhokWebWeb.Plugs.LlmAuth do
             assign(conn, :instance, instance)
 
           # The legacy OpenRouter path is gone; a row without a ruoc account
-          # cannot be served until it is migrated (BotManager.migrate_to_ruoc/1).
+          # (every bot has one since 2026-09-05) cannot be served.
           _ ->
             conn
             |> put_resp_content_type("application/json")

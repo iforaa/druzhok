@@ -148,6 +148,7 @@ defmodule Druzhok.ManagerBot.Onboarding do
 
   def create_race_message, do: "Код успели использовать. Попроси новый и создай бота заново."
   def name_taken_message, do: "Бот с похожим именем уже есть. Создай бота с другим username."
+  def ruoc_quota_message, do: "Сейчас создаётся слишком много ботов, попробуй позже"
   def after_create_message, do: "Управление ботом — в меню внизу."
   def after_delete_message, do: "Можно создать нового бота."
 
@@ -334,6 +335,12 @@ defmodule Druzhok.ManagerBot.Onboarding do
 
   def delete_done(handle), do: "✅ Бот @#{handle} удалён."
   def delete_cancelled, do: "Отменено."
+
+  @doc "A delete that failed: the reason the controller recorded, or the generic text."
+  def delete_failed_message(reason) when is_binary(reason) and reason != "",
+    do: "Ошибка удаления: #{reason}\nПопробуй ещё раз."
+
+  def delete_failed_message(_reason), do: "Ошибка удаления, попробуй ещё раз."
 
   defp bot_line(bot) do
     status =

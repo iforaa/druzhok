@@ -16,6 +16,9 @@ defmodule Druzhok.Settings do
     |> unique_constraint(:key)
   end
 
+  # ruoc_admin_host / ruoc_admin_token are read by nothing since partner
+  # access (RUOC_PARTNER_TOKEN); they stay listed for a rollback to the
+  # previous druzhok and go in a later release.
   @keys ~w(openai_api_key manager_bot_token operator_telegram_id
            ruoc_url ruoc_admin_host ruoc_admin_token ruoc_catalog_key fetch_secret bot_creation
            sleep_idle_minutes)

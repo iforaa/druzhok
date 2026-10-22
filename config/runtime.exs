@@ -100,8 +100,8 @@ end
 config :druzhok,
   openai_api_url: System.get_env("OPENAI_API_URL") || "https://api.openai.com/v1",
   ruoc_url: env_or_nil.("RUOC_URL"),
-  ruoc_admin_host: env_or_nil.("RUOC_ADMIN_HOST"),
-  ruoc_admin_token: env_or_nil.("RUOC_ADMIN_TOKEN"),
+  # The partner token comes from the env only; it never has a settings row.
+  ruoc_partner_token: env_or_nil.("RUOC_PARTNER_TOKEN"),
   ruoc_catalog_key: env_or_nil.("RUOC_CATALOG_KEY"),
   fetch_secret: env_or_nil.("FETCH_SECRET"),
   operator_telegram_id: env_or_nil.("OPERATOR_TELEGRAM_ID"),

@@ -153,53 +153,11 @@ defmodule Druzhok.BotManagerLifecycleTest do
       %{stub: Druzhok.RuocStub.start()}
     end
 
-    test "migrate_to_ruoc creates the account, remaps models, restarts, and is idempotent",
-         %{name: name, data_root: root, stub: stub} do
-      {:ok, _} = BotManager.create(name, %{model: "z-ai/glm-5.3-flash", telegram_token: "1A", image_model: "google/gemini-2.5-flash-lite"})
-      # create/2 provisioned already (ruoc is configured); undo that to test a legacy bot.
-      Repo.get_by!(Instance, name: name)
-      |> Instance.changeset(%{ruoc_account_id: nil, ruoc_api_key: nil, model: "z-ai/glm-5.3-flash", image_model: "google/gemini-2.5-flash-lite"})
-      |> Repo.update!()
-
-      assert {:ok, _} = BotManager.start(name, wait: true)
-
-      assert {:ok, %{account_id: "acct-" <> _ = id, model: "ruoc-flash"}} = BotManager.migrate_to_ruoc(name)
-
-      inst = Repo.get_by!(Instance, name: name)
-      assert inst.ruoc_account_id == id
-      assert inst.ruoc_api_key =~ "ruoc_key"
-      assert inst.model == "ruoc-flash"
-      assert inst.image_model == "ruoc-flash"
-      assert [call | _] = Druzhok.RuocStub.calls(stub, "POST /admin/accounts") |> Enum.reverse()
-      assert call.params["label"] == "druzhok:#{name}"
-      # Migration funds nothing; the owner already has a balance to move.
-      refute Map.has_key?(call.params, "grant_rubles")
-
-      # The restart is a request; the controller re-syncs config.yaml.
-      assert eventually(fn -> File.read!(Path.join([root, name, "config.yaml"])) =~ ~s(default: "ruoc-flash") end, 200)
-      assert eventually(fn -> BotManager.status(name) == "active" end)
-
-      assert {:already_migrated, ^name} = BotManager.migrate_to_ruoc(name)
-      assert {:error, :not_found} = BotManager.migrate_to_ruoc("no-such-bot")
-    end
-
     test "create leaves funding to ruoc's default plan: no grant_rubles", %{name: name, stub: stub} do
       {:ok, _} = BotManager.create(name, %{model: "m", telegram_token: "1A"})
-      assert [%{params: params}] = Druzhok.RuocStub.calls(stub, "POST /admin/accounts")
+      assert [%{params: params}] = Druzhok.RuocStub.calls(stub, "POST /partner/accounts")
       refute Map.has_key?(params, "grant_rubles")
       refute Map.has_key?(params, "plan")
-    end
-
-    test "migrate_to_ruoc leaves the row alone when the gateway refuses", %{name: name, stub: stub} do
-      {:ok, _} = BotManager.create(name, %{model: "m", telegram_token: "1A"})
-      Repo.get_by!(Instance, name: name) |> Instance.changeset(%{ruoc_account_id: nil, ruoc_api_key: nil}) |> Repo.update!()
-
-      Bypass.expect_once(stub.bypass, "POST", "/admin/accounts", fn conn ->
-        Druzhok.RuocStub.reply(conn, 500, %{"error" => %{"type" => "api_error", "message" => "internal error"}})
-      end)
-
-      assert {:error, "HTTP 500: internal error"} = BotManager.migrate_to_ruoc(name)
-      assert Repo.get_by!(Instance, name: name).ruoc_api_key == nil
     end
 
     test "create provisions a ruoc account when the gateway is configured", %{name: name, stub: stub} do
@@ -208,18 +166,66 @@ defmodule Druzhok.BotManagerLifecycleTest do
       inst = Repo.get_by!(Instance, name: name)
       assert inst.ruoc_account_id =~ "acct-"
       assert inst.ruoc_api_key =~ "ruoc_key"
-      assert [%{params: %{"label" => label}}] = Druzhok.RuocStub.calls(stub, "POST /admin/accounts")
+      assert [%{params: %{"label" => label}}] = Druzhok.RuocStub.calls(stub, "POST /partner/accounts")
       assert label == "druzhok:#{name}"
       assert {out, 0} = BotManager.exec(name, ["sh", "-c", "echo $OPENAI_API_KEY"])
       # The bot still talks to druzhok with its tenant key; the ruoc key stays server-side.
       assert String.trim(out) == inst.tenant_key
     end
 
-    test "the ruoc label carries the owner's telegram id when known", %{name: name, stub: stub} do
+    test "the ruoc label and ref carry the owner's telegram id when known", %{name: name, stub: stub} do
       assert {:ok, _} = BotManager.create(name, %{telegram_token: "1A", owner_telegram_id: 4242})
-      assert [%{params: %{"label" => label}}] = Druzhok.RuocStub.calls(stub, "POST /admin/accounts")
+      assert [%{params: %{"label" => label, "external_ref" => ref}}] = Druzhok.RuocStub.calls(stub, "POST /partner/accounts")
       assert label == "druzhok:#{name} tg:4242"
+      assert ref == "#{name}:4242"
       assert BotManager.ruoc_label("x", nil) == "druzhok:x"
+      assert BotManager.external_ref("x", nil) == "x:-"
+    end
+
+    test "a create answered account_exists stores the reissued key", %{name: name, stub: stub} do
+      Bypass.expect_once(stub.bypass, "POST", "/partner/accounts", fn conn ->
+        Druzhok.RuocStub.reply(conn, 409, %{"error" => %{"type" => "account_exists"}, "account_id" => "acct-prev"})
+      end)
+
+      assert {:ok, _} = BotManager.create(name, %{telegram_token: "1A", owner_telegram_id: 77})
+      inst = Repo.get_by!(Instance, name: name)
+      assert inst.ruoc_account_id == "acct-prev"
+      assert "ruoc_rekey" <> _ = inst.ruoc_api_key
+      assert [%{path: "/partner/accounts/acct-prev/key"}] = Druzhok.RuocStub.calls(stub, "POST /partner/accounts/:id/key")
+    end
+
+    test "the partner quota is :ruoc_quota and leaves no row", %{name: name, stub: stub} do
+      Bypass.expect_once(stub.bypass, "POST", "/partner/accounts", fn conn ->
+        Druzhok.RuocStub.reply(conn, 429, %{"error" => %{"type" => "partner_quota", "message" => "limit"}})
+      end)
+
+      log =
+        ExUnit.CaptureLog.capture_log(fn ->
+          assert {:error, :ruoc_quota} = BotManager.create(name, %{telegram_token: "1A"})
+        end)
+
+      assert log =~ "ruoc partner quota reached"
+      assert Repo.get_by(Instance, name: name) == nil
+    end
+
+    test "two concurrent creates of one name: one bot, one ruoc call, its key live", %{name: name, stub: stub} do
+      Bypass.stub(stub.bypass, "POST", "/partner/accounts", fn conn ->
+        conn = Druzhok.RuocStub.record(stub, "POST /partner/accounts", conn)
+        # Slow enough that the second create arrives while the first is in ruoc.
+        Process.sleep(200)
+        Druzhok.RuocStub.reply(conn, 201, %{"account_id" => "acct-race", "api_key" => "ruoc_race"})
+      end)
+
+      results =
+        [%{telegram_token: "1A"}, %{telegram_token: "1B"}]
+        |> Enum.map(fn opts -> Task.async(fn -> BotManager.create(name, opts) end) end)
+        |> Enum.map(&Task.await(&1, 10_000))
+
+      assert Enum.count(results, &match?({:ok, _}, &1)) == 1
+      assert {:error, :name_taken} in results
+      assert [_] = Druzhok.RuocStub.calls(stub, "POST /partner/accounts")
+      assert Druzhok.RuocStub.calls(stub, "POST /partner/accounts/:id/key") == []
+      assert Repo.get_by!(Instance, name: name).ruoc_api_key == "ruoc_race"
     end
 
     test "create keeps a legacy model id out of a ruoc bot", %{name: name} do
@@ -235,10 +241,10 @@ defmodule Druzhok.BotManagerLifecycleTest do
     end
 
     test "create skips provisioning when ruoc is not configured", %{name: name, stub: stub} do
-      Druzhok.RuocStub.unset(:ruoc_admin_token)
+      Druzhok.RuocStub.unset(:ruoc_partner_token)
       assert {:ok, _} = BotManager.create(name, %{model: "m", telegram_token: "1A"})
       assert Repo.get_by!(Instance, name: name).ruoc_api_key == nil
-      assert Druzhok.RuocStub.calls(stub, "POST /admin/accounts") == []
+      assert Druzhok.RuocStub.calls(stub, "POST /partner/accounts") == []
     end
 
     test "delete suspends the ruoc account", %{name: name, stub: stub} do
@@ -247,16 +253,44 @@ defmodule Druzhok.BotManagerLifecycleTest do
 
       assert :ok = BotManager.delete(name, wait: true)
 
-      assert [%{path: path}] = Druzhok.RuocStub.calls(stub, "POST /admin/accounts/:id/status")
-      assert path == "/admin/accounts/#{id}/status"
+      assert [%{path: path}] = Druzhok.RuocStub.calls(stub, "POST /partner/accounts/:id/suspend")
+      assert path == "/partner/accounts/#{id}/suspend"
       assert Repo.get_by(Instance, name: name) == nil
     end
 
-    test "delete still succeeds when suspend fails", %{name: name, stub: stub} do
+    test "a failed suspend keeps the row, is recorded and retried after the backoff",
+         %{name: name, stub: stub} do
       {:ok, _} = BotManager.create(name, %{telegram_token: "1A"})
-      Bypass.down(stub.bypass)
-      assert :ok = BotManager.delete(name, wait: true)
-      assert Repo.get_by(Instance, name: name) == nil
+      {:ok, ok?} = Agent.start(fn -> false end)
+      on_exit(fn -> Agent.stop(ok?) end)
+
+      Bypass.stub(stub.bypass, "POST", "/partner/accounts/:id/suspend", fn conn ->
+        conn = Druzhok.RuocStub.record(stub, "POST /partner/accounts/:id/suspend", conn)
+
+        if Agent.get(ok?, & &1),
+          do: Druzhok.RuocStub.reply(conn, 200, %{"status" => "suspended"}),
+          else: Druzhok.RuocStub.reply(conn, 502, %{"error" => %{"type" => "api_error", "message" => "upstream down"}})
+      end)
+
+      log =
+        ExUnit.CaptureLog.capture_log(fn ->
+          assert {:error, "ruoc suspend: HTTP 502: upstream down"} = BotManager.delete(name, wait: true)
+        end)
+
+      assert log =~ "[life] #{name}: delete failed: ruoc suspend: HTTP 502: upstream down"
+      inst = Repo.get_by!(Instance, name: name)
+      assert inst.delete_requested
+      assert inst.delete_failures == 1
+      assert inst.delete_error == "ruoc suspend: HTTP 502: upstream down"
+      assert inst.delete_failed_at
+
+      # Test backoff is [300, 600] ms: no second attempt before backoff_ms(1).
+      Process.sleep(150)
+      assert length(Druzhok.RuocStub.calls(stub, "POST /partner/accounts/:id/suspend")) == 1
+
+      Agent.update(ok?, fn _ -> true end)
+      assert eventually(fn -> Repo.get_by(Instance, name: name) == nil end)
+      assert length(Druzhok.RuocStub.calls(stub, "POST /partner/accounts/:id/suspend")) == 2
     end
 
     test "create sends the invite to ruoc and admits the owner", %{name: name, stub: stub} do
@@ -266,7 +300,7 @@ defmodule Druzhok.BotManagerLifecycleTest do
 
       {:ok, _} = BotManager.create(name, %{model: "m", telegram_token: "1A", owner_telegram_id: owner, invite: "ABCD-EFGH"})
 
-      assert [%{params: params}] = Druzhok.RuocStub.calls(stub, "POST /admin/accounts")
+      assert [%{params: params}] = Druzhok.RuocStub.calls(stub, "POST /partner/accounts")
       assert params["invite"] == "ABCD-EFGH"
       assert Druzhok.Admissions.admitted?(owner)
       assert %{invite_hint: "ABCD"} = Repo.one(from(a in "admissions", where: a.telegram_id == ^owner, select: %{invite_hint: a.invite_hint}))
@@ -275,7 +309,7 @@ defmodule Druzhok.BotManagerLifecycleTest do
     test "a refused invite leaves no row and no admission", %{name: name, stub: stub} do
       owner = System.unique_integer([:positive]) + 20_000_000
 
-      Bypass.expect_once(stub.bypass, "POST", "/admin/accounts", fn conn ->
+      Bypass.expect_once(stub.bypass, "POST", "/partner/accounts", fn conn ->
         Druzhok.RuocStub.reply(conn, 409, %{"error" => %{"type" => "invite_spent", "message" => "used"}})
       end)
 

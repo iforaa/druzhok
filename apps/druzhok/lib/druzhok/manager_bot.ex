@@ -636,8 +636,8 @@ defmodule Druzhok.ManagerBot do
                   reply_markup: Jason.encode!(menu)
                 })
 
-              _ ->
-                edit_plain(token, chat_id, message_id, "Ошибка удаления, попробуй ещё раз.")
+              {:error, reason} ->
+                edit_plain(token, chat_id, message_id, Onboarding.delete_failed_message(reason))
             end
           rescue
             e ->
@@ -733,6 +733,8 @@ defmodule Druzhok.ManagerBot do
           {:error, :crashed} -> "Ошибка создания бота. Попробуй ещё раз."
           {:error, {:invite, _}} -> Onboarding.create_race_message()
           {:error, :name_taken} -> Onboarding.name_taken_message()
+          # Druzhok.Ruoc logged "ruoc partner quota reached" for the operator.
+          {:error, :ruoc_quota} -> Onboarding.ruoc_quota_message()
           {:error, reason} -> "Ошибка создания бота: #{inspect(reason)}\nПопробуй ещё раз."
         end
 
