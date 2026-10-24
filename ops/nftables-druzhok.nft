@@ -39,11 +39,19 @@ table inet druzhok {
     elements = { 2001:b28:f23d::/48, 2001:b28:f23f::/48, 2001:67c:4e8::/48, 2a0a:f280::/32 }
   }
 
+  # The output hook sees every packet the host sends, so it only dispatches:
+  # bot users' packets go through bot_egress, the rest are accepted. A packet
+  # the kernel sends with no socket owner (SYN-ACKs and ACKs answered from a
+  # TIME_WAIT connection, resets for closed ports) has no uid and matches
+  # neither "in" nor "not in" @bot_uids; under the old single chain it fell
+  # through to the drop, so other services' connections on this host
+  # sometimes hung and closed ports never refused.
   chain output {
     type filter hook output priority 0; policy accept;
+    meta skuid @bot_uids jump bot_egress
+  }
 
-    meta skuid != @bot_uids accept
-
+  chain bot_egress {
     # Druzhok proxy
     ip daddr 127.0.0.1 tcp dport 4000 accept
     # Webhook relay: replies from a bot's own PTB listener to druzhok. Reply
@@ -53,8 +61,8 @@ table inet druzhok {
     ip daddr @resolvers4 udp dport 53 accept
     ip daddr @resolvers4 tcp dport 53 accept
     # Telegram, counted per uid
-    ip daddr @telegram4 tcp dport 443 meter bot_tg { meta skuid counter } accept
-    ip6 daddr @telegram6 tcp dport 443 meter bot_tg6 { meta skuid counter } accept
+    ip daddr @telegram4 tcp dport 443 meter tg_per_bot { meta skuid counter } accept
+    ip6 daddr @telegram6 tcp dport 443 meter tg6_per_bot { meta skuid counter } accept
     # everything else: cloud metadata, other local services, the open web
     counter drop
   }
