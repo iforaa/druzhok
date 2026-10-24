@@ -356,13 +356,14 @@ defmodule Druzhok.BotManager do
   (`<data_root_base>/<bot>/workspace/...`). Public so the web layer can resolve
   the same root when serving published sites.
   """
-  @doc "A bot's tenant dir, `<data_root_base>/<name>` (its HERMES_HOME)."
-  def tenant_dir(bot_name) when is_binary(bot_name), do: Path.join(data_root_base(), bot_name)
 
   def data_root_base do
     (System.get_env("DRUZHOK_DATA_ROOT") || Application.get_env(:druzhok, :data_root_default))
     |> Path.expand()
   end
+
+  @doc "A bot's tenant dir, `<data_root_base>/<name>` (its HERMES_HOME)."
+  def tenant_dir(bot_name) when is_binary(bot_name), do: Path.join(data_root_base(), bot_name)
 
   @doc """
   Absolute host path to a bot's published-sites directory:
