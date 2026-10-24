@@ -15,8 +15,8 @@ defmodule Druzhok.Cabinet do
   bind-cabinet` calls `bind_now/1` itself.
 
   `instances.cabinet_binding` (`"<bot_id>:<owner_tg_id>:<language>"`) and
-  `cabinet_url` are written when ruoc accepts a binding, `cabinet_menu_set`
-  when Telegram takes the menu button, and `cabinet_off` by `ops/druzhok
+  `cabinet_url` are written when ruoc accepts a binding; `cabinet_url` and
+  `cabinet_menu_set` together whenever Telegram takes the menu button; and `cabinet_off` by `ops/druzhok
   bind-cabinet --off`, which nothing undoes but a plain `bind-cabinet`. A matching binding with the button set costs nothing,
   so a wake from sleep makes no call. The button usually fails at first: a new
   bot is started before its owner has pressed Start, and Telegram answers 400.

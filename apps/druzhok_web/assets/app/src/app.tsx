@@ -169,7 +169,7 @@ function BotTab({ bot }: { bot: Bot }) {
 
 type FileScreen =
   | { kind: "list" }
-  | { kind: "text"; title: string; load: () => Promise<Text> }
+  | { kind: "text"; title: string; load: () => Promise<Text>; back?: FileScreen }
   | { kind: "jobs" }
   | { kind: "skills" }
   | { kind: "site" }
@@ -183,11 +183,20 @@ function FilesTab() {
     panelApi.files().then(setFiles, (err) => setError(explain(err)))
   }, [])
 
-  useEffect(() => backButton(screen.kind === "list" ? null : () => setScreen({ kind: "list" })), [screen])
+  useEffect(
+    () =>
+      backButton(
+        screen.kind === "list"
+          ? null
+          : () => setScreen(screen.kind === "text" && screen.back ? screen.back : { kind: "list" }),
+      ),
+    [screen],
+  )
 
   if (screen.kind === "text") return <TextView title={screen.title} load={screen.load} />
   if (screen.kind === "jobs") return <JobsView />
-  if (screen.kind === "skills") return <SkillsView open={(title, load) => setScreen({ kind: "text", title, load })} />
+  if (screen.kind === "skills")
+    return <SkillsView open={(title, load) => setScreen({ kind: "text", title, load, back: { kind: "skills" } })} />
   if (screen.kind === "site") return <SiteView />
 
   if (!files) return <p className="notice notice--quiet">{error ?? "Загрузка…"}</p>
@@ -338,7 +347,7 @@ function SkillsView({ open }: { open: (title: string, load: () => Promise<Text>)
       {error && <p className="error">{error}</p>}
       {!skills && !error && <p className="notice notice--quiet">Загрузка…</p>}
       {skills?.map((s) => (
-        <button key={`${s.category}/${s.name}`} className="item" onClick={() => open(s.name, () => panelApi.skill(s))}>
+        <button key={s.path.join("/")} className="item" onClick={() => open(s.name, () => panelApi.skill(s))}>
           <span>
             {s.name}
             {s.category ? <span className="hint"> · {s.category}</span> : null}

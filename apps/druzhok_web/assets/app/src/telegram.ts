@@ -65,5 +65,10 @@ export function backButton(onBack: (() => void) | null): () => void {
   }
   button.show()
   button.onClick(onBack)
-  return () => button.offClick(onBack)
+  // Hidden on the way out too: switching tabs unmounts a sub-screen, and a
+  // Back button left showing would do nothing.
+  return () => {
+    button.offClick(onBack)
+    button.hide()
+  }
 }

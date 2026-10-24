@@ -50,8 +50,7 @@ defmodule Druzhok.Panel do
     |> Enum.find(&(Instance.telegram_bot_id(&1) == bot_id))
   end
 
-  defp tenant_dir(%Instance{name: name}),
-    do: name |> BotManager.sites_dir() |> Path.dirname() |> Path.dirname()
+  defp tenant_dir(%Instance{name: name}), do: BotManager.tenant_dir(name)
 
   # --- Бот -----------------------------------------------------------------
 
@@ -99,7 +98,7 @@ defmodule Druzhok.Panel do
   defp start_error(nil), do: nil
 
   defp start_error(text) do
-    root = BotManager.sites_dir("x") |> Path.dirname() |> Path.dirname() |> Path.dirname()
+    root = BotManager.data_root_base()
 
     text
     |> String.replace(~r/#{Regex.escape(root)}\/\S*/, "…")
@@ -232,9 +231,10 @@ defmodule Druzhok.Panel do
     end
   end
 
-  defp text_field(nil), do: ""
+  # Any decoded JSON value, never raising: objects and lists are not text.
   defp text_field(s) when is_binary(s), do: s
-  defp text_field(other), do: to_string(other)
+  defp text_field(n) when is_number(n) or is_boolean(n), do: to_string(n)
+  defp text_field(_), do: ""
 
   defp repeat(%{} = r), do: %{times: r["times"], completed: r["completed"]}
   defp repeat(_), do: nil
@@ -281,7 +281,10 @@ defmodule Druzhok.Panel do
         end)
 
       not is_nil(job["schedule"]) ->
-        to_string(job["schedule"])
+        case text_field(job["schedule"]) do
+          "" -> "?"
+          s -> s
+        end
 
       true ->
         "?"
@@ -318,7 +321,11 @@ defmodule Druzhok.Panel do
 
   @doc "The bot's own skills: name, category (or nil), description."
   def skills(%Instance{} = inst) do
-    Enum.map(skills_scan(inst).own, &Map.take(&1, [:name, :category, :description]))
+    # `path` is the directory segments that open the skill: the front-matter
+    # name shown may differ from the directory's.
+    Enum.map(skills_scan(inst).own, fn s ->
+      s |> Map.take([:name, :category, :description]) |> Map.put(:path, s.segments)
+    end)
   end
 
   @doc "One own skill's SKILL.md: `segments` is `[name]` or `[category, name]`."

@@ -9,6 +9,13 @@ defmodule Druzhok.TenantFiles do
   from a descriptor we verified rather than from a second lookup by name,
   which the bot could swap in between.
 
+  The walk alone cannot stop a bot that swaps an *intermediate* directory for
+  a symlink between druzhok's lookups (each lookup re-resolves the whole
+  path), so the opened file must also belong to the tenant: its owner is the
+  tenant dir's owner, the bot's own uid. Another tenant's files have another
+  owner, host files belong to root, so a swap reaches nothing the bot could
+  not read itself.
+
   Directory *listings* are not done here: an in-process walk re-resolves the
   path at every step, so `Druzhok.Panel.Lister` lists as the bot's own user.
   """
@@ -16,12 +23,14 @@ defmodule Druzhok.TenantFiles do
   @doc """
   Opens `segments` below `tenant_dir`. `index: true` serves a directory as its
   `index.html` (BotSite). `{:ok, fd, path, %File.Stat{}}` or `:not_found`; the
-  caller closes `fd`. The stat is the open descriptor's.
+  caller closes `fd`. The stat is the open descriptor's. `uid:` overrides the
+  owner the file must have (default: the tenant dir's owner).
   """
   def open(tenant_dir, segments, opts \\ []) do
     index? = Keyword.get(opts, :index, false)
 
-    with {:ok, file, _stat} <- walk(tenant_dir, segments, index?),
+    with {:ok, uid} <- owner(tenant_dir, opts),
+         {:ok, file, _stat} <- walk(tenant_dir, segments, index?),
          {:ok, fd} <- :file.open(file, [:read, :binary, :raw]) do
       # Re-walk now that the file is open: the descriptor is only trusted if
       # the symlink-free path still leads to the very inode it refers to.
@@ -30,7 +39,8 @@ defmodule Druzhok.TenantFiles do
            {:ok, ^file, %File.Stat{inode: inode, major_device: dev}} <-
              walk(tenant_dir, segments, index?),
            true <-
-             opened.type == :regular and opened.inode == inode and opened.major_device == dev do
+             opened.type == :regular and opened.inode == inode and opened.major_device == dev,
+           true <- opened.uid == uid do
         {:ok, fd, file, opened}
       else
         _ ->
@@ -42,13 +52,26 @@ defmodule Druzhok.TenantFiles do
     end
   end
 
+  defp owner(tenant_dir, opts) do
+    case Keyword.fetch(opts, :uid) do
+      {:ok, uid} ->
+        {:ok, uid}
+
+      :error ->
+        case File.lstat(tenant_dir) do
+          {:ok, %File.Stat{type: :directory, uid: uid}} -> {:ok, uid}
+          _ -> :not_found
+        end
+    end
+  end
+
   @doc """
   Reads at most `limit` bytes of a file through `open/3`:
   `{:ok, %{bytes: binary, size: n, modified_at: DateTime, truncated: bool}}`
   or `:not_found`. Reads `limit + 4` so a cut can be told from an exact fit.
   """
-  def read(tenant_dir, segments, limit) do
-    with {:ok, fd, _file, stat} <- open(tenant_dir, segments) do
+  def read(tenant_dir, segments, limit, opts \\ []) do
+    with {:ok, fd, _file, stat} <- open(tenant_dir, segments, opts) do
       try do
         bytes =
           case :file.read(fd, limit + 4) do
@@ -82,8 +105,9 @@ defmodule Druzhok.TenantFiles do
   the text must be valid UTF-8. `{:ok, %{text: …, …}}`, `:not_found` or
   `:not_text`.
   """
-  def read_text(tenant_dir, segments, limit) do
-    with {:ok, %{bytes: bytes, truncated: truncated} = r} <- read(tenant_dir, segments, limit) do
+  def read_text(tenant_dir, segments, limit, opts \\ []) do
+    with {:ok, %{bytes: bytes, truncated: truncated} = r} <-
+           read(tenant_dir, segments, limit, opts) do
       text = if truncated, do: trim_utf8(bytes), else: bytes
 
       if String.valid?(text),

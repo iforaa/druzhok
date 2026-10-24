@@ -30,6 +30,15 @@ defmodule Druzhok.TenantFilesTest do
     assert :not_found = TenantFiles.read_text(dir, ["memories", "MEMORY.md"], 100)
   end
 
+  test "a file owned by anyone but the tenant dir's owner is refused", %{dir: dir} do
+    File.write!(Path.join(dir, "SOUL.md"), "x")
+    %File.Stat{uid: me} = File.lstat!(dir)
+    assert {:ok, _} = TenantFiles.read(dir, ["SOUL.md"], 10)
+    assert {:ok, _} = TenantFiles.read(dir, ["SOUL.md"], 10, uid: me)
+    # Another tenant's file reached through a swapped parent has another owner.
+    assert :not_found = TenantFiles.read(dir, ["SOUL.md"], 10, uid: me + 1)
+  end
+
   test "a missing file and a directory are not found", %{dir: dir} do
     assert :not_found = TenantFiles.read(dir, ["nope"], 10)
     assert :not_found = TenantFiles.read(dir, ["memories"], 10)

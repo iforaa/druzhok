@@ -85,8 +85,8 @@ requires an **edge header** only Caddy sets:
 | `GET /app/api/skills/:category/:name` | a categorised own skill's `SKILL.md` |
 | `GET /app/api/site` | the website's file tree |
 
-All of `/app` sits behind `Plugs.Edge`. The bundle is served by a `Plug.Static` inside the `/app` scope
-(not in the endpoint, so the edge check covers it). `/app/index.html` and any other path under `/app/`
+All of `/app` sits behind `Plugs.Edge`. The bundle is served by `PanelPageController.asset/2` inside the
+`/app` scope (a file-name allowlist and `send_file`, not in the endpoint, so the edge check covers it). `/app/index.html` and any other path under `/app/`
 that is not a bundle file → 404.
 
 ### Page headers
@@ -143,7 +143,8 @@ The handler gets the instance. No response ever carries the token.
 **Errors** use ruoc's envelope, `{"error": {"type": "<code>", "message": "<text>"}}`, so the shared
 `api.ts` reads both APIs the same way. Codes: `init_invalid`, `init_stale`, `not_owner`,
 `rate_limit_error` (ruoc's name), `not_found`, `cabinet_off`, `not_text`. The page's `explain()` /
-`fatal()` gain `not_found`, `cabinet_off` (both fatal) and `not_text` (shown in place of the file).
+`fatal()` gain `cabinet_off` (fatal), `not_found` (shown; `GET /app/api/bot` failing with it stops the page,
+a missing file does not) and `not_text` (shown in place of the file).
 
 ### `GET /app/api/bot`
 
@@ -200,7 +201,11 @@ The safe walk moves out of `Plugs.BotSite` into `Druzhok.TenantFiles`; BotSite a
 **Opening a file** (as BotSite does today): `lstat` every component below the tenant dir; every
 intermediate a real directory, the leaf a regular file, no symlink anywhere; open; re-walk and compare the
 descriptor's inode and device. Bytes and `stat` figures come from the verified descriptor
-(`:file.read_file_info(fd)`), never from a second lookup by name.
+(`:file.read_file_info(fd)`), never from a second lookup by name. **The opened file must also be owned by
+the tenant dir's owner** (the bot's uid): the walk cannot stop a bot that swaps an intermediate directory
+for a symlink between lookups, but another tenant's files have another owner and host files belong to
+root, so such a swap reaches only the bot's own files. (Every file the panel reads is the bot's; checked
+on prod.)
 
 **Listing a directory** (website tree, skills discovery) is **not** done by druzhok's own process. An
 in-process walk (`lstat`, then `File.ls`, then `lstat` per entry) resolves the whole path again at each

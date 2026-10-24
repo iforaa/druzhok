@@ -84,16 +84,38 @@ defmodule DruzhokWebWeb.PanelApiTest do
     assert api(build_conn(), "/app/api/skills/nope").status == 404
   end
 
+  defp real_asset do
+    static = Path.join([Application.app_dir(:druzhok_web, "priv"), "static", "app"])
+    html = File.read!(Path.join(static, "index.html"))
+
+    [ref | _] =
+      Regex.scan(~r{/app/(assets/[^"]+)}, html, capture: :all_but_first) |> List.flatten()
+
+    "/app/" <> ref
+  end
+
+  defp page(path, edge) do
+    conn = if edge, do: put_req_header(build_conn(), "x-druzhok-edge", edge), else: build_conn()
+    get(conn, path).status
+  end
+
   test "no edge header, a wrong one, or none configured: 404 for API, page and bundle", %{
     conn: conn
   } do
+    asset = real_asset()
+    assert page(asset, @edge) == 200 and page("/app/", @edge) == 200
+
     assert api(conn, "/app/api/bot", edge: nil).status == 404
     assert api(build_conn(), "/app/api/bot", edge: "wrong").status == 404
-    assert get(build_conn(), "/app/").status == 404
-    assert get(build_conn(), "/app/assets/x.js").status == 404
+
+    for edge <- [nil, "wrong"], path <- ["/app/", asset] do
+      assert page(path, edge) == 404, "#{path} with #{inspect(edge)}"
+    end
 
     Application.delete_env(:druzhok, :edge_secret)
     assert api(build_conn(), "/app/api/bot").status == 404
+    assert page("/app/", @edge) == 404
+    assert page(asset, @edge) == 404
   end
 
   test "refusals use ruoc's error envelope", %{conn: conn, inst: inst} do

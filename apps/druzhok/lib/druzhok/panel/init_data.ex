@@ -47,10 +47,11 @@ defmodule Druzhok.Panel.InitData do
          true <- ed25519_ok?(fields, bot_id, sig, key),
          true <- hmac_ok?(fields, hash, token),
          {auth_date, ""} when auth_date > 0 <- Integer.parse(auth_text),
-         true <- auth_date <= now + @future_skew_s,
          {:ok, %{"id" => user_id}} when is_integer(user_id) and user_id > 0 <-
            Jason.decode(user_text) do
-      if now - auth_date > max_age,
+      # Too old, or from the future (a clock off by more than the skew):
+      # either way, reopening the panel gets fresh data.
+      if now - auth_date > max_age or auth_date > now + @future_skew_s,
         do: {:error, :stale},
         else: {:ok, %{user_id: user_id, auth_date: auth_date}}
     else

@@ -168,6 +168,8 @@ export interface Skill {
   name: string
   category: string | null
   description: string
+  /** The directory segments that open it; the front-matter name may differ. */
+  path: string[]
 }
 
 export interface SiteFile {
@@ -183,12 +185,7 @@ export const panelApi = {
   file: (kind: "soul" | "memory" | "user") => panel<Text>(`files/${kind}`),
   jobs: () => panel<{ jobs: Job[]; error?: string }>("jobs"),
   skills: () => panel<{ skills: Skill[] }>("skills"),
-  skill: (s: Skill) =>
-    panel<Text>(
-      s.category
-        ? `skills/${encodeURIComponent(s.category)}/${encodeURIComponent(s.name)}`
-        : `skills/${encodeURIComponent(s.name)}`,
-    ),
+  skill: (s: Skill) => panel<Text>(`skills/${s.path.map(encodeURIComponent).join("/")}`),
   site: () => panel<{ files: SiteFile[] | null }>("site"),
 }
 

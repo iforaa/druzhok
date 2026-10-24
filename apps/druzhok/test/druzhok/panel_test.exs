@@ -148,6 +148,10 @@ defmodule Druzhok.PanelTest do
     put(dir, "cron/jobs.json", Jason.encode!(jobs))
     assert %{jobs: [_, _, _, _]} = Panel.jobs(inst)
 
+    odd = %{"name" => %{}, "prompt" => ["x"], "schedule" => %{"expr" => %{}}}
+    put(dir, "cron/jobs.json", Jason.encode!(%{"jobs" => [odd]}))
+    assert %{jobs: [%{name: "cron job", prompt: "", schedule: "?"}]} = Panel.jobs(inst)
+
     put(dir, "cron/jobs.json", "{nope")
     assert %{jobs: [], error: "unreadable"} = Panel.jobs(inst)
   end
@@ -169,7 +173,12 @@ defmodule Druzhok.PanelTest do
     dir: dir,
     outside: outside
   } do
-    put(dir, "skills/notes/SKILL.md", "---\nname: notes\ndescription: \"Заметки\"\n---\nтело")
+    # The front-matter name differs from the directory's: listed by name, opened by path.
+    put(
+      dir,
+      "skills/notes/SKILL.md",
+      "---\nname: daily-notes\ndescription: \"Заметки\"\n---\nтело"
+    )
 
     put(
       dir,
@@ -186,9 +195,9 @@ defmodule Druzhok.PanelTest do
 
     skills = Panel.skills(inst)
 
-    assert Enum.map(skills, &{&1.category, &1.name}) == [
-             {nil, "notes"},
-             {"productivity", "planner"}
+    assert Enum.map(skills, &{&1.category, &1.name, &1.path}) == [
+             {nil, "daily-notes", ["notes"]},
+             {"productivity", "planner", ["productivity", "planner"]}
            ]
 
     assert hd(skills).description == "Заметки"
@@ -251,6 +260,9 @@ defmodule Druzhok.PanelTest do
   } do
     Application.delete_env(:druzhok, :panel_lister)
     put(dir, "workspace/sites/promo/index.html", "hi")
+    put(dir, "workspace/sites/promo/_draft.html", "x")
+    put(dir, "workspace/sites/promo/.git/HEAD", "x")
+    put(dir, "workspace/sites/promo/a/b/c/d/e/f/g/h/deep.html", "x")
     File.ln_s!(outside, Path.join(dir, "workspace/sites/promo/leak"))
 
     File.ln_s!(
@@ -260,7 +272,11 @@ defmodule Druzhok.PanelTest do
 
     paths = Lister.list(inst.name, dir, "sites", 8, 100) |> Enum.map(& &1.path)
     assert "promo/index.html" in paths
-    refute Enum.any?(paths, &String.contains?(&1, ["leak", "l.html"]))
+
+    refute Enum.any?(
+             paths,
+             &String.contains?(&1, ["leak", "l.html", "_draft", ".git", "deep.html"])
+           )
   end
 
   test "the panel URL needs a public host and a token", %{inst: inst} do

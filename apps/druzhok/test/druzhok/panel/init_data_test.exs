@@ -65,7 +65,8 @@ defmodule Druzhok.Panel.InitDataTest do
     now = System.system_time(:second)
     assert {:error, :stale} = verify(F.build(@bot, @token, @user, auth_date: now - 90_000))
     assert {:ok, _} = verify(F.build(@bot, @token, @user, auth_date: now - 3600))
-    assert {:error, :invalid} = verify(F.build(@bot, @token, @user, auth_date: now + 600))
+    assert {:error, :stale} = verify(F.build(@bot, @token, @user, auth_date: now + 600))
+    assert {:ok, _} = verify(F.build(@bot, @token, @user, auth_date: now + 30))
 
     assert {:error, :stale} =
              verify(F.build(@bot, @token, @user, auth_date: now - 120), max_age: 60)

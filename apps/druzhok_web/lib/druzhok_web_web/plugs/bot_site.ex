@@ -59,7 +59,7 @@ defmodule DruzhokWebWeb.Plugs.BotSite do
   @site_prefix ["workspace", "sites"]
 
   defp open_site_file(bot, segments) do
-    tenant_dir = bot |> Druzhok.BotManager.sites_dir() |> Path.dirname() |> Path.dirname()
+    tenant_dir = Druzhok.BotManager.tenant_dir(bot)
 
     with true <- Druzhok.TenantFiles.valid_segments?(segments),
          {:ok, fd, file, _stat} <-
