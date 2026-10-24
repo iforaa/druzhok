@@ -12,7 +12,10 @@ defmodule Druzhok.Application do
         {DynamicSupervisor, name: Druzhok.Host.ProcessSup, strategy: :one_for_one},
         {Finch, name: Druzhok.Finch},
         {Finch, name: Druzhok.LocalFinch},
-        Druzhok.Fetch.Worker
+        Druzhok.Fetch.Worker,
+        # Warm ruoc's model catalogue: a bot start reads it from the cache
+        # without waiting (Runtime.Hermes sync_image_input_mode).
+        {Task, &Druzhok.Ruoc.models/0}
       ] ++ manager_bot()
 
     opts = [strategy: :one_for_one, name: Druzhok.Supervisor]
