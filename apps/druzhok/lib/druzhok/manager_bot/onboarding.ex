@@ -206,25 +206,35 @@ defmodule Druzhok.ManagerBot.Onboarding do
   end
 
   @doc """
+  The owner's available referral codes as invites: the superbot deep link,
+  and a `t.me/share` link carrying it with a caption. The one place both
+  «🎁 Пригласить» and the bot panel (`Druzhok.Panel.invites/1`) take them from.
+  """
+  def invites(codes, manager_username) do
+    for %{status: "available", code: code} = c <- codes, is_binary(code) do
+      link = "https://t.me/#{manager_username}?start=ref_#{code}"
+
+      caption =
+        if c.you_rub != "0.00",
+          do: "Создай своего AI-бота по моей ссылке — мне за это начислят #{c.you_rub} ₽",
+          else: "Создай своего AI-бота по моей ссылке"
+
+      share = "https://t.me/share/url?url=#{URI.encode_www_form(link)}&text=#{URI.encode_www_form(caption)}"
+      %{link: link, share_url: share, you_rub: c.you_rub, friend_rub: c.friend_rub}
+    end
+  end
+
+  @doc """
   What «🎁 Пригласить» sends, in order: an intro, one message per available
   code with its deep link and a share button, then one message listing the
   redeemed codes. `codes` is `Druzhok.Ruoc.referrals/1`'s list.
   """
   def referrals_messages(codes, manager_username) do
-    available = Enum.filter(codes, &(&1.status == "available" and is_binary(&1.code)))
     redeemed = Enum.filter(codes, &(&1.status == "redeemed"))
 
     shares =
-      Enum.map(available, fn c ->
-        link = "https://t.me/#{manager_username}?start=ref_#{c.code}"
-
-        caption =
-          if c.you_rub != "0.00",
-            do: "Создай своего AI-бота по моей ссылке — мне за это начислят #{c.you_rub} ₽",
-            else: "Создай своего AI-бота по моей ссылке"
-
-        share = "https://t.me/share/url?url=#{URI.encode_www_form(link)}&text=#{URI.encode_www_form(caption)}"
-        {link, [[%{text: "Поделиться", url: share}]]}
+      Enum.map(invites(codes, manager_username), fn i ->
+        {i.link, [[%{text: "Поделиться", url: i.share_url}]]}
       end)
 
     intro = if shares == [], do: [], else: [{"Пригласи друга — по этой ссылке он сможет создать своего бота:", []}]

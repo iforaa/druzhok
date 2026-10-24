@@ -79,29 +79,48 @@ defmodule Druzhok.PanelTest do
     assert view.billing_url == "https://oldey.dev"
   end
 
-  test "the bot view names the bot as Telegram does, once per hour", %{inst: inst} do
-    Application.put_env(:druzhok, :test_profiles, %{
-      "123:secret" => %{"first_name" => "Кот Вася", "username" => "DruzhokVasaBot"}
-    })
-
+  test "the bot view names the bot as Telegram does", %{inst: inst} do
+    token = "named:#{System.unique_integer([:positive])}"
+    Application.put_env(:druzhok, :test_profiles, %{token => %{"first_name" => "Кот Вася", "username" => "DruzhokVasaBot"}})
     on_exit(fn -> Application.delete_env(:druzhok, :test_profiles) end)
 
-    view = Panel.bot(inst)
+    view = Panel.bot(%{inst | telegram_token: token})
     assert view.title == "Кот Вася"
     assert view.username == "DruzhokVasaBot"
-
-    # Cached: a later failure keeps serving the name.
-    Application.put_env(:druzhok, :test_profiles, %{})
-    assert Panel.profile("123:secret") == %{title: "Кот Вася", username: "DruzhokVasaBot"}
     assert Panel.profile(nil) == nil
-    assert Panel.profile("999:none") == nil
   end
 
-  test "the model shows ruoc's catalogue name, or its id", %{inst: inst} do
-    stub = Druzhok.RuocStub.start()
-    [%{"id" => id, "name" => name} | _] = Druzhok.RuocStub.models()
-    _ = stub
+  test "an expired profile is kept when Telegram fails, and the failure is not retried at once" do
+    token = "expired:#{System.unique_integer([:positive])}"
+    key = {Panel, :profile, :crypto.hash(:sha256, token)}
+    old = %{title: "Кот Вася", username: "DruzhokVasaBot"}
+    on_exit(fn -> :persistent_term.erase(key) end)
 
+    # Two hours old, and Telegram knows nothing about the token now.
+    :persistent_term.put(key, {System.monotonic_time(:second) - 7200, old})
+    assert Panel.profile(token) == old
+    assert {:failed, _, ^old} = :persistent_term.get(key)
+
+    # Within the minute the failure is remembered: no new ask, even once
+    # Telegram would answer.
+    Application.put_env(:druzhok, :test_profiles, %{token => %{"first_name" => "Новое имя"}})
+    on_exit(fn -> Application.delete_env(:druzhok, :test_profiles) end)
+    assert Panel.profile(token) == old
+
+    # A never-known bot gets nil, remembered the same way.
+    unknown = "unknown:#{System.unique_integer([:positive])}"
+    on_exit(fn -> :persistent_term.erase({Panel, :profile, :crypto.hash(:sha256, unknown)}) end)
+    assert Panel.profile(unknown) == nil
+    assert {:failed, _, nil} = :persistent_term.get({Panel, :profile, :crypto.hash(:sha256, unknown)})
+  end
+
+  test "the model shows ruoc's catalogue name as last fetched, never waiting on ruoc", %{inst: inst} do
+    _stub = Druzhok.RuocStub.start()
+    [%{"id" => id, "name" => name} | _] = Druzhok.RuocStub.models()
+
+    # Nothing fetched yet: the id, and a fetch starts in the background.
+    assert Panel.bot(%{inst | model: id}).settings.model_name == id
+    Druzhok.Ruoc.models()
     assert Panel.bot(%{inst | model: id}).settings.model_name == name
     assert Panel.bot(%{inst | model: "nope/x"}).settings.model_name == "nope/x"
   end

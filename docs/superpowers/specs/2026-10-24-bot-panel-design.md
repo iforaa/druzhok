@@ -185,8 +185,10 @@ a missing file does not) and `not_text` (shown in place of the file).
   | `inactive`, `failed` | true (start backoff) | `error` |
   | anything else (`unknown`, a new word) | any | `error` |
 - `start_error` is cut to 300 characters with absolute paths under the data root replaced by `…`.
-- `username` from `Druzhok.Telegram.Addressed.username/1`, the existing non-blocking `getMe` cache
-  (`:persistent_term`; a miss starts the lookup and returns nil). No new cache, no wait on Telegram.
+- `title` and `username` from `Panel.profile/1` since iteration 2 (see below): its own `getMe` cache, an hour per
+  token; a miss waits at most 3 s, a failure keeps the last known name and is not retried for a minute.
+  `username` falls back to `Addressed.username/1`. `settings.model_name` is ruoc's catalogue name as last fetched
+  (`Ruoc.cached_models/0`, never waits on ruoc), `support_url` is Settings `support_url` when it is https.
 - `access` gives counts only, the ids being other people's (operator decision, 2026-10-24):
   - `allow_all_users`: `instances.allow_all_telegram_users` (hermes's `TELEGRAM_ALLOW_ALL_USERS`); the page
     shows «все» instead of a count when true.
@@ -446,10 +448,11 @@ The first version's three plain tabs became **Главная · Память · 
 navy, or light when Telegram is light; `applyTheme` asks Telegram to paint its header to match), a floating tab
 bar with icons, and placeholders while loading. Data added, all read only:
 
-- `GET /app/api/bot`: `title` and the exact-case `username` from `getMe` (`Panel.profile/1`, cached an hour per
-  token, a miss waits at most 3 s), `settings.model_name` from ruoc's catalogue, `support_url` (Settings, https only).
-- `GET /app/api/invites`: the owner's referral codes from ruoc `GET /v1/referrals` with the bot's key, as superbot
-  `start=ref_` links and a `t.me/share` link, as «🎁 Пригласить» gives them; 502 `invites_unavailable` otherwise.
+- `GET /app/api/bot`: `title`, exact-case `username`, `settings.model_name`, `support_url` (described above).
+- `GET /app/api/invites`: the owner's referral codes from ruoc `GET /v1/referrals` with the bot's key, built by
+  `ManagerBot.Onboarding.invites/2`, the same function «🎁 Пригласить» uses; 502 `invites_unavailable` otherwise.
+- The account (`/tg/api/me`) is shared by Главная and Счёт through a page cache; Счёт always reloads it, and
+  opening a payment drops it.
 
 Главная: the bot and its state in words, the balance as the big figure, a setup checklist (receipt email, «о вас»,
 a first scheduled job, a site when hosting is on; «Написать боту» closes the panel back to the chat), four

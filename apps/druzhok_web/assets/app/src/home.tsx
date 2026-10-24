@@ -19,6 +19,9 @@ const stateText: Record<Bot["state"], [string, string]> = {
   error: ["не запустился", "Бот сейчас не отвечает. Мы уже знаем об этом."],
 }
 
+// "Оплачен до…" reads "оплачен до…" after the plan's name; a plan name inside stays as written.
+const lowerFirst = (s: string) => s.charAt(0).toLowerCase() + s.slice(1)
+
 export function botTitle(bot: Bot): string {
   return bot.title ?? (bot.username ? `@${bot.username}` : bot.name)
 }
@@ -139,7 +142,7 @@ export default function Home({ bot, go }: { bot: Bot; go: Go }) {
             <Money nanorub={me.data.balance_nanorub} />
             {me.data.subscription ? (
               <p className="hero__sub">
-                {me.data.subscription.plan_name} · {periodNote(me.data.subscription).toLowerCase()}
+                {me.data.subscription.plan_name} · {lowerFirst(periodNote(me.data.subscription))}
               </p>
             ) : (
               <p className="hero__sub">Тариф не выбран</p>

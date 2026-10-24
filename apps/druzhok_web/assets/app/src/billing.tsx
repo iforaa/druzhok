@@ -63,8 +63,10 @@ export default function Billing({ start }: { start?: string }) {
     }
   }, [])
 
+  // Fresh on every visit, as before the account was shared with Главная: a
+  // payment opened earlier, or finished at the bank meanwhile, shows here.
   useEffect(() => {
-    load()
+    load(true)
   }, [load])
 
   useEffect(() => backButton(screen === "account" ? null : () => setScreen("account")), [screen])
@@ -86,7 +88,14 @@ export default function Billing({ start }: { start?: string }) {
       ) : null}
       {screen === "account" ? <Account me={me} go={setScreen} /> : null}
       {screen === "plans" ? (
-        <Plans me={me} needReceipt={() => setScreen("receipt")} onOpened={(id) => setWatching(id)} />
+        <Plans
+          me={me}
+          needReceipt={() => setScreen("receipt")}
+          onOpened={(id) => {
+            invalidate("me")
+            setWatching(id)
+          }}
+        />
       ) : null}
       {screen === "receipt" ? <Receipt me={me} onChanged={() => load(true)} done={() => setScreen("account")} /> : null}
     </>

@@ -3,10 +3,14 @@ defmodule Druzhok.Panel do
   What the bot panel shows a bot's owner, read only (spec
   `docs/superpowers/specs/2026-10-24-bot-panel-design.md`). Nothing here
   wakes a sleeping bot: it reads the instance row, the disk through
-  `Druzhok.TenantFiles` / `Druzhok.Panel.Lister`, and the unit's state.
+  `Druzhok.TenantFiles` / `Druzhok.Panel.Lister` and the unit's state, plus
+  the bot's name from Telegram's `getMe` (`profile/1`, cached), ruoc's model
+  catalogue as last fetched, and the owner's referral codes at ruoc.
 
   The HTTP side (authentication, routes) is `DruzhokWebWeb.PanelController`.
   """
+
+  require Logger
 
   alias Druzhok.{BotManager, Instance, Lifecycle, TenantFiles}
   alias Druzhok.Panel.Lister
@@ -88,11 +92,14 @@ defmodule Druzhok.Panel do
   end
 
   @profile_ttl_s 3600
+  @profile_retry_s 60
 
   @doc """
   The bot's Telegram name and @username, from `getMe`, as Telegram writes
   them: `%{title:, username:}` or nil. Cached per token for an hour; a miss
-  asks Telegram and waits at most 3 s, then answers the stale entry or nil.
+  asks Telegram and waits at most 3 s. A failed ask answers the last known
+  profile (or nil) and is not repeated for a minute, so a Telegram outage
+  costs one 3 s wait a minute, not one per request.
   """
   def profile(token) when is_binary(token) and token != "" do
     key = {__MODULE__, :profile, :crypto.hash(:sha256, token)}
@@ -102,7 +109,17 @@ defmodule Druzhok.Panel do
       {at, p} when now - at < @profile_ttl_s ->
         p
 
-      stale ->
+      {:failed, at, p} when now - at < @profile_retry_s ->
+        p
+
+      cached ->
+        last =
+          case cached do
+            {_, p} -> p
+            {:failed, _, p} -> p
+            nil -> nil
+          end
+
         task = Task.async(fn -> get_me(token) end)
 
         case Task.yield(task, 3000) || Task.shutdown(task, :brutal_kill) do
@@ -111,7 +128,9 @@ defmodule Druzhok.Panel do
             p
 
           _ ->
-            with {_, p} <- stale, do: p
+            Logger.warning("[panel] getMe failed or timed out; showing the last known bot name")
+            :persistent_term.put(key, {:failed, now, last})
+            last
         end
     end
   end
@@ -132,11 +151,12 @@ defmodule Druzhok.Panel do
   defp text_or_nil(v) when is_binary(v) and v != "", do: v
   defp text_or_nil(_), do: nil
 
-  # ruoc's catalogue name for a model id; the id when the catalogue lacks it.
+  # ruoc's catalogue name for a model id, from the catalogue as last fetched
+  # (never waiting on ruoc); the id when the catalogue lacks it.
   defp model_name(nil), do: nil
 
   defp model_name(id) do
-    case Enum.find(Druzhok.Ruoc.models(), &(&1.id == id)) do
+    case Enum.find(Druzhok.Ruoc.cached_models(), &(&1.id == id)) do
       %{name: name} when is_binary(name) and name != "" -> name
       _ -> id
     end
@@ -165,25 +185,11 @@ defmodule Druzhok.Panel do
     with {:ok, codes} <- Druzhok.Ruoc.referrals(key),
          %{username: manager} when is_binary(manager) <-
            profile(Druzhok.Settings.get("manager_bot_token")) do
-      links =
-        for %{status: "available", code: code} = c <- codes, is_binary(code) do
-          link = "https://t.me/#{manager}?start=ref_#{code}"
-
-          caption =
-            if c.you_rub != "0.00",
-              do: "Создай своего AI-бота по моей ссылке — мне за это начислят #{c.you_rub} ₽",
-              else: "Создай своего AI-бота по моей ссылке"
-
-          %{
-            link: link,
-            share_url:
-              "https://t.me/share/url?" <> URI.encode_query(%{"url" => link, "text" => caption}),
-            you_rub: c.you_rub,
-            friend_rub: c.friend_rub
-          }
-        end
-
-      {:ok, %{links: links, used: Enum.count(codes, &(&1.status == "redeemed"))}}
+      {:ok,
+       %{
+         links: Druzhok.ManagerBot.Onboarding.invites(codes, manager),
+         used: Enum.count(codes, &(&1.status == "redeemed"))
+       }}
     else
       _ -> :error
     end

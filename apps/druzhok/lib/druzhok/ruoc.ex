@@ -30,6 +30,7 @@ defmodule Druzhok.Ruoc do
   @default_model "ruoc-flash"
   @cache_ttl_ms 60_000
   @cache_key {__MODULE__, :models}
+  @refresh_key {__MODULE__, :models_refresh}
   @partner_timeout_ms 15_000
 
   def url, do: setting("ruoc_url") || @default_url
@@ -308,6 +309,35 @@ defmodule Druzhok.Ruoc do
   end
 
   @doc """
+  The catalogue as last fetched, without waiting on ruoc: `[]` before the
+  first fetch. A missing or expired cache starts one fetch in the background
+  (at most one a minute), for callers that must answer now, like the panel.
+  """
+  def cached_models do
+    now = System.monotonic_time(:millisecond)
+    cached = :persistent_term.get(@cache_key, nil)
+
+    with {fetched_at, _} when now - fetched_at < @cache_ttl_ms <- cached do
+      :ok
+    else
+      _ ->
+        case :persistent_term.get(@refresh_key, nil) do
+          at when is_integer(at) and now - at < @cache_ttl_ms ->
+            :ok
+
+          _ ->
+            :persistent_term.put(@refresh_key, now)
+            Task.start(fn -> models() end)
+        end
+    end
+
+    case cached do
+      {_, list} -> list
+      nil -> []
+    end
+  end
+
+  @doc """
   The catalog: `[%{id, name, price: %{input, output}, capabilities}]`.
   Cached for 60 s; on failure the last good list is returned.
   """
@@ -340,7 +370,10 @@ defmodule Druzhok.Ruoc do
     end
   end
 
-  def reset_cache, do: :persistent_term.erase(@cache_key)
+  def reset_cache do
+    :persistent_term.erase(@cache_key)
+    :persistent_term.erase(@refresh_key)
+  end
 
   def find_model(id), do: Enum.find(models(), &(&1.id == id))
 

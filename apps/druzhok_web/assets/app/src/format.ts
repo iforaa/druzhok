@@ -94,7 +94,7 @@ function dayStart(d: Date): number {
   return new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime()
 }
 
-/** A moment ahead, always with its day: "сегодня в 17:56", "завтра в 9:10", "сб, 25 октября в 17:56". */
+/** A moment ahead, always with its day: "сегодня в 17:56", "завтра в 09:10", "сб, 25 октября в 17:56". */
 export function moment(iso: string): string {
   const at = new Date(iso)
   if (Number.isNaN(at.getTime())) return "—"
