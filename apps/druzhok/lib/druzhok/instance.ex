@@ -56,6 +56,7 @@ defmodule Druzhok.Instance do
     field :cabinet_binding, :string
     field :cabinet_url, :string
     field :cabinet_menu_set, :boolean, default: false
+    field :cabinet_off, :boolean, default: false
 
     timestamps()
   end

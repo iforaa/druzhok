@@ -97,8 +97,9 @@ owner sees its account and pays for druzhok's plans (managed in ruoc's Pricing t
 and sets the owner's «Кабинет» menu button on every start/wake when something changed
 (`instances.cabinet_binding/cabinet_url/cabinet_menu_set`); the button is retried on the owner's first private
 message, since Telegram refuses it before the owner opened the bot. A chat 402 also sends the owner an
-«Открыть кабинет» button, at most every 6 h. `sudo ops/druzhok bind-cabinet [<bot>]` binds now (`--off`
-restores the default button). The model catalog is ruoc's
+«Открыть кабинет» button, at most every 6 h. `sudo ops/druzhok bind-cabinet [<bot>]` binds now; `--off`
+restores the default button and sets `cabinet_off`, which nothing undoes but a plain `bind-cabinet`. An owner
+or language change rebinds and resets the old owner's button. The model catalog is ruoc's
 `GET /v1/models` (`Druzhok.Ruoc.models/0`, default `ruoc-flash`).
 
 The superbot is invite-only: `admissions` (`Druzhok.Admissions`) records who may create a bot,

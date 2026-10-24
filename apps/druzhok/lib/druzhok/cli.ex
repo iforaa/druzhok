@@ -91,13 +91,15 @@ defmodule Druzhok.CLI do
         results =
           for inst <- bots do
             result =
-              if off?, do: Druzhok.Cabinet.unset_now(inst), else: Druzhok.Cabinet.bind_now(inst)
+              if off?, do: Druzhok.Cabinet.unset_now(inst), else: Druzhok.Cabinet.resume_now(inst)
 
             IO.puts("#{pad(inst.name, 28)} #{describe_cabinet(result)}")
             result
           end
 
-        if Enum.any?(results, &match?({:error, r} when r != :not_eligible, &1)),
+        # A skipped bot and an owner who has not opened the bot yet are not
+        # failures: the second is retried on its own.
+        if Enum.any?(results, &failed_cabinet?/1),
           do: {:error, "some bots were not done; see above"},
           else: :ok
     end
@@ -194,12 +196,18 @@ defmodule Druzhok.CLI do
 
   defp run(args), do: {:error, "unknown command: #{Enum.join(args, " ")} (try: druzhok help)"}
 
+  defp failed_cabinet?({:error, :not_eligible}), do: false
+  defp failed_cabinet?({:error, {:menu_button, :not_opened}}), do: false
+  defp failed_cabinet?({:error, _}), do: true
+  defp failed_cabinet?(_), do: false
+
   defp cabinet_state(nil), do: "-"
+  defp cabinet_state(%Instance{cabinet_off: true}), do: "выключен"
   defp cabinet_state(%Instance{cabinet_binding: nil}), do: "не привязан"
 
   defp cabinet_state(%Instance{} = inst),
     do:
-      "bot:owner #{inst.cabinet_binding}, button #{if inst.cabinet_menu_set, do: "set", else: "not set yet"}"
+      "bot:owner:lang #{inst.cabinet_binding}, button #{if inst.cabinet_menu_set, do: "set", else: "not set yet"}"
 
   defp describe_cabinet({:ok, :unchanged}), do: "без изменений"
   defp describe_cabinet({:ok, :bound}), do: "привязан, кнопка поставлена"
@@ -209,8 +217,13 @@ defmodule Druzhok.CLI do
   defp describe_cabinet({:error, :not_eligible}),
     do: "пропущен: нет ruoc-аккаунта, владельца или токена"
 
-  defp describe_cabinet({:error, :menu_button}),
+  defp describe_cabinet({:ok, :off}), do: "выключен (bind-cabinet без --off включит)"
+
+  defp describe_cabinet({:error, {:menu_button, :not_opened}}),
     do: "привязан, кнопка не поставлена (владелец ещё не открывал бота)"
+
+  defp describe_cabinet({:error, {:menu_button, reason}}),
+    do: "привязан, кнопка не поставлена: #{reason}"
 
   defp describe_cabinet({:error, reason}), do: "ошибка: #{reason}"
 

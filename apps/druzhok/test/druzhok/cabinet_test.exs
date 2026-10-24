@@ -3,6 +3,7 @@ defmodule Druzhok.CabinetTest do
   use ExUnit.Case, async: false
 
   import Druzhok.BotFixtures
+  import Ecto.Query, only: [from: 2]
   alias Druzhok.{Cabinet, Instance, Repo, RuocStub}
 
   @url "https://oldey.dev/tg/?bot=123"
@@ -81,7 +82,7 @@ defmodule Druzhok.CabinetTest do
     inst = reload(inst)
 
     assert {inst.cabinet_binding, inst.cabinet_url, inst.cabinet_menu_set} ==
-             {"123:456", @url, true}
+             {"123:456:ru", @url, true}
 
     assert {:ok, :unchanged} = Cabinet.bind_now(inst)
     assert length(RuocStub.calls(stub, "PUT /partner/accounts/:id/telegram")) == 1
@@ -91,11 +92,11 @@ defmodule Druzhok.CabinetTest do
   test "a refused button keeps the binding, and the retry sets only the button",
        %{stub: stub, seen: seen, menu_ok: menu_ok, inst: inst} do
     Agent.update(menu_ok, fn _ -> false end)
-    assert {:error, :menu_button} = Cabinet.bind_now(inst)
+    assert {:error, {:menu_button, :not_opened}} = Cabinet.bind_now(inst)
     inst = reload(inst)
 
     assert {inst.cabinet_binding, inst.cabinet_url, inst.cabinet_menu_set} ==
-             {"123:456", @url, false}
+             {"123:456:ru", @url, false}
 
     Agent.update(menu_ok, fn _ -> true end)
     assert {:ok, :button} = Cabinet.bind_now(inst)
@@ -151,32 +152,107 @@ defmodule Druzhok.CabinetTest do
              msg["reply_markup"]["inline_keyboard"]
   end
 
-  test "a failing call never takes the process down", %{stub: stub, inst: inst} do
+  test "a call that raises never takes the process down", %{inst: inst} do
     start_supervised!(Cabinet)
     pid = Process.whereis(Cabinet)
-    Bypass.down(stub.bypass)
+    # A bound bot whose button Telegram answers with a body that is not JSON:
+    # Telegram.API's decode raises inside the handler.
+    tg = Bypass.open()
+    Application.put_env(:druzhok, :telegram_api_base, "http://localhost:#{tg.port}")
+
+    Bypass.stub(tg, "POST", "/:bot/:method", fn conn ->
+      Plug.Conn.resp(conn, 200, "<html>oops</html>")
+    end)
+
+    set_row(inst, cabinet_binding: "123:456:ru", cabinet_url: @url, cabinet_menu_set: false)
+
     Cabinet.sync(inst.id)
     :sys.get_state(Cabinet)
     assert Process.whereis(Cabinet) == pid
-    assert reload(inst).cabinet_binding == nil
+    refute reload(inst).cabinet_menu_set
+  end
+
+  test "another refusal of the button is reported with Telegram's reason", %{inst: inst} do
+    tg = Bypass.open()
+    Application.put_env(:druzhok, :telegram_api_base, "http://localhost:#{tg.port}")
+
+    Bypass.stub(tg, "POST", "/:bot/:method", fn conn ->
+      Plug.Conn.resp(conn, 401, ~s({"ok":false,"description":"Unauthorized"}))
+    end)
+
+    assert {:error, {:menu_button, reason}} = Cabinet.bind_now(inst)
+    assert reason =~ "Unauthorized"
+  end
+
+  test "an owner change hands the button over and resets the old owner's", %{
+    seen: seen,
+    inst: inst
+  } do
+    {:ok, :bound} = Cabinet.bind_now(inst)
+    set_row(inst, owner_telegram_id: 789)
+    assert {:ok, :bound} = Cabinet.bind_now(reload(inst))
+
+    buttons = telegram(seen, "setChatMenuButton") |> Enum.map(&elem(&1, 1))
+    assert %{"chat_id" => 456, "menu_button" => %{"type" => "default"}} in buttons
+
+    assert Enum.any?(
+             buttons,
+             &match?(%{"chat_id" => 789, "menu_button" => %{"type" => "web_app"}}, &1)
+           )
+  end
+
+  test "a language change relabels the button", %{seen: seen, inst: inst} do
+    {:ok, :bound} = Cabinet.bind_now(inst)
+    set_row(inst, language: "en")
+    assert {:ok, :bound} = Cabinet.bind_now(reload(inst))
+    {_, last} = List.last(telegram(seen, "setChatMenuButton"))
+    assert last["menu_button"]["text"] == "Cabinet"
   end
 
   test "the owner's first private message is the moment for the button", %{inst: inst} do
     private = %{"message" => %{"from" => %{"id" => 456}, "chat" => %{"type" => "private"}}}
     assert Cabinet.button_moment?(inst, private)
-    refute Cabinet.button_moment?(%{inst | cabinet_menu_set: true}, private)
+
+    refute Cabinet.button_moment?(
+             %{inst | cabinet_menu_set: true, cabinet_binding: "123:456:ru"},
+             private
+           )
+
     refute Cabinet.button_moment?(inst, put_in(private, ["message", "from", "id"], 999))
     refute Cabinet.button_moment?(inst, put_in(private, ["message", "chat", "type"], "group"))
     refute Cabinet.button_moment?(inst, %{"callback_query" => %{}})
+
+    # A rebind that failed after an owner change leaves the button "set" for
+    # the old binding: the owner's message still retries it.
+    stale = %{inst | cabinet_menu_set: true, cabinet_binding: "123:111:ru"}
+    assert Cabinet.button_moment?(stale, private)
+    refute Cabinet.button_moment?(%{stale | cabinet_binding: "123:456:ru"}, private)
+    refute Cabinet.button_moment?(%{inst | cabinet_off: true}, private)
   end
 
-  test "--off puts the default button back and forgets the binding", %{seen: seen, inst: inst} do
+  test "--off lasts until a plain bind-cabinet", %{seen: seen, inst: inst} do
     {:ok, :bound} = Cabinet.bind_now(inst)
     assert {:ok, :unset} = Cabinet.unset_now(reload(inst))
 
     assert {"setChatMenuButton", %{"menu_button" => %{"type" => "default"}}} =
              List.last(telegram(seen, "setChatMenuButton"))
 
-    assert reload(inst).cabinet_binding == nil
+    off = reload(inst)
+    assert off.cabinet_off and off.cabinet_binding == nil
+    # Nothing puts it back: not a start or wake, not the owner's message.
+    assert {:ok, :off} = Cabinet.bind_now(off)
+
+    refute Cabinet.button_moment?(off, %{
+             "message" => %{"from" => %{"id" => 456}, "chat" => %{"type" => "private"}}
+           })
+
+    assert {:ok, :bound} = Cabinet.resume_now(off)
+    on = reload(inst)
+    refute on.cabinet_off
+    assert on.cabinet_menu_set
+  end
+
+  defp set_row(inst, fields) do
+    Repo.update_all(from(i in Instance, where: i.id == ^inst.id), set: fields)
   end
 end
