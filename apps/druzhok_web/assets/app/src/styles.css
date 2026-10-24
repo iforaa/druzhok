@@ -257,13 +257,13 @@ h2 {
 .hero--plain .hero__label {
   margin-top: 0;
 }
-.hero__sub--gap {
-  margin-top: 26px;
-}
 .hero__sub {
   margin: 4px 0 0;
   color: var(--hint);
   font-size: 0.92rem;
+}
+.hero__sub--gap {
+  margin-top: 26px;
 }
 
 .money {
