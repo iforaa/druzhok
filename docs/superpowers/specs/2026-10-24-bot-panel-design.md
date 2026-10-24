@@ -1,6 +1,6 @@
 # Bot panel: the cabinet moves to druzhok
 
-Status: draft r3, 2026-10-24. Follows ruoc-gateway
+Status: approved after revmux rounds 01–03, 2026-10-24. Follows ruoc-gateway
 `docs/superpowers/specs/2026-10-24-telegram-mini-app-design.md` (the bot cabinet, live as ruoc `cc24742`,
 druzhok `7c6fbee`).
 
@@ -212,14 +212,19 @@ user**, through `Druzhok.Host.exec/2` (prod: `druzhok-ctl exec`, a transient uni
 /bin/sh -c 'exec find -P "$1" -mindepth 1 -maxdepth "$2" \( -name ".*" -o -name "_*" \) -prune -o -printf "%y %s %P\0" 2>/dev/null' find <root> <depth>
 ```
 
-- `<root>` is a fixed relative path (`../sites`, `../skills`; the unit's cwd is `workspace/`) passed as a
-  positional argument, never interpolated into the script.
+- `<root>` is a fixed relative path from the unit's cwd `workspace/`: `sites` (= `<tenant>/workspace/sites`,
+  the root BotSite serves) and `../skills` (= `<tenant>/skills`). It is passed as a positional argument,
+  never interpolated into the script.
+- GNU find is required (`-printf`); the binary comes from config `:find_bin` (prod `/usr/bin/find`; macOS
+  dev `gfind` from Homebrew findutils).
 - Records are NUL-separated `type size path`; druzhok keeps type `f` (and `d` for structure), drops
   everything else (`l` symlinks included), stops at the entry cap, and treats an unparsable record as the
   end of the list. A race now reaches only what the bot's uid can read: its own tree and world-readable
   host files, which the bot could read and repeat to its owner anyway. Other tenants' dirs are 0700.
-- A listing costs one transient unit (a few hundred ms); it does not start or wake the bot. Dev and test
-  (`Host.Process`) run the same command locally; tests inject the lister.
+- A listing costs one transient unit (a few hundred ms); it does not start or wake the bot, and works
+  whatever the unit's state. Prod goes through `Druzhok.Host.exec/2` (`druzhok-ctl exec`). Dev and test do
+  **not** use `Host.Process.exec/2` (it needs the bot's port process running): the lister runs the same
+  command directly with `System.cmd`, cwd `<tenant>/workspace`. Tests inject the lister.
 
 Any file whose contents a listing needs (a skill's front matter) is then read through the verified open
 above, by druzhok, never trusted from the listing.
@@ -392,8 +397,10 @@ No `PHX_HOST` (dev, test) → everything behaves as today, with ruoc's URL.
     truncation right after the lead byte of a 2-byte («д») and of a 3-byte character, and mid-sequence,
     each returns valid text with `truncated: true`; invalid UTF-8 → 422;
   - listings: the record parser keeps `f`/`d` and drops `l`; the entry and depth caps; an unparsable record
-    ends the list; a symlinked `workspace/`, `sites/` or `skills/` → section absent; with `Host.Process`,
-    a real `find` over a tree holding symlinked files and directories reports none of them;
+    ends the list; a symlinked `workspace/`, `sites/` or `skills/` → section absent; the direct lister with
+    a real GNU find over a tree holding regular files plus symlinked files and directories reports every
+    regular file and none of the symlinks (skipped when `:find_bin` is missing or not GNU); the website
+    listing reads `workspace/sites`, not `<tenant>/sites`;
   - `/app/api/bot`: no secret, account id or owner id in the encoded JSON; the state table; `access` with
     `allow_all_users` true, with paired users, and with the owner counted once;
   - errors: every code comes in the `{"error": {"type", "message"}}` envelope;
