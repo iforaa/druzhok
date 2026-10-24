@@ -216,9 +216,14 @@ defmodule Druzhok.BotManager do
 
     write_workspace_files(data_root, Hermes.workspace_files(instance))
     # The operator is the hermes slash-command admin on every bot
-    # (Runtime.Hermes.sync_config/2); the instance row does not carry it.
+    # (Runtime.Hermes.sync_config/2), and whether the model reads photos
+    # comes from ruoc's catalogue; the instance row carries neither.
+    model = instance.model || Druzhok.Ruoc.default_model()
+
     Hermes.sync_config(
-      Map.put(instance, :operator_telegram_id, Druzhok.Settings.operator_telegram_id()),
+      instance
+      |> Map.put(:operator_telegram_id, Druzhok.Settings.operator_telegram_id())
+      |> Map.put(:model_sees_images, Druzhok.Ruoc.sees_images?(model)),
       data_root
     )
 

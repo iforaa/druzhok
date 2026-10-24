@@ -381,6 +381,18 @@ defmodule Druzhok.Ruoc do
   def vision_models, do: Enum.filter(models(), &(&1.capabilities["attachment"] == true))
 
   @doc """
+  Whether `model` reads images, from the cached catalogue without waiting on
+  ruoc: `true`/`false`, or `nil` while the catalogue is not fetched yet or
+  does not list the model.
+  """
+  def sees_images?(model) do
+    case Enum.find(cached_models(), &(&1.id == model)) do
+      nil -> nil
+      m -> m.capabilities["attachment"] == true
+    end
+  end
+
+  @doc """
   The ruoc id a legacy OpenRouter model becomes at migration. Known ids pass
   through; the two GLMs map to their ruoc entries; anything else falls to
   the default.

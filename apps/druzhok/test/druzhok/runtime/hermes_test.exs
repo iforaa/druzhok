@@ -580,6 +580,37 @@ defmodule Druzhok.Runtime.HermesTest do
     end
   end
 
+  describe "sync_config/2 — image input mode" do
+    setup do
+      tmp_dir = Path.join(System.tmp_dir!(), "hermes-images-#{System.unique_integer([:positive])}")
+      File.mkdir_p!(Path.join(tmp_dir, "workspace"))
+      on_exit(fn -> File.rm_rf!(tmp_dir) end)
+      %{tmp_dir: tmp_dir}
+    end
+
+    defp image_mode(tmp_dir, yaml, sees) do
+      File.write!(Path.join(tmp_dir, "config.yaml"), yaml)
+      instance = %{name: "b", model: "x", tenant_key: "k", model_sees_images: sees}
+      assert :ok = Hermes.sync_config(instance, tmp_dir)
+      {:ok, cfg} = YamlElixir.read_from_string(File.read!(Path.join(tmp_dir, "config.yaml")))
+      cfg["agent"]
+    end
+
+    test "a model that reads images gets native photos", %{tmp_dir: tmp_dir} do
+      assert image_mode(tmp_dir, "model:\n  default: \"x\"\n", true) == %{"image_input_mode" => "native"}
+    end
+
+    test "a model that cannot read images keeps auto, and sibling agent keys stay", %{tmp_dir: tmp_dir} do
+      yaml = "agent:\n  image_input_mode: native\n  max_turns: 40\n"
+      assert image_mode(tmp_dir, yaml, false) == %{"image_input_mode" => "auto", "max_turns" => 40}
+    end
+
+    test "an unknown catalogue leaves the file alone", %{tmp_dir: tmp_dir} do
+      assert image_mode(tmp_dir, "model:\n  default: \"x\"\n", nil) == nil
+      assert image_mode(tmp_dir, "agent:\n  image_input_mode: native\n", nil) == %{"image_input_mode" => "native"}
+    end
+  end
+
   describe "sync_config/2 — stt silence trim" do
     setup do
       tmp_dir = Path.join(System.tmp_dir!(), "hermes-stt-#{System.unique_integer([:positive])}")

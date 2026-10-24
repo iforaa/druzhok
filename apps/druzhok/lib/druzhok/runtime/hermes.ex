@@ -258,6 +258,7 @@ defmodule Druzhok.Runtime.Hermes do
           |> sync_cron_block()
           |> sync_display_block()
           |> sync_stt_block()
+          |> sync_image_input_mode(instance)
 
         if updated != content, do: File.write!(config_path, updated)
         :ok
@@ -297,6 +298,31 @@ defmodule Druzhok.Runtime.Hermes do
       upsert: &upsert_indented_line(&1, "memory_notifications", "off"),
       default: "display:\n  memory_notifications: off"
     )
+  end
+
+  # How a photo reaches the model (hermes `agent.image_input_mode`). In
+  # `auto` the explicit `auxiliary.vision` block above makes hermes describe
+  # every photo in a separate call and hand the bot 2-4 English sentences
+  # instead (agent/image_routing.py), even when the bot's model reads images.
+  # `native` sends the photo itself. A model ruoc says cannot read images
+  # keeps `auto`, and so the description; while the catalogue is unknown
+  # (`model_sees_images` nil) the file is left as it is.
+  defp sync_image_input_mode(content, instance) do
+    mode =
+      case Map.get(instance, :model_sees_images) do
+        true -> "native"
+        false -> "auto"
+        nil -> nil
+      end
+
+    if mode do
+      sync_yaml_block(content, "agent",
+        upsert: &upsert_indented_line(&1, "image_input_mode", mode),
+        default: "agent:\n  image_input_mode: #{mode}"
+      )
+    else
+      content
+    end
   end
 
   # Hermes trims silence from longer voice notes before a cloud STT upload
