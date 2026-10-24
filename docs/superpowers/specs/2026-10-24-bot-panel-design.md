@@ -1,6 +1,6 @@
 # Bot panel: the cabinet moves to druzhok
 
-Status: draft r2, 2026-10-24. Follows ruoc-gateway
+Status: draft r3, 2026-10-24. Follows ruoc-gateway
 `docs/superpowers/specs/2026-10-24-telegram-mini-app-design.md` (the bot cabinet, live as ruoc `cc24742`,
 druzhok `7c6fbee`).
 
@@ -27,7 +27,8 @@ the page calls ruoc's existing `/tg/api/*` for it. ruoc-mobile is out of scope.
 
 - Editing settings, SOUL.md, memory or jobs; clearing history. (v2; writes would go through
   `BotSettings.update/2` and hermes's own CLI via `druzhok-ctl exec`, never by writing hermes's locked
-  files. The authentication below is designed so that a bot cannot pass it, which v2 relies on.)
+  files. The authentication below stops a bot from minting init data; it does not stop a bot from
+  phishing the owner's genuine init data, so v2 writes need more, see open questions.)
 - Conversations (`state.db`, `sessions/`): group chats carry other people's messages.
 - Mnemosyne contents, uploads, logs, `config.yaml`, `auth.json`, `.env`.
 - Links to the bot's live website: `*.oldey.dev` reaches ruoc, not druzhok's BotSite (`ops/Caddyfile`;
@@ -109,20 +110,25 @@ opposed to `RUOC_URL`, which may be internal. `GET /app/api/bot` returns it as `
 After `Plugs.Edge`, on every `/app/api/*` request, in this order:
 
 1. **Rate limit** per client IP (last `X-Forwarded-For` hop, trusted because of the edge header): 60
-   requests a minute, ETS counter, 429 `rate_limited`.
+   requests a minute, ETS counter, 429 `rate_limit_error`.
 2. Parse `Authorization: tma <initData>` and `X-Telegram-Bot` (1–20 digits). Missing or malformed → 401
-   `init_invalid`.
+   `init_invalid`. The init data is split into pairs once, into a single-valued map: **a key that occurs
+   more than once → 401 `init_invalid`** (as ruoc's `telegram_init.go`). The signed strings below and every
+   value read afterwards (`user`, `auth_date`) come from that same map.
 3. **Find the bot**: the instance, `delete_requested` false, whose `Instance.telegram_bot_id/1` equals the
    header. None → 404 `not_found`. (A scan of the instances table; a few dozen rows.)
 4. **Telegram's Ed25519 signature** (the third-party scheme, as ruoc's `telegram_init.go`): the
    data-check string is `"<bot_id>:WebAppData\n"` followed by every `key=value` pair except `hash` and
-   `signature`, sorted by key, values URL-decoded, joined by `\n`; `signature` is base64url (unpadded) and
-   must verify with Telegram's production public key
+   `signature`, sorted by key, values URL-decoded, joined by `\n`; `signature` is base64url, trailing `=`
+   trimmed before decoding (as ruoc does), and must verify with Telegram's production public key
    `e7bf03a2fa4602af4580703d88dda5bb59f32ed8b02a56c187fe7d34caed242d`
    (`:crypto.verify(:eddsa, :none, msg, sig, [pub, :ed25519])`). Missing or invalid → 401 `init_invalid`.
-   **This is the check a bot cannot pass:** every bot holds its own token (`TELEGRAM_BOT_TOKEN` in its env,
-   `Runtime.Hermes.env_vars/1`), so a token HMAC alone could be minted by the bot itself for its owner's id.
-   Only Telegram holds the Ed25519 private key.
+   **This is the check a bot cannot mint:** every bot holds its own token (`TELEGRAM_BOT_TOKEN` in its env,
+   `Runtime.Hermes.env_vars/1`), so a token HMAC alone could be computed by the bot itself for its owner's
+   id. Only Telegram holds the Ed25519 private key. A bot *can* still phish genuine init data: with its
+   token it can point the owner's menu button or an inline `web_app` button at a page it controls, and
+   Telegram hands that page real init data for this bot and owner, usable for `PANEL_INIT_MAX_AGE`. In v1
+   that exposes only what the bot can already read; it is the reason v2 writes need an extra step.
 5. **Bot-token HMAC** (the first-party scheme), as a second check: `secret = HMAC_SHA256(key="WebAppData",
    msg=bot_token)`; `data_check_string` = every pair except `hash`, sorted, URL-decoded, joined by `\n`
    (`signature` included); `hash` must equal the hex HMAC, constant-time. It binds the data to this bot's
@@ -133,6 +139,11 @@ After `Plugs.Edge`, on every `/app/api/*` request, in this order:
 8. **Cabinet off**: `cabinet_off` true → 403 `cabinet_off`.
 
 The handler gets the instance. No response ever carries the token.
+
+**Errors** use ruoc's envelope, `{"error": {"type": "<code>", "message": "<text>"}}`, so the shared
+`api.ts` reads both APIs the same way. Codes: `init_invalid`, `init_stale`, `not_owner`,
+`rate_limit_error` (ruoc's name), `not_found`, `cabinet_off`, `not_text`. The page's `explain()` /
+`fatal()` gain `not_found`, `cabinet_off` (both fatal) and `not_text` (shown in place of the file).
 
 ### `GET /app/api/bot`
 
@@ -149,7 +160,7 @@ The handler gets the instance. No response ever carries the token.
     "website_hosting_enabled": true,
     "memory_provider": "mnemosyne", "group_shared_memory": false
   },
-  "access": { "allowed_chats": 3, "allowed_users": 2 },
+  "access": { "allow_all_users": false, "allowed_users": 2, "free_response_chats": 3 },
   "billing_url": "https://oldey.dev"
 }
 ```
@@ -171,10 +182,16 @@ The handler gets the instance. No response ever carries the token.
   | `inactive`, `failed` | true (start backoff) | `error` |
   | anything else (`unknown`, a new word) | any | `error` |
 - `start_error` is cut to 300 characters with absolute paths under the data root replaced by `…`.
-- `username` from `getMe`, cached in an ETS table owned by a small supervised process for 24 h. The
-  request reads ETS directly; on a miss it calls `getMe` with a 2 s timeout, and on failure returns null.
-  It never goes through `Druzhok.Cabinet` (casts only by contract).
-- `access` gives counts only: the ids are other people's.
+- `username` from `Druzhok.Telegram.Addressed.username/1`, the existing non-blocking `getMe` cache
+  (`:persistent_term`; a miss starts the lookup and returns nil). No new cache, no wait on Telegram.
+- `access` gives counts only, the ids being other people's:
+  - `allow_all_users`: `instances.allow_all_telegram_users` (hermes's `TELEGRAM_ALLOW_ALL_USERS`); the page
+    shows «все» instead of a count when true.
+  - `allowed_users`: the distinct ids of the owner, the row's `allowed_telegram_ids`, and the keys of
+    hermes's pairing file `platforms/pairing/telegram-approved.json` (read through `TenantFiles`, not
+    `Hermes.read_allowed_users/1`, which uses a plain `File.read`), minus the `__closed__` marker.
+  - `free_response_chats`: the length of `allowed_telegram_chats`, which is the list of chats where the bot
+    answers without a mention (not an access list).
 
 ### Files: `Druzhok.TenantFiles`
 
@@ -185,11 +202,31 @@ intermediate a real directory, the leaf a regular file, no symlink anywhere; ope
 descriptor's inode and device. Bytes and `stat` figures come from the verified descriptor
 (`:file.read_file_info(fd)`), never from a second lookup by name.
 
-**Listing a directory** (website tree, skills discovery): the root itself is `lstat`ed and must be a real
-directory (a symlinked root → treated as absent). Entries are read with `File.ls`, each one `lstat`ed: real
-directories are descended into, regular files are reported, **symlinks and everything else are skipped and
-never reported**. Any file whose contents a listing needs (a skill's front matter) is read through the
-verified open above.
+**Listing a directory** (website tree, skills discovery) is **not** done by druzhok's own process. An
+in-process walk (`lstat`, then `File.ls`, then `lstat` per entry) resolves the whole path again at each
+step, and the bot, which owns these directories, can swap a parent for a symlink between two steps; with
+druzhok's `CAP_DAC_READ_SEARCH` that lists another tenant's tree. So a listing runs **as the bot's own
+user**, through `Druzhok.Host.exec/2` (prod: `druzhok-ctl exec`, a transient unit with the bot's uid):
+
+```
+/bin/sh -c 'exec find -P "$1" -mindepth 1 -maxdepth "$2" \( -name ".*" -o -name "_*" \) -prune -o -printf "%y %s %P\0" 2>/dev/null' find <root> <depth>
+```
+
+- `<root>` is a fixed relative path (`../sites`, `../skills`; the unit's cwd is `workspace/`) passed as a
+  positional argument, never interpolated into the script.
+- Records are NUL-separated `type size path`; druzhok keeps type `f` (and `d` for structure), drops
+  everything else (`l` symlinks included), stops at the entry cap, and treats an unparsable record as the
+  end of the list. A race now reaches only what the bot's uid can read: its own tree and world-readable
+  host files, which the bot could read and repeat to its owner anyway. Other tenants' dirs are 0700.
+- A listing costs one transient unit (a few hundred ms); it does not start or wake the bot. Dev and test
+  (`Host.Process`) run the same command locally; tests inject the lister.
+
+Any file whose contents a listing needs (a skill's front matter) is then read through the verified open
+above, by druzhok, never trusted from the listing.
+
+**Every component from the tenant dir down is checked**, for listings too: before listing `sites/`,
+`workspace/` must `lstat` as a real directory (BotSite's "a symlinked workspace is not served" rule);
+before listing `skills/`, `skills` itself. A symlinked component → the section is absent.
 
 **Segment rules** (`""`, `.`, `..`, leading `.` or `_`, `/`, NUL refused) apply to **segments that come
 from a request** (the skills routes). Fixed paths the code names itself (`skills/.bundled_manifest`) go
@@ -204,16 +241,20 @@ The panel reads only these, relative to `/data/tenants/<name>`:
 | About the owner | `memories/USER.md` | 256 KiB |
 | Jobs | `cron/jobs.json` | 1 MiB |
 | Bundled skills list | `skills/.bundled_manifest` | 256 KiB |
+| Paired users (keys only) | `platforms/pairing/telegram-approved.json` | 256 KiB |
 | Own skills | `skills/<name>/SKILL.md` and `skills/<category>/<name>/SKILL.md` | 256 KiB each, 200 skills |
 | Website | `workspace/sites/**` (tree only) | 2000 entries, depth 8 below `sites/` |
 
-Reading never takes hermes's `fcntl` locks. Hermes writes these files by temp file + rename (a guess from
-`memory_tool.py`/`jobs.py`; not proven), so a read sees either version.
+Reading never takes hermes's `fcntl` locks. `cron/jobs.json` is replaced atomically (`cron/jobs.py`,
+`mkstemp_beside` + `atomic_replace`), and so are `memories/MEMORY.md` and `USER.md`
+(`tools/memory_tool_store.py`, `atomic_write_text`), so a read sees one version or the other. SOUL.md and
+SKILL.md writes are not verified; a torn read shows partial text until the next open.
 
-**Text and limits:** read at most limit + 4 bytes. If the file is longer than the limit, cut at the limit
-and then back to the last complete UTF-8 code point (drop up to 3 trailing continuation bytes), and set
-`"truncated": true`. The UTF-8 check runs on the trimmed buffer, so a valid file never fails because of
-the cut. Invalid UTF-8 inside the kept text → 422 `not_text`. JSON files (`jobs.json`) over their limit →
+**Text and limits:** read at most limit + 4 bytes. If the file is longer than the limit, cut at the limit,
+then trim back to the start of the last incomplete code point: drop any trailing continuation bytes
+(`10xxxxxx`) **and the lead byte that begins the incomplete sequence**, at most 3 bytes in all (e.g. a cut
+right after `0xD0`, the first byte of «д», drops that `0xD0`). Set `"truncated": true`. The UTF-8 check
+runs on the trimmed buffer, so a valid file never fails because of the cut. Invalid UTF-8 inside the kept text → 422 `not_text`. JSON files (`jobs.json`) over their limit →
 `{"jobs": [], "error": "too_large"}` rather than a cut.
 
 ### `GET /app/api/files`
@@ -237,23 +278,25 @@ the cut. Invalid UTF-8 inside the kept text → 422 `not_text`. JSON files (`job
 parse failure → `{"jobs": [], "error": "unreadable"}`. Each job is shown the way hermes's own list shows it
 (`cron/jobs.py` `_normalize_job_record`):
 
-- `name`: stored `name` trimmed; if empty, the first 50 characters of `prompt`, else `skills[0]` (or
-  `skill`), else `script`, else `id`, else «cron job».
+- `name`: stored `name` trimmed; if empty, the first of `prompt`, `skills[0]` (or `skill`), `script`, `id`
+  that is non-empty, **cut to 50 characters whichever it is** and trimmed, else «cron job».
 - `schedule`: stored `schedule_display`; if empty, `schedule.display`, `.value`, `.expr` or `.run_at` (first
   non-empty), or `schedule` itself when it is a string; else «?».
-- `state` (hermes's `effective_job_state`): stored `state` `completed` or `error` is kept; else when
-  `enabled` (default true) is false → `paused` (or the stored state if it is non-empty and not paused);
-  when `enabled` is true → `scheduled` if the stored state is `paused` or `paused_at` is set, else the stored
-  state or `scheduled`.
+- `state` (hermes's `effective_job_state`), in order:
+  1. stored `state` `completed` or `error` → kept;
+  2. `enabled` (default true) false → `paused` if the stored state is `paused` or `paused_at` is set,
+     else the stored state, or `paused` when it is empty;
+  3. `enabled` true → `scheduled` if the stored state is `paused` or `paused_at` is set, else the stored
+     state, or `scheduled` when it is empty.
 - Also: `prompt`, `next_run_at`, `last_run_at`, `last_status`, `repeat` (`times`, `completed`).
 
 Delivery targets (`deliver`, chat ids) are not shown.
 
 ### Skills
 
-- **Discovery:** under `skills/`, every real directory one level down that holds a `SKILL.md` is an
-  uncategorised skill (`skills/<name>/`); every real directory two levels down that holds one is a
-  categorised skill (`skills/<category>/<name>/`). Dot and `_` entries are skipped. hermes allows both
+- **Discovery:** the bot-uid listing of `skills/` (depth 3); every `SKILL.md` regular file at
+  `<name>/SKILL.md` is an uncategorised skill, at `<category>/<name>/SKILL.md` a categorised one. Dot and
+  `_` entries are pruned. hermes allows both
   (`tools/skill_manager_tool.py`, the category is optional).
 - **Bundled or own:** the skill's identifier is its front-matter `name:` (parsed leniently from the
   leading `---` block), else its directory name. It is bundled when that identifier equals the part before
@@ -267,7 +310,7 @@ Delivery targets (`deliver`, chat ids) are not shown.
 
 ### `GET /app/api/site`
 
-The tree of `workspace/sites/` (the root BotSite serves), as `[{site, path, size}]` grouped by top-level
+The bot-uid listing of `workspace/sites/` (the root BotSite serves), as `[{site, path, size}]` grouped by top-level
 directory (a bot can publish several sites; `AGENTS.md` tells it to use `sites/<имя>/`). `path` is relative
 to `sites/`. Dot and `_` entries are skipped, as BotSite does. No URLs or links in v1 (see non-goals).
 `website_hosting_enabled` false, or no `sites/` directory → `null`.
@@ -280,13 +323,16 @@ With `PHX_HOST` set, the panel URL is `https://<PHX_HOST>/app/?bot=<bot_id>` and
 - `bind/2` writes the panel URL into `cabinet_url`. ruoc's reply is still required (it proves the binding);
   its URL is ignored.
 - `bind_now/1`: the `:unchanged` branch also requires `cabinet_url == panel_url`; the `:button` branch
-  (binding current, button or URL stale) writes `cabinet_url = panel_url` and sets the button to the panel
-  URL, with no ruoc call.
+  (binding current, button or URL stale) sets the button to the panel URL with no ruoc call, and **only
+  after Telegram accepts it** writes `cabinet_url = panel_url` together with `cabinet_menu_set: true`, in
+  one update.
 - `button_moment?/2` is also true when `cabinet_url != panel_url`, so the owner's next private message
   moves a bot that is never restarted.
 - The out-of-money notice opens `…/app/?bot=<bot_id>&tab=billing`.
-- A failed `setChatMenuButton` leaves `cabinet_url` as it was, so the next trigger tries again; a success
-  writes the panel URL, after which every check is `:unchanged` (no loop, no ruoc call).
+- In the `:button` branch a failed `setChatMenuButton` leaves `cabinet_url` as it was, so the next trigger
+  tries again; a success writes the panel URL, after which every check is `:unchanged` (no loop, no ruoc
+  call). `bind/2` keeps today's order (URL first, with `cabinet_menu_set: false`, so a bound bot always has
+  an address for the out-of-money notice and the button is retried).
 
 No `PHX_HOST` (dev, test) → everything behaves as today, with ruoc's URL.
 
@@ -294,13 +340,15 @@ No `PHX_HOST` (dev, test) → everything behaves as today, with ruoc's URL.
 
 - Source moves from ruoc `web/miniapp/` to `apps/druzhok_web/assets/app/` (Vite, React, TypeScript, the
   same `telegram.ts`, `api.ts`, styles). Build output `apps/druzhok_web/priv/static/app/`, committed, as
-  ruoc commits `web/dist`; `node_modules/` is gitignored and never rsynced. `ops/build-app.sh` builds it;
-  the deploy steps in CLAUDE.md gain one line, and a test fails when the committed `index.html` references
-  a bundle file that is not committed.
+  ruoc commits `web/dist`. `node_modules/` is gitignored, and the CLAUDE.md deploy rsync gains
+  `--exclude=node_modules` (it copies `apps` from the working tree, where `.gitignore` does not apply).
+  The deploy steps gain `ops/build-app.sh` before the rsync, and a test fails when the committed
+  `index.html` references a bundle file that is not committed.
 - `api.ts` gets two bases: `/app/api/` for the panel, `<billing_url>/tg/api/` for billing.
 - Tabs at the bottom; `?tab=billing` opens Счёт. Text in the bot's `language` (ru, en; ru default).
 - Markdown renders with `marked`, raw HTML in the source escaped; links open with `openLink`.
-- Every error from either API shows its message and, for `init_stale`, the reopen hint.
+- Errors from either API are shown by kind (`explain()`, localized), with the reopen hint for
+  `init_stale`.
 - Payment works as today: checkout returns the bank's URL, the page opens it with `openLink` from a tap,
   the bank returns the owner to ruoc's `/tg/paid` / `/tg/unpaid`, and the Счёт tab polls
   `/tg/api/payments/{id}` on ruoc.
@@ -327,6 +375,7 @@ No `PHX_HOST` (dev, test) → everything behaves as today, with ruoc's URL.
 | owner changed | old owner gets 403 `not_owner`; `Druzhok.Cabinet` already resets their button |
 | init data from another bot | Ed25519 fails (bot id is in the signed string) → 401 |
 | a bot forging init data with its token | Ed25519 fails → 401 |
+| a bot phishing the owner's real init data (fake `web_app` button) | passes for up to 24 h; v1 shows only what the bot can read; v2 writes need more (open questions) |
 | a bot calling `127.0.0.1:4000/app/…` | no edge header → 404 |
 
 ## Tests
@@ -335,21 +384,28 @@ No `PHX_HOST` (dev, test) → everything behaves as today, with ruoc's URL.
   - init data: a vector signed with a test Ed25519 key (the verifier takes the public key as config, prod
     default above) and a test token passes; a valid token HMAC with a missing or wrong signature fails; a
     valid signature with a wrong HMAC fails; another bot id fails; a changed field, a stale or future
-    `auth_date` fail;
+    `auth_date` fail; a duplicated `user` key fails; a padded signature passes;
   - `Plugs.Edge`: missing, wrong, and unconfigured secret → 404 for page, bundle and API;
   - `PanelAuth`: unknown bot, non-owner, `cabinet_off`, deleted bot, rate limit (keyed on the XFF hop);
   - `TenantFiles`: a symlinked `SOUL.md`, a symlinked `memories/`, a swap between walk and open (the
-    BotSite tests move with the code); listings with a symlinked directory and a symlinked file inside
-    `sites/` and inside `skills/` (skipped, not reported), a symlinked `sites/` root; a symlinked
-    `.bundled_manifest`; truncation mid-Cyrillic returns valid text with `truncated: true`; invalid UTF-8
-    → 422;
-  - `/app/api/bot`: no secret, account id or owner id in the encoded JSON; the state table;
+    BotSite tests move with the code); a symlinked `.bundled_manifest`, a symlinked pairing file;
+    truncation right after the lead byte of a 2-byte («д») and of a 3-byte character, and mid-sequence,
+    each returns valid text with `truncated: true`; invalid UTF-8 → 422;
+  - listings: the record parser keeps `f`/`d` and drops `l`; the entry and depth caps; an unparsable record
+    ends the list; a symlinked `workspace/`, `sites/` or `skills/` → section absent; with `Host.Process`,
+    a real `find` over a tree holding symlinked files and directories reports none of them;
+  - `/app/api/bot`: no secret, account id or owner id in the encoded JSON; the state table; `access` with
+    `allow_all_users` true, with paired users, and with the owner counted once;
+  - errors: every code comes in the `{"error": {"type", "message"}}` envelope;
   - skills: uncategorised and categorised own skills listed and opened; a bundled one (by front-matter
     name) excluded; a path not in the own list → 404;
-  - jobs: name/schedule/state derivations match the cases above; `{"jobs": …}` and bare list; garbage;
+  - jobs: name/schedule/state derivations match the cases above, incl. a disabled job with `paused_at` and
+    stored state `scheduled` (→ `paused`) and a long `script` fallback name (cut to 50); `{"jobs": …}` and
+    bare list; garbage;
   - `Cabinet`: a bot bound on ruoc's URL with the button set moves to the panel URL on `bind_now` (no ruoc
-    call) and on the owner's message (`button_moment?/2`); a failed button keeps the old URL; after success
-    `:unchanged`; no `PHX_HOST` keeps ruoc's URL.
+    call) and on the owner's message (`button_moment?/2`); a failed button keeps the old URL and
+    `cabinet_menu_set`; after success `:unchanged`; `bind/2` still writes the URL first; no `PHX_HOST` keeps
+    ruoc's URL.
 - ruoc: preflight and simple request on `/tg/api/me` from the allowed origin get the headers incl.
   `X-Telegram-Bot`; another origin gets none; `ALLOWED_ORIGINS` origins get no headers on `/tg/api/`;
   other paths unchanged.
@@ -360,7 +416,10 @@ No `PHX_HOST` (dev, test) → everything behaves as today, with ruoc's URL.
    `/etc/ruoc/ruoc.env` (backup first), restart.
 2. Caddy: generate `DRUZHOK_EDGE_SECRET`, add it to `/etc/caddy/env` and `/etc/druzhok/druzhok.env`
    (backups first), patch the prod `druzhok.oldey.dev` block with the `header_up` line, `caddy validate`,
-   reload. Mirror the line in `ops/Caddyfile`.
+   then **`systemctl restart caddy`**, not a reload: `{env.…}` reads the running process's environment,
+   which `EnvironmentFile=` fixes at start, so a reload would send the header empty. Check
+   `curl -s -o /dev/null -w '%{http_code}' https://druzhok.oldey.dev/app/` → 200 once druzhok is deployed
+   (404 before). Mirror the line in `ops/Caddyfile`.
 3. druzhok: merge, deploy. Buttons still point at ruoc until something triggers the cabinet.
 4. `sudo ops/druzhok bind-cabinet igorhermes`; check Бот, Файлы, Счёт and one payment in Telegram Web and
    on the phone.
@@ -370,3 +429,7 @@ No `PHX_HOST` (dev, test) → everything behaves as today, with ruoc's URL.
 ## Open questions
 
 - Show the owner the ids in the allowlists, or counts only (this draft: counts)?
+- v2 writes: phished init data passes every check above for its lifetime. Candidates, to decide with v2:
+  a short write max-age (ruoc's `TG_INIT_WRITE_MAX_AGE`, 1 h, or less); a confirmation the owner taps in
+  the superbot, which the bot cannot touch; checking `chat_type`/`query_id`; druzhok re-asserting the
+  menu button from time to time with `getChatMenuButton`, since today it trusts `cabinet_menu_set`.
