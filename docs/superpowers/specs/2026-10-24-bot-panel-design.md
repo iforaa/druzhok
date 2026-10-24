@@ -184,7 +184,7 @@ The handler gets the instance. No response ever carries the token.
 - `start_error` is cut to 300 characters with absolute paths under the data root replaced by `…`.
 - `username` from `Druzhok.Telegram.Addressed.username/1`, the existing non-blocking `getMe` cache
   (`:persistent_term`; a miss starts the lookup and returns nil). No new cache, no wait on Telegram.
-- `access` gives counts only, the ids being other people's:
+- `access` gives counts only, the ids being other people's (operator decision, 2026-10-24):
   - `allow_all_users`: `instances.allow_all_telegram_users` (hermes's `TELEGRAM_ALLOW_ALL_USERS`); the page
     shows «все» instead of a count when true.
   - `allowed_users`: the distinct ids of the owner, the row's `allowed_telegram_ids`, and the keys of
@@ -435,7 +435,6 @@ No `PHX_HOST` (dev, test) → everything behaves as today, with ruoc's URL.
 
 ## Open questions
 
-- Show the owner the ids in the allowlists, or counts only (this draft: counts)?
 - v2 writes: phished init data passes every check above for its lifetime. Candidates, to decide with v2:
   a short write max-age (ruoc's `TG_INIT_WRITE_MAX_AGE`, 1 h, or less); a confirmation the owner taps in
   the superbot, which the bot cannot touch; checking `chat_type`/`query_id`; druzhok re-asserting the
