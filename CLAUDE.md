@@ -104,8 +104,10 @@ or language change rebinds and resets the old owner's button. The model catalog 
 
 Bot panel (spec `docs/superpowers/specs/2026-10-24-bot-panel-design.md`): with `PHX_HOST` set, «Кабинет» opens
 druzhok's own Mini App, `https://<PHX_HOST>/app/?bot=<bot_id>` (source `apps/druzhok_web/assets/app`, built by
-`ops/build-app.sh` into the committed `priv/static/app`). Tabs Бот and Файлы are read only and served by druzhok
-(`Druzhok.Panel`, `PanelController`); Счёт calls ruoc's `/tg/api/*` cross-origin at `RUOC_SITE_URL` (default
+`ops/build-app.sh` into the committed `priv/static/app`). Tabs Главная, Память, Счёт, Ещё (own dark/light palette);
+the bot, files, settings and invites (`GET /app/api/invites`, ruoc `/v1/referrals` → superbot links) are read only
+and served by druzhok (`Druzhok.Panel`, `PanelController`); «Поддержка» shows when Settings `support_url` (https)
+is set. Счёт calls ruoc's `/tg/api/*` cross-origin at `RUOC_SITE_URL` (default
 `https://oldey.dev`; ruoc must list druzhok in `TG_PANEL_ORIGINS`). `/app` answers only with Caddy's
 `X-Druzhok-Edge` header (`DRUZHOK_EDGE_SECRET`, env only; bots reach :4000 directly), and the API checks Telegram's
 Ed25519 signature plus the bot-token HMAC and the owner (`Plugs.PanelAuth`). Files are read through

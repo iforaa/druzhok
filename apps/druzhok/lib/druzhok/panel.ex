@@ -56,15 +56,19 @@ defmodule Druzhok.Panel do
 
   @doc "State and settings, from an explicit allowlist of fields."
   def bot(%Instance{} = inst) do
+    profile = profile(inst.telegram_token)
+
     %{
       name: inst.name,
       bot_id: Instance.telegram_bot_id(inst),
-      username: Druzhok.Telegram.Addressed.username(inst),
+      title: profile && profile.title,
+      username: (profile && profile.username) || Druzhok.Telegram.Addressed.username(inst),
       state: state(Lifecycle.shown_status(inst, BotManager.status(inst.name)), inst.active),
       started_at: inst.started_at,
       start_error: start_error(inst.start_error),
       settings: %{
         model: inst.model,
+        model_name: model_name(inst.model),
         language: inst.language,
         timezone: inst.timezone,
         mention_only: inst.mention_only,
@@ -78,9 +82,114 @@ defmodule Druzhok.Panel do
         group_shared_memory: inst.group_shared_memory
       },
       access: access(inst),
-      billing_url: billing_url()
+      billing_url: billing_url(),
+      support_url: support_url()
     }
   end
+
+  @profile_ttl_s 3600
+
+  @doc """
+  The bot's Telegram name and @username, from `getMe`, as Telegram writes
+  them: `%{title:, username:}` or nil. Cached per token for an hour; a miss
+  asks Telegram and waits at most 3 s, then answers the stale entry or nil.
+  """
+  def profile(token) when is_binary(token) and token != "" do
+    key = {__MODULE__, :profile, :crypto.hash(:sha256, token)}
+    now = System.monotonic_time(:second)
+
+    case :persistent_term.get(key, nil) do
+      {at, p} when now - at < @profile_ttl_s ->
+        p
+
+      stale ->
+        task = Task.async(fn -> get_me(token) end)
+
+        case Task.yield(task, 3000) || Task.shutdown(task, :brutal_kill) do
+          {:ok, %{} = p} ->
+            :persistent_term.put(key, {now, p})
+            p
+
+          _ ->
+            with {_, p} <- stale, do: p
+        end
+    end
+  end
+
+  def profile(_), do: nil
+
+  defp get_me(token) do
+    {mod, fun} = Application.get_env(:druzhok, :panel_get_me, {Druzhok.Telegram.API, :get_me})
+
+    case apply(mod, fun, [token]) do
+      {:ok, %{} = me} -> %{title: text_or_nil(me["first_name"]), username: text_or_nil(me["username"])}
+      _ -> nil
+    end
+  rescue
+    _ -> nil
+  end
+
+  defp text_or_nil(v) when is_binary(v) and v != "", do: v
+  defp text_or_nil(_), do: nil
+
+  # ruoc's catalogue name for a model id; the id when the catalogue lacks it.
+  defp model_name(nil), do: nil
+
+  defp model_name(id) do
+    case Enum.find(Druzhok.Ruoc.models(), &(&1.id == id)) do
+      %{name: name} when is_binary(name) and name != "" -> name
+      _ -> id
+    end
+  end
+
+  @doc "Where the panel's «Поддержка» goes (Settings `support_url`), or nil."
+  def support_url do
+    case Druzhok.Settings.get("support_url") do
+      url when is_binary(url) ->
+        url = String.trim(url)
+        if String.starts_with?(url, "https://"), do: url, else: nil
+
+      _ ->
+        nil
+    end
+  end
+
+  # --- Приглашения ------------------------------------------------------------
+
+  @doc """
+  The owner's referral codes at ruoc (`GET /v1/referrals` with the bot's
+  key) as links to the superbot, like its «🎁 Пригласить»:
+  `{:ok, %{links: [...], used: n}}` or `:error`.
+  """
+  def invites(%Instance{ruoc_api_key: key}) when is_binary(key) and key != "" do
+    with {:ok, codes} <- Druzhok.Ruoc.referrals(key),
+         %{username: manager} when is_binary(manager) <-
+           profile(Druzhok.Settings.get("manager_bot_token")) do
+      links =
+        for %{status: "available", code: code} = c <- codes, is_binary(code) do
+          link = "https://t.me/#{manager}?start=ref_#{code}"
+
+          caption =
+            if c.you_rub != "0.00",
+              do: "Создай своего AI-бота по моей ссылке — мне за это начислят #{c.you_rub} ₽",
+              else: "Создай своего AI-бота по моей ссылке"
+
+          %{
+            link: link,
+            share_url:
+              "https://t.me/share/url?" <> URI.encode_query(%{"url" => link, "text" => caption}),
+            you_rub: c.you_rub,
+            friend_rub: c.friend_rub
+          }
+        end
+
+      {:ok, %{links: links, used: Enum.count(codes, &(&1.status == "redeemed"))}}
+    else
+      _ -> :error
+    end
+  end
+
+  def invites(_), do: :error
 
   @doc "The panel's word for a bot's state; first matching row of the spec's table wins."
   def state(shown, active) do

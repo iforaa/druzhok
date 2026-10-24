@@ -31,3 +31,4 @@ config :druzhok,
 
 # Telegram.Addressed learns a bot's @username from getMe; tests set it per token.
 config :druzhok, :telegram_username_fun, {Druzhok.TestUsernames, :lookup}
+config :druzhok, :panel_get_me, {Druzhok.TestUsernames, :get_me}

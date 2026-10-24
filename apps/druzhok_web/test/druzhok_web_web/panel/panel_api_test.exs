@@ -82,6 +82,10 @@ defmodule DruzhokWebWeb.PanelApiTest do
     assert api(build_conn(), "/app/api/skills").status == 200
     assert api(build_conn(), "/app/api/site").status == 200
     assert api(build_conn(), "/app/api/skills/nope").status == 404
+
+    # No ruoc key: the invites cannot load, and say so.
+    conn3 = api(build_conn(), "/app/api/invites")
+    assert conn3.status == 502 and error_type(conn3) == "invites_unavailable"
   end
 
   defp real_asset do

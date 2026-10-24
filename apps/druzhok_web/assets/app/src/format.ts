@@ -78,3 +78,49 @@ export function when(iso: string | null | undefined): string {
   const t = new Date(iso)
   return Number.isNaN(t.getTime()) ? "—" : dayMonthTime.format(t)
 }
+
+/** A money figure split for a big display: "956" and ",42 ₽". */
+export function rubParts(nanorub: number): { whole: string; rest: string } {
+  const text = rub(nanorub)
+  const i = text.indexOf(",")
+  if (i < 0) return { whole: text.replace(/ ₽$/, ""), rest: " ₽" }
+  return { whole: text.slice(0, i), rest: text.slice(i) }
+}
+
+const hhmm = new Intl.DateTimeFormat("ru-RU", { hour: "2-digit", minute: "2-digit" })
+const weekdayDate = new Intl.DateTimeFormat("ru-RU", { weekday: "short", day: "numeric", month: "long" })
+
+function dayStart(d: Date): number {
+  return new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime()
+}
+
+/** A moment ahead, always with its day: "сегодня в 17:56", "завтра в 9:10", "сб, 25 октября в 17:56". */
+export function moment(iso: string): string {
+  const at = new Date(iso)
+  if (Number.isNaN(at.getTime())) return "—"
+  const time = hhmm.format(at)
+  const days = Math.round((dayStart(at) - dayStart(new Date())) / 86_400_000)
+  if (days <= 0) return `сегодня в ${time}`
+  if (days === 1) return `завтра в ${time}`
+  return `${weekdayDate.format(at)} в ${time}`
+}
+
+/** How long until a moment: "через 40 мин", "через 2 ч 15 мин", "через 21 ч", "через 3 дня 4 ч". */
+export function inTime(iso: string): string {
+  const ms = new Date(iso).getTime() - Date.now()
+  if (!Number.isFinite(ms) || ms <= 60_000) return "меньше минуты"
+  const min = Math.ceil(ms / 60_000)
+  if (min < 60) return `через ${min} мин`
+  const h = Math.floor(min / 60)
+  if (h < 3) return `через ${h} ч${min % 60 ? ` ${min % 60} мин` : ""}`
+  if (h < 24) return `через ${h} ч`
+  const d = Math.floor(h / 24)
+  return `через ${d} ${plural(d, "день", "дня", "дней")}${h % 24 ? ` ${h % 24} ч` : ""}`
+}
+
+/** Up to two initials for an avatar: "Кот Вася" is "КВ". */
+export function initials(name: string): string {
+  const words = name.replace(/[^\p{L}\p{N}\s]/gu, " ").trim().split(/\s+/).filter(Boolean)
+  const letters = words.length > 1 ? words[0][0] + words[1][0] : (words[0] ?? "?").slice(0, 2)
+  return letters.toUpperCase()
+}

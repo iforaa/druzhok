@@ -12,6 +12,7 @@ defmodule DruzhokWebWeb.PanelController do
       GET /app/api/skills/:name
       GET /app/api/skills/:category/:name
       GET /app/api/site
+      GET /app/api/invites
   """
 
   use DruzhokWebWeb, :controller
@@ -39,6 +40,13 @@ defmodule DruzhokWebWeb.PanelController do
       end
 
     reply(conn, %{files: files})
+  end
+
+  def invites(conn, _params) do
+    case Panel.invites(conn.assigns.instance) do
+      {:ok, body} -> reply(conn, body)
+      :error -> PanelAuth.error(conn, 502, "invites_unavailable", "could not load the invites")
+    end
   end
 
   defp content(conn, {:ok, body}), do: reply(conn, body)

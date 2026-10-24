@@ -18,7 +18,7 @@ the page calls ruoc's existing `/tg/api/*` for it. ruoc-mobile is out of scope.
 
 1. «Кабинет» opens `https://<PHX_HOST>/app/?bot=<bot_id>`, a page druzhok serves.
 2. Three tabs: **Бот** (state and settings), **Файлы** (the bot's files), **Счёт** (today's cabinet screens).
-3. Бот and Файлы are **read only**. Nothing in v1 changes a bot.
+3. Everything druzhok serves is **read only**. Nothing in v1 changes a bot.
 4. Счёт behaves exactly as today, calling ruoc's `/tg/api/*` cross-origin.
 5. Opening the panel never wakes a sleeping bot: it reads the instance row, the disk, and the unit's state
    (one `BotManager.status/1` call per `GET /app/api/bot`, which in prod runs `sudo druzhok-ctl status`).
@@ -382,7 +382,7 @@ No `PHX_HOST` (dev, test) → everything behaves as today, with ruoc's URL.
 
 | Case | Result |
 |---|---|
-| ruoc down | Бот and Файлы work; Счёт shows ruoc's error |
+| ruoc down | the bot and its files work; Главная has no balance, Счёт shows ruoc's error |
 | druzhok down | nothing opens (the page is druzhok's) — accepted; druzhok down means the bots are down too |
 | bot asleep | everything works; nothing wakes it |
 | owner changed | old owner gets 403 `not_owner`; `Druzhok.Cabinet` already resets their button |
@@ -439,6 +439,23 @@ No `PHX_HOST` (dev, test) → everything behaves as today, with ruoc's URL.
    on the phone.
 5. Other bots move on their next start, wake or owner message; `bind-cabinet` (all) moves them at once.
 6. Later: remove ruoc's `/tg/` page; route bot subdomains to BotSite and add site links.
+
+## Iteration 2 (2026-10-24): four tabs
+
+The first version's three plain tabs became **Главная · Память · Счёт · Ещё** with the panel's own palette (dark
+navy, or light when Telegram is light; `applyTheme` asks Telegram to paint its header to match), a floating tab
+bar with icons, and placeholders while loading. Data added, all read only:
+
+- `GET /app/api/bot`: `title` and the exact-case `username` from `getMe` (`Panel.profile/1`, cached an hour per
+  token, a miss waits at most 3 s), `settings.model_name` from ruoc's catalogue, `support_url` (Settings, https only).
+- `GET /app/api/invites`: the owner's referral codes from ruoc `GET /v1/referrals` with the bot's key, as superbot
+  `start=ref_` links and a `t.me/share` link, as «🎁 Пригласить» gives them; 502 `invites_unavailable` otherwise.
+
+Главная: the bot and its state in words, the balance as the big figure, a setup checklist (receipt email, «о вас»,
+a first scheduled job, a site when hosting is on; «Написать боту» closes the panel back to the chat), four
+shortcuts, dismissible tips (localStorage), the limits. Счёт's limits name the day each comes back («обновится
+завтра в 18:42 · через 21 ч»), the 5-hour window says it starts with the first message, the plan line and the
+balance note follow ruoc's portal. Still needs ruoc: the allowance in rubles, usage by day, payment history.
 
 ## Open questions
 

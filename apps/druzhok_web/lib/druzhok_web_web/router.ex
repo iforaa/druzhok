@@ -61,6 +61,7 @@ defmodule DruzhokWebWeb.Router do
       pipe_through :panel_api
 
       get "/bot", PanelController, :bot
+      get "/invites", PanelController, :invites
       get "/files", PanelController, :files
       get "/files/:kind", PanelController, :file
       get "/jobs", PanelController, :jobs

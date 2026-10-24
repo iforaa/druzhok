@@ -79,6 +79,71 @@ defmodule Druzhok.PanelTest do
     assert view.billing_url == "https://oldey.dev"
   end
 
+  test "the bot view names the bot as Telegram does, once per hour", %{inst: inst} do
+    Application.put_env(:druzhok, :test_profiles, %{
+      "123:secret" => %{"first_name" => "Кот Вася", "username" => "DruzhokVasaBot"}
+    })
+
+    on_exit(fn -> Application.delete_env(:druzhok, :test_profiles) end)
+
+    view = Panel.bot(inst)
+    assert view.title == "Кот Вася"
+    assert view.username == "DruzhokVasaBot"
+
+    # Cached: a later failure keeps serving the name.
+    Application.put_env(:druzhok, :test_profiles, %{})
+    assert Panel.profile("123:secret") == %{title: "Кот Вася", username: "DruzhokVasaBot"}
+    assert Panel.profile(nil) == nil
+    assert Panel.profile("999:none") == nil
+  end
+
+  test "the model shows ruoc's catalogue name, or its id", %{inst: inst} do
+    stub = Druzhok.RuocStub.start()
+    [%{"id" => id, "name" => name} | _] = Druzhok.RuocStub.models()
+    _ = stub
+
+    assert Panel.bot(%{inst | model: id}).settings.model_name == name
+    assert Panel.bot(%{inst | model: "nope/x"}).settings.model_name == "nope/x"
+  end
+
+  test "support_url only takes an https address" do
+    on_exit(fn -> Druzhok.Repo.delete_all(from(s in Druzhok.Settings, where: s.key == "support_url")) end)
+    assert Panel.support_url() == nil
+    Druzhok.Settings.set("support_url", "javascript:alert(1)")
+    assert Panel.support_url() == nil
+    Druzhok.Settings.set("support_url", " https://t.me/druzhok_help ")
+    assert Panel.support_url() == "https://t.me/druzhok_help"
+  end
+
+  test "invites: available codes as superbot links, redeemed ones counted", %{inst: inst} do
+    stub = Druzhok.RuocStub.start()
+
+    Bypass.stub(stub.bypass, "GET", "/v1/referrals", fn conn ->
+      Druzhok.RuocStub.reply(conn, 200, %{
+        "codes" => [
+          %{"code" => "ABC123", "status" => "available", "you_get_nanorub" => 50_000_000_000, "friend_gets_nanorub" => 0},
+          %{"code" => nil, "status" => "redeemed", "redeemed_at" => "2026-10-01T00:00:00Z"}
+        ]
+      })
+    end)
+
+    Application.put_env(:druzhok, :test_profiles, %{"mgr:token" => %{"first_name" => "Дружок", "username" => "druzhok_bot"}})
+    Druzhok.Settings.set("manager_bot_token", "mgr:token")
+
+    on_exit(fn ->
+      Application.delete_env(:druzhok, :test_profiles)
+      Druzhok.Repo.delete_all(from(s in Druzhok.Settings, where: s.key == "manager_bot_token"))
+    end)
+
+    assert {:ok, %{links: [link], used: 1}} = Panel.invites(inst)
+    assert link.link == "https://t.me/druzhok_bot?start=ref_ABC123"
+    assert link.you_rub == "50.00"
+    assert link.share_url =~ "https://t.me/share/url?"
+    assert URI.decode_query(URI.parse(link.share_url).query)["url"] == link.link
+
+    assert Panel.invites(%{inst | ruoc_api_key: nil}) == :error
+  end
+
   test "the state table" do
     assert Panel.state("active", true) == "awake"
     assert Panel.state("sleeping", true) == "asleep"

@@ -111,12 +111,15 @@ async function request<T>(url: string, method: "GET" | "POST", body?: unknown): 
 export interface Bot {
   name: string
   bot_id: number
+  /** Telegram's name for the bot, from getMe; null when Telegram did not answer. */
+  title: string | null
   username: string | null
   state: "awake" | "asleep" | "starting" | "stopped" | "error"
   started_at: string | null
   start_error: string | null
   settings: {
     model: string
+    model_name: string | null
     language: string
     timezone: string
     mention_only: boolean
@@ -131,6 +134,14 @@ export interface Bot {
   }
   access: { allow_all_users: boolean; allowed_users: number; free_response_chats: number }
   billing_url: string
+  support_url: string | null
+}
+
+export interface Invite {
+  link: string
+  share_url: string
+  you_rub: string
+  friend_rub: string
 }
 
 export interface FileMeta {
@@ -187,6 +198,26 @@ export const panelApi = {
   skills: () => panel<{ skills: Skill[] }>("skills"),
   skill: (s: Skill) => panel<Text>(`skills/${s.path.map(encodeURIComponent).join("/")}`),
   site: () => panel<{ files: SiteFile[] | null }>("site"),
+  invites: () => panel<{ links: Invite[]; used: number }>("invites"),
+}
+
+// Answers the screens share (the account shows on Главная and Счёт), kept
+// for the life of the page; a failure is not kept, and invalidate() drops
+// one after a change so the next read asks again.
+const cache = new Map<string, Promise<unknown>>()
+
+export function cached<T>(key: string, load: () => Promise<T>): Promise<T> {
+  let p = cache.get(key) as Promise<T> | undefined
+  if (!p) {
+    p = load()
+    cache.set(key, p)
+    p.catch(() => cache.delete(key))
+  }
+  return p
+}
+
+export function invalidate(key: string) {
+  cache.delete(key)
 }
 
 export const api = {
@@ -248,6 +279,8 @@ export function explain(err: unknown): string {
       return "Эту смену тарифа можно сделать только через поддержку."
     case "payment_unavailable":
       return "Банк не ответил. Попробуйте через минуту."
+    case "invites_unavailable":
+      return "Не получилось загрузить приглашения. Попробуйте позже."
     default:
       return "Что-то пошло не так. Попробуйте ещё раз."
   }

@@ -14,7 +14,13 @@ interface WebApp {
   colorScheme?: "light" | "dark"
   ready(): void
   expand(): void
+  close?(): void
   openLink(url: string): void
+  openTelegramLink?(url: string): void
+  setHeaderColor?(color: string): void
+  setBackgroundColor?(color: string): void
+  setBottomBarColor?(color: string): void
+  onEvent?(event: string, cb: () => void): void
   BackButton: BackButton
 }
 
@@ -71,4 +77,47 @@ export function backButton(onBack: (() => void) | null): () => void {
     button.offClick(onBack)
     button.hide()
   }
+}
+
+/**
+ * The panel wears its own colours, light or dark as the owner's Telegram is,
+ * and asks Telegram to paint its header and background to match so the page
+ * does not sit in a frame of another colour.
+ */
+export function applyTheme() {
+  const app = webApp()
+  const paint = () => {
+    const scheme = app?.colorScheme === "light" ? "light" : "dark"
+    document.documentElement.dataset.theme = scheme
+    const bg = getComputedStyle(document.documentElement).getPropertyValue("--bg").trim()
+    if (!bg) return
+    try {
+      app?.setHeaderColor?.(bg)
+      app?.setBackgroundColor?.(bg)
+      app?.setBottomBarColor?.(bg)
+    } catch {
+      // An old client without these: the frame keeps Telegram's colour.
+    }
+  }
+  paint()
+  app?.onEvent?.("themeChanged", paint)
+}
+
+/** Opens a t.me link inside Telegram (a share sheet, a chat), else outside. */
+export function openTelegram(url: string): boolean {
+  const app = webApp()
+  try {
+    if (app?.openTelegramLink && url.startsWith("https://t.me/")) {
+      app.openTelegramLink(url)
+      return true
+    }
+  } catch {
+    // fall through to an ordinary link
+  }
+  return openExternal(url)
+}
+
+/** Closes the panel, back to the chat with the bot. */
+export function closePanel() {
+  webApp()?.close?.()
 }
