@@ -252,6 +252,67 @@ defmodule Druzhok.CabinetTest do
     assert on.cabinet_menu_set
   end
 
+  describe "with a public host the button opens druzhok's panel" do
+    setup do
+      Application.put_env(:druzhok, :public_host, "druzhok.test")
+      on_exit(fn -> Application.delete_env(:druzhok, :public_host) end)
+      :ok
+    end
+
+    @panel "https://druzhok.test/app/?bot=123"
+
+    test "a fresh bind writes the panel's address, not ruoc's", %{seen: seen, inst: inst} do
+      assert {:ok, :bound} = Cabinet.bind_now(inst)
+      assert reload(inst).cabinet_url == @panel
+      [{_, button}] = telegram(seen, "setChatMenuButton")
+      assert button["menu_button"]["web_app"]["url"] == @panel
+    end
+
+    test "a bot bound on ruoc's address moves with no ruoc call", %{stub: stub, seen: seen, inst: inst} do
+      set_row(inst, cabinet_binding: "123:456:ru", cabinet_url: @url, cabinet_menu_set: true)
+      moved = reload(inst)
+
+      private = %{"message" => %{"from" => %{"id" => 456}, "chat" => %{"type" => "private"}}}
+      assert Cabinet.button_moment?(moved, private)
+
+      assert {:ok, :button} = Cabinet.bind_now(moved)
+      assert RuocStub.calls(stub, "PUT /partner/accounts/:id/telegram") == []
+      [{_, button}] = telegram(seen, "setChatMenuButton")
+      assert button["menu_button"]["web_app"]["url"] == @panel
+
+      done = reload(inst)
+      assert {done.cabinet_url, done.cabinet_menu_set} == {@panel, true}
+      assert {:ok, :unchanged} = Cabinet.bind_now(done)
+      refute Cabinet.button_moment?(done, private)
+    end
+
+    test "a refused button keeps the old address, so the next trigger retries", %{
+      menu_ok: menu_ok,
+      inst: inst
+    } do
+      set_row(inst, cabinet_binding: "123:456:ru", cabinet_url: @url, cabinet_menu_set: true)
+      Agent.update(menu_ok, fn _ -> false end)
+      assert {:error, {:menu_button, :not_opened}} = Cabinet.bind_now(reload(inst))
+      kept = reload(inst)
+      assert {kept.cabinet_url, kept.cabinet_menu_set} == {@url, true}
+
+      Agent.update(menu_ok, fn _ -> true end)
+      assert {:ok, :button} = Cabinet.bind_now(kept)
+      assert reload(inst).cabinet_url == @panel
+    end
+
+    test "the out-of-money notice opens the Счёт tab", %{seen: seen, inst: inst} do
+      start_supervised!(Cabinet)
+      {:ok, :bound} = Cabinet.bind_now(inst)
+      Cabinet.out_of_money(inst.id)
+      :sys.get_state(Cabinet)
+      [{_, msg}] = telegram(seen, "sendMessage")
+
+      assert [[%{"web_app" => %{"url" => @panel <> "&tab=billing"}}]] =
+               msg["reply_markup"]["inline_keyboard"]
+    end
+  end
+
   defp set_row(inst, fields) do
     Repo.update_all(from(i in Instance, where: i.id == ^inst.id), set: fields)
   end

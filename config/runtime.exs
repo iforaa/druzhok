@@ -104,6 +104,13 @@ config :druzhok,
   ruoc_partner_token: env_or_nil.("RUOC_PARTNER_TOKEN"),
   ruoc_catalog_key: env_or_nil.("RUOC_CATALOG_KEY"),
   fetch_secret: env_or_nil.("FETCH_SECRET"),
+  # The bot panel: Caddy's edge header secret (env only, never a settings
+  # row), ruoc's public origin for the Счёт tab, init data lifetime.
+  edge_secret: env_or_nil.("DRUZHOK_EDGE_SECRET"),
+  ruoc_site_url: env_or_nil.("RUOC_SITE_URL"),
+  panel_init_max_age: String.to_integer(System.get_env("PANEL_INIT_MAX_AGE") || "86400"),
+  # GNU find for the panel's listings (`-printf`); macOS dev has it as gfind.
+  find_bin: System.get_env("FIND_BIN") || System.find_executable("gfind") || "/usr/bin/find",
   operator_telegram_id: env_or_nil.("OPERATOR_TELEGRAM_ID"),
   host:
     (if System.get_env("DRUZHOK_HOST") == "systemd",

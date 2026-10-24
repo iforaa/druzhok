@@ -102,6 +102,17 @@ restores the default button and sets `cabinet_off`, which nothing undoes but a p
 or language change rebinds and resets the old owner's button. The model catalog is ruoc's
 `GET /v1/models` (`Druzhok.Ruoc.models/0`, default `ruoc-flash`).
 
+Bot panel (spec `docs/superpowers/specs/2026-10-24-bot-panel-design.md`): with `PHX_HOST` set, «Кабинет» opens
+druzhok's own Mini App, `https://<PHX_HOST>/app/?bot=<bot_id>` (source `apps/druzhok_web/assets/app`, built by
+`ops/build-app.sh` into the committed `priv/static/app`). Tabs Бот and Файлы are read only and served by druzhok
+(`Druzhok.Panel`, `PanelController`); Счёт calls ruoc's `/tg/api/*` cross-origin at `RUOC_SITE_URL` (default
+`https://oldey.dev`; ruoc must list druzhok in `TG_PANEL_ORIGINS`). `/app` answers only with Caddy's
+`X-Druzhok-Edge` header (`DRUZHOK_EDGE_SECRET`, env only; bots reach :4000 directly), and the API checks Telegram's
+Ed25519 signature plus the bot-token HMAC and the owner (`Plugs.PanelAuth`). Files are read through
+`Druzhok.TenantFiles` (no symlink below the tenant dir, verified descriptor); directory listings run as the bot's
+uid (`Druzhok.Panel.Lister`, `druzhok-ctl exec` + GNU find). `Druzhok.Cabinet` moves each button to the panel on
+the next start, wake, owner message or `bind-cabinet`.
+
 The superbot is invite-only: `admissions` (`Druzhok.Admissions`) records who may create a bot,
 written when a bot is created with the code's first characters as the hint (or `owner` when no code
 was used), and the code itself is spent by ruoc in `POST /partner/accounts`. The operator issues
@@ -124,7 +135,8 @@ HERMES_BIN=$PWD/hermes-agent/.venv/bin/hermes DATABASE_PATH=data/druzhok.db mix 
 
 ```bash
 # ~/druzhok on the box is an rsync target (symlink to /data/home-ubuntu/druzhok-new), not a git checkout
-rsync -az --delete --exclude=_build --exclude=deps apps config ops mix.exs mix.lock .tool-versions ubuntu@195.49.213.8:~/druzhok/
+ops/build-app.sh   # only when apps/druzhok_web/assets/app changed; the build output is committed
+rsync -az --delete --exclude=_build --exclude=deps --exclude=node_modules apps config ops mix.exs mix.lock .tool-versions ubuntu@195.49.213.8:~/druzhok/
 ssh ubuntu@195.49.213.8
 . ~/.asdf/asdf.sh; set -a; . /etc/druzhok/druzhok.env; set +a
 cd ~/druzhok && MIX_ENV=prod mix compile

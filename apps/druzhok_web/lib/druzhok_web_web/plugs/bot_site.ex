@@ -54,63 +54,18 @@ defmodule DruzhokWebWeb.Plugs.BotSite do
     end
   end
 
-  # The bot owns everything below its tenant dir, `workspace/` and `sites/`
-  # included, and druzhok reads with CAP_DAC_READ_SEARCH: a symlink followed
-  # here hands out any file on the host. So no component below the tenant dir
-  # may be a symlink, and the bytes come from a descriptor we verified rather
-  # than from a second lookup by name, which the bot could swap in between.
+  # The safe walk (no symlink below the tenant dir, bytes from a verified
+  # descriptor) lives in Druzhok.TenantFiles, shared with the bot panel.
   @site_prefix ["workspace", "sites"]
 
   defp open_site_file(bot, segments) do
     tenant_dir = bot |> Druzhok.BotManager.sites_dir() |> Path.dirname() |> Path.dirname()
 
-    with :ok <- validate_segments(segments),
-         {:ok, file, _stat} <- walk(tenant_dir, @site_prefix ++ segments),
-         {:ok, fd} <- :file.open(file, [:read, :binary, :raw]) do
-      # Re-walk now that the file is open: the descriptor is only trusted if
-      # the symlink-free path still leads to the very inode it refers to.
-      with {:ok, info} <- :file.read_file_info(fd),
-           opened = File.Stat.from_record(info),
-           {:ok, ^file, %File.Stat{inode: inode, major_device: dev}} <-
-             walk(tenant_dir, @site_prefix ++ segments),
-           true <- opened.type == :regular and opened.inode == inode and opened.major_device == dev do
-        {:ok, fd, file}
-      else
-        _ ->
-          :file.close(fd)
-          :not_found
-      end
+    with true <- Druzhok.TenantFiles.valid_segments?(segments),
+         {:ok, fd, file, _stat} <-
+           Druzhok.TenantFiles.open(tenant_dir, @site_prefix ++ segments, index: true) do
+      {:ok, fd, file}
     else
-      _ -> :not_found
-    end
-  end
-
-  # Descend from `dir` one component at a time with lstat. Every intermediate
-  # must be a real directory and the target a real regular file; a directory
-  # target resolves to its index.html.
-  defp walk(dir, []), do: walk_leaf(Path.join(dir, "index.html"))
-
-  defp walk(dir, [last]) do
-    path = Path.join(dir, last)
-
-    case File.lstat(path) do
-      {:ok, %File.Stat{type: :directory}} -> walk(path, [])
-      _ -> walk_leaf(path)
-    end
-  end
-
-  defp walk(dir, [next | rest]) do
-    path = Path.join(dir, next)
-
-    case File.lstat(path) do
-      {:ok, %File.Stat{type: :directory}} -> walk(path, rest)
-      _ -> :not_found
-    end
-  end
-
-  defp walk_leaf(path) do
-    case File.lstat(path) do
-      {:ok, %File.Stat{type: :regular} = stat} -> {:ok, path, stat}
       _ -> :not_found
     end
   end
@@ -139,17 +94,6 @@ defmodule DruzhokWebWeb.Plugs.BotSite do
     else
       _ -> conn
     end
-  end
-
-  defp validate_segments(segments) do
-    bad? =
-      Enum.any?(segments, fn seg ->
-        seg in ["", ".", ".."] or String.starts_with?(seg, ".") or
-          String.starts_with?(seg, "_") or String.contains?(seg, "/") or
-          String.contains?(seg, "\0")
-      end)
-
-    if bad?, do: :error, else: :ok
   end
 
   defp not_found(conn) do

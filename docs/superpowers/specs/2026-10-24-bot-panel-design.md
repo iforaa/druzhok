@@ -350,7 +350,8 @@ No `PHX_HOST` (dev, test) → everything behaves as today, with ruoc's URL.
   The deploy steps gain `ops/build-app.sh` before the rsync, and a test fails when the committed
   `index.html` references a bundle file that is not committed.
 - `api.ts` gets two bases: `/app/api/` for the panel, `<billing_url>/tg/api/` for billing.
-- Tabs at the bottom; `?tab=billing` opens Счёт. Text in the bot's `language` (ru, en; ru default).
+- Tabs at the bottom; `?tab=billing` opens Счёт. Text in Russian only in v1 (the billing screens it inherits
+  are Russian-only; English is a later change).
 - Markdown renders with `marked`, raw HTML in the source escaped; links open with `openLink`.
 - Errors from either API are shown by kind (`explain()`, localized), with the reopen hint for
   `init_stale`.

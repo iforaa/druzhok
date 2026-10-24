@@ -40,6 +40,37 @@ defmodule DruzhokWebWeb.Router do
     post "/fetch", FetchController, :fetch
   end
 
+  # The bot panel: a Telegram Mini App for a bot's owner (spec
+  # docs/superpowers/specs/2026-10-24-bot-panel-design.md). Everything under
+  # /app needs Caddy's edge header: bots reach this port directly.
+  pipeline :panel do
+    plug DruzhokWebWeb.Plugs.Edge
+  end
+
+  pipeline :panel_api do
+    plug DruzhokWebWeb.Plugs.PanelAuth
+  end
+
+  scope "/app", DruzhokWebWeb do
+    pipe_through :panel
+
+    get "/", PanelPageController, :index
+    get "/assets/:file", PanelPageController, :asset
+
+    scope "/api" do
+      pipe_through :panel_api
+
+      get "/bot", PanelController, :bot
+      get "/files", PanelController, :files
+      get "/files/:kind", PanelController, :file
+      get "/jobs", PanelController, :jobs
+      get "/skills", PanelController, :skills
+      get "/skills/:name", PanelController, :skill
+      get "/skills/:category/:name", PanelController, :skill
+      get "/site", PanelController, :site
+    end
+  end
+
   # Telegram pushes webhook-mode bots' updates here. No pipeline: no session,
   # no content negotiation; the controller checks the bot's own secret header
   # (docs/superpowers/specs/2026-10-20-telegram-webhook-relay-design.md).

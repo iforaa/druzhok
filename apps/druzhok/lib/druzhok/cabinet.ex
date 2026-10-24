@@ -22,6 +22,11 @@ defmodule Druzhok.Cabinet do
   bot is started before its owner has pressed Start, and Telegram answers 400.
   It is tried again on every start, on the owner's first private message
   (the webhook controller calls `sync/1`) and with every out-of-money notice.
+
+  With a public host the button opens druzhok's bot panel (`Druzhok.Panel.url/2`,
+  spec `docs/superpowers/specs/2026-10-24-bot-panel-design.md`) instead of
+  ruoc's page; a bot still on another address counts as "button not set", so
+  the same triggers move it, with no ruoc call.
   """
 
   use GenServer
@@ -59,7 +64,9 @@ defmodule Druzhok.Cabinet do
         "message" => %{"from" => %{"id" => owner}, "chat" => %{"type" => "private"}}
       })
       when is_integer(owner),
-      do: not inst.cabinet_menu_set or inst.cabinet_binding != fingerprint(inst)
+      do:
+        not inst.cabinet_menu_set or inst.cabinet_binding != fingerprint(inst) or
+          stale_url?(inst)
 
   def button_moment?(_instance, _update), do: false
 
@@ -120,11 +127,14 @@ defmodule Druzhok.Cabinet do
       binding ->
         cond do
           binding == inst.cabinet_binding and inst.cabinet_menu_set and
-              is_binary(inst.cabinet_url) ->
+            is_binary(inst.cabinet_url) and not stale_url?(inst) ->
             {:ok, :unchanged}
 
           binding == inst.cabinet_binding and is_binary(inst.cabinet_url) ->
-            with :ok <- set_button(inst, inst.cabinet_url), do: {:ok, :button}
+            # The binding is current; the button or its address is not. No ruoc
+            # call: the button moves to the panel, and cabinet_url follows only
+            # once Telegram took it.
+            with :ok <- set_button(inst, button_url(inst, inst.cabinet_url)), do: {:ok, :button}
 
           true ->
             with {:ok, url} <- bind(inst, binding) do
@@ -132,6 +142,19 @@ defmodule Druzhok.Cabinet do
               with :ok <- set_button(%{inst | cabinet_url: url}, url), do: {:ok, :bound}
             end
         end
+    end
+  end
+
+  # The button opens druzhok's bot panel (bot panel spec) when druzhok has a
+  # public host; without one (dev, test) it keeps ruoc's address.
+  defp button_url(inst, fallback), do: Druzhok.Panel.url(inst) || fallback
+
+  # A button still on another address than the panel's: moved on the next
+  # start, wake, owner message or bind-cabinet.
+  defp stale_url?(inst) do
+    case Druzhok.Panel.url(inst) do
+      nil -> false
+      url -> inst.cabinet_url != url
     end
   end
 
@@ -149,9 +172,12 @@ defmodule Druzhok.Cabinet do
     bot = Instance.telegram_bot_id(inst)
 
     case Ruoc.bind_telegram(inst.ruoc_account_id, bot, inst.owner_telegram_id) do
-      {:ok, url} ->
-        # Written before the button: a bound bot always has its address, so
-        # the out-of-money notice can offer it while the button is not set.
+      {:ok, ruoc_url} ->
+        # ruoc's reply proves the binding; the address is druzhok's panel
+        # when there is one. Written before the button: a bound bot always
+        # has its address, so the out-of-money notice can offer it while the
+        # button is not set.
+        url = button_url(inst, ruoc_url)
         set(inst.id, cabinet_binding: binding, cabinet_url: url, cabinet_menu_set: false)
         Logger.info("[cabinet] #{inst.name}: bound bot #{bot}")
         {:ok, url}
@@ -185,7 +211,10 @@ defmodule Druzhok.Cabinet do
 
     case API.set_chat_menu_button(inst.telegram_token, inst.owner_telegram_id, button) do
       {:ok, _} ->
-        set(inst.id, cabinet_menu_set: true)
+        # The address is written with the button, in one update, only once
+        # Telegram took it: a refused button leaves the old address, so the
+        # next trigger tries again.
+        set(inst.id, cabinet_url: url, cabinet_menu_set: true)
         :ok
 
       {:error, reason} ->
@@ -251,6 +280,7 @@ defmodule Druzhok.Cabinet do
     with %Instance{cabinet_url: url, cabinet_off: false} = inst when is_binary(url) <-
            Repo.get(Instance, id) do
       {line, label} = text(@notice, inst)
+      url = Druzhok.Panel.url(inst, tab: "billing") || url
       markup = %{inline_keyboard: [[%{text: label, web_app: %{url: url}}]]}
 
       result =

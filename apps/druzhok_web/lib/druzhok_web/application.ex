@@ -7,7 +7,7 @@ defmodule DruzhokWeb.Application do
 
   @impl true
   def start(_type, _args) do
-    children = relay() ++ [DruzhokWebWeb.Endpoint]
+    children = relay() ++ [DruzhokWebWeb.Panel.Limiter, DruzhokWebWeb.Endpoint]
 
     # See https://hexdocs.pm/elixir/Supervisor.html
     # for other strategies and supported options

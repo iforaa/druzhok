@@ -1,0 +1,178 @@
+defmodule Druzhok.TenantFiles do
+  @moduledoc """
+  Reading a file a bot owns, safely, for `DruzhokWebWeb.Plugs.BotSite` and the
+  bot panel.
+
+  The bot owns everything below its tenant dir and druzhok reads with
+  CAP_DAC_READ_SEARCH: a symlink followed here hands out any file on the host.
+  So no component below the tenant dir may be a symlink, and the bytes come
+  from a descriptor we verified rather than from a second lookup by name,
+  which the bot could swap in between.
+
+  Directory *listings* are not done here: an in-process walk re-resolves the
+  path at every step, so `Druzhok.Panel.Lister` lists as the bot's own user.
+  """
+
+  @doc """
+  Opens `segments` below `tenant_dir`. `index: true` serves a directory as its
+  `index.html` (BotSite). `{:ok, fd, path, %File.Stat{}}` or `:not_found`; the
+  caller closes `fd`. The stat is the open descriptor's.
+  """
+  def open(tenant_dir, segments, opts \\ []) do
+    index? = Keyword.get(opts, :index, false)
+
+    with {:ok, file, _stat} <- walk(tenant_dir, segments, index?),
+         {:ok, fd} <- :file.open(file, [:read, :binary, :raw]) do
+      # Re-walk now that the file is open: the descriptor is only trusted if
+      # the symlink-free path still leads to the very inode it refers to.
+      with {:ok, info} <- :file.read_file_info(fd, time: :posix),
+           opened = File.Stat.from_record(info),
+           {:ok, ^file, %File.Stat{inode: inode, major_device: dev}} <-
+             walk(tenant_dir, segments, index?),
+           true <-
+             opened.type == :regular and opened.inode == inode and opened.major_device == dev do
+        {:ok, fd, file, opened}
+      else
+        _ ->
+          :file.close(fd)
+          :not_found
+      end
+    else
+      _ -> :not_found
+    end
+  end
+
+  @doc """
+  Reads at most `limit` bytes of a file through `open/3`:
+  `{:ok, %{bytes: binary, size: n, modified_at: DateTime, truncated: bool}}`
+  or `:not_found`. Reads `limit + 4` so a cut can be told from an exact fit.
+  """
+  def read(tenant_dir, segments, limit) do
+    with {:ok, fd, _file, stat} <- open(tenant_dir, segments) do
+      try do
+        bytes =
+          case :file.read(fd, limit + 4) do
+            {:ok, data} -> data
+            :eof -> ""
+            {:error, _} -> nil
+          end
+
+        if is_nil(bytes) do
+          :not_found
+        else
+          truncated = byte_size(bytes) > limit
+          bytes = if truncated, do: binary_part(bytes, 0, limit), else: bytes
+
+          {:ok,
+           %{
+             bytes: bytes,
+             size: stat.size,
+             modified_at: DateTime.from_unix!(stat.mtime),
+             truncated: truncated
+           }}
+        end
+      after
+        :file.close(fd)
+      end
+    end
+  end
+
+  @doc """
+  `read/3` for text: a cut is trimmed back to a whole UTF-8 character, then
+  the text must be valid UTF-8. `{:ok, %{text: …, …}}`, `:not_found` or
+  `:not_text`.
+  """
+  def read_text(tenant_dir, segments, limit) do
+    with {:ok, %{bytes: bytes, truncated: truncated} = r} <- read(tenant_dir, segments, limit) do
+      text = if truncated, do: trim_utf8(bytes), else: bytes
+
+      if String.valid?(text),
+        do: {:ok, r |> Map.delete(:bytes) |> Map.put(:text, text)},
+        else: :not_text
+    end
+  end
+
+  @doc """
+  Drops an incomplete UTF-8 sequence at the end of `bin`: any trailing
+  continuation bytes and the lead byte that begins them, at most 3 bytes.
+  A complete trailing character is kept.
+  """
+  def trim_utf8(bin) do
+    size = byte_size(bin)
+    tail = for i <- 1..min(3, size)//1, do: :binary.at(bin, size - i)
+    # Count trailing continuation bytes (10xxxxxx), then look at the byte before them.
+    conts = Enum.take_while(tail, &(Bitwise.band(&1, 0xC0) == 0x80)) |> length()
+
+    case Enum.at(tail, conts) do
+      lead when is_integer(lead) ->
+        need =
+          cond do
+            Bitwise.band(lead, 0xE0) == 0xC0 -> 1
+            Bitwise.band(lead, 0xF0) == 0xE0 -> 2
+            Bitwise.band(lead, 0xF8) == 0xF0 -> 3
+            true -> 0
+          end
+
+        if need > conts, do: binary_part(bin, 0, size - conts - 1), else: bin
+
+      nil ->
+        bin
+    end
+  end
+
+  @doc "Whether every component of `segments` below `tenant_dir` is a real directory."
+  def real_dir?(tenant_dir, segments) do
+    Enum.reduce_while(segments, tenant_dir, fn seg, dir ->
+      path = Path.join(dir, seg)
+
+      case File.lstat(path) do
+        {:ok, %File.Stat{type: :directory}} -> {:cont, path}
+        _ -> {:halt, false}
+      end
+    end) != false
+  end
+
+  @doc """
+  Whether request-supplied path segments are acceptable: no empty, `.`, `..`,
+  leading `.` or `_`, `/` or NUL. Fixed paths the code names itself do not go
+  through this.
+  """
+  def valid_segments?(segments) do
+    Enum.all?(segments, fn seg ->
+      is_binary(seg) and seg not in ["", ".", ".."] and not String.starts_with?(seg, ".") and
+        not String.starts_with?(seg, "_") and not String.contains?(seg, "/") and
+        not String.contains?(seg, "\0")
+    end)
+  end
+
+  # Descend from `dir` one component at a time with lstat. Every intermediate
+  # must be a real directory and the target a real regular file; with
+  # `index?`, a directory target resolves to its index.html.
+  defp walk(dir, [], true), do: walk_leaf(Path.join(dir, "index.html"))
+  defp walk(_dir, [], false), do: :not_found
+
+  defp walk(dir, [last], index?) do
+    path = Path.join(dir, last)
+
+    case File.lstat(path) do
+      {:ok, %File.Stat{type: :directory}} when index? -> walk(path, [], true)
+      _ -> walk_leaf(path)
+    end
+  end
+
+  defp walk(dir, [next | rest], index?) do
+    path = Path.join(dir, next)
+
+    case File.lstat(path) do
+      {:ok, %File.Stat{type: :directory}} -> walk(path, rest, index?)
+      _ -> :not_found
+    end
+  end
+
+  defp walk_leaf(path) do
+    case File.lstat(path) do
+      {:ok, %File.Stat{type: :regular} = stat} -> {:ok, path, stat}
+      _ -> :not_found
+    end
+  end
+end
