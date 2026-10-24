@@ -58,9 +58,11 @@ druzhok listens on `127.0.0.1:4000`, and **bot processes reach that port directl
 `ops/nftables-druzhok.nft`). A bot can send any `Host` and any `X-Forwarded-For`. So `/app` (page and API)
 requires an **edge header** only Caddy sets:
 
-- Caddy's `druzhok.oldey.dev` block: `header_up X-Druzhok-Edge {env.DRUZHOK_EDGE_SECRET}` (sets, so a
-  client-sent value is overwritten). The secret lives in `/etc/caddy/env` and in `/etc/druzhok/druzhok.env`
-  as `DRUZHOK_EDGE_SECRET`, never a settings row. The prod Caddyfile drifts from the repo: the rollout
+- Caddy's `druzhok.oldey.dev` block: `import /etc/caddy/druzhok-edge.caddy`, a `root:caddy 0640` file holding
+  `header_up X-Druzhok-Edge <secret>` (sets, so a client-sent value is overwritten). An import rather than
+  `{env.…}`: Caddy fronts all of ruoc's traffic, so it must change by reload, and a reload never re-reads
+  `EnvironmentFile=`. The same secret is `DRUZHOK_EDGE_SECRET` in `/etc/druzhok/druzhok.env`, never a
+  settings row. The prod Caddyfile drifts from the repo: the rollout
   patches that one block and backs the file up first.
 - druzhok's `Plugs.Edge` on the `/app` scope: constant-time compare; mismatch or missing → 404 (the route
   does not exist for anyone else). No `DRUZHOK_EDGE_SECRET` configured → `/app` is closed (404), as
@@ -425,14 +427,13 @@ No `PHX_HOST` (dev, test) → everything behaves as today, with ruoc's URL.
 
 ## Rollout
 
-1. ruoc: `TG_PANEL_ORIGINS` code, deploy, set `TG_PANEL_ORIGINS=https://druzhok.oldey.dev` in
-   `/etc/ruoc/ruoc.env` (backup first), restart.
-2. Caddy: generate `DRUZHOK_EDGE_SECRET`, add it to `/etc/caddy/env` and `/etc/druzhok/druzhok.env`
-   (backups first), patch the prod `druzhok.oldey.dev` block with the `header_up` line, `caddy validate`,
-   then **`systemctl restart caddy`**, not a reload: `{env.…}` reads the running process's environment,
-   which `EnvironmentFile=` fixes at start, so a reload would send the header empty. Check
-   `curl -s -o /dev/null -w '%{http_code}' https://druzhok.oldey.dev/app/` → 200 once druzhok is deployed
-   (404 before). Mirror the line in `ops/Caddyfile`.
+1. ruoc: `TG_PANEL_ORIGINS` code; set `TG_PANEL_ORIGINS=https://druzhok.oldey.dev` in `/etc/ruoc/ruoc.env`
+   (backup first) *before* `deploy/deploy.sh`, so the new colour starts with it. Done 2026-10-24 (`42692cf`).
+2. Caddy: generate the secret, write `/etc/caddy/druzhok-edge.caddy` and `DRUZHOK_EDGE_SECRET` in
+   `/etc/druzhok/druzhok.env` (backups first), patch the prod `druzhok.oldey.dev` block with the `import`,
+   `caddy adapt` (`caddy validate` fails without Cloudflare's token), then `systemctl reload caddy`, never a
+   restart. Check `curl -s -o /dev/null -w '%{http_code}' https://druzhok.oldey.dev/app/` → 200 once druzhok
+   is deployed (404 before). Mirror the line in `ops/Caddyfile`. Done 2026-10-24.
 3. druzhok: merge, deploy. Buttons still point at ruoc until something triggers the cabinet.
 4. `sudo ops/druzhok bind-cabinet igorhermes`; check Бот, Файлы, Счёт and one payment in Telegram Web and
    on the phone.

@@ -9,7 +9,13 @@ druzhok.oldey.dev {
     dns cloudflare {env.CLOUDFLARE_API_TOKEN}
   }
   encode zstd gzip
-  reverse_proxy 127.0.0.1:4000
+  reverse_proxy 127.0.0.1:4000 {
+    # `header_up X-Druzhok-Edge <secret>`, so only Caddy can reach druzhok's
+    # /app (bots dial :4000 directly). The file is root:caddy 0640 and holds
+    # the same value as DRUZHOK_EDGE_SECRET in /etc/druzhok/druzhok.env; an
+    # import, not {env.*}, so a reload picks it up with no restart.
+    import /etc/caddy/druzhok-edge.caddy
+  }
 }
 
 # Triera landing (static, site/triera in the repo, rsynced to /data/triera).
