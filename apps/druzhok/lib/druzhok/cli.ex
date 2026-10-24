@@ -26,6 +26,9 @@ defmodule Druzhok.CLI do
                                   compare ruoc's partner accounts with the bots;
                                   exits 1 when anything is off. --suspend-orphans
                                   suspends orphans created over an hour ago
+    bind-cabinet [<bot>]          bind each bot (or one) to ruoc's bot cabinet now and
+                                  set its owner's «Кабинет» menu button; prints each
+    bind-cabinet --off [<bot>]    put the owners' menu buttons back to the default
     settings                      global settings (secrets masked)
     settings set key=value...     change global settings; value "-" reads stdin
 
@@ -59,7 +62,44 @@ defmodule Druzhok.CLI do
   defp run(["show", bot]) do
     with {:ok, rows} <- BotSettings.show(bot) |> explain() do
       for {k, v} <- rows, do: IO.puts("#{pad(to_string(k), 26)} #{format(v)}")
+      IO.puts("#{pad("cabinet", 26)} #{cabinet_state(Repo.get_by(Instance, name: bot))}")
       :ok
+    end
+  end
+
+  # One-off BEAM: Druzhok.Cabinet does not run here, so this calls its work
+  # directly and waits for each answer rather than casting.
+  defp run(["bind-cabinet" | args]) when length(args) <= 2 do
+    {off?, names} = Enum.split_with(args, &(&1 == "--off"))
+    off? = off? != []
+
+    bots =
+      case names do
+        [] -> Repo.all(from(i in Instance, where: i.delete_requested == false, order_by: i.name))
+        [name] -> List.wrap(Repo.get_by(Instance, name: name))
+        _ -> :usage
+      end
+
+    case bots do
+      :usage ->
+        {:error, "usage: bind-cabinet [--off] [<bot>]"}
+
+      [] ->
+        {:error, "no such bot"}
+
+      bots ->
+        results =
+          for inst <- bots do
+            result =
+              if off?, do: Druzhok.Cabinet.unset_now(inst), else: Druzhok.Cabinet.bind_now(inst)
+
+            IO.puts("#{pad(inst.name, 28)} #{describe_cabinet(result)}")
+            result
+          end
+
+        if Enum.any?(results, &match?({:error, r} when r != :not_eligible, &1)),
+          do: {:error, "some bots were not done; see above"},
+          else: :ok
     end
   end
 
@@ -154,6 +194,26 @@ defmodule Druzhok.CLI do
 
   defp run(args), do: {:error, "unknown command: #{Enum.join(args, " ")} (try: druzhok help)"}
 
+  defp cabinet_state(nil), do: "-"
+  defp cabinet_state(%Instance{cabinet_binding: nil}), do: "не привязан"
+
+  defp cabinet_state(%Instance{} = inst),
+    do:
+      "bot:owner #{inst.cabinet_binding}, button #{if inst.cabinet_menu_set, do: "set", else: "not set yet"}"
+
+  defp describe_cabinet({:ok, :unchanged}), do: "без изменений"
+  defp describe_cabinet({:ok, :bound}), do: "привязан, кнопка поставлена"
+  defp describe_cabinet({:ok, :button}), do: "кнопка поставлена"
+  defp describe_cabinet({:ok, :unset}), do: "кнопка снята"
+
+  defp describe_cabinet({:error, :not_eligible}),
+    do: "пропущен: нет ruoc-аккаунта, владельца или токена"
+
+  defp describe_cabinet({:error, :menu_button}),
+    do: "привязан, кнопка не поставлена (владелец ещё не открывал бота)"
+
+  defp describe_cabinet({:error, reason}), do: "ошибка: #{reason}"
+
   # The reconcile report (partner access spec, `ruoc-check`). It reads both
   # sides and changes nothing unless asked to suspend orphans.
   @orphan_min_age_s 3600
@@ -164,7 +224,9 @@ defmodule Druzhok.CLI do
     owned = MapSet.new(instances, & &1.ruoc_account_id)
 
     orphans =
-      for a <- accounts, a.status == "active", not MapSet.member?(owned, a.account_id),
+      for a <- accounts,
+          a.status == "active",
+          not MapSet.member?(owned, a.account_id),
           do: {:orphan, a}
 
     per_bot =
@@ -192,16 +254,19 @@ defmodule Druzhok.CLI do
   end
 
   defp describe_finding({:orphan, a}),
-    do: "orphan: account #{a.account_id} (#{a.label}, ref #{a.external_ref}, created #{format(a.created_at)}) has no bot"
+    do:
+      "orphan: account #{a.account_id} (#{a.label}, ref #{a.external_ref}, created #{format(a.created_at)}) has no bot"
 
   defp describe_finding({:missing, inst}),
-    do: "missing: bot #{inst.name} has account #{format(inst.ruoc_account_id)}, not among the partner's accounts"
+    do:
+      "missing: bot #{inst.name} has account #{format(inst.ruoc_account_id)}, not among the partner's accounts"
 
   defp describe_finding({:suspended, inst, a}),
     do: "suspended: bot #{inst.name} has account #{a.account_id}, which is #{a.status}"
 
   defp describe_finding({:ref_mismatch, inst, a, ref}),
-    do: "ref mismatch: bot #{inst.name} account #{a.account_id} has ref #{format(a.external_ref)}, expected #{ref}"
+    do:
+      "ref mismatch: bot #{inst.name} account #{a.account_id} has ref #{format(a.external_ref)}, expected #{ref}"
 
   defp describe_finding({:stuck_delete, inst}),
     do: "stuck delete: bot #{inst.name} (#{inst.delete_failures} attempts): #{inst.delete_error}"

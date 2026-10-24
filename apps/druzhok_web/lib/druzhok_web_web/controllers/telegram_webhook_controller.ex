@@ -37,6 +37,12 @@ defmodule DruzhokWebWeb.TelegramWebhookController do
 
   defp secret_ok?(_conn, _instance), do: false
 
+  # The cabinet's menu button cannot be set before the owner has opened the
+  # bot; their first private message is the moment it can (Druzhok.Cabinet).
+  defp retry_cabinet_button(instance, update) do
+    if Druzhok.Cabinet.button_moment?(instance, update), do: Druzhok.Cabinet.sync(instance.id)
+  end
+
   defp store(conn, instance) do
     case conn.body_params do
       %{"update_id" => update_id} = update when is_integer(update_id) ->
@@ -45,6 +51,7 @@ defmodule DruzhokWebWeb.TelegramWebhookController do
         case Inbox.enqueue(instance.id, update_id, Jason.encode!(update), wakes: wakes) do
           :ok ->
             Relay.notify(instance.id)
+            retry_cabinet_button(instance, update)
             send_resp(conn, 200, "")
 
           # Switched to polling since the lookup above: Telegram keeps the

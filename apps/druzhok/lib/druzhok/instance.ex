@@ -50,9 +50,31 @@ defmodule Druzhok.Instance do
     field :delete_error, :string
     field :delete_failed_at, :utc_datetime_usec
     field :delete_failures, :integer, default: 0
+    # Bot cabinet (Druzhok.Cabinet): "<bot_id>:<owner_tg_id>" of the last
+    # binding ruoc accepted, the cabinet's address it returned, and whether
+    # the owner's menu button was set for that binding.
+    field :cabinet_binding, :string
+    field :cabinet_url, :string
+    field :cabinet_menu_set, :boolean, default: false
 
     timestamps()
   end
+
+  @doc """
+  The bot's numeric Telegram id: the part of its token before the colon. nil
+  for a missing or malformed token. A token change changes it, and the next
+  start rebinds the cabinet.
+  """
+  def telegram_bot_id(%__MODULE__{telegram_token: token}) when is_binary(token) do
+    with [id, _secret] <- String.split(token, ":", parts: 2),
+         {n, ""} when n > 0 <- Integer.parse(id) do
+      n
+    else
+      _ -> nil
+    end
+  end
+
+  def telegram_bot_id(_), do: nil
 
   # Hermes memory providers druzhok knows how to configure (Runtime.Hermes).
   @memory_providers ~w(builtin mnemosyne)

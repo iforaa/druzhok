@@ -29,6 +29,11 @@ defmodule Druzhok.Telegram.API do
     call(token, "answerCallbackQuery", Map.merge(%{callback_query_id: callback_query_id}, opts))
   end
 
+  @doc "Sets one chat's menu button (`chat_id`), e.g. `%{type: \"web_app\", text: …, web_app: %{url: …}}`."
+  def set_chat_menu_button(token, chat_id, menu_button) do
+    call(token, "setChatMenuButton", %{chat_id: chat_id, menu_button: menu_button})
+  end
+
   def get_managed_bot_token(token, bot_user_id) do
     call(token, "getManagedBotToken", %{user_id: bot_user_id})
   end

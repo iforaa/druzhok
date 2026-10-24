@@ -271,6 +271,8 @@ defmodule Druzhok.Lifecycle.Bot do
     # on the port is not.
     Webhook.resume_except(inst.id, :wrong_owner)
     Relay.notify(inst.id)
+    # A cast: it cannot block this start or raise into run_start's rescue.
+    Druzhok.Cabinet.sync(inst.id)
 
     Logger.info(
       "[life] #{inst.name}: started in #{div(System.monotonic_time(:millisecond) - t0, 1000)} s"

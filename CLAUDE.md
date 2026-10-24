@@ -90,7 +90,15 @@ stays (`delete_error`, `delete_failures`) and the controller retries on the star
 `ruoc_admin_*` settings rows are unused, kept for rollback only. Spec: ruoc-gateway
 `docs/superpowers/specs/2026-10-22-partner-access-design.md`. Extra funding and plan
 changes happen in the ruoc console; the manager bot and `ops/druzhok show` only show plan + renewal
-date from `GET /v1/balance` (`Druzhok.Ruoc.balance/1`). The model catalog is ruoc's
+date from `GET /v1/balance` (`Druzhok.Ruoc.balance/1`). Bot cabinet (ruoc-gateway spec
+`2026-10-24-telegram-mini-app-design.md`): ruoc serves a Telegram Mini App at `oldey.dev/tg/` where a bot's
+owner sees its account and pays for druzhok's plans (managed in ruoc's Pricing tab, «Партнёр» = druzhok).
+`Druzhok.Cabinet` (one GenServer, casts only) binds each bot at ruoc (`PUT /partner/accounts/{id}/telegram`)
+and sets the owner's «Кабинет» menu button on every start/wake when something changed
+(`instances.cabinet_binding/cabinet_url/cabinet_menu_set`); the button is retried on the owner's first private
+message, since Telegram refuses it before the owner opened the bot. A chat 402 also sends the owner an
+«Открыть кабинет» button, at most every 6 h. `sudo ops/druzhok bind-cabinet [<bot>]` binds now (`--off`
+restores the default button). The model catalog is ruoc's
 `GET /v1/models` (`Druzhok.Ruoc.models/0`, default `ruoc-flash`).
 
 The superbot is invite-only: `admissions` (`Druzhok.Admissions`) records who may create a bot,

@@ -165,6 +165,21 @@ defmodule Druzhok.Ruoc do
   end
 
   @doc """
+  Binds an account to its Telegram bot and owner for ruoc's bot cabinet
+  (`PUT /partner/accounts/{id}/telegram`): `{:ok, mini_app_url}`, the address
+  the owner's menu button opens. Idempotent; ruoc logs only a change.
+  """
+  def bind_telegram(account_id, bot_id, owner_telegram_id)
+      when is_binary(account_id) and is_integer(bot_id) and is_integer(owner_telegram_id) do
+    body = %{bot_id: bot_id, owner_telegram_id: owner_telegram_id}
+
+    case partner_put("/partner/accounts/#{URI.encode(account_id)}/telegram", body) do
+      {:ok, 200, %{"mini_app_url" => url}} when is_binary(url) and url != "" -> {:ok, url}
+      other -> {:error, describe(other)}
+    end
+  end
+
+  @doc """
   The partner's own accounts: `{:ok, [%{account_id, external_ref, label,
   status, plan, created_at}]}`, `created_at` a `DateTime` or nil. Options
   `status` and `ref` filter on the gateway.
@@ -431,6 +446,13 @@ defmodule Druzhok.Ruoc do
   defp partner_post(path, body) do
     with {:ok, token} <- require_token() do
       Client.post(path, token, Jason.encode!(body), receive_timeout: partner_timeout())
+      |> partner_reply()
+    end
+  end
+
+  defp partner_put(path, body) do
+    with {:ok, token} <- require_token() do
+      Client.put(path, token, Jason.encode!(body), receive_timeout: partner_timeout())
       |> partner_reply()
     end
   end

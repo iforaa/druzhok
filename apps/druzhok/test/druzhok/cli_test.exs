@@ -131,4 +131,30 @@ defmodule Druzhok.CLITest do
 
   defp host_override?(call, stub),
     do: List.keyfind(call.headers, "host", 0) not in [nil, {"host", "localhost:#{stub.bypass.port}"}]
+
+  describe "bind-cabinet" do
+    test "binds one bot and prints the outcome" do
+      stub = RuocStub.start()
+
+      Bypass.stub(stub.bypass, "PUT", "/partner/accounts/:id/telegram", fn conn ->
+        conn = RuocStub.record(stub, "PUT /partner/accounts/:id/telegram", conn)
+        RuocStub.reply(conn, 200, %{"bot_id" => 321, "mini_app_url" => "https://oldey.dev/tg/?bot=321"})
+      end)
+
+      tg = Bypass.open()
+      Application.put_env(:druzhok, :telegram_api_base, "http://localhost:#{tg.port}")
+      on_exit(fn -> Application.delete_env(:druzhok, :telegram_api_base) end)
+      Bypass.stub(tg, "POST", "/:bot/:method", fn conn -> Plug.Conn.resp(conn, 200, ~s({"ok":true,"result":true})) end)
+
+      name = "cab#{System.unique_integer([:positive])}"
+      bot(name, %{telegram_token: "321:x", owner_telegram_id: 9, ruoc_account_id: "acct-9"})
+
+      assert {0, out} = run_cli(["bind-cabinet", name])
+      assert out =~ "привязан, кнопка поставлена"
+      assert {0, out} = run_cli(["bind-cabinet", name])
+      assert out =~ "без изменений"
+      assert length(RuocStub.calls(stub, "PUT /partner/accounts/:id/telegram")) == 1
+      assert {1, _} = run_cli(["bind-cabinet", "no-such-bot"])
+    end
+  end
 end

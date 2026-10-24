@@ -59,6 +59,7 @@ defmodule DruzhokWebWeb.LlmProxy.Ruoc do
       {:ok, 402, headers, _resp_body} ->
         request_id = request_id(headers)
         log(instance, "chat", request_id, started_at, "HTTP 402 -> balance notice")
+        Druzhok.Cabinet.out_of_money(instance.id)
 
         conn
         |> relay_headers(headers, request_id)
@@ -149,6 +150,7 @@ defmodule DruzhokWebWeb.LlmProxy.Ruoc do
       {:ok, %{status: 402} = acc} ->
         request_id = request_id(acc.headers)
         log(instance, "chat", request_id, started_at, "HTTP 402 -> balance notice")
+        Druzhok.Cabinet.out_of_money(instance.id)
 
         acc.conn
         |> relay_headers(acc.headers, request_id)

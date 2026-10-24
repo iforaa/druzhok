@@ -13,6 +13,16 @@ defmodule Druzhok.Ruoc.Client do
     |> run(opts)
   end
 
+  @doc "PUT JSON, as `post/4`."
+  def put(path, api_key, body, opts \\ []) do
+    headers =
+      [{"authorization", "Bearer #{api_key}"}, {"content-type", "application/json"}] ++
+        Keyword.get(opts, :headers, [])
+
+    Finch.build(:put, Druzhok.Ruoc.url() <> path, headers, body)
+    |> run(opts)
+  end
+
   def get(path, api_key, opts \\ []) do
     headers = [{"authorization", "Bearer #{api_key}"}] ++ Keyword.get(opts, :headers, [])
 
