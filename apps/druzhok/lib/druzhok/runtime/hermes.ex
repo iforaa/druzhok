@@ -304,24 +304,27 @@ defmodule Druzhok.Runtime.Hermes do
   # `auto` the explicit `auxiliary.vision` block above makes hermes describe
   # every photo in a separate call and hand the bot 2-4 English sentences
   # instead (agent/image_routing.py), even when the bot's model reads images.
-  # `native` sends the photo itself. A model ruoc says cannot read images
-  # keeps `auto`, and so the description; while the catalogue is unknown
-  # (`model_sees_images` nil) the file is left as it is.
+  # `native` sends the photo itself. Hermes also checks right before each call
+  # whether the model sees (agent/vision_message_prep.py); models.dev does not
+  # know ruoc's ids, so without `model.supports_vision` it turns every photo
+  # in the history back into a long description. A model ruoc says cannot
+  # read images keeps `auto` and `supports_vision: false`, and so the
+  # description; while the catalogue is unknown (`model_sees_images` nil) the
+  # file is left as it is.
   defp sync_image_input_mode(content, instance) do
-    mode =
-      case Map.get(instance, :model_sees_images) do
-        true -> "native"
-        false -> "auto"
-        nil -> nil
-      end
+    case Map.get(instance, :model_sees_images) do
+      nil ->
+        content
 
-    if mode do
-      sync_yaml_block(content, "agent",
-        upsert: &upsert_indented_line(&1, "image_input_mode", mode),
-        default: "agent:\n  image_input_mode: #{mode}"
-      )
-    else
-      content
+      sees? ->
+        mode = if sees?, do: "native", else: "auto"
+
+        content
+        |> sync_yaml_block("model", upsert: &upsert_indented_line(&1, "supports_vision", sees?))
+        |> sync_yaml_block("agent",
+          upsert: &upsert_indented_line(&1, "image_input_mode", mode),
+          default: "agent:\n  image_input_mode: #{mode}"
+        )
     end
   end
 

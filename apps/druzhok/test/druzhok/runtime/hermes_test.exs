@@ -588,26 +588,33 @@ defmodule Druzhok.Runtime.HermesTest do
       %{tmp_dir: tmp_dir}
     end
 
-    defp image_mode(tmp_dir, yaml, sees) do
+    defp image_cfg(tmp_dir, yaml, sees) do
       File.write!(Path.join(tmp_dir, "config.yaml"), yaml)
       instance = %{name: "b", model: "x", tenant_key: "k", model_sees_images: sees}
       assert :ok = Hermes.sync_config(instance, tmp_dir)
       {:ok, cfg} = YamlElixir.read_from_string(File.read!(Path.join(tmp_dir, "config.yaml")))
-      cfg["agent"]
+      cfg
     end
 
-    test "a model that reads images gets native photos", %{tmp_dir: tmp_dir} do
-      assert image_mode(tmp_dir, "model:\n  default: \"x\"\n", true) == %{"image_input_mode" => "native"}
+    test "a model that reads images gets native photos and is marked as seeing", %{tmp_dir: tmp_dir} do
+      cfg = image_cfg(tmp_dir, "model:\n  default: \"x\"\n", true)
+      assert cfg["agent"] == %{"image_input_mode" => "native"}
+      assert cfg["model"]["supports_vision"] == true
     end
 
-    test "a model that cannot read images keeps auto, and sibling agent keys stay", %{tmp_dir: tmp_dir} do
-      yaml = "agent:\n  image_input_mode: native\n  max_turns: 40\n"
-      assert image_mode(tmp_dir, yaml, false) == %{"image_input_mode" => "auto", "max_turns" => 40}
+    test "a model that cannot read images keeps auto, and sibling keys stay", %{tmp_dir: tmp_dir} do
+      yaml = "model:\n  default: \"x\"\n  supports_vision: true\nagent:\n  image_input_mode: native\n  max_turns: 40\n"
+      cfg = image_cfg(tmp_dir, yaml, false)
+      assert cfg["agent"] == %{"image_input_mode" => "auto", "max_turns" => 40}
+      assert cfg["model"]["supports_vision"] == false
+      assert cfg["model"]["default"] == "x"
     end
 
     test "an unknown catalogue leaves the file alone", %{tmp_dir: tmp_dir} do
-      assert image_mode(tmp_dir, "model:\n  default: \"x\"\n", nil) == nil
-      assert image_mode(tmp_dir, "agent:\n  image_input_mode: native\n", nil) == %{"image_input_mode" => "native"}
+      cfg = image_cfg(tmp_dir, "model:\n  default: \"x\"\n", nil)
+      assert cfg["agent"] == nil
+      refute Map.has_key?(cfg["model"], "supports_vision")
+      assert image_cfg(tmp_dir, "agent:\n  image_input_mode: native\n", nil)["agent"] == %{"image_input_mode" => "native"}
     end
   end
 
