@@ -2,14 +2,14 @@ import { useEffect, useState } from "react"
 import { api, cached, panelApi, type Bot, type Files, type Me } from "./api"
 import { backButton, closePanel, openTelegram } from "./telegram"
 import { initials, plural } from "./format"
-import { Icon, Meter, Money, Ring, useLoad } from "./ui"
-import { periodNote } from "./billing"
+import { Icon, Meter, Ring, useLoad } from "./ui"
+import { PlanHero } from "./billing"
 import type { Go } from "./nav"
 
-// Главная: who the bot is and whether it is up, the balance as the one big
-// figure, what is left to set up, four shortcuts, tips, and the limits at a
+// Главная: who the bot is and whether it is up, what is left of its plan as
+// the one big figure, what is left to set up, four shortcuts, tips, and the limits at a
 // glance. Each part loads on its own, so ruoc being slow does not hide the
-// bot, and a bot whose files cannot be read still shows its balance.
+// bot, and a bot whose files cannot be read still shows its plan.
 
 const stateText: Record<Bot["state"], [string, string]> = {
   awake: ["работает", "Отвечает сразу."],
@@ -18,9 +18,6 @@ const stateText: Record<Bot["state"], [string, string]> = {
   stopped: ["остановлен", "Бот сейчас не отвечает. Напишите в поддержку."],
   error: ["не запустился", "Бот сейчас не отвечает. Мы уже знаем об этом."],
 }
-
-// "Оплачен до…" reads "оплачен до…" after the plan's name; a plan name inside stays as written.
-const lowerFirst = (s: string) => s.charAt(0).toLowerCase() + s.slice(1)
 
 export function botTitle(bot: Bot): string {
   return bot.title ?? (bot.username ? `@${bot.username}` : bot.name)
@@ -136,20 +133,10 @@ export default function Home({ bot, go }: { bot: Bot; go: Go }) {
         <span className={`chip chip--${bot.state}`}>{state}</span>
         <p className="hero__hint">{stateHint}</p>
 
-        <p className="hero__label">Баланс</p>
         {me.data ? (
-          <>
-            <Money nanorub={me.data.balance_nanorub} />
-            {me.data.subscription ? (
-              <p className="hero__sub">
-                {me.data.subscription.plan_name} · {lowerFirst(periodNote(me.data.subscription))}
-              </p>
-            ) : (
-              <p className="hero__sub">Тариф не выбран</p>
-            )}
-          </>
+          <PlanHero me={me.data} />
         ) : me.error ? (
-          <p className="hero__sub">Счёт сейчас не загрузился</p>
+          <p className="hero__sub hero__sub--gap">Тариф сейчас не загрузился</p>
         ) : (
           <div className="skeleton__money" />
         )}
@@ -171,7 +158,7 @@ export default function Home({ bot, go }: { bot: Bot; go: Go }) {
       ) : null}
 
       <div className="actions">
-        <Action icon="plus" label="Пополнить" onClick={() => go("billing", "plans")} />
+        <Action icon="card" label="Тариф" onClick={() => go("billing", "plans")} />
         <Action icon="spark" label="Память" onClick={() => go("memory")} />
         <Action icon="gift" label="Пригласить" onClick={() => go("more", "invites")} />
         {bot.support_url ? (

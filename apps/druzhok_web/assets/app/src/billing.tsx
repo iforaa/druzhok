@@ -2,14 +2,15 @@ import { useCallback, useEffect, useRef, useState } from "react"
 import { api, cached, explain, fatal, invalidate, type Me, type Payment, type Plan } from "./api"
 import { backButton, openExternal } from "./telegram"
 import { count, date, days, rub } from "./format"
-import { ErrorNote, Meter, Money, Row, Skeleton } from "./ui"
+import { ErrorNote, Figure, Meter, Row, Skeleton } from "./ui"
 
 // Счёт: ruoc-gateway's bot cabinet (ruoc internal/httpapi/miniapp.go), called
-// cross-origin: the plan and when its period ends, the balance and what it is
-// spent on, the plan's limits with the day each comes back, and the plans
-// and payments. A payment takes two taps: one to open it at the bank, one to
-// go there, because Telegram opens an outside link only from a tap and the
-// bank can take seconds to answer.
+// cross-origin: the plan and when its period ends, how much of it is left
+// (its limits, with the day each comes back), and the plans and payments.
+// There is no balance to show: a bot's plan is all it spends. A payment
+// takes two taps: one to open it at the bank, one to go there, because
+// Telegram opens an outside link only from a tap and the bank can take
+// seconds to answer.
 
 type Screen = "account" | "plans" | "receipt"
 
@@ -29,21 +30,33 @@ export function periodNote(sub: NonNullable<Me["subscription"]>): string {
   return `Отменён, действует до ${date(end)}`
 }
 
-/** What the balance is for on this plan, as the portal explains it. */
-function spentNote(me: Me): string {
-  if (!me.limits) return "Запросы бота оплачиваются с баланса."
-  return me.limits.overflow
-    ? "Пока лимиты тарифа не исчерпаны, баланс не тратится. Дальше запросы оплачиваются с баланса."
-    : "На этом тарифе баланс не тратится: когда лимит исчерпан, бот ждёт, пока он обновится."
+/**
+ * The plan at a glance, Главная's and Счёт's big figure: what is left of the
+ * week, the plan's name and its period. A plan without limits shows its name.
+ */
+export function PlanHero({ me }: { me: Me }) {
+  const sub = me.subscription
+  const line = sub ? `${sub.plan_name} · ${lowerFirst(periodNote(sub))}` : "Тариф не выбран"
+  if (!me.limits)
+    return (
+      <>
+        <p className="hero__label">Тариф</p>
+        <Figure whole={sub ? sub.plan_name : "—"} small />
+        {sub ? <p className="hero__sub">{lowerFirst(periodNote(sub))}</p> : null}
+      </>
+    )
+  const left = 100 - Math.max(0, Math.min(100, Math.round(me.limits.weekly.used_percent)))
+  return (
+    <>
+      <p className="hero__label">Осталось на неделю</p>
+      <Figure whole={String(left)} rest="%" />
+      <p className="hero__sub">{line}</p>
+    </>
+  )
 }
 
-// ruoc's grant kinds, labelled as its portal labels them.
-const grantLabel: Record<string, string> = {
-  topup: "Пополнение",
-  subscription: "По тарифу",
-  promo: "Бонус",
-  adjustment: "Корректировка",
-}
+// "Оплачен до…" reads "оплачен до…" after the plan's name; a plan name inside stays as written.
+const lowerFirst = (s: string) => s.charAt(0).toLowerCase() + s.slice(1)
 
 export default function Billing({ start }: { start?: string }) {
   const [me, setMe] = useState<Me | null>(null)
@@ -103,35 +116,10 @@ export default function Billing({ start }: { start?: string }) {
 }
 
 function Account({ me, go }: { me: Me; go: (s: Screen) => void }) {
-  const sub = me.subscription
   return (
     <>
       <section className="hero hero--plain">
-        <p className="hero__label">Баланс</p>
-        <Money nanorub={me.balance_nanorub} />
-        {me.balance_nanorub < 0 ? (
-          <p className="hero__hint">Минус — это долг: запрос стоил больше, чем оставалось. Пополнение сначала покроет его.</p>
-        ) : null}
-      </section>
-
-      <section className="card">
-        <div className="card__head">
-          <span className="label">Тариф</span>
-        </div>
-        <h2 className="card__title">{sub ? sub.plan_name : "Тариф не выбран"}</h2>
-        {sub ? <p className="hint">{periodNote(sub)}</p> : null}
-        <p className="hint">{spentNote(me)}</p>
-        {me.grants.length > 0 ? (
-          <ul className="grants">
-            {me.grants.map((g, i) => (
-              <li key={i}>
-                <span>{grantLabel[g.kind] ?? "Начисление"}</span>
-                <span>{rub(g.remaining_nanorub)}</span>
-                <span className="hint">{g.expires_at ? `до ${date(g.expires_at)}` : "бессрочно"}</span>
-              </li>
-            ))}
-          </ul>
-        ) : null}
+        <PlanHero me={me} />
       </section>
 
       {me.limits ? (
@@ -162,10 +150,6 @@ function Account({ me, go }: { me: Me; go: (s: Screen) => void }) {
           <div>
             <dt>Запросов</dt>
             <dd>{count(me.usage_30d.requests)}</dd>
-          </div>
-          <div>
-            <dt>Списано с баланса</dt>
-            <dd>{rub(me.usage_30d.charged_nanorub)}</dd>
           </div>
         </dl>
       </section>

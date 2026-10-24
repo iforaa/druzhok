@@ -79,14 +79,6 @@ export function when(iso: string | null | undefined): string {
   return Number.isNaN(t.getTime()) ? "—" : dayMonthTime.format(t)
 }
 
-/** A money figure split for a big display: "956" and ",42 ₽". */
-export function rubParts(nanorub: number): { whole: string; rest: string } {
-  const text = rub(nanorub)
-  const i = text.indexOf(",")
-  if (i < 0) return { whole: text.replace(/ ₽$/, ""), rest: " ₽" }
-  return { whole: text.slice(0, i), rest: text.slice(i) }
-}
-
 const hhmm = new Intl.DateTimeFormat("ru-RU", { hour: "2-digit", minute: "2-digit" })
 const weekdayDate = new Intl.DateTimeFormat("ru-RU", { weekday: "short", day: "numeric", month: "long" })
 

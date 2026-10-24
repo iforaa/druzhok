@@ -257,6 +257,9 @@ h2 {
 .hero--plain .hero__label {
   margin-top: 0;
 }
+.hero__sub--gap {
+  margin-top: 26px;
+}
 .hero__sub {
   margin: 4px 0 0;
   color: var(--hint);
@@ -281,9 +284,6 @@ h2 {
 }
 .money--mid .money__rest {
   font-size: 1.2rem;
-}
-.money--debt {
-  color: var(--danger);
 }
 
 .chip {
@@ -627,21 +627,6 @@ h2 {
   margin: 0;
   text-align: right;
   overflow-wrap: anywhere;
-}
-
-.grants {
-  list-style: none;
-  margin: 0;
-  padding: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-}
-.grants li {
-  display: grid;
-  grid-template-columns: 1fr auto auto;
-  gap: 10px;
-  font-size: 0.92rem;
 }
 
 .meter {

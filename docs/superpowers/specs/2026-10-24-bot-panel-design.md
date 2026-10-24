@@ -454,11 +454,12 @@ bar with icons, and placeholders while loading. Data added, all read only:
 - The account (`/tg/api/me`) is shared by Главная and Счёт through a page cache; Счёт always reloads it, and
   opening a payment drops it.
 
-Главная: the bot and its state in words, the balance as the big figure, a setup checklist (receipt email, «о вас»,
+Главная: the bot and its state in words, what is left of the plan's week as the big figure (no balance: a
+bot's plan is all it spends, so balance, grants and «списано с баланса» are not shown anywhere), a setup checklist (receipt email, «о вас»,
 a first scheduled job, a site when hosting is on; «Написать боту» closes the panel back to the chat), four
 shortcuts, dismissible tips (localStorage), the limits. Счёт's limits name the day each comes back («обновится
 завтра в 18:42 · через 21 ч»), the 5-hour window says it starts with the first message, the plan line and the
-balance note follow ruoc's portal. Still needs ruoc: the allowance in rubles, usage by day, payment history.
+Still needs ruoc: usage by day, payment history.
 
 ## Open questions
 

@@ -10,9 +10,10 @@ import More from "./more"
 
 // The bot panel: what a bot's owner sees inside Telegram (druzhok spec
 // docs/superpowers/specs/2026-10-24-bot-panel-design.md). Four tabs:
-// Главная (the bot, its balance, setup and shortcuts), Память (what it knows
-// and can do, read only), Счёт (the account, limits, plans and payments,
-// served by ruoc-gateway) and Ещё (settings, access, invites, support).
+// Главная (the bot, what is left of its plan, setup and shortcuts), Память
+// (what it knows and can do, read only), Счёт (the plan, its limits, plans
+// and payments, served by ruoc-gateway) and Ещё (settings, access, invites,
+// support).
 
 const tabs: [Tab, string, string][] = [
   ["home", "Главная", "home"],

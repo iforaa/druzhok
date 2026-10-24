@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState, type ReactNode } from "react"
 import { explain } from "./api"
-import { inTime, moment, rubParts } from "./format"
+import { inTime, moment } from "./format"
 
 // The panel's small parts: icons, list rows, the big money figure, the
 // progress ring, meters, placeholders while a screen loads, and the hook
@@ -160,13 +160,12 @@ export function Row({
   )
 }
 
-/** The big figure: "956" large, ",42 ₽" smaller, as a wallet shows money. */
-export function Money({ nanorub, size = "big" }: { nanorub: number; size?: "big" | "mid" }) {
-  const { whole, rest } = rubParts(nanorub)
+/** The big figure: "85" large, "%" smaller, as a wallet shows its total. */
+export function Figure({ whole, rest, small = false }: { whole: string; rest?: string; small?: boolean }) {
   return (
-    <p className={`money money--${size}${nanorub < 0 ? " money--debt" : ""}`}>
+    <p className={small ? "money money--mid" : "money money--big"}>
       <span className="money__whole">{whole}</span>
-      <span className="money__rest">{rest}</span>
+      {rest ? <span className="money__rest">{rest}</span> : null}
     </p>
   )
 }

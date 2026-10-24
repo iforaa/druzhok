@@ -12,9 +12,9 @@ export interface Window {
 
 export interface Me {
   account: { id: string; status: string }
-  balance_nanorub: number
-  grants: { kind: string; remaining_nanorub: number; expires_at: string | null }[]
-  usage_30d: { requests: number; charged_nanorub: number }
+  // ruoc also sends balance_nanorub and grants; a bot's plan is all it
+  // spends, so the panel shows neither.
+  usage_30d: { requests: number }
   subscription: {
     plan_id: string
     plan_name: string
