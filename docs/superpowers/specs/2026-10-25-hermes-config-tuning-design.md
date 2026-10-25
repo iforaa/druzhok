@@ -17,12 +17,13 @@ On hermes 0.22.2 three things cost money or correctness every day:
   tokens, max 418K; dzharvis 148 calls, average 242K, max 345K.
 - **Tool schemas.** The `hermes-telegram` default gives 21 tools, about 41K characters of schemas per call,
   among them a browser (bots have no internet and no browser binary), computer use (no display), OAuth
-  connectors and subagent delegation.
+  connectors and subagent delegation (kept by decision; see 3).
 - **Turn budget.** `agent.max_turns` defaults to unlimited and `agent.run_budget_seconds` to off
   (hermes_cli/config_defaults.py:78–86). A looping turn can spend a whole plan.
 
 ## Decisions already taken (operator, 2026-10-25)
 
+- **Keep delegation** (`delegate_task` sub-agents), uncapped.
 - **Keep skill creation:** the `skills` toolset and `skill_manage`. Bots create skills (vilya: `auto/car-*`;
   others: `utility-bill-disputes`, `resume-optimization`, `film-recommendations`).
 - **Keep the 10-turn background review** (`auxiliary.background_review`, `memory.nudge_interval`).
@@ -125,13 +126,20 @@ This is a prerequisite for any later aux setting; no aux setting changes in this
 
 ### 3. Switch off toolsets that cannot work
 
-`agent.disabled_toolsets: [browser, computer_use, connections, delegation]`.
+`agent.disabled_toolsets: [browser, computer_use, connections]`.
+- **browser:** bots have no internet and no browser binary.
+- **computer_use:** desktop control; bots run headless, with no display.
+- **connections:** `manage_connections` signs in to external accounts through Nous's managed connector
+  gateway or local MCP servers. Bots cannot reach either.
 - This is the global suppression list, applied last (hermes_cli/tools_config.py:626).
 - It is a block list, not a `platform_toolsets` allow list, so toolsets added by later hermes versions are
   not lost silently. Each hermes update (the `update-hermes` skill) reviews new toolsets.
 - `kanban` is off by default already.
-- Kept: web, vision, image_gen, tts, memory, session_search, cronjob, clarify, todo, skills, file, terminal,
-  code_execution (dzharvis runs Python in its workspace).
+- **Kept:**
+  - web, vision, image_gen, tts, memory, session_search, cronjob, clarify, todo;
+  - skills;
+  - **delegation** (operator, 2026-10-25: sub-agents stay, with no extra cap);
+  - file, terminal, code_execution: bots still code when asked, and dzharvis runs Python in its workspace.
 - Hermes's own guard keeps `web_search` when only the browser is suppressed (toolsets.py:108).
 
 Druzhok owns `agent.disabled_toolsets`; the list is written as a whole.
@@ -142,17 +150,24 @@ Each bot carries about 60–90 bundled skills (`<home>/skills`, listed with hash
 `skills/.bundled_manifest`). The skills index in the system prompt lists all of them (~7K characters), and
 some tell the model to use tools a bot does not have.
 
-Druzhok keeps a fixed list `@disabled_skills` of bundled names that need a Mac, GitHub, an external API or
-a coding environment:
+Druzhok keeps a fixed list `@disabled_skills` of bundled names that need a Mac, GitHub access, an external
+API or an external coding-agent CLI that is not installed:
 - `claude-code`, `codex`, `opencode`, `computer-use`, `merge-reconciler`;
 - `apple-notes`, `apple-reminders`, `findmy`, `imessage`;
 - `github`, `github-auth`, `github-code-review`, `github-issues`, `github-issue-to-pr`,
-  `github-pr-workflow`, `github-repo-management`, `codebase-inspection`, `dogfood`;
+  `github-pr-workflow`, `github-repo-management`;
 - `huggingface-hub`, `serving-llms-vllm`, `llama-cpp`, `weights-and-biases`, `evaluating-llms-harness`;
 - `sdlc-review`, `openhue`, `xurl`, `himalaya`, `comfyui`, `touchdesigner-mcp`;
 - `airtable`, `box`, `google-workspace`, `notion`, `teams-meeting-pipeline`.
 
-Obsidian stays: it works on plain files.
+**Coding stays.** It comes from the model plus the file, terminal and code-execution tools.
+`codebase-inspection`, `plan` and `dogfood` work offline and stay enabled.
+
+**Obsidian** stays: it works on plain files.
+
+**`google-workspace`** (Gmail, Calendar, Drive, Docs, Sheets) is a wanted feature but cannot work yet: it
+needs a Google OAuth app, a token and access to `googleapis.com`, and bots have none. It is off until a
+Google integration exists (egress or a proxy route plus a sign-in flow), and is turned back on with it.
 
 **Skills are disabled by name** (`skills.disabled`, agent/skill_utils.py:261), so a bot-created skill with
 the same name would be hidden too. The written list is
