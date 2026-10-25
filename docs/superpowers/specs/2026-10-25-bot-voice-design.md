@@ -173,6 +173,8 @@ Hermes's own blocks are left alone here; branding is the fork batch. This covers
      loads no Project Context.
   4. Anything else → write the remainder back. It is what the owner or bot added; the `.bak` has the
      original.
+  5. Record the result in `instances.agents_md_sha256`: the written file's hash, or `deleted`. Rollback
+     uses it to tell druzhok's file from later edits.
 - An owner who wants standing rules tells the bot; hermes stores them in memory.
 
 ### The 402 notice
