@@ -224,7 +224,10 @@ More tests:
 
 1. Merge, deploy (CLAUDE.md → Server).
 2. Canary igorhermes:
-   - restart it;
+   - restart it, then send `/new`. A running conversation keeps its stored system prompt until compaction
+     or /new (agent/conversation_loop.py:745), so without `/new` the prompt and token numbers would be the
+     old ones. The skills cut reaches other bots' ongoing chats at their next compaction. For vilya and
+     dzharvis that is their next turn, since they sit above the new 150K trigger;
    - read `config.yaml` and the rendered system prompt (`agent.log`);
    - check 24 h of `usage_logs`: input tokens per user request (not per call), compression events, cost;
    - send a reminder, a photo and a voice note, and publish a site, across one sleep/wake.
@@ -233,16 +236,22 @@ More tests:
 
 **Rollback.** Reverting the code is not enough. The old `sync_config` never writes or removes these keys,
 and `config.yaml` is seeded only when absent, so they would stay in force:
-- `model.context_length`, `model.supports_vision`;
+- `model.context_length`;
 - `agent.max_turns`, `agent.budget_warning_ratio`, `agent.run_budget_seconds`, `agent.disabled_toolsets`;
 - `skills.disabled`, `terminal.cwd`.
 
 The change ships `Druzhok.Runtime.Hermes.Rollback.tuning/0`, which removes exactly those keys from every
-bot's `config.yaml` through `TenantFiles.replace/3`. `agent.image_input_mode` stays, being already live.
+bot's `config.yaml` through `TenantFiles.replace/3`. `agent.image_input_mode` and `model.supports_vision`
+stay: both are already written by main today (78461ff), and removing only one would make hermes describe
+every photo again.
+
+**Order matters:** while the new code runs, any start or wake (a sleep wake, a cron pre-wake, a backoff
+restart) writes the keys back. So the revert takes out only the new sync steps and keeps `Rollback`.
 Rollback is:
-1. `sudo ops/druzhok-run.sh 'Druzhok.Runtime.Hermes.Rollback.tuning()'`;
-2. deploy the revert;
-3. restart the bots one at a time.
+1. deploy the partial revert;
+2. `sudo ops/druzhok-run.sh 'Druzhok.Runtime.Hermes.Rollback.tuning()'`;
+3. restart the bots one at a time;
+4. later remove `Rollback` in a cleanup commit.
 
 The `auxiliary:` merge and the removed `messaging` block need nothing: the old code rewrites `auxiliary:`
 wholesale, and nothing reads `messaging`.

@@ -46,9 +46,14 @@ and a coding assistant; the product is Дружок.
 - `Runtime.Hermes.soul_md(instance)` renders the persona.
 - **The name** is a new `instances.display_name` column, never a network call on the start path.
   - It is written by the provisioner at creation, from `session[:name]`, which is the name the owner
-    typed. It is backfilled once from `Panel.profile/1`'s cache by a one-off expression shipped with the
-    change.
-  - It is updated whenever `Panel.profile/1` learns a different title (the panel opens often).
+    typed.
+  - **Backfill:** a boot task in druzhok.service, after the catalogue warm-up, takes each instance with a
+    nil `display_name` and calls `Panel.profile(inst.telegram_token)`. That is a live getMe, 3 s cap, one
+    bot at a time. It is not a `druzhok-run.sh` one-off, whose fresh VM has an empty profile cache. A bot
+    whose getMe fails keeps nil and is tried again on the next boot.
+  - **Updates** happen at the instance-aware caller (`Panel.bot/1`, panel.ex:63): when the profile title
+    differs from `display_name`, it updates the row. `Panel.profile/1` stays token-only and read only; it
+    is also called for the manager bot.
   - When `display_name` is nil, `sync_soul` keeps the current SOUL.md. The only exception is a missing
     SOUL.md, which is written with «Дружок». The bot's slug is never used as a name.
 - **`ManagerBot.Provisioner.write_soul/2` is removed.** The 'missing' row below covers creation. Update the
@@ -118,6 +123,9 @@ writes through druzhok and updates the hash.
 - **Safety, from the seed:** private data never leaks; destructive actions only with the owner's
   permission. **Groups:** take part, don't dominate.
 - **Memory:** user facts go through the memory tool; never invent files like `memory/YYYY-MM-DD.md`.
+- **Older instructions:** if earlier instructions in this conversation mention `memory/YYYY-MM-DD.md`,
+  TOOLS.md or AGENTS.md sections, they are out of date; follow these rules. This covers the period
+  described under Rollout, when a running session still holds the old stored prompt.
 
 **Cron runs do not get it.** `_construct_cron_agent` (cron/scheduler.py:2468) builds the agent without
 `ephemeral_system_prompt`; only gateway agents get it (gateway/run_turn_runner.py:1119).
@@ -146,8 +154,9 @@ Hermes's own blocks are left alone here; branding is the fork batch. This covers
 - `sync_agents_md/2`, the seed in `workspace_files/1` and the four section constants are removed.
 - **Existing files.** `sync_agents_md` has spliced the four druzhok sections into every file on every
   start since 04814e3, appending missing ones after the seed's footer. So no unedited file equals a past
-  seed verbatim. Migration (`migrate_agents_md/1`, once per bot, recorded in
-  `instances.agents_md_migrated_at`):
+  seed verbatim. Migration (`migrate_agents_md/1`, on every start, keyed on the file's content rather
+  than a column, so it also runs again after a rollback restored a `.bak`). It acts only when AGENTS.md
+  holds at least one of the four druzhok-owned headings, and is a no-op otherwise:
   1. Copy the file to `AGENTS.md.bak-<date>` (through `TenantFiles`).
   2. Remove the four druzhok-owned sections («Каждая сессия», «Память», «Стиль», «Публикация сайтов»),
      wherever they sit, footer or not.
@@ -177,11 +186,25 @@ replies for search and other endpoints (llm_proxy/ruoc.ex:265, 394); those get t
 200 completion carrying the notice. That includes hermes's auxiliary calls (compression summary, photo
 description, session title), so on an exhausted plan a summary or a description can become the notice
 text (pre-existing).
-- Hermes's main conversation calls always carry `tools` (bots have tools); auxiliary calls do not.
-- The proxy answers the notice only when the request has a non-empty `tools`. Otherwise it passes the real
-  402 through, which hermes's auxiliary client treats as a failure.
+- **The auxiliary callers pass no tools:** compression, title, vision, query rewrite. The main loop and its
+  iteration-summary path do carry tools (chat_completion_helpers.py:2255).
+- **Exception:** a cron job created with `enabled_toolsets: []` (tools/cronjob_tools.py:1132,
+  cron/scheduler.py:474) is a main conversation call without `tools` (chat_completions.py:387). A real 402
+  there produces hermes's "Billing or credits exhausted … /model" text (conversation_loop.py:577), and cron
+  delivers it to the owner.
+- **The gate therefore recognises the agent's own prompt.** Every agent system prompt, gateway or cron,
+  carries hermes's runtime trailer. The exact marker is pinned at implementation by rendering both a
+  gateway and a cron prompt: the `Conversation started:` line (agent/system_prompt.py:489) or the
+  `# Hermes runtime environment` heading. The aux prompts never carry it.
+- **The proxy answers the notice when** the request has non-empty `tools`, or when its first system message
+  contains that marker. Otherwise it passes the real 402 through, which hermes's auxiliary client treats as
+  a failure.
+- If a hermes update moves the marker, the gate falls back to today's behaviour: the notice for every chat
+  402. It never falls back to the raw lecture. The `update-hermes` skill gets a check for the marker.
 - This needs no fork patch.
-- To check on the canary: an aux call on an exhausted plan gets 402, and hermes does not retry it in a loop.
+- **To check on the canary**, on an exhausted plan:
+  - an aux call gets 402 and hermes does not retry it in a loop;
+  - a zero-toolset reminder delivers the notice.
 
 ## Not in scope
 
@@ -210,16 +233,36 @@ text (pre-existing).
   - a seed with druzhok sections spliced in, some after the footer, is deleted with its `.bak`;
   - in a file with an owner's own section, only druzhok's four sections are removed and the rest stays
     byte for byte;
-  - it runs once.
+  - a file without druzhok headings is untouched;
+  - migrate → `Rollback.voice()` → migrate again ends in the migrated state.
 - **`BalanceNotice`:**
   - both texts;
   - a 402 on a request with `tools` gets the notice;
-  - a 402 without `tools` passes through as 402.
+  - a tool-less request whose system message carries the agent marker (a cron shape) gets the notice;
+  - a tool-less aux-shaped request passes through as 402.
 
 ## Rollout
 
-Same as batch 1: canary igorhermes, read the rendered system prompt (`agent.log`), then a few real
-conversations in Russian:
+**A running conversation keeps its stored system prompt.** Hermes 0.22.2 reuses the prompt saved in the
+session DB word for word (`_restore_or_build_system_prompt`, agent/conversation_loop.py:745). It rebuilds
+only when:
+- the Model or Provider line changes;
+- the cwd changes;
+- at compaction (agent/conversation_compression.py:3125).
+
+Gateway chats reset only on /new or /reset (hermes_cli/session_reset_retirement.py). So a bot's ongoing DM
+keeps the old SOUL.md, AGENTS.md and skills index until its next compaction or /new. Only
+`agent.system_prompt`, which is added per request, applies at once.
+- This mixed period is accepted. The product rules' «Older instructions» line covers the one real
+  conflict, the memory files.
+- No one-off forces a rebuild. Doing so would mean editing hermes's session DB.
+- Heavy bots compact soon: after batch 1, vilya and dzharvis are above the new 150K trigger on their next
+  turn.
+
+Canary igorhermes:
+1. send `/new` first, so the prompt is rebuilt;
+2. read the rendered system prompt (`agent.log`);
+3. hold a few real conversations in Russian:
 - a reminder;
 - «что ты умеешь»;
 - a question at the limit;
@@ -234,9 +277,14 @@ through `TenantFiles`:
 - restores `AGENTS.md.bak-*` where the migration made one.
 
 The reverted `sync_agents_md` then re-adds its sections to a restored AGENTS.md as before. Without the
-key removal, the product rules would apply twice. Rollback is:
-1. run `Rollback.voice()` through `ops/druzhok-run.sh`;
-2. deploy the revert;
-3. restart the bots.
+key removal, the product rules would apply twice.
+
+**Order matters:** while the new code runs, any start or wake writes the keys back. So the revert takes out
+only the sync steps (`sync_soul`, `migrate_agents_md`, the `agent.system_prompt` and `platform_hints` steps)
+and keeps `Rollback`. Rollback is:
+1. deploy the partial revert;
+2. run `Rollback.voice()` through `ops/druzhok-run.sh`;
+3. restart the bots;
+4. later remove `Rollback` in a cleanup commit.
 
 The new columns are left in place; they are additive.
