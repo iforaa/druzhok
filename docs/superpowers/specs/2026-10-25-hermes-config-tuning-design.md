@@ -39,6 +39,34 @@ All live in `apps/druzhok/lib/druzhok/runtime/hermes.ex` (writes) and `apps/druz
 (catalogue), each as a `sync_*` step that is idempotent: a second run over its own output changes nothing,
 so the `updated != content` write guard keeps holding.
 
+**How owned keys are written.** `upsert_indented_line/3` is flat: it replaces the first `key:` line at any
+depth and inserts a missing key at indent 2. That is right only for scalar keys directly under a top-level
+block (`model.context_length`, `model.supports_vision`, `agent.image_input_mode`, `agent.max_turns`,
+`agent.budget_warning_ratio`, `agent.run_budget_seconds`, `terminal.cwd`).
+
+Nested and list keys go through the path `sync_telegram_extra` already uses: `yaml_block` +
+`drop_owned_keys` (the key with its whole indented body, blank lines included) + a fresh render. This covers:
+- `auxiliary.vision`, `auxiliary.compression`;
+- `agent.disabled_toolsets`, `skills.disabled`.
+
+Lists are rendered as one-line flow lists (`[a, b]`). Hermes keeps unchanged nodes on its own round-trip
+saves (utils.py:529), so a flow list stays one line.
+
+**The symlink exposure is pre-existing, and this change closes it for its own files.** druzhok.service has
+CAP_DAC_OVERRIDE, CAP_DAC_READ_SEARCH, CAP_CHOWN and CAP_FOWNER, and the bot owns its tenant dir, so the bot
+can replace any path there with a symlink. Today's config.yaml and AGENTS.md writes follow such links.
+
+From here on, every druzhok read or write of a tenant file goes through `Druzhok.TenantFiles`:
+- `config.yaml`, `skills/.bundled_manifest`, and batch 2's SOUL.md and AGENTS.md.
+- **Reads** already refuse a symlink anywhere below the tenant dir and verify the descriptor.
+- **Writes, new `TenantFiles.replace/3`:**
+  1. lstat every path component below the tenant dir and refuse any symlink;
+  2. write a temp file in the same directory with `:exclusive` (O_CREAT|O_EXCL does not follow a link);
+  3. chown it to the bot's uid;
+  4. `rename(2)` it over the target. A rename replaces a link instead of following it.
+- **Residual race:** the bot can swap a directory component between the lstat and the rename. Only files
+  directly in `<home>` and `<home>/workspace` are written, and the check runs right before the rename.
+
 ### 1. Model facts from ruoc's catalogue
 
 `Ruoc.to_model/1` keeps `limit.context` and `limit.output` as `limits: %{context, output}`.
@@ -50,7 +78,7 @@ and returns one of:
 |---|---|
 | `{:ok, %{sees_images: bool, context: int \| nil}}` | the model is in the catalogue |
 | `:unknown_model` | the catalogue is loaded but does not list the model |
-| `:no_catalogue` | the catalogue is not fetched yet |
+| `:no_catalogue` | the cached list is empty: never fetched, or the first fetch failed (`Ruoc.models/0` stores `{now, []}` on failure, ruoc.ex:357) |
 
 `prepare_start/1` puts the result on the instance map as `:model_facts`; `sync_config` reads it.
 
@@ -78,9 +106,12 @@ its next start or wake; `cached_models` refreshes within 60 s.
 to the next top-level key). Any other `auxiliary.*` setting is erased: `background_review`,
 `title_generation`, and anything hermes writes there.
 
-Rewrite it with `sync_yaml_block/3` + nested upserts that touch only:
-- `auxiliary.vision.{provider, base_url, api_key, model}`;
-- `auxiliary.compression.reasoning_effort`.
+Rewrite it so that only two subsections are dropped (each with its body) and re-rendered:
+- `auxiliary.vision` (`provider`, `base_url`, `api_key`, `model`);
+- `auxiliary.compression` (`reasoning_effort`). Other keys hermes may keep there are carried over.
+
+Every other subsection is left byte for byte: `background_review`, `title_generation`, and any `model:` /
+`provider:` lines inside them.
 
 This is a prerequisite for any later aux setting; no aux setting changes in this batch.
 
@@ -118,7 +149,8 @@ Obsidian stays: it works on plain files.
 **Skills are disabled by name** (`skills.disabled`, agent/skill_utils.py:261), so a bot-created skill with
 the same name would be hidden too. The written list is
 `@disabled_skills ∩ names in skills/.bundled_manifest`. A name the bot created is not in the manifest, so
-it is never disabled. If the manifest is missing, nothing is disabled.
+it is never disabled. If the manifest is missing, unreadable, or a symlink (read through `TenantFiles`),
+nothing is disabled: `skills.disabled` is removed.
 
 `hermes-agent` is essential and cannot be disabled (skill_utils.py:258). The list is regenerated on every
 start; druzhok owns `skills.disabled`.
@@ -175,8 +207,18 @@ Values are a first guess, to be checked against the canary's real turns: count t
 - `terminal.cwd`;
 - the env map no longer carries the three variables.
 
-Each sync step also gets an idempotence test: syncing its own output changes nothing. `Ruoc.model_facts/1`
-gets tests for its three results.
+More tests:
+- **Idempotence:** each sync step synced over its own output changes nothing.
+- **A changed value between two syncs:**
+  - lists shorter and longer than before;
+  - a new context length;
+  - a changed vision model.
+  No old `- item` or body lines may be left behind.
+- **Aux merge:** an `auxiliary:` block with another subsection carrying `model:` placed before `vision:`.
+- **`Ruoc.model_facts/1`:** its three results, including a failed first fetch (`:no_catalogue`).
+- **`TenantFiles.replace/3`:**
+  - a symlinked target, a dangling symlink target and a symlinked directory component are refused;
+  - the written file belongs to the bot's uid.
 
 ## Rollout
 
@@ -189,5 +231,18 @@ gets tests for its three results.
 3. The other bots pick the change up on their next wake, or restart them one at a time with
    `sudo ops/druzhok restart <bot>`.
 
-**Rollback:** revert the commit and restart. The previous values come back on the next sync, except the
-deleted `messaging` block, which nothing reads.
+**Rollback.** Reverting the code is not enough. The old `sync_config` never writes or removes these keys,
+and `config.yaml` is seeded only when absent, so they would stay in force:
+- `model.context_length`, `model.supports_vision`;
+- `agent.max_turns`, `agent.budget_warning_ratio`, `agent.run_budget_seconds`, `agent.disabled_toolsets`;
+- `skills.disabled`, `terminal.cwd`.
+
+The change ships `Druzhok.Runtime.Hermes.Rollback.tuning/0`, which removes exactly those keys from every
+bot's `config.yaml` through `TenantFiles.replace/3`. `agent.image_input_mode` stays, being already live.
+Rollback is:
+1. `sudo ops/druzhok-run.sh 'Druzhok.Runtime.Hermes.Rollback.tuning()'`;
+2. deploy the revert;
+3. restart the bots one at a time.
+
+The `auxiliary:` merge and the removed `messaging` block need nothing: the old code rewrites `auxiliary:`
+wholesale, and nothing reads `messaging`.
