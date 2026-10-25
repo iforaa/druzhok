@@ -269,7 +269,7 @@ defmodule Druzhok.Runtime.Hermes do
           |> sync_stt_block()
           |> sync_model_facts(instance)
           |> sync_agent_block()
-          |> sync_skills_block(bundled_skills(data_root))
+          |> sync_skills_block()
           |> sync_terminal_block(data_root)
           |> drop_messaging_block()
 
@@ -394,9 +394,10 @@ defmodule Druzhok.Runtime.Hermes do
   # coding-agent CLI that is not installed; the skills index in every system
   # prompt lists them and some send the model after tools it lacks. Coding
   # itself stays (file, terminal and code-execution tools; codebase-inspection,
-  # plan). google-workspace returns with a Google integration. Disabling is by
-  # name (hermes `skills.disabled`), so only names in the bot's
-  # skills/.bundled_manifest are written: a skill the bot made is not in it.
+  # plan). google-workspace returns with a Google integration. Turned off by
+  # name (hermes `skills.disabled`), never deleted, on every bot (operator,
+  # 2026-10-25): a manifest check missed skills an older hermes left behind,
+  # and a skill the bot made with one of these exact names is hidden too.
   @disabled_skills ~w(
     claude-code codex opencode computer-use merge-reconciler
     apple-notes apple-reminders findmy imessage
@@ -407,45 +408,8 @@ defmodule Druzhok.Runtime.Hermes do
     airtable box google-workspace notion teams-meeting-pipeline
   )
 
-  defp sync_skills_block(content, bundled) do
-    names =
-      case bundled do
-        :fresh -> @disabled_skills
-        {:manifest, set} -> Enum.filter(@disabled_skills, &MapSet.member?(set, &1))
-        :unknown -> []
-      end
-
-    case names do
-      [] -> put_block(content, "skills", [{"disabled", :delete}])
-      names -> put_block(content, "skills", [{"disabled", {:list, names}}])
-    end
-  end
-
-  # Which bundled skills the bot has: `{:manifest, names}` from hermes's
-  # skills/.bundled_manifest (`name:hash` lines, read without following a
-  # symlink); `:fresh` when there is no skills/ dir at all, i.e. hermes has
-  # not copied anything in yet (it does so at gateway start, after this sync)
-  # and the bot cannot have made a skill of its own; `:unknown` otherwise (a
-  # refused or unreadable manifest), which disables nothing.
-  defp bundled_skills(data_root) do
-    case TenantFiles.read_text(data_root, ["skills", ".bundled_manifest"], 262_144) do
-      {:ok, %{text: text}} ->
-        names =
-          for line <- String.split(text, "\n"),
-              name = line |> String.split(":", parts: 2) |> hd() |> String.trim(),
-              name != "",
-              into: MapSet.new(),
-              do: name
-
-        {:manifest, names}
-
-      _ ->
-        case File.lstat(Path.join(data_root, "skills")) do
-          {:error, :enoent} -> :fresh
-          _ -> :unknown
-        end
-    end
-  end
+  defp sync_skills_block(content),
+    do: put_block(content, "skills", [{"disabled", {:list, @disabled_skills}}])
 
   # The bot's working directory (`terminal.cwd`, canonical in hermes 0.22,
   # gateway/run.py:2152). MESSAGING_CWD in env_vars/1 carries the same value

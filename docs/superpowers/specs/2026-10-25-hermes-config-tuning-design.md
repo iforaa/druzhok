@@ -58,7 +58,7 @@ CAP_DAC_OVERRIDE, CAP_DAC_READ_SEARCH, CAP_CHOWN and CAP_FOWNER, and the bot own
 can replace any path there with a symlink. Today's config.yaml and AGENTS.md writes follow such links.
 
 From here on, every druzhok read or write of a tenant file goes through `Druzhok.TenantFiles`:
-- `config.yaml`, `skills/.bundled_manifest`, and batch 2's SOUL.md and AGENTS.md.
+- `config.yaml`, and batch 2's SOUL.md and AGENTS.md.
 - **This includes the first writer of config.yaml on every start,** `BotManager.write_workspace_files/2`
   (bot_manager.ex:386, called by `prepare_start/1` before `sync_config`). Its `:create_only` seed uses
   `File.exists?` (which follows links, so a dangling link reads as absent), then `File.mkdir_p!` and
@@ -171,22 +171,12 @@ API or an external coding-agent CLI that is not installed:
 needs a Google OAuth app, a token and access to `googleapis.com`, and bots have none. It is off until a
 Google integration exists (egress or a proxy route plus a sign-in flow), and is turned back on with it.
 
-**Skills are disabled by name** (`skills.disabled`, agent/skill_utils.py:261), so a bot-created skill with
-the same name would be hidden too. The written list is
-`@disabled_skills ∩ names in skills/.bundled_manifest`. A name the bot created is normally not in the
-manifest, so it is not disabled.
-
-**A fresh bot** has no `skills/` dir when druzhok syncs: hermes copies its bundled skills in at gateway
-start, after the sync. Such a bot cannot have made a skill yet, so it gets the whole `@disabled_skills`
-list. A `skills/` dir without a readable manifest disables nothing.
-
-**One accepted residual.** If a bot deletes a disabled bundled skill and creates its own with the same
-name, the manifest keeps the old entry (skill_manager_tool.py:562, skills_sync.py:438), so the new skill is
-hidden too. Hermes refuses to create a name that exists (skill_manager_tool.py:457), so this takes a
-deliberate delete first. It only affects the ~35 names tied to Macs, GitHub or external APIs, on bots
-without internet. Checking hermes's origin hash per skill would need its `_dir_hash` reproduced in druzhok,
-which isn't worth it. If the manifest is missing, unreadable, or a symlink (read through `TenantFiles`),
-nothing is disabled: `skills.disabled` is removed.
+**Skills are disabled by name** (`skills.disabled`, agent/skill_utils.py:261), and the whole list is written
+on every bot (operator, 2026-10-25, after the igorhermes canary). A first version wrote only the names in
+`skills/.bundled_manifest`, to spare a bot-made skill with the same name. That missed bundled skills an older
+hermes left on disk and dropped from the manifest: igorhermes kept its six `github-*` skills and still
+offered GitHub. Accepted residual: a skill the bot made with one of these exact names is hidden too. It is
+only turned off, never deleted.
 
 `hermes-agent` is essential and cannot be disabled (skill_utils.py:258). The list is regenerated on every
 start; druzhok owns `skills.disabled`.
@@ -236,8 +226,7 @@ Values are a first guess, to be checked against the canary's real turns: count t
 - every row of the table in 1;
 - the aux merge keeps unrelated `auxiliary.*` keys and nested siblings;
 - the disabled toolsets are written;
-- the skills list is intersected with a fixture manifest, a bot-created namesake survives, and a missing
-  manifest disables nothing;
+- the whole skills list is written, an old list is replaced, other `skills.*` keys stay;
 - the turn-budget keys;
 - `messaging` is removed;
 - `terminal.cwd`;

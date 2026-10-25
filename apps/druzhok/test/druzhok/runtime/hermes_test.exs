@@ -794,15 +794,6 @@ defmodule Druzhok.Runtime.HermesTest do
       {cfg, content}
     end
 
-    defp manifest!(tmp_dir, names) do
-      File.mkdir_p!(Path.join(tmp_dir, "skills"))
-
-      File.write!(
-        Path.join([tmp_dir, "skills", ".bundled_manifest"]),
-        Enum.map_join(names, "\n", &"#{&1}:abc123") <> "\n"
-      )
-    end
-
     test "writes the turn budget and the disabled toolsets, replacing an older block list", %{
       tmp_dir: tmp_dir
     } do
@@ -819,34 +810,21 @@ defmodule Druzhok.Runtime.HermesTest do
       refute content =~ "delegation"
     end
 
-    test "disables only listed skills hermes bundled, never the bot's own", %{tmp_dir: tmp_dir} do
-      manifest!(tmp_dir, ["claude-code", "notion", "obsidian", "codebase-inspection", "xlsx"])
-      File.mkdir_p!(Path.join([tmp_dir, "skills", "my-own", "github"]))
-      {cfg, _} = tune(tmp_dir, "model:\n  default: \"x\"\n")
-      assert cfg["skills"]["disabled"] == ["claude-code", "notion"]
-    end
-
-    test "a skills dir without a manifest disables nothing, and an old list goes", %{
+    test "turns off the whole skills list, replacing an old one, keeping other skills keys", %{
       tmp_dir: tmp_dir
     } do
-      File.mkdir_p!(Path.join([tmp_dir, "skills", "my-own"]))
-
       {cfg, _} =
         tune(
           tmp_dir,
           "model:\n  default: \"x\"\nskills:\n  disabled: [codex]\n  external_dirs: [/x]\n"
         )
 
-      assert cfg["skills"] == %{"external_dirs" => ["/x"]}
-    end
-
-    # Hermes copies its bundled skills in at gateway start, after this sync:
-    # a fresh bot has no skills/ dir yet and no skill of its own either.
-    test "a fresh bot with no skills dir gets the whole list", %{tmp_dir: tmp_dir} do
-      {cfg, _} = tune(tmp_dir, "model:\n  default: \"x\"\n")
       assert "claude-code" in cfg["skills"]["disabled"]
+      assert "github-auth" in cfg["skills"]["disabled"]
       assert "google-workspace" in cfg["skills"]["disabled"]
       refute "codebase-inspection" in cfg["skills"]["disabled"]
+      refute "xlsx" in cfg["skills"]["disabled"]
+      assert cfg["skills"]["external_dirs"] == ["/x"]
     end
 
     test "an empty flow-mapping section becomes a block; a filled one is left alone", %{
@@ -859,16 +837,6 @@ defmodule Druzhok.Runtime.HermesTest do
       {cfg, content} = tune(tmp_dir, "model:\n  default: \"x\"\nterminal: {backend: local}\n")
       assert cfg["terminal"] == %{"backend" => "local"}
       assert length(String.split(content, "\nterminal:")) == 2
-    end
-
-    test "a symlinked manifest is not read", %{tmp_dir: tmp_dir} do
-      outside = Path.join(System.tmp_dir!(), "manifest-#{System.unique_integer([:positive])}")
-      File.write!(outside, "claude-code:abc\n")
-      on_exit(fn -> File.rm(outside) end)
-      File.mkdir_p!(Path.join(tmp_dir, "skills"))
-      File.ln_s!(outside, Path.join([tmp_dir, "skills", ".bundled_manifest"]))
-      {cfg, _} = tune(tmp_dir, "model:\n  default: \"x\"\n")
-      refute Map.has_key?(cfg, "skills")
     end
 
     test "sets terminal.cwd to the workspace and drops the dead messaging block", %{
@@ -906,8 +874,6 @@ defmodule Druzhok.Runtime.HermesTest do
     end
 
     test "a second sync changes nothing", %{tmp_dir: tmp_dir} do
-      manifest!(tmp_dir, ["codex", "notion"])
-
       {_, first} =
         tune(
           tmp_dir,
@@ -921,8 +887,6 @@ defmodule Druzhok.Runtime.HermesTest do
     test "strip_tuning_keys/1 removes what this change writes and keeps the photo keys", %{
       tmp_dir: tmp_dir
     } do
-      manifest!(tmp_dir, ["codex"])
-
       File.write!(
         Path.join(tmp_dir, "config.yaml"),
         "model:\n  default: \"x\"\nagent:\n  gateway_timeout: 1800\n"
