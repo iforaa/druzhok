@@ -87,7 +87,7 @@ version. On every start `sync_soul/2` does one of:
 
 Legacy texts are compared as full rendered content after trimming, never by size.
 
-**All reads, writes and renames go through `Druzhok.TenantFiles`** (batch 1 adds `TenantFiles.replace/3`:
+**All reads, writes and renames go through `Druzhok.TenantFiles`** (batch 1 adds `TenantFiles.write/4`:
 lstat every component, refuse symlinks, exclusive temp file, chown to the bot uid, rename).
 - A symlinked or dangling-symlink SOUL.md is refused and logged, never treated as 'missing'. Otherwise
   `File.write!` would create the link's target anywhere on the host, since druzhok runs with

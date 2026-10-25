@@ -22,9 +22,10 @@ defmodule Druzhok.TenantFiles do
   Writing (`write/4`, druzhok's own files in the tenant dir: config.yaml,
   AGENTS.md) has the same problem the other way round: druzhok writes with
   CAP_DAC_OVERRIDE, so a write that follows a symlink lands anywhere on the
-  host. Writes never open the target by name: a fresh temp file is created
-  exclusively next to it (O_EXCL does not follow a link) and renamed over it,
-  and rename(2) replaces a link instead of following it.
+  host. Writes never open, chmod or chown anything by name inside the bot's
+  dir: the file is prepared in a staging dir next to the tenant dirs, which no
+  bot can write, and then renamed over the target (rename(2) replaces a link
+  instead of following it) or, for a seed, hard-linked into place.
   """
 
   @doc """
@@ -174,7 +175,7 @@ defmodule Druzhok.TenantFiles do
         {:ok, :exists}
       else
         mode = if mode == :new, do: Keyword.get(opts, :mode, 0o644), else: mode
-        put_file(tenant_dir, dirs, dir, target, content, uid, mode, create?)
+        put_file(tenant_dir, dirs, target, content, uid, mode, create?)
       end
     else
       :not_found -> {:error, :no_tenant_dir}
@@ -191,10 +192,8 @@ defmodule Druzhok.TenantFiles do
           {:cont, {:ok, path}}
 
         {:error, :enoent} ->
-          # mkdir(2) fails on an existing link rather than follow it.
-          with :ok <- File.mkdir(path), :ok <- :file.change_owner(path, uid) do
-            {:cont, {:ok, path}}
-          else
+          case make_dir(tenant_dir, path, uid) do
+            :ok -> {:cont, {:ok, path}}
             {:error, reason} -> {:halt, {:error, reason}}
           end
 
@@ -202,6 +201,25 @@ defmodule Druzhok.TenantFiles do
           {:halt, {:error, :not_a_directory}}
       end
     end)
+  end
+
+  # A new directory is made and chowned in the staging dir, then renamed into
+  # place: a chown by path inside the bot's dir would follow a link the bot
+  # swapped in. rename(2) of a directory fails on an existing link or file.
+  defp make_dir(tenant_dir, path, uid) do
+    with {:ok, staging} <- staging(tenant_dir) do
+      tmp = Path.join(staging, "d#{System.unique_integer([:positive])}")
+
+      result =
+        with :ok <- File.mkdir(tmp),
+             :ok <- :file.change_mode(tmp, 0o700),
+             :ok <- :file.change_owner(tmp, uid) do
+          :file.rename(tmp, path)
+        end
+
+      _ = :file.del_dir(tmp)
+      result
+    end
   end
 
   defp target_mode(target) do
@@ -213,31 +231,51 @@ defmodule Druzhok.TenantFiles do
     end
   end
 
-  defp put_file(tenant_dir, dirs, dir, target, content, uid, mode, create?) do
-    tmp =
-      Path.join(dir, ".#{Path.basename(target)}.druzhok-#{System.unique_integer([:positive])}")
+  # The temp file is written, chmodded and chowned in the staging dir, which
+  # the bot cannot write: chmod(2)/chown(2) by path inside the bot's own dir
+  # would follow a symlink the bot swapped in for the temp name and hand any
+  # host file to it (druzhok has CAP_CHOWN/CAP_FOWNER). Only then is it moved
+  # into the bot's dir, by rename(2) (replaces, never follows the target) or,
+  # for a seed, link(2) (fails if anything is there).
+  defp put_file(tenant_dir, dirs, target, content, uid, mode, create?) do
+    with {:ok, staging} <- staging(tenant_dir) do
+      tmp = Path.join(staging, "f#{System.unique_integer([:positive])}")
 
-    result =
-      with {:ok, fd} <- :file.open(tmp, [:write, :exclusive, :binary, :raw]),
-           :ok <- write_close(fd, content),
-           :ok <- :file.change_mode(tmp, mode),
-           :ok <- :file.change_owner(tmp, uid),
-           # The directories may have been swapped since ensure_dirs/3.
-           true <- real_dir?(tenant_dir, dirs) || {:error, :not_a_directory} do
-        if create? do
-          case :file.make_link(tmp, target) do
-            :ok -> :ok
-            {:error, :eexist} -> {:ok, :exists}
-            {:error, reason} -> {:error, reason}
+      result =
+        with {:ok, fd} <- :file.open(tmp, [:write, :exclusive, :binary, :raw]),
+             :ok <- write_close(fd, content),
+             :ok <- :file.change_mode(tmp, mode),
+             :ok <- :file.change_owner(tmp, uid),
+             # The directories may have been swapped since ensure_dirs/3.
+             true <- real_dir?(tenant_dir, dirs) || {:error, :not_a_directory} do
+          if create? do
+            case :file.make_link(tmp, target) do
+              :ok -> :ok
+              {:error, :eexist} -> {:ok, :exists}
+              {:error, reason} -> {:error, reason}
+            end
+          else
+            :file.rename(tmp, target)
           end
-        else
-          :file.rename(tmp, target)
         end
-      end
 
-    # After a rename the temp name is gone; after a link (or a failure) it is not.
-    _ = :file.delete(tmp)
-    result
+      # After a rename the temp name is gone; after a link (or a failure) it is not.
+      _ = :file.delete(tmp)
+      result
+    end
+  end
+
+  # `.druzhok-staging` next to the tenant dirs: the same filesystem (rename and
+  # link need it) and a parent no bot can write (/data/tenants is root's), so
+  # nothing in it can be swapped. Created on first use, kept at 0700.
+  defp staging(tenant_dir) do
+    dir = Path.join(Path.dirname(Path.expand(tenant_dir)), ".druzhok-staging")
+    _ = File.mkdir(dir)
+
+    case File.lstat(dir) do
+      {:ok, %File.Stat{type: :directory}} -> with :ok <- File.chmod(dir, 0o700), do: {:ok, dir}
+      _ -> {:error, :no_staging_dir}
+    end
   end
 
   defp write_close(fd, content) do

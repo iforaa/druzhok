@@ -113,10 +113,16 @@ defmodule Druzhok.TenantFilesTest do
       assert File.read!(Path.join(outside, "secret")) == "token"
     end
 
-    test "a dangling symlink is refused, and its target is not created", %{dir: dir, outside: outside} do
+    test "a dangling symlink is refused, and its target is not created", %{
+      dir: dir,
+      outside: outside
+    } do
       target = Path.join(outside, "created")
       File.ln_s!(target, Path.join(dir, "config.yaml"))
-      assert {:error, :not_regular} = TenantFiles.write(dir, ["config.yaml"], "seed", create: true)
+
+      assert {:error, :not_regular} =
+               TenantFiles.write(dir, ["config.yaml"], "seed", create: true)
+
       assert {:error, :not_regular} = TenantFiles.write(dir, ["config.yaml"], "seed")
       refute File.exists?(target)
     end
@@ -134,6 +140,16 @@ defmodule Druzhok.TenantFilesTest do
       assert :ok = TenantFiles.write(dir, ["new.yaml"], "seed", create: true)
       assert File.read!(Path.join(dir, "new.yaml")) == "seed"
       assert Path.wildcard(Path.join(dir, ".*.druzhok-*"), match_dot: true) == []
+    end
+
+    test "prepares files in a 0700 staging dir next to the tenant dirs, never in the bot's dir",
+         %{dir: dir} do
+      assert :ok = TenantFiles.write(dir, ["workspace", "AGENTS.md"], "x")
+      staging = Path.join(Path.dirname(dir), ".druzhok-staging")
+      assert %File.Stat{type: :directory, mode: mode} = File.lstat!(staging)
+      assert Bitwise.band(mode, 0o777) == 0o700
+      assert File.ls!(dir) |> Enum.sort() == ["memories", "workspace"]
+      assert File.ls!(Path.join(dir, "workspace")) == ["AGENTS.md"]
     end
 
     test "a missing tenant dir is an error", %{dir: dir} do

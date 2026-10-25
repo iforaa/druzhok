@@ -21,12 +21,17 @@ defmodule Druzhok.Runtime.HermesTest do
 
   describe "env_vars/1" do
     test "a builtin bot gets no MNEMOSYNE_ keys" do
-      refute Hermes.env_vars(@instance) |> Map.keys() |> Enum.any?(&String.starts_with?(&1, "MNEMOSYNE_"))
+      refute Hermes.env_vars(@instance)
+             |> Map.keys()
+             |> Enum.any?(&String.starts_with?(&1, "MNEMOSYNE_"))
     end
 
     test "a mnemosyne bot points the provider at the proxy with e5 prefixes and no LLM" do
       env = Hermes.env_vars(Map.put(@instance, :memory_provider, "mnemosyne"))
-      assert env["MNEMOSYNE_DATA_DIR"] == Path.join([Hermes.data_root(@instance), "mnemosyne", "data"])
+
+      assert env["MNEMOSYNE_DATA_DIR"] ==
+               Path.join([Hermes.data_root(@instance), "mnemosyne", "data"])
+
       assert env["MNEMOSYNE_EMBEDDING_API_URL"] == Hermes.proxy_url()
       assert env["MNEMOSYNE_EMBEDDING_API_KEY"] == "dk-alice-token"
       assert env["MNEMOSYNE_EMBEDDING_MODEL"] == "ruoc-embed-gemini"
@@ -39,7 +44,10 @@ defmodule Druzhok.Runtime.HermesTest do
 
     test "leaves model and provider to config.yaml" do
       env = Hermes.env_vars(@instance)
-      for key <- ~w(HERMES_INFERENCE_PROVIDER HERMES_MODEL HERMES_QUIET), do: refute(Map.has_key?(env, key))
+
+      for key <- ~w(HERMES_INFERENCE_PROVIDER HERMES_MODEL HERMES_QUIET),
+          do: refute(Map.has_key?(env, key))
+
       assert env["MESSAGING_CWD"] == Path.join(Hermes.data_root(@instance), "workspace")
     end
 
@@ -72,7 +80,9 @@ defmodule Druzhok.Runtime.HermesTest do
       assert drain > 0
       # hermes resolve_systemd_timeout_stop_sec: max(60, max(drain, 30 + 10) + 30),
       # against hermes@.service's TimeoutStopSec (systemd default 90 s, unset in the unit).
-      refute File.read!(Path.expand("../../../../../ops/hermes@.service", __DIR__)) =~ "TimeoutStopSec"
+      refute File.read!(Path.expand("../../../../../ops/hermes@.service", __DIR__)) =~
+               "TimeoutStopSec"
+
       assert max(60, max(drain, 40) + 30) <= 90
     end
 
@@ -84,7 +94,9 @@ defmodule Druzhok.Runtime.HermesTest do
       refute Map.has_key?(polling, "TELEGRAM_WEBHOOK_SECRET")
 
       webhook =
-        Hermes.env_vars(Map.merge(@instance, %{id: 9, telegram_mode: "webhook", telegram_webhook_secret: "abc"}))
+        Hermes.env_vars(
+          Map.merge(@instance, %{id: 9, telegram_mode: "webhook", telegram_webhook_secret: "abc"})
+        )
 
       assert webhook["TELEGRAM_WEBHOOK_URL"] =~ ~r{^https://[^/]+/telegram/webhook/alice$}
       assert webhook["TELEGRAM_WEBHOOK_SECRET"] == "abc"
@@ -92,7 +104,15 @@ defmodule Druzhok.Runtime.HermesTest do
     end
 
     test "an id outside the port range gets no webhook vars, even in webhook mode" do
-      env = Hermes.env_vars(Map.merge(@instance, %{id: 1000, telegram_mode: "webhook", telegram_webhook_secret: "abc"}))
+      env =
+        Hermes.env_vars(
+          Map.merge(@instance, %{
+            id: 1000,
+            telegram_mode: "webhook",
+            telegram_webhook_secret: "abc"
+          })
+        )
+
       refute Enum.any?(Map.keys(env), &String.starts_with?(&1, "TELEGRAM_WEBHOOK_"))
     end
 
@@ -116,8 +136,11 @@ defmodule Druzhok.Runtime.HermesTest do
     end
 
     test "TELEGRAM_REQUIRE_MENTION reflects mention_only flag" do
-      assert Hermes.env_vars(%{@instance | mention_only: true})["TELEGRAM_REQUIRE_MENTION"] == "true"
-      assert Hermes.env_vars(%{@instance | mention_only: false})["TELEGRAM_REQUIRE_MENTION"] == "false"
+      assert Hermes.env_vars(%{@instance | mention_only: true})["TELEGRAM_REQUIRE_MENTION"] ==
+               "true"
+
+      assert Hermes.env_vars(%{@instance | mention_only: false})["TELEGRAM_REQUIRE_MENTION"] ==
+               "false"
     end
 
     test "TELEGRAM_MENTION_PATTERNS wraps trigger_name in a word-bounded regex" do
@@ -126,8 +149,11 @@ defmodule Druzhok.Runtime.HermesTest do
     end
 
     test "TELEGRAM_MENTION_PATTERNS is empty when trigger_name is nil or blank" do
-      assert Hermes.env_vars(Map.put(@instance, :trigger_name, nil))["TELEGRAM_MENTION_PATTERNS"] == ""
-      assert Hermes.env_vars(Map.put(@instance, :trigger_name, ""))["TELEGRAM_MENTION_PATTERNS"] == ""
+      assert Hermes.env_vars(Map.put(@instance, :trigger_name, nil))["TELEGRAM_MENTION_PATTERNS"] ==
+               ""
+
+      assert Hermes.env_vars(Map.put(@instance, :trigger_name, ""))["TELEGRAM_MENTION_PATTERNS"] ==
+               ""
     end
 
     test "TELEGRAM_FREE_RESPONSE_CHATS is a comma-separated list from the JSON array field" do
@@ -136,8 +162,13 @@ defmodule Druzhok.Runtime.HermesTest do
     end
 
     test "TELEGRAM_ALLOW_ALL_USERS reflects the flag" do
-      assert Hermes.env_vars(Map.put(@instance, :allow_all_telegram_users, true))["TELEGRAM_ALLOW_ALL_USERS"] == "true"
-      assert Hermes.env_vars(Map.put(@instance, :allow_all_telegram_users, false))["TELEGRAM_ALLOW_ALL_USERS"] == "false"
+      assert Hermes.env_vars(Map.put(@instance, :allow_all_telegram_users, true))[
+               "TELEGRAM_ALLOW_ALL_USERS"
+             ] == "true"
+
+      assert Hermes.env_vars(Map.put(@instance, :allow_all_telegram_users, false))[
+               "TELEGRAM_ALLOW_ALL_USERS"
+             ] == "false"
     end
 
     test "does not duplicate keys from base_env/1" do
@@ -204,12 +235,13 @@ defmodule Druzhok.Runtime.HermesTest do
     end
   end
 
-
   describe "vision model" do
     test "without image_model the bot's own model reads images" do
       yaml = Hermes.build_config_yaml(Map.merge(@instance, %{model: "ruoc-flash"}))
       refute yaml =~ "gemini-2.5-flash-lite"
-      assert yaml =~ "vision:\n    provider: custom\n    base_url: \"http://127.0.0.1:4000/v1\"\n    api_key: \"dk-alice-token\"\n    model: \"ruoc-flash\""
+
+      assert yaml =~
+               "vision:\n    provider: custom\n    base_url: \"http://127.0.0.1:4000/v1\"\n    api_key: \"dk-alice-token\"\n    model: \"ruoc-flash\""
     end
 
     test "an explicit image_model wins" do
@@ -227,7 +259,11 @@ defmodule Druzhok.Runtime.HermesTest do
 
     @tag :tmp_dir
     test "sync_config/2 writes it into an existing auxiliary block", %{tmp_dir: tmp_dir} do
-      File.write!(Path.join(tmp_dir, "config.yaml"), "model: x\nauxiliary:\n  vision:\n    model: old\n")
+      File.write!(
+        Path.join(tmp_dir, "config.yaml"),
+        "model: x\nauxiliary:\n  vision:\n    model: old\n"
+      )
+
       assert :ok = Hermes.sync_config(%{name: "b", model: "x", tenant_key: "k"}, tmp_dir)
       yaml = File.read!(Path.join(tmp_dir, "config.yaml"))
       assert yaml =~ @compression
@@ -262,7 +298,9 @@ defmodule Druzhok.Runtime.HermesTest do
       assert content =~ ~r/^  memory_char_limit: 999$/m
     end
 
-    test "switches the memory block to mnemosyne with the three tools, builtin flags still on", %{tmp_dir: tmp_dir} do
+    test "switches the memory block to mnemosyne with the three tools, builtin flags still on", %{
+      tmp_dir: tmp_dir
+    } do
       File.write!(Path.join(tmp_dir, "config.yaml"), """
       model:
         default: "x"
@@ -279,18 +317,26 @@ defmodule Druzhok.Runtime.HermesTest do
       assert content =~ ~r/^  provider: mnemosyne$/m
       assert content =~ ~r/^  memory_enabled: true$/m
       assert content =~ ~r/^  user_profile_enabled: true$/m
-      assert content =~ ~r/^  mnemosyne: \{tools: \[mnemosyne_remember, mnemosyne_recall, mnemosyne_forget\]\}$/m
+
+      assert content =~
+               ~r/^  mnemosyne: \{tools: \[mnemosyne_remember, mnemosyne_recall, mnemosyne_forget\]\}$/m
+
       assert content =~ ~r/^  memory_char_limit: 999$/m
-      assert YamlElixir.read_from_string!(content)["memory"]["mnemosyne"]["tools"] == ~w(mnemosyne_remember mnemosyne_recall mnemosyne_forget)
+
+      assert YamlElixir.read_from_string!(content)["memory"]["mnemosyne"]["tools"] ==
+               ~w(mnemosyne_remember mnemosyne_recall mnemosyne_forget)
 
       # Idempotent: a second sync leaves the memory block as it is (other
       # blocks have their own whitespace quirks, outside this test).
       memory_block = fn c -> Regex.run(~r/^memory:\n(?:[ \t]+\S[^\n]*\n)*/m, c) end
       assert :ok = Hermes.sync_config(inst, tmp_dir)
-      assert memory_block.(File.read!(Path.join(tmp_dir, "config.yaml"))) == memory_block.(content)
+
+      assert memory_block.(File.read!(Path.join(tmp_dir, "config.yaml"))) ==
+               memory_block.(content)
     end
 
-    test "switching back to builtin drops the mnemosyne block hermes may have re-dumped as a mapping", %{tmp_dir: tmp_dir} do
+    test "switching back to builtin drops the mnemosyne block hermes may have re-dumped as a mapping",
+         %{tmp_dir: tmp_dir} do
       File.write!(Path.join(tmp_dir, "config.yaml"), """
       memory:
         provider: mnemosyne
@@ -303,7 +349,12 @@ defmodule Druzhok.Runtime.HermesTest do
         memory_char_limit: 999
       """)
 
-      assert :ok = Hermes.sync_config(%{name: "b", model: "x", tenant_key: "k", memory_provider: "builtin"}, tmp_dir)
+      assert :ok =
+               Hermes.sync_config(
+                 %{name: "b", model: "x", tenant_key: "k", memory_provider: "builtin"},
+                 tmp_dir
+               )
+
       content = File.read!(Path.join(tmp_dir, "config.yaml"))
       assert content =~ ~r/^  provider: builtin$/m
       refute content =~ "mnemosyne"
@@ -320,13 +371,22 @@ defmodule Druzhok.Runtime.HermesTest do
         memory_enabled: true
       """)
 
-      assert :ok = Hermes.sync_config(%{name: "b", model: "x", tenant_key: "k", memory_provider: "mnemosyne"}, tmp_dir)
+      assert :ok =
+               Hermes.sync_config(
+                 %{name: "b", model: "x", tenant_key: "k", memory_provider: "mnemosyne"},
+                 tmp_dir
+               )
+
       content = File.read!(Path.join(tmp_dir, "config.yaml"))
       assert length(Regex.scan(~r/mnemosyne:/, content)) == 1
-      assert YamlElixir.read_from_string!(content)["memory"]["mnemosyne"]["tools"] == ~w(mnemosyne_remember mnemosyne_recall mnemosyne_forget)
+
+      assert YamlElixir.read_from_string!(content)["memory"]["mnemosyne"]["tools"] ==
+               ~w(mnemosyne_remember mnemosyne_recall mnemosyne_forget)
     end
 
-    test "a trailing mnemosyne mapping is dropped without eating the block's last newline", %{tmp_dir: tmp_dir} do
+    test "a trailing mnemosyne mapping is dropped without eating the block's last newline", %{
+      tmp_dir: tmp_dir
+    } do
       # Hermes's own dumper puts unknown keys last, so this is the shape it
       # writes back; the next top-level key must survive both directions.
       dumped = """
@@ -343,9 +403,17 @@ defmodule Druzhok.Runtime.HermesTest do
 
       for provider <- ["builtin", "mnemosyne"] do
         File.write!(Path.join(tmp_dir, "config.yaml"), dumped)
-        assert :ok = Hermes.sync_config(%{name: "b", model: "x", tenant_key: "k", memory_provider: provider}, tmp_dir)
+
+        assert :ok =
+                 Hermes.sync_config(
+                   %{name: "b", model: "x", tenant_key: "k", memory_provider: provider},
+                   tmp_dir
+                 )
+
         content = File.read!(Path.join(tmp_dir, "config.yaml"))
-        assert %{"memory" => %{"provider" => ^provider}, "terminal" => %{"timeout" => 30}} = YamlElixir.read_from_string!(content)
+
+        assert %{"memory" => %{"provider" => ^provider}, "terminal" => %{"timeout" => 30}} =
+                 YamlElixir.read_from_string!(content)
       end
     end
 
@@ -371,7 +439,12 @@ defmodule Druzhok.Runtime.HermesTest do
 
     test "AGENTS.md memory section is the builtin text", %{tmp_dir: tmp_dir} do
       File.write!(Path.join(tmp_dir, "config.yaml"), "model:\n  default: \"x\"\n")
-      File.write!(Path.join([tmp_dir, "workspace", "AGENTS.md"]), "# Agent\n\n## Память\n\nhoncho stuff\n\n## Other\n")
+
+      File.write!(
+        Path.join([tmp_dir, "workspace", "AGENTS.md"]),
+        "# Agent\n\n## Память\n\nhoncho stuff\n\n## Other\n"
+      )
+
       assert :ok = Hermes.sync_config(%{name: "b", model: "x", tenant_key: "k"}, tmp_dir)
       agents = File.read!(Path.join([tmp_dir, "workspace", "AGENTS.md"]))
       refute agents =~ "honcho"
@@ -391,7 +464,11 @@ defmodule Druzhok.Runtime.HermesTest do
 
     @tag :tmp_dir
     test "overwrites an existing value", %{tmp_dir: tmp_dir} do
-      File.write!(Path.join(tmp_dir, "config.yaml"), "gateway:\n  systemd_watchdog_seconds: 0\n  other: 1\n")
+      File.write!(
+        Path.join(tmp_dir, "config.yaml"),
+        "gateway:\n  systemd_watchdog_seconds: 0\n  other: 1\n"
+      )
+
       assert :ok = Hermes.sync_config(%{name: "b", model: "x", tenant_key: "k"}, tmp_dir)
       content = File.read!(Path.join(tmp_dir, "config.yaml"))
       assert content =~ ~r/^  systemd_watchdog_seconds: 60$/m
@@ -438,13 +515,18 @@ defmodule Druzhok.Runtime.HermesTest do
       %{tmp_dir: tmp_dir}
     end
 
-    defp sync!(tmp_dir, yaml, instance \\ %{name: "b", model: "x", tenant_key: "k", operator_telegram_id: 4242}) do
+    defp sync!(
+           tmp_dir,
+           yaml,
+           instance \\ %{name: "b", model: "x", tenant_key: "k", operator_telegram_id: 4242}
+         ) do
       File.write!(Path.join(tmp_dir, "config.yaml"), yaml)
       assert :ok = Hermes.sync_config(instance, tmp_dir)
       File.read!(Path.join(tmp_dir, "config.yaml"))
     end
 
-    test "adds extra under the seeded telegram block: operator is admin, tenants get the user list", %{tmp_dir: tmp_dir} do
+    test "adds extra under the seeded telegram block: operator is admin, tenants get the user list",
+         %{tmp_dir: tmp_dir} do
       content =
         sync!(tmp_dir, """
         model:
@@ -498,7 +580,13 @@ defmodule Druzhok.Runtime.HermesTest do
                YamlElixir.read_from_string(content)
 
       assert extra["allow_admin_from"] == ["4242"]
-      assert extra["command_menu"] == %{"priority_mode" => "replace", "max_commands" => 4, "priority" => Hermes.menu_commands()}
+
+      assert extra["command_menu"] == %{
+               "priority_mode" => "replace",
+               "max_commands" => 4,
+               "priority" => Hermes.menu_commands()
+             }
+
       # Hermes's default drops every update sent while the bot was down.
       assert extra["drop_pending_on_cold_boot"] == false
     end
@@ -521,11 +609,17 @@ defmodule Druzhok.Runtime.HermesTest do
               command_menu: {max_commands: 60}
         """)
 
-      assert {:ok, %{"platforms" => %{"telegram" => %{"extra" => extra}}}} = YamlElixir.read_from_string(content)
+      assert {:ok, %{"platforms" => %{"telegram" => %{"extra" => extra}}}} =
+               YamlElixir.read_from_string(content)
+
       assert extra["allow_admin_from"] == ["4242"]
       assert extra["user_allowed_commands"] == Hermes.user_commands()
       assert extra["command_menu"]["max_commands"] == 4
-      assert extra["dm_topics"] == [%{"chat_id" => 1, "topics" => [%{"name" => "x", "thread_id" => 7}]}]
+
+      assert extra["dm_topics"] == [
+               %{"chat_id" => 1, "topics" => [%{"name" => "x", "thread_id" => 7}]}
+             ]
+
       refute content =~ "999"
       refute content =~ "[model, tools]"
     end
@@ -537,30 +631,50 @@ defmodule Druzhok.Runtime.HermesTest do
       assert length(Regex.scan(~r/^\s+allow_admin_from:/m, twice)) == 1
     end
 
-    test "uses the sentinel id 0 when no operator is configured, so gating stays on", %{tmp_dir: tmp_dir} do
-      content = sync!(tmp_dir, "platforms:\n  telegram:\n    enabled: true\n", %{name: "b", model: "x", tenant_key: "k"})
-      assert {:ok, %{"platforms" => %{"telegram" => %{"extra" => extra}}}} = YamlElixir.read_from_string(content)
+    test "uses the sentinel id 0 when no operator is configured, so gating stays on", %{
+      tmp_dir: tmp_dir
+    } do
+      content =
+        sync!(tmp_dir, "platforms:\n  telegram:\n    enabled: true\n", %{
+          name: "b",
+          model: "x",
+          tenant_key: "k"
+        })
+
+      assert {:ok, %{"platforms" => %{"telegram" => %{"extra" => extra}}}} =
+               YamlElixir.read_from_string(content)
+
       assert extra["allow_admin_from"] == ["0"]
     end
 
     test "appends a platforms block when the file has none", %{tmp_dir: tmp_dir} do
       content = sync!(tmp_dir, "model:\n  default: \"x\"\n")
-      assert {:ok, %{"platforms" => %{"telegram" => %{"extra" => %{"allow_admin_from" => ["4242"]}}}}} = YamlElixir.read_from_string(content)
+
+      assert {:ok,
+              %{"platforms" => %{"telegram" => %{"extra" => %{"allow_admin_from" => ["4242"]}}}}} =
+               YamlElixir.read_from_string(content)
     end
   end
 
   describe "sync_config/2 — cron + display notices" do
     setup do
-      tmp_dir = Path.join(System.tmp_dir!(), "hermes-notices-#{System.unique_integer([:positive])}")
+      tmp_dir =
+        Path.join(System.tmp_dir!(), "hermes-notices-#{System.unique_integer([:positive])}")
+
       File.mkdir_p!(Path.join(tmp_dir, "workspace"))
       on_exit(fn -> File.rm_rf!(tmp_dir) end)
       %{tmp_dir: tmp_dir}
     end
 
-    test "adds cron.wrap_response: false and display.memory_notifications: off when absent", %{tmp_dir: tmp_dir} do
+    test "adds cron.wrap_response: false and display.memory_notifications: off when absent", %{
+      tmp_dir: tmp_dir
+    } do
       File.write!(Path.join(tmp_dir, "config.yaml"), "model:\n  default: \"x\"\n")
       assert :ok = Hermes.sync_config(%{name: "b", model: "x", tenant_key: "k"}, tmp_dir)
-      assert {:ok, cfg} = YamlElixir.read_from_string(File.read!(Path.join(tmp_dir, "config.yaml")))
+
+      assert {:ok, cfg} =
+               YamlElixir.read_from_string(File.read!(Path.join(tmp_dir, "config.yaml")))
+
       assert cfg["cron"] == %{"wrap_response" => false}
       assert cfg["display"]["memory_notifications"] == "off"
     end
@@ -576,7 +690,10 @@ defmodule Druzhok.Runtime.HermesTest do
       """)
 
       assert :ok = Hermes.sync_config(%{name: "b", model: "x", tenant_key: "k"}, tmp_dir)
-      assert {:ok, cfg} = YamlElixir.read_from_string(File.read!(Path.join(tmp_dir, "config.yaml")))
+
+      assert {:ok, cfg} =
+               YamlElixir.read_from_string(File.read!(Path.join(tmp_dir, "config.yaml")))
+
       assert cfg["cron"] == %{"wrap_response" => false, "timezone" => "UTC"}
       assert cfg["display"] == %{"tool_progress" => "all", "memory_notifications" => "off"}
     end
@@ -599,16 +716,27 @@ defmodule Druzhok.Runtime.HermesTest do
       {cfg, content}
     end
 
-    test "a known model that reads images: its window, native photos, marked as seeing", %{tmp_dir: tmp_dir} do
-      {cfg, _} = facts_sync(tmp_dir, "model:\n  default: \"x\"\n", {:ok, %{sees_images: true, context: 200_000}})
+    test "a known model that reads images: its window, native photos, marked as seeing", %{
+      tmp_dir: tmp_dir
+    } do
+      {cfg, _} =
+        facts_sync(
+          tmp_dir,
+          "model:\n  default: \"x\"\n",
+          {:ok, %{sees_images: true, context: 200_000}}
+        )
+
       assert cfg["model"]["context_length"] == 200_000
       assert cfg["model"]["supports_vision"] == true
       assert cfg["model"]["default"] == "x"
       assert cfg["agent"]["image_input_mode"] == "native"
     end
 
-    test "a known model without a window or vision: no window, auto photos, other agent keys kept", %{tmp_dir: tmp_dir} do
-      yaml = "model:\n  default: \"x\"\n  context_length: 1000\n  supports_vision: true\nagent:\n  image_input_mode: native\n  gateway_timeout: 1800\n"
+    test "a known model without a window or vision: no window, auto photos, other agent keys kept",
+         %{tmp_dir: tmp_dir} do
+      yaml =
+        "model:\n  default: \"x\"\n  context_length: 1000\n  supports_vision: true\nagent:\n  image_input_mode: native\n  gateway_timeout: 1800\n"
+
       {cfg, _} = facts_sync(tmp_dir, yaml, {:ok, %{sees_images: false, context: nil}})
       refute Map.has_key?(cfg["model"], "context_length")
       assert cfg["model"]["supports_vision"] == false
@@ -617,7 +745,9 @@ defmodule Druzhok.Runtime.HermesTest do
     end
 
     test "a model ruoc does not list loses the previous model's numbers", %{tmp_dir: tmp_dir} do
-      yaml = "model:\n  default: \"x\"\n  context_length: 200000\n  supports_vision: true\nagent:\n  image_input_mode: native\n"
+      yaml =
+        "model:\n  default: \"x\"\n  context_length: 200000\n  supports_vision: true\nagent:\n  image_input_mode: native\n"
+
       {cfg, _} = facts_sync(tmp_dir, yaml, :unknown_model)
       refute Map.has_key?(cfg["model"], "context_length")
       refute Map.has_key?(cfg["model"], "supports_vision")
@@ -625,14 +755,21 @@ defmodule Druzhok.Runtime.HermesTest do
     end
 
     test "an empty catalogue leaves the model facts alone", %{tmp_dir: tmp_dir} do
-      yaml = "model:\n  default: \"x\"\n  context_length: 200000\nagent:\n  image_input_mode: native\n"
+      yaml =
+        "model:\n  default: \"x\"\n  context_length: 200000\nagent:\n  image_input_mode: native\n"
+
       {cfg, _} = facts_sync(tmp_dir, yaml, :no_catalogue)
       assert cfg["model"]["context_length"] == 200_000
       assert cfg["agent"]["image_input_mode"] == "native"
     end
 
     test "a changed window between two syncs leaves no old line", %{tmp_dir: tmp_dir} do
-      facts_sync(tmp_dir, "model:\n  default: \"x\"\n", {:ok, %{sees_images: true, context: 200_000}})
+      facts_sync(
+        tmp_dir,
+        "model:\n  default: \"x\"\n",
+        {:ok, %{sees_images: true, context: 200_000}}
+      )
+
       {cfg, content} = facts_sync(tmp_dir, nil, {:ok, %{sees_images: true, context: 131_072}})
       assert cfg["model"]["context_length"] == 131_072
       assert length(String.split(content, "context_length")) == 2
@@ -641,7 +778,9 @@ defmodule Druzhok.Runtime.HermesTest do
 
   describe "sync_config/2 — toolsets, skills, turn budget, terminal, dead keys" do
     setup do
-      tmp_dir = Path.join(System.tmp_dir!(), "hermes-tuning-#{System.unique_integer([:positive])}")
+      tmp_dir =
+        Path.join(System.tmp_dir!(), "hermes-tuning-#{System.unique_integer([:positive])}")
+
       File.mkdir_p!(Path.join(tmp_dir, "workspace"))
       on_exit(fn -> File.rm_rf!(tmp_dir) end)
       %{tmp_dir: tmp_dir}
@@ -657,11 +796,19 @@ defmodule Druzhok.Runtime.HermesTest do
 
     defp manifest!(tmp_dir, names) do
       File.mkdir_p!(Path.join(tmp_dir, "skills"))
-      File.write!(Path.join([tmp_dir, "skills", ".bundled_manifest"]), Enum.map_join(names, "\n", &"#{&1}:abc123") <> "\n")
+
+      File.write!(
+        Path.join([tmp_dir, "skills", ".bundled_manifest"]),
+        Enum.map_join(names, "\n", &"#{&1}:abc123") <> "\n"
+      )
     end
 
-    test "writes the turn budget and the disabled toolsets, replacing an older block list", %{tmp_dir: tmp_dir} do
-      yaml = "model:\n  default: \"x\"\nagent:\n  disabled_toolsets:\n  - kanban\n  - browser\n  - delegation\n  gateway_timeout: 1800\n"
+    test "writes the turn budget and the disabled toolsets, replacing an older block list", %{
+      tmp_dir: tmp_dir
+    } do
+      yaml =
+        "model:\n  default: \"x\"\nagent:\n  disabled_toolsets:\n  - kanban\n  - browser\n  - delegation\n  gateway_timeout: 1800\n"
+
       {cfg, content} = tune(tmp_dir, yaml)
       assert cfg["agent"]["disabled_toolsets"] == ["browser", "computer_use", "connections"]
       assert cfg["agent"]["max_turns"] == 30
@@ -680,7 +827,12 @@ defmodule Druzhok.Runtime.HermesTest do
     end
 
     test "without a manifest nothing is disabled and an old list goes", %{tmp_dir: tmp_dir} do
-      {cfg, _} = tune(tmp_dir, "model:\n  default: \"x\"\nskills:\n  disabled: [codex]\n  external_dirs: [/x]\n")
+      {cfg, _} =
+        tune(
+          tmp_dir,
+          "model:\n  default: \"x\"\nskills:\n  disabled: [codex]\n  external_dirs: [/x]\n"
+        )
+
       assert cfg["skills"] == %{"external_dirs" => ["/x"]}
     end
 
@@ -694,27 +846,75 @@ defmodule Druzhok.Runtime.HermesTest do
       refute Map.has_key?(cfg, "skills")
     end
 
-    test "sets terminal.cwd to the workspace and drops the dead messaging block", %{tmp_dir: tmp_dir} do
-      yaml = "model:\n  default: \"x\"\nmessaging:\n  enabled_platforms:\n    telegram: [hermes-telegram]\nstreaming:\n  enabled: true\n"
+    test "sets terminal.cwd to the workspace and drops the dead messaging block", %{
+      tmp_dir: tmp_dir
+    } do
+      yaml =
+        "model:\n  default: \"x\"\nmessaging:\n  enabled_platforms:\n    telegram: [hermes-telegram]\nstreaming:\n  enabled: true\n"
+
       {cfg, _} = tune(tmp_dir, yaml)
       assert cfg["terminal"]["cwd"] == Path.join(tmp_dir, "workspace")
       refute Map.has_key?(cfg, "messaging")
       assert cfg["streaming"]["enabled"] == true
     end
 
+    test "a header with a trailing comment is found, not duplicated", %{tmp_dir: tmp_dir} do
+      {cfg, content} =
+        tune(
+          tmp_dir,
+          "model: # the model\n  default: \"x\"\nterminal:   # shell\n  backend: local\n"
+        )
+
+      assert length(String.split(content, "\nterminal:")) == 2
+      assert cfg["terminal"] == %{"backend" => "local", "cwd" => Path.join(tmp_dir, "workspace")}
+      assert content =~ "model: # the model"
+    end
+
+    test "a comment between list items does not split an owned key", %{tmp_dir: tmp_dir} do
+      yaml =
+        "model:\n  default: \"x\"\nagent:\n  disabled_toolsets:\n  - browser\n  # why\n  - kanban\n  gateway_timeout: 1800\n"
+
+      {cfg, content} = tune(tmp_dir, yaml)
+      assert cfg["agent"]["disabled_toolsets"] == ["browser", "computer_use", "connections"]
+      assert cfg["agent"]["gateway_timeout"] == 1800
+      refute content =~ "kanban"
+    end
+
     test "a second sync changes nothing", %{tmp_dir: tmp_dir} do
       manifest!(tmp_dir, ["codex", "notion"])
-      {_, first} = tune(tmp_dir, "model:\n  default: \"x\"\nauxiliary:\n  title_generation:\n    enabled: false\n")
+
+      {_, first} =
+        tune(
+          tmp_dir,
+          "model:\n  default: \"x\"\nauxiliary:\n  title_generation:\n    enabled: false\n"
+        )
+
       {_, second} = tune(tmp_dir, nil)
       assert first == second
     end
 
-    test "strip_tuning_keys/1 removes what this change writes and keeps the photo keys", %{tmp_dir: tmp_dir} do
+    test "strip_tuning_keys/1 removes what this change writes and keeps the photo keys", %{
+      tmp_dir: tmp_dir
+    } do
       manifest!(tmp_dir, ["codex"])
-      File.write!(Path.join(tmp_dir, "config.yaml"), "model:\n  default: \"x\"\nagent:\n  gateway_timeout: 1800\n")
+
+      File.write!(
+        Path.join(tmp_dir, "config.yaml"),
+        "model:\n  default: \"x\"\nagent:\n  gateway_timeout: 1800\n"
+      )
+
       facts = {:ok, %{sees_images: true, context: 200_000}}
-      :ok = Hermes.sync_config(%{name: "b", model: "x", tenant_key: "k", model_facts: facts}, tmp_dir)
-      {:ok, cfg} = tmp_dir |> Path.join("config.yaml") |> File.read!() |> Hermes.strip_tuning_keys() |> YamlElixir.read_from_string()
+
+      :ok =
+        Hermes.sync_config(%{name: "b", model: "x", tenant_key: "k", model_facts: facts}, tmp_dir)
+
+      {:ok, cfg} =
+        tmp_dir
+        |> Path.join("config.yaml")
+        |> File.read!()
+        |> Hermes.strip_tuning_keys()
+        |> YamlElixir.read_from_string()
+
       refute Map.has_key?(cfg["model"], "context_length")
       assert cfg["model"]["supports_vision"] == true
       assert cfg["agent"] == %{"image_input_mode" => "native", "gateway_timeout" => 1800}
@@ -731,7 +931,9 @@ defmodule Druzhok.Runtime.HermesTest do
       %{tmp_dir: tmp_dir}
     end
 
-    test "rewrites only vision and compression; other aux tasks and keys stay", %{tmp_dir: tmp_dir} do
+    test "rewrites only vision and compression; other aux tasks and keys stay", %{
+      tmp_dir: tmp_dir
+    } do
       File.write!(Path.join(tmp_dir, "config.yaml"), """
       model:
         default: "x"
@@ -751,7 +953,12 @@ defmodule Druzhok.Runtime.HermesTest do
           timeout: 90
       """)
 
-      assert :ok = Hermes.sync_config(%{name: "b", model: "x", tenant_key: "k", image_model: "seer"}, tmp_dir)
+      assert :ok =
+               Hermes.sync_config(
+                 %{name: "b", model: "x", tenant_key: "k", image_model: "seer"},
+                 tmp_dir
+               )
+
       {:ok, cfg} = YamlElixir.read_from_string(File.read!(Path.join(tmp_dir, "config.yaml")))
       aux = cfg["auxiliary"]
       assert aux["title_generation"] == %{"model" => "cheap-title", "enabled" => false}
@@ -774,11 +981,19 @@ defmodule Druzhok.Runtime.HermesTest do
       tmp_dir = Path.join(System.tmp_dir!(), "hermes-links-#{System.unique_integer([:positive])}")
       File.mkdir_p!(Path.join(tmp_dir, "workspace"))
       outside = Path.join(System.tmp_dir!(), "outside-#{System.unique_integer([:positive])}.yaml")
-      on_exit(fn -> File.rm_rf!(tmp_dir); File.rm(outside) end)
+
+      on_exit(fn ->
+        File.rm_rf!(tmp_dir)
+        File.rm(outside)
+      end)
+
       %{tmp_dir: tmp_dir, outside: outside}
     end
 
-    test "a symlinked config.yaml is neither read nor written", %{tmp_dir: tmp_dir, outside: outside} do
+    test "a symlinked config.yaml is neither read nor written", %{
+      tmp_dir: tmp_dir,
+      outside: outside
+    } do
       File.write!(outside, "model:\n  default: \"secret\"\n")
       File.ln_s!(outside, Path.join(tmp_dir, "config.yaml"))
       assert :ok = Hermes.sync_config(%{name: "b", model: "x", tenant_key: "k"}, tmp_dir)
@@ -795,7 +1010,9 @@ defmodule Druzhok.Runtime.HermesTest do
       %{tmp_dir: tmp_dir}
     end
 
-    test "turns cloud_trim_silence off inside an existing stt block and keeps the provider", %{tmp_dir: tmp_dir} do
+    test "turns cloud_trim_silence off inside an existing stt block and keeps the provider", %{
+      tmp_dir: tmp_dir
+    } do
       File.write!(Path.join(tmp_dir, "config.yaml"), """
       stt:
         enabled: true
@@ -807,15 +1024,29 @@ defmodule Druzhok.Runtime.HermesTest do
       """)
 
       assert :ok = Hermes.sync_config(%{name: "b", model: "x", tenant_key: "k"}, tmp_dir)
-      assert {:ok, cfg} = YamlElixir.read_from_string(File.read!(Path.join(tmp_dir, "config.yaml")))
-      assert cfg["stt"] == %{"enabled" => true, "provider" => "openai", "openai" => %{"model" => "whisper-1"}, "cloud_trim_silence" => false}
+
+      assert {:ok, cfg} =
+               YamlElixir.read_from_string(File.read!(Path.join(tmp_dir, "config.yaml")))
+
+      assert cfg["stt"] == %{
+               "enabled" => true,
+               "provider" => "openai",
+               "openai" => %{"model" => "whisper-1"},
+               "cloud_trim_silence" => false
+             }
+
       assert cfg["tts"] == %{"enabled" => true}
     end
 
-    test "adds the stt block when absent and the seed template carries the key", %{tmp_dir: tmp_dir} do
+    test "adds the stt block when absent and the seed template carries the key", %{
+      tmp_dir: tmp_dir
+    } do
       File.write!(Path.join(tmp_dir, "config.yaml"), "model:\n  default: \"x\"\n")
       assert :ok = Hermes.sync_config(%{name: "b", model: "x", tenant_key: "k"}, tmp_dir)
-      assert {:ok, cfg} = YamlElixir.read_from_string(File.read!(Path.join(tmp_dir, "config.yaml")))
+
+      assert {:ok, cfg} =
+               YamlElixir.read_from_string(File.read!(Path.join(tmp_dir, "config.yaml")))
+
       assert cfg["stt"]["cloud_trim_silence"] == false
       assert {:ok, seed} = YamlElixir.read_from_string(Hermes.build_config_yaml(@instance))
       assert seed["stt"]["cloud_trim_silence"] == false
@@ -1059,5 +1290,4 @@ defmodule Druzhok.Runtime.HermesTest do
       assert first == second
     end
   end
-
 end

@@ -65,14 +65,16 @@ From here on, every druzhok read or write of a tenant file goes through `Druzhok
   `File.write!`. Those would create a dangling link's target anywhere on the host. The seed becomes:
   1. lstat the target and its parents below the tenant dir; refuse an existing or dangling symlink and a
      symlinked parent;
-  2. create the file exclusively (through `TenantFiles.replace/3`);
+  2. create the file exclusively (through `TenantFiles.write/4`);
   3. chown it to the bot's uid.
 - **Reads** already refuse a symlink anywhere below the tenant dir and verify the descriptor.
-- **Writes, new `TenantFiles.replace/3`:**
+- **Writes, new `TenantFiles.write/4`:**
   1. lstat every path component below the tenant dir and refuse any symlink;
-  2. write a temp file in the same directory with `:exclusive` (O_CREAT|O_EXCL does not follow a link);
-  3. chown it to the bot's uid;
-  4. `rename(2)` it over the target. A rename replaces a link instead of following it.
+  2. prepare the temp file (exclusive create, chmod, chown to the bot's uid) in `.druzhok-staging`, a 0700
+     dir next to the tenant dirs that no bot can write. A chmod or chown by path inside the bot's own dir
+     would follow a link the bot swapped in. Missing directories are made the same way and renamed in;
+  3. `rename(2)` it over the target (a rename replaces a link instead of following it), or for a seed
+     (`create: true`) `link(2)` it into place, which fails if anything is there.
 - **Residual race:** the bot can swap a directory component between the lstat and the rename. Only files
   directly in `<home>` and `<home>/workspace` are written, and the check runs right before the rename.
 
@@ -246,7 +248,7 @@ More tests:
   No old `- item` or body lines may be left behind.
 - **Aux merge:** an `auxiliary:` block with another subsection carrying `model:` placed before `vision:`.
 - **`Ruoc.model_facts/1`:** its three results, including a failed first fetch (`:no_catalogue`).
-- **`TenantFiles.replace/3`:**
+- **`TenantFiles.write/4`:**
   - a symlinked target, a dangling symlink target and a symlinked directory component are refused;
   - the written file belongs to the bot's uid.
 - **`prepare_start/1`:** a dangling-symlink `config.yaml` is refused, and the link's target is not created.
@@ -272,7 +274,7 @@ and `config.yaml` is seeded only when absent, so they would stay in force:
 - `skills.disabled`, `terminal.cwd`.
 
 The change ships `Druzhok.Runtime.Hermes.Rollback.tuning/0`, which removes exactly those keys from every
-bot's `config.yaml` through `TenantFiles.replace/3`. `agent.image_input_mode` and `model.supports_vision`
+bot's `config.yaml` through `TenantFiles.write/4`. `agent.image_input_mode` and `model.supports_vision`
 stay: both are already written by main today (78461ff), and removing only one would make hermes describe
 every photo again.
 

@@ -407,8 +407,6 @@ defmodule Druzhok.Runtime.Hermes do
     airtable box google-workspace notion teams-meeting-pipeline
   )
 
-  def disabled_skills, do: @disabled_skills
-
   defp sync_skills_block(content, bundled) do
     case Enum.filter(@disabled_skills, &MapSet.member?(bundled, &1)) do
       [] -> put_block(content, "skills", [{"disabled", :delete}])
@@ -463,7 +461,7 @@ defmodule Druzhok.Runtime.Hermes do
   # Set druzhok-owned children of the top-level `name:` block. `owned` is
   # [{key, value}], value one of: a YAML scalar (a string written as is),
   # {:list, items} (a one-line flow list), {:merge, owned} (a nested block
-  # whose other children are kept), :delete, or :keep (left untouched). Each
+  # whose other children are kept), or :delete. Each
   # owned key is dropped with its whole body (blank lines, deeper lines,
   # hermes's same-indent `- item` lists) and rendered fresh at the top of the
   # block, so a changed value leaves nothing behind and a second run changes
@@ -494,13 +492,9 @@ defmodule Druzhok.Runtime.Hermes do
     indent = child_indent(body, default_indent)
 
     {taken, rest} =
-      Enum.reduce(owned, {%{}, body}, fn
-        {_key, :keep}, acc ->
-          acc
-
-        {key, _}, {taken, lines} ->
-          {child, lines} = take_child(lines, indent, key)
-          {Map.put(taken, key, child), lines}
+      Enum.reduce(owned, {%{}, body}, fn {key, _}, {taken, lines} ->
+        {child, lines} = take_child(lines, indent, key)
+        {Map.put(taken, key, child), lines}
       end)
 
     rendered =
@@ -510,7 +504,7 @@ defmodule Druzhok.Runtime.Hermes do
     if Enum.all?(lines, &(String.trim(&1) == "")), do: [], else: lines
   end
 
-  defp render_child(_key, value, _old, _indent) when value in [:keep, :delete], do: []
+  defp render_child(_key, :delete, _old, _indent), do: []
 
   defp render_child(key, {:list, items}, _old, indent),
     do: [pad(indent) <> key <> ": [" <> Enum.join(items, ", ") <> "]"]
@@ -541,8 +535,8 @@ defmodule Druzhok.Runtime.Hermes do
     end
   end
 
-  # `key:` at exactly `indent` and its body: blank lines, deeper lines, and
-  # `- item` lines at the key's own indent. `{nil, lines}` when absent.
+  # `key:` at exactly `indent` and its body (child_body_line?/2).
+  # `{nil, lines}` when absent.
   defp take_child(lines, indent, key) do
     header = ~r/^ {#{indent}}#{Regex.escape(key)}:(\s|$)/
 
@@ -554,10 +548,7 @@ defmodule Druzhok.Runtime.Hermes do
         {before, [h | after_header]} = Enum.split(lines, i)
 
         {body, rest} =
-          Enum.split_while(after_header, fn l ->
-            String.trim(l) == "" or indent_of(l) > indent or
-              (indent_of(l) == indent and String.starts_with?(String.trim_leading(l), "- "))
-          end)
+          Enum.split_while(after_header, &child_body_line?(&1, indent))
 
         {[h | body], before ++ rest}
     end
@@ -683,8 +674,19 @@ defmodule Druzhok.Runtime.Hermes do
 
   defp yaml_block(_lines, _indent, _key, _from, _to), do: nil
 
+  # Whether `line` still belongs to the body of a key at `indent`: blank,
+  # deeper, a comment, or a `- item` hermes's dumper puts at the key's own
+  # indent. Shared by drop_owned_keys/2 and take_child/3.
+  defp child_body_line?(line, indent) do
+    trimmed = String.trim(line)
+
+    trimmed == "" or indent_of(line) > indent or String.starts_with?(trimmed, "#") or
+      (indent_of(line) == indent and String.starts_with?(trimmed, "- "))
+  end
+
+  # A header may carry a trailing comment (`terminal: # shell`).
   defp yaml_key_line?(line, key, indent) do
-    case Regex.run(~r/^([ \t]*)([A-Za-z0-9_]+):[ \t]*$/, line) do
+    case Regex.run(~r/^([ \t]*)([A-Za-z0-9_]+):[ \t]*(?:#.*)?$/, line) do
       [_, ws, ^key] -> if indent == nil, do: byte_size(ws) > 0, else: byte_size(ws) == indent
       _ -> false
     end
@@ -701,11 +703,7 @@ defmodule Druzhok.Runtime.Hermes do
   defp drop_owned_keys(body, keys) do
     Enum.reduce(body, {[], nil}, fn line, {acc, skipping} ->
       cond do
-        # Nested body, or list items hermes's dumper puts at the key's own indent.
-        skipping != nil and
-            (String.trim(line) == "" or indent_of(line) > skipping or
-               (indent_of(line) == skipping and
-                  String.starts_with?(String.trim_leading(line), "- "))) ->
+        skipping != nil and child_body_line?(line, skipping) ->
           {acc, skipping}
 
         Regex.run(~r/^([ \t]*)([A-Za-z0-9_]+):/, line) |> owned_key?(keys) ->
