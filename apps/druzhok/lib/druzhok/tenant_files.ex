@@ -207,12 +207,12 @@ defmodule Druzhok.TenantFiles do
   # place: a chown by path inside the bot's dir would follow a link the bot
   # swapped in. rename(2) of a directory fails on an existing link or file.
   defp make_dir(tenant_dir, path, uid) do
-    with {:ok, staging} <- staging(tenant_dir) do
-      tmp = Path.join(staging, "d#{System.unique_integer([:positive])}")
-
+    with {:ok, staging} <- staging(tenant_dir),
+         tmp = Path.join(staging, staged_name("d")),
+         # Only a name this call created is cleaned up below.
+         :ok <- File.mkdir(tmp) do
       result =
-        with :ok <- File.mkdir(tmp),
-             :ok <- :file.change_mode(tmp, 0o700),
+        with :ok <- :file.change_mode(tmp, 0o700),
              :ok <- :file.change_owner(tmp, uid) do
           :file.rename(tmp, path)
         end
@@ -238,12 +238,12 @@ defmodule Druzhok.TenantFiles do
   # into the bot's dir, by rename(2) (replaces, never follows the target) or,
   # for a seed, link(2) (fails if anything is there).
   defp put_file(tenant_dir, dirs, target, content, uid, mode, create?) do
-    with {:ok, staging} <- staging(tenant_dir) do
-      tmp = Path.join(staging, "f#{System.unique_integer([:positive])}")
-
+    with {:ok, staging} <- staging(tenant_dir),
+         tmp = Path.join(staging, staged_name("f")),
+         # Only a name this call created is cleaned up below.
+         {:ok, fd} <- :file.open(tmp, [:write, :exclusive, :binary, :raw]) do
       result =
-        with {:ok, fd} <- :file.open(tmp, [:write, :exclusive, :binary, :raw]),
-             :ok <- write_close(fd, content),
+        with :ok <- write_close(fd, content),
              :ok <- :file.change_mode(tmp, mode),
              :ok <- :file.change_owner(tmp, uid),
              # The directories may have been swapped since ensure_dirs/3.
@@ -264,6 +264,12 @@ defmodule Druzhok.TenantFiles do
       result
     end
   end
+
+  # Random, so names stay unique across BEAMs sharing the staging dir
+  # (druzhok.service and an ops/druzhok-run.sh one-off); an exclusive create
+  # still refuses a collision.
+  defp staged_name(prefix),
+    do: prefix <> Base.encode16(:crypto.strong_rand_bytes(12), case: :lower)
 
   # `.druzhok-staging` next to the tenant dirs: the same filesystem (rename and
   # link need it) and a parent no bot can write (/data/tenants is root's), so

@@ -5,8 +5,14 @@ defmodule Druzhok.Runtime.Hermes.Rollback do
 
   Order: deploy a revert of the sync steps that keeps this module, then
   `sudo ops/druzhok-run.sh 'IO.inspect(Druzhok.Runtime.Hermes.Rollback.tuning())'`,
-  then restart the bots one at a time. Running it while the new sync steps
-  are still live is pointless: the next start or wake writes the keys back.
+  then restart the bots one at a time, then run it once more: every bot must
+  report `:unchanged`. Running it while the new sync steps are still live is
+  pointless: the next start or wake writes the keys back.
+
+  A running bot may rewrite config.yaml itself (Telegram topic ids, /model)
+  between this read and write: one of the two writes is lost. The re-run after
+  the restarts catches keys a bot wrote back; a lost topic id is recreated by
+  hermes.
   """
 
   alias Druzhok.{Instance, Repo, TenantFiles}

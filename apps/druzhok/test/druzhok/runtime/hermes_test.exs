@@ -826,7 +826,11 @@ defmodule Druzhok.Runtime.HermesTest do
       assert cfg["skills"]["disabled"] == ["claude-code", "notion"]
     end
 
-    test "without a manifest nothing is disabled and an old list goes", %{tmp_dir: tmp_dir} do
+    test "a skills dir without a manifest disables nothing, and an old list goes", %{
+      tmp_dir: tmp_dir
+    } do
+      File.mkdir_p!(Path.join([tmp_dir, "skills", "my-own"]))
+
       {cfg, _} =
         tune(
           tmp_dir,
@@ -834,6 +838,27 @@ defmodule Druzhok.Runtime.HermesTest do
         )
 
       assert cfg["skills"] == %{"external_dirs" => ["/x"]}
+    end
+
+    # Hermes copies its bundled skills in at gateway start, after this sync:
+    # a fresh bot has no skills/ dir yet and no skill of its own either.
+    test "a fresh bot with no skills dir gets the whole list", %{tmp_dir: tmp_dir} do
+      {cfg, _} = tune(tmp_dir, "model:\n  default: \"x\"\n")
+      assert "claude-code" in cfg["skills"]["disabled"]
+      assert "google-workspace" in cfg["skills"]["disabled"]
+      refute "codebase-inspection" in cfg["skills"]["disabled"]
+    end
+
+    test "an empty flow-mapping section becomes a block; a filled one is left alone", %{
+      tmp_dir: tmp_dir
+    } do
+      {cfg, content} = tune(tmp_dir, "model:\n  default: \"x\"\nterminal: {}\n")
+      assert cfg["terminal"] == %{"cwd" => Path.join(tmp_dir, "workspace")}
+      assert length(String.split(content, "\nterminal:")) == 2
+
+      {cfg, content} = tune(tmp_dir, "model:\n  default: \"x\"\nterminal: {backend: local}\n")
+      assert cfg["terminal"] == %{"backend" => "local"}
+      assert length(String.split(content, "\nterminal:")) == 2
     end
 
     test "a symlinked manifest is not read", %{tmp_dir: tmp_dir} do

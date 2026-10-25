@@ -176,6 +176,10 @@ the same name would be hidden too. The written list is
 `@disabled_skills ∩ names in skills/.bundled_manifest`. A name the bot created is normally not in the
 manifest, so it is not disabled.
 
+**A fresh bot** has no `skills/` dir when druzhok syncs: hermes copies its bundled skills in at gateway
+start, after the sync. Such a bot cannot have made a skill yet, so it gets the whole `@disabled_skills`
+list. A `skills/` dir without a readable manifest disables nothing.
+
 **One accepted residual.** If a bot deletes a disabled bundled skill and creates its own with the same
 name, the manifest keeps the old entry (skill_manager_tool.py:562, skills_sync.py:438), so the new skill is
 hidden too. Hermes refuses to create a name that exists (skill_manager_tool.py:457), so this takes a
@@ -284,7 +288,9 @@ Rollback is:
 1. deploy the partial revert;
 2. `sudo ops/druzhok-run.sh 'Druzhok.Runtime.Hermes.Rollback.tuning()'`;
 3. restart the bots one at a time;
-4. later remove `Rollback` in a cleanup commit.
+4. run `Rollback.tuning()` again: every bot must report `:unchanged`. A running bot that rewrote
+   config.yaml during step 2 can lose or bring back a key; this run catches it;
+5. later remove `Rollback` in a cleanup commit.
 
 The `auxiliary:` merge and the removed `messaging` block need nothing: the old code rewrites `auxiliary:`
 wholesale, and nothing reads `messaging`.

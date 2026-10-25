@@ -3,14 +3,17 @@ defmodule Druzhok.TenantFilesTest do
 
   alias Druzhok.TenantFiles
 
+  # Each test has its own parent, so the staging dir write/4 keeps next to
+  # the tenant dirs (`<parent>/.druzhok-staging`) is private to it.
   setup do
-    dir = Path.join(System.tmp_dir!(), "tenantfiles-#{System.unique_integer([:positive])}")
-    outside = dir <> "-outside"
+    parent = Path.join(System.tmp_dir!(), "tenantfiles-#{System.unique_integer([:positive])}")
+    dir = Path.join(parent, "t")
+    outside = Path.join(parent, "outside")
     File.mkdir_p!(Path.join(dir, "memories"))
     File.mkdir_p!(outside)
     File.write!(Path.join(outside, "secret"), "token")
-    on_exit(fn -> File.rm_rf!(dir) && File.rm_rf!(outside) end)
-    %{dir: dir, outside: outside}
+    on_exit(fn -> File.rm_rf!(parent) end)
+    %{dir: dir, outside: outside, staging: Path.join(parent, ".druzhok-staging")}
   end
 
   test "reads a file with its size and time", %{dir: dir} do
@@ -91,14 +94,15 @@ defmodule Druzhok.TenantFilesTest do
   end
 
   describe "write/4" do
-    test "replaces a regular file, keeping its mode", %{dir: dir} do
+    test "replaces a regular file, keeping its mode", %{dir: dir, staging: staging} do
       path = Path.join(dir, "config.yaml")
       File.write!(path, "old")
       File.chmod!(path, 0o640)
       assert :ok = TenantFiles.write(dir, ["config.yaml"], "new")
       assert File.read!(path) == "new"
       assert Bitwise.band(File.stat!(path).mode, 0o777) == 0o640
-      assert Path.wildcard(Path.join(dir, ".config.yaml.druzhok-*"), match_dot: true) == []
+      assert File.ls!(dir) |> Enum.sort() == ["config.yaml", "memories"]
+      assert File.ls!(staging) == []
     end
 
     test "creates missing directories and a new file", %{dir: dir} do
@@ -133,23 +137,32 @@ defmodule Druzhok.TenantFilesTest do
       refute File.exists?(Path.join(outside, "AGENTS.md"))
     end
 
-    test "create: true leaves an existing file alone", %{dir: dir} do
+    test "create: true leaves an existing file alone", %{dir: dir, staging: staging} do
       File.write!(Path.join(dir, "config.yaml"), "mine")
       assert {:ok, :exists} = TenantFiles.write(dir, ["config.yaml"], "seed", create: true)
       assert File.read!(Path.join(dir, "config.yaml")) == "mine"
       assert :ok = TenantFiles.write(dir, ["new.yaml"], "seed", create: true)
       assert File.read!(Path.join(dir, "new.yaml")) == "seed"
-      assert Path.wildcard(Path.join(dir, ".*.druzhok-*"), match_dot: true) == []
+      # The seed's staged copy is gone once it is linked into place.
+      assert File.ls!(staging) == []
     end
 
-    test "prepares files in a 0700 staging dir next to the tenant dirs, never in the bot's dir",
-         %{dir: dir} do
+    test "prepares files in a private 0700 staging dir, never in the bot's dir",
+         %{dir: dir, staging: staging} do
+      refute File.exists?(staging)
       assert :ok = TenantFiles.write(dir, ["workspace", "AGENTS.md"], "x")
-      staging = Path.join(Path.dirname(dir), ".druzhok-staging")
+      # The staging dir exists only because write/4 used it, and is empty after.
       assert %File.Stat{type: :directory, mode: mode} = File.lstat!(staging)
       assert Bitwise.band(mode, 0o777) == 0o700
+      assert File.ls!(staging) == []
       assert File.ls!(dir) |> Enum.sort() == ["memories", "workspace"]
       assert File.ls!(Path.join(dir, "workspace")) == ["AGENTS.md"]
+    end
+
+    test "a failed write leaves nothing staged", %{dir: dir, outside: outside, staging: staging} do
+      File.ln_s!(outside, Path.join(dir, "workspace"))
+      assert {:error, :not_a_directory} = TenantFiles.write(dir, ["workspace", "x"], "x")
+      assert File.ls(staging) in [{:ok, []}, {:error, :enoent}]
     end
 
     test "a missing tenant dir is an error", %{dir: dir} do

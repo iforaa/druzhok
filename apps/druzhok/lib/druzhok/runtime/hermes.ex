@@ -408,25 +408,42 @@ defmodule Druzhok.Runtime.Hermes do
   )
 
   defp sync_skills_block(content, bundled) do
-    case Enum.filter(@disabled_skills, &MapSet.member?(bundled, &1)) do
+    names =
+      case bundled do
+        :fresh -> @disabled_skills
+        {:manifest, set} -> Enum.filter(@disabled_skills, &MapSet.member?(set, &1))
+        :unknown -> []
+      end
+
+    case names do
       [] -> put_block(content, "skills", [{"disabled", :delete}])
       names -> put_block(content, "skills", [{"disabled", {:list, names}}])
     end
   end
 
-  # Names of the skills hermes copied in (`name:hash` lines), read without
-  # following a symlink; none when the manifest is missing or refused.
+  # Which bundled skills the bot has: `{:manifest, names}` from hermes's
+  # skills/.bundled_manifest (`name:hash` lines, read without following a
+  # symlink); `:fresh` when there is no skills/ dir at all, i.e. hermes has
+  # not copied anything in yet (it does so at gateway start, after this sync)
+  # and the bot cannot have made a skill of its own; `:unknown` otherwise (a
+  # refused or unreadable manifest), which disables nothing.
   defp bundled_skills(data_root) do
     case TenantFiles.read_text(data_root, ["skills", ".bundled_manifest"], 262_144) do
       {:ok, %{text: text}} ->
-        for line <- String.split(text, "\n"),
-            name = line |> String.split(":", parts: 2) |> hd() |> String.trim(),
-            name != "",
-            into: MapSet.new(),
-            do: name
+        names =
+          for line <- String.split(text, "\n"),
+              name = line |> String.split(":", parts: 2) |> hd() |> String.trim(),
+              name != "",
+              into: MapSet.new(),
+              do: name
+
+        {:manifest, names}
 
       _ ->
-        MapSet.new()
+        case File.lstat(Path.join(data_root, "skills")) do
+          {:error, :enoent} -> :fresh
+          _ -> :unknown
+        end
     end
   end
 
@@ -467,6 +484,31 @@ defmodule Druzhok.Runtime.Hermes do
   # block, so a changed value leaves nothing behind and a second run changes
   # nothing. A block left empty loses its header; a missing one is appended.
   defp put_block(content, name, owned) do
+    case inline_block(content, name) do
+      :none ->
+        put_block_lines(content, name, owned)
+
+      {:empty, header} ->
+        put_block_lines(String.replace(content, header, name <> ":", global: false), name, owned)
+
+      # A hand-written flow mapping (`terminal: {backend: local}`) is left as
+      # it is: appending a second block would be a duplicate key.
+      :flow ->
+        content
+    end
+  end
+
+  # How the top-level `name:` line carries an inline value: none (a block
+  # header or no such key), an empty one (`{}`, `null`, `~`), or anything else.
+  defp inline_block(content, name) do
+    case Regex.run(~r/^#{Regex.escape(name)}:[ \t]+([^#\s][^\n]*?)[ \t]*(?:#[^\n]*)?$/m, content) do
+      [header, value] when value in ["{}", "null", "~"] -> {:empty, header}
+      [_, _] -> :flow
+      nil -> :none
+    end
+  end
+
+  defp put_block_lines(content, name, owned) do
     lines = String.split(content, "\n")
 
     case yaml_block(lines, 0, name, 0, length(lines) - 1) do
