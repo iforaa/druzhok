@@ -56,8 +56,13 @@ and a coding assistant; the product is Дружок.
     is also called for the manager bot.
   - When `display_name` is nil, `sync_soul` keeps the current SOUL.md. The only exception is a missing
     SOUL.md, which is written with «Дружок». The bot's slug is never used as a name.
-- **`ManagerBot.Provisioner.write_soul/2` is removed.** The 'missing' row below covers creation. Update the
-  CLAUDE.md layout note («SOUL.md from the provisioner» becomes «SOUL.md from `Runtime.Hermes.sync_soul/2`»).
+- **`ManagerBot.Provisioner.write_soul/2` is removed.** The 'missing' row below covers creation.
+- **Docs to update with the change:**
+  - CLAUDE.md's layout line becomes «workspace seed: config.yaml comes from
+    `Runtime.Hermes.workspace_files/1`; SOUL.md from `Runtime.Hermes.sync_soul/2`; no AGENTS.md».
+  - Three hermes.ex comments: the moduledoc on the AGENTS.md seed (hermes.ex:17), "Set MESSAGING_CWD so
+    hermes's prompt_builder loads AGENTS.md" (:110), and "see workspace/AGENTS.md «Публикация сайтов»"
+    (:140, the steps move to `product_rules/1`).
 - **Content (Russian, short):**
   - who it is: a personal assistant in Telegram, part of Дружок;
   - its voice: friendly, plain words, no jargon, short by default;
@@ -179,8 +184,11 @@ New texts:
 - ru: «Лимит тарифа на сейчас исчерпан. Когда он обновится и как сменить тариф — в «Кабинете».»
 - en: «The plan's limit is used up for now. When it resets and how to change plans — in «Кабинет».»
 
-No prompt can change these, because they are deterministic completions. `text/1` also feeds the 402
-replies for search and other endpoints (llm_proxy/ruoc.ex:265, 394); those get the same texts.
+No prompt can change these, because they are deterministic completions.
+- `text/1` also feeds the 402 replies for fetch (`/v2/scrape`, llm_proxy/ruoc.ex:259) and image generation
+  (ruoc.ex:388); those get the same texts.
+- Search (`search/4`, ruoc.ex:190) does not use `BalanceNotice` today: it relays ruoc's own error text,
+  which may say "balance", to the model. A 402 branch is added there that uses `text/1`.
 
 **Only the main conversation call gets the notice.** Today every 402 on `/v1/chat/completions` becomes a
 200 completion carrying the notice. That includes hermes's auxiliary calls (compression summary, photo
@@ -192,15 +200,19 @@ text (pre-existing).
   cron/scheduler.py:474) is a main conversation call without `tools` (chat_completions.py:387). A real 402
   there produces hermes's "Billing or credits exhausted … /model" text (conversation_loop.py:577), and cron
   delivers it to the owner.
-- **The gate therefore recognises the agent's own prompt.** Every agent system prompt, gateway or cron,
-  carries hermes's runtime trailer. The exact marker is pinned at implementation by rendering both a
-  gateway and a cron prompt: the `Conversation started:` line (agent/system_prompt.py:489) or the
-  `# Hermes runtime environment` heading. The aux prompts never carry it.
-- **The proxy answers the notice when** the request has non-empty `tools`, or when its first system message
-  contains that marker. Otherwise it passes the real 402 through, which hermes's auxiliary client treats as
-  a failure.
-- If a hermes update moves the marker, the gate falls back to today's behaviour: the notice for every chat
-  402. It never falls back to the raw lecture. The `update-hermes` skill gets a check for the marker.
+- **The gate recognises auxiliary calls, not agent calls,** so an unrecognised request gets the notice, as
+  today. The proxy passes the real 402 through only when the request has no `tools` and matches a known
+  auxiliary shape:
+  - **no system message at all:** the compressor sends a single user message
+    (agent/context_compressor.py:3899);
+  - **or a first system message that starts with one of hermes's auxiliary prompts:** title generation,
+    vision description, query rewrite. The prefixes are pinned at implementation from the hermes source
+    and kept in one list, `LlmProxy.AuxShapes`.
+- **Every other chat 402 gets the notice:** gateway turns, zero-toolset cron jobs, and Bot Mode sessions
+  (whose timestamp line differs, system_prompt.py:509).
+- **If a hermes update changes an auxiliary prompt,** that call falls back to today's behaviour (the notice
+  as its result). That is a cosmetic failure, never the raw lecture to the owner. The `update-hermes`
+  skill gets a check that the `AuxShapes` prefixes still match.
 - This needs no fork patch.
 - **To check on the canary**, on an exhausted plan:
   - an aux call gets 402 and hermes does not retry it in a loop;
@@ -238,8 +250,11 @@ text (pre-existing).
 - **`BalanceNotice`:**
   - both texts;
   - a 402 on a request with `tools` gets the notice;
-  - a tool-less request whose system message carries the agent marker (a cron shape) gets the notice;
-  - a tool-less aux-shaped request passes through as 402.
+  - a tool-less request with an agent system prompt (a cron shape) gets the notice;
+  - a tool-less request with an unknown system prompt gets the notice;
+  - a tool-less request with no system message (compressor shape), or with a listed aux prefix, passes
+    through as 402;
+  - a search 402 carries the notice text.
 
 ## Rollout
 
@@ -268,13 +283,19 @@ Canary igorhermes:
 - a question at the limit;
 - a group chat.
 
-The other bots pick the change up on wake.
+Then restart the other bots one at a time with `sudo ops/druzhok restart <bot>` (not `druzhok-ctl
+restart`, which skips `sync_config`). Waking would also apply it, since all live bots have sleep on today;
+the explicit restart doesn't depend on that.
 
 **Rollback.** The change ships `Druzhok.Runtime.Hermes.Rollback.voice/0`. For each bot it does three things
 through `TenantFiles`:
 - removes `agent.system_prompt` and `platform_hints.telegram` from `config.yaml`;
-- restores `SOUL.md.bak-*` where druzhok made one;
-- restores `AGENTS.md.bak-*` where the migration made one.
+- restores the newest `SOUL.md.bak-*`, but only when the current SOUL.md's hash equals
+  `instances.soul_sha256`, i.e. nobody edited druzhok's persona since;
+- restores the newest `AGENTS.md.bak-*`, but only when AGENTS.md is absent or still equals what the
+  migration wrote. The migration records that file's hash in `instances.agents_md_sha256`.
+- Otherwise the current file stays; the `.bak` is left in place for the operator, and the case is logged.
+  Nothing an owner or bot wrote after the migration is lost.
 
 The reverted `sync_agents_md` then re-adds its sections to a restored AGENTS.md as before. Without the
 key removal, the product rules would apply twice.

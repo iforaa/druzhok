@@ -58,6 +58,14 @@ can replace any path there with a symlink. Today's config.yaml and AGENTS.md wri
 
 From here on, every druzhok read or write of a tenant file goes through `Druzhok.TenantFiles`:
 - `config.yaml`, `skills/.bundled_manifest`, and batch 2's SOUL.md and AGENTS.md.
+- **This includes the first writer of config.yaml on every start,** `BotManager.write_workspace_files/2`
+  (bot_manager.ex:386, called by `prepare_start/1` before `sync_config`). Its `:create_only` seed uses
+  `File.exists?` (which follows links, so a dangling link reads as absent), then `File.mkdir_p!` and
+  `File.write!`. Those would create a dangling link's target anywhere on the host. The seed becomes:
+  1. lstat the target and its parents below the tenant dir; refuse an existing or dangling symlink and a
+     symlinked parent;
+  2. create the file exclusively (through `TenantFiles.replace/3`);
+  3. chown it to the bot's uid.
 - **Reads** already refuse a symlink anywhere below the tenant dir and verify the descriptor.
 - **Writes, new `TenantFiles.replace/3`:**
   1. lstat every path component below the tenant dir and refuse any symlink;
@@ -148,8 +156,15 @@ Obsidian stays: it works on plain files.
 
 **Skills are disabled by name** (`skills.disabled`, agent/skill_utils.py:261), so a bot-created skill with
 the same name would be hidden too. The written list is
-`@disabled_skills ∩ names in skills/.bundled_manifest`. A name the bot created is not in the manifest, so
-it is never disabled. If the manifest is missing, unreadable, or a symlink (read through `TenantFiles`),
+`@disabled_skills ∩ names in skills/.bundled_manifest`. A name the bot created is normally not in the
+manifest, so it is not disabled.
+
+**One accepted residual.** If a bot deletes a disabled bundled skill and creates its own with the same
+name, the manifest keeps the old entry (skill_manager_tool.py:562, skills_sync.py:438), so the new skill is
+hidden too. Hermes refuses to create a name that exists (skill_manager_tool.py:457), so this takes a
+deliberate delete first. It only affects the ~35 names tied to Macs, GitHub or external APIs, on bots
+without internet. Checking hermes's origin hash per skill would need its `_dir_hash` reproduced in druzhok,
+which isn't worth it. If the manifest is missing, unreadable, or a symlink (read through `TenantFiles`),
 nothing is disabled: `skills.disabled` is removed.
 
 `hermes-agent` is essential and cannot be disabled (skill_utils.py:258). The list is regenerated on every
@@ -219,6 +234,7 @@ More tests:
 - **`TenantFiles.replace/3`:**
   - a symlinked target, a dangling symlink target and a symlinked directory component are refused;
   - the written file belongs to the bot's uid.
+- **`prepare_start/1`:** a dangling-symlink `config.yaml` is refused, and the link's target is not created.
 
 ## Rollout
 
