@@ -18,6 +18,13 @@ defmodule Druzhok.TenantFiles do
 
   Directory *listings* are not done here: an in-process walk re-resolves the
   path at every step, so `Druzhok.Panel.Lister` lists as the bot's own user.
+
+  Writing (`write/4`, druzhok's own files in the tenant dir: config.yaml,
+  AGENTS.md) has the same problem the other way round: druzhok writes with
+  CAP_DAC_OVERRIDE, so a write that follows a symlink lands anywhere on the
+  host. Writes never open the target by name: a fresh temp file is created
+  exclusively next to it (O_EXCL does not follow a link) and renamed over it,
+  and rename(2) replaces a link instead of following it.
   """
 
   @doc """
@@ -142,6 +149,101 @@ defmodule Druzhok.TenantFiles do
       nil ->
         bin
     end
+  end
+
+  @doc """
+  Writes `content` to `segments` below `tenant_dir` without following a
+  symlink. Missing directories are created; any existing component that is
+  not a real directory, or a target that is not a regular file, is refused.
+  The file is owned by the tenant dir's owner (`uid:` overrides) and keeps an
+  existing file's mode (`mode:` for a new one, default 0644).
+
+  `create: true` writes only when nothing is there yet (a hard link of the
+  temp file, which fails rather than replace). Returns `:ok`, `{:ok, :exists}`
+  (create, a regular file is already there) or `{:error, reason}`.
+  """
+  def write(tenant_dir, segments, content, opts \\ []) do
+    {dirs, [name]} = Enum.split(segments, -1)
+    create? = Keyword.get(opts, :create, false)
+
+    with {:ok, uid} <- owner(tenant_dir, opts),
+         {:ok, dir} <- ensure_dirs(tenant_dir, dirs, uid),
+         target = Path.join(dir, name),
+         {:ok, mode} <- target_mode(target) do
+      if create? and mode != :new do
+        {:ok, :exists}
+      else
+        mode = if mode == :new, do: Keyword.get(opts, :mode, 0o644), else: mode
+        put_file(tenant_dir, dirs, dir, target, content, uid, mode, create?)
+      end
+    else
+      :not_found -> {:error, :no_tenant_dir}
+      {:error, _} = error -> error
+    end
+  end
+
+  defp ensure_dirs(tenant_dir, dirs, uid) do
+    Enum.reduce_while(dirs, {:ok, tenant_dir}, fn seg, {:ok, dir} ->
+      path = Path.join(dir, seg)
+
+      case File.lstat(path) do
+        {:ok, %File.Stat{type: :directory}} ->
+          {:cont, {:ok, path}}
+
+        {:error, :enoent} ->
+          # mkdir(2) fails on an existing link rather than follow it.
+          with :ok <- File.mkdir(path), :ok <- :file.change_owner(path, uid) do
+            {:cont, {:ok, path}}
+          else
+            {:error, reason} -> {:halt, {:error, reason}}
+          end
+
+        _ ->
+          {:halt, {:error, :not_a_directory}}
+      end
+    end)
+  end
+
+  defp target_mode(target) do
+    case File.lstat(target) do
+      {:ok, %File.Stat{type: :regular, mode: mode}} -> {:ok, Bitwise.band(mode, 0o7777)}
+      {:ok, _} -> {:error, :not_regular}
+      {:error, :enoent} -> {:ok, :new}
+      {:error, reason} -> {:error, reason}
+    end
+  end
+
+  defp put_file(tenant_dir, dirs, dir, target, content, uid, mode, create?) do
+    tmp =
+      Path.join(dir, ".#{Path.basename(target)}.druzhok-#{System.unique_integer([:positive])}")
+
+    result =
+      with {:ok, fd} <- :file.open(tmp, [:write, :exclusive, :binary, :raw]),
+           :ok <- write_close(fd, content),
+           :ok <- :file.change_mode(tmp, mode),
+           :ok <- :file.change_owner(tmp, uid),
+           # The directories may have been swapped since ensure_dirs/3.
+           true <- real_dir?(tenant_dir, dirs) || {:error, :not_a_directory} do
+        if create? do
+          case :file.make_link(tmp, target) do
+            :ok -> :ok
+            {:error, :eexist} -> {:ok, :exists}
+            {:error, reason} -> {:error, reason}
+          end
+        else
+          :file.rename(tmp, target)
+        end
+      end
+
+    # After a rename the temp name is gone; after a link (or a failure) it is not.
+    _ = :file.delete(tmp)
+    result
+  end
+
+  defp write_close(fd, content) do
+    result = :file.write(fd, content)
+    :ok = :file.close(fd)
+    result
   end
 
   @doc "Whether every component of `segments` below `tenant_dir` is a real directory."

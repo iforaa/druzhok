@@ -89,4 +89,55 @@ defmodule Druzhok.TenantFilesTest do
       refute TenantFiles.valid_segments?(bad), inspect(bad)
     end
   end
+
+  describe "write/4" do
+    test "replaces a regular file, keeping its mode", %{dir: dir} do
+      path = Path.join(dir, "config.yaml")
+      File.write!(path, "old")
+      File.chmod!(path, 0o640)
+      assert :ok = TenantFiles.write(dir, ["config.yaml"], "new")
+      assert File.read!(path) == "new"
+      assert Bitwise.band(File.stat!(path).mode, 0o777) == 0o640
+      assert Path.wildcard(Path.join(dir, ".config.yaml.druzhok-*"), match_dot: true) == []
+    end
+
+    test "creates missing directories and a new file", %{dir: dir} do
+      assert :ok = TenantFiles.write(dir, ["workspace", "AGENTS.md"], "# hi")
+      assert File.read!(Path.join([dir, "workspace", "AGENTS.md"])) == "# hi"
+      assert File.stat!(Path.join([dir, "workspace", "AGENTS.md"])).uid == File.stat!(dir).uid
+    end
+
+    test "never writes through a symlinked target", %{dir: dir, outside: outside} do
+      File.ln_s!(Path.join(outside, "secret"), Path.join(dir, "config.yaml"))
+      assert {:error, :not_regular} = TenantFiles.write(dir, ["config.yaml"], "pwned")
+      assert File.read!(Path.join(outside, "secret")) == "token"
+    end
+
+    test "a dangling symlink is refused, and its target is not created", %{dir: dir, outside: outside} do
+      target = Path.join(outside, "created")
+      File.ln_s!(target, Path.join(dir, "config.yaml"))
+      assert {:error, :not_regular} = TenantFiles.write(dir, ["config.yaml"], "seed", create: true)
+      assert {:error, :not_regular} = TenantFiles.write(dir, ["config.yaml"], "seed")
+      refute File.exists?(target)
+    end
+
+    test "never writes below a symlinked directory", %{dir: dir, outside: outside} do
+      File.ln_s!(outside, Path.join(dir, "workspace"))
+      assert {:error, :not_a_directory} = TenantFiles.write(dir, ["workspace", "AGENTS.md"], "x")
+      refute File.exists?(Path.join(outside, "AGENTS.md"))
+    end
+
+    test "create: true leaves an existing file alone", %{dir: dir} do
+      File.write!(Path.join(dir, "config.yaml"), "mine")
+      assert {:ok, :exists} = TenantFiles.write(dir, ["config.yaml"], "seed", create: true)
+      assert File.read!(Path.join(dir, "config.yaml")) == "mine"
+      assert :ok = TenantFiles.write(dir, ["new.yaml"], "seed", create: true)
+      assert File.read!(Path.join(dir, "new.yaml")) == "seed"
+      assert Path.wildcard(Path.join(dir, ".*.druzhok-*"), match_dot: true) == []
+    end
+
+    test "a missing tenant dir is an error", %{dir: dir} do
+      assert {:error, :no_tenant_dir} = TenantFiles.write(dir <> "-nope", ["config.yaml"], "x")
+    end
+  end
 end

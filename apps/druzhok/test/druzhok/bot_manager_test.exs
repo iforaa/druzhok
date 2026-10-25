@@ -40,4 +40,39 @@ defmodule Druzhok.BotManagerTest do
       refute BotManager.safe_to_wipe?("/tmp/druzhok-test-root-evil/x")
     end
   end
+
+  describe "prepare_start/1 and the tuning rollback" do
+    setup do
+      %{data_root: root} = Druzhok.BotFixtures.with_tmp_data_root()
+      name = "tune#{System.unique_integer([:positive])}"
+      inst = %Druzhok.Instance{name: name, workspace: Path.join([root, name, "workspace"]), model: "x", tenant_key: "k"}
+      File.mkdir_p!(inst.workspace)
+      outside = Path.join(System.tmp_dir!(), "outside-#{System.unique_integer([:positive])}")
+      on_exit(fn -> File.rm_rf(outside) end)
+      %{inst: inst, home: Path.join(root, name), outside: outside}
+    end
+
+    test "a dangling config.yaml symlink is refused, not followed", %{inst: inst, home: home, outside: outside} do
+      File.ln_s!(outside, Path.join(home, "config.yaml"))
+      assert_raise RuntimeError, ~r/config.yaml.*not_regular/, fn -> BotManager.prepare_start(inst) end
+      refute File.exists?(outside)
+      assert {:ok, %File.Stat{type: :symlink}} = File.lstat(Path.join(home, "config.yaml"))
+    end
+
+    test "seeds config.yaml with the tuning keys, and Rollback.tuning/0 removes them", %{inst: inst, home: home} do
+      BotManager.prepare_start(inst)
+      {:ok, cfg} = YamlElixir.read_from_string(File.read!(Path.join(home, "config.yaml")))
+      assert cfg["agent"]["max_turns"] == 30
+      assert cfg["terminal"]["cwd"] == inst.workspace
+
+      row = Druzhok.Repo.insert!(%{inst | telegram_token: "rollback-#{inst.name}"})
+      on_exit(fn -> Druzhok.Repo.delete(row) end)
+
+      assert {_, :ok} = List.keyfind(Druzhok.Runtime.Hermes.Rollback.tuning(), inst.name, 0)
+      {:ok, cfg} = YamlElixir.read_from_string(File.read!(Path.join(home, "config.yaml")))
+      refute Map.has_key?(cfg["agent"] || %{}, "max_turns")
+      refute Map.has_key?(cfg, "terminal")
+      assert {_, :unchanged} = List.keyfind(Druzhok.Runtime.Hermes.Rollback.tuning(), inst.name, 0)
+    end
+  end
 end

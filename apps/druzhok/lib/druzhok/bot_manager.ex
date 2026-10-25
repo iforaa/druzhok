@@ -216,14 +216,15 @@ defmodule Druzhok.BotManager do
 
     write_workspace_files(data_root, Hermes.workspace_files(instance))
     # The operator is the hermes slash-command admin on every bot
-    # (Runtime.Hermes.sync_config/2), and whether the model reads photos
-    # comes from ruoc's catalogue; the instance row carries neither.
+    # (Runtime.Hermes.sync_config/2), and what the model can do (photos, its
+    # context window) comes from ruoc's catalogue; the instance row carries
+    # neither.
     model = instance.model || Druzhok.Ruoc.default_model()
 
     Hermes.sync_config(
       instance
       |> Map.put(:operator_telegram_id, Druzhok.Settings.operator_telegram_id())
-      |> Map.put(:model_sees_images, Druzhok.Ruoc.sees_images?(model)),
+      |> Map.put(:model_facts, Druzhok.Ruoc.model_facts(model)),
       data_root
     )
 
@@ -237,8 +238,13 @@ defmodule Druzhok.BotManager do
   """
   def update_image_gen(name, enabled?, model) when is_boolean(enabled?) do
     case Repo.get_by(Instance, name: name) do
-      nil -> {:error, :not_found}
-      inst -> inst |> Instance.changeset(%{image_gen_enabled: enabled?, image_gen_model: model}) |> Repo.update()
+      nil ->
+        {:error, :not_found}
+
+      inst ->
+        inst
+        |> Instance.changeset(%{image_gen_enabled: enabled?, image_gen_model: model})
+        |> Repo.update()
     end
   end
 
@@ -335,12 +341,16 @@ defmodule Druzhok.BotManager do
 
     if safe_to_wipe?(data_root) do
       case File.rm_rf(data_root) do
-        {:ok, _} -> Logger.info("Wiped data dir for #{instance.name}: #{data_root}")
+        {:ok, _} ->
+          Logger.info("Wiped data dir for #{instance.name}: #{data_root}")
+
         {:error, reason, file} ->
           Logger.error("Failed to wipe #{data_root} (#{file}): #{inspect(reason)}")
       end
     else
-      Logger.warning("Refusing to wipe unsafe data dir for #{instance.name}: #{inspect(data_root)}")
+      Logger.warning(
+        "Refusing to wipe unsafe data dir for #{instance.name}: #{inspect(data_root)}"
+      )
     end
   end
 
@@ -349,11 +359,13 @@ defmodule Druzhok.BotManager do
   # against a malformed instance.workspace nuking something unexpected.
   def safe_to_wipe?(nil), do: false
   def safe_to_wipe?(""), do: false
+
   def safe_to_wipe?(path) when is_binary(path) do
     root = data_root_base()
     abs = Path.expand(path)
     abs not in ["/", root] and String.starts_with?(abs <> "/", root <> "/")
   end
+
   def safe_to_wipe?(_), do: false
 
   @doc """
@@ -383,7 +395,13 @@ defmodule Druzhok.BotManager do
   @doc "Run a command inside the bot's environment. Returns `{output, exit_code}`."
   def exec(name, args) when is_list(args), do: Druzhok.Host.exec(name, args)
 
+  # Through TenantFiles: the bot owns its data root and could leave a symlink
+  # (even a dangling one) where a seed goes, and druzhok writes with
+  # CAP_DAC_OVERRIDE. A refused write is never followed; it fails the start,
+  # which the controller records and retries.
   defp write_workspace_files(data_root, files) do
+    File.mkdir_p!(data_root)
+
     for entry <- files do
       {rel_path, content, mode} =
         case entry do
@@ -391,15 +409,17 @@ defmodule Druzhok.BotManager do
           {p, c, m} -> {p, c, m}
         end
 
-      full_path = Path.join(data_root, rel_path)
-      File.mkdir_p!(Path.dirname(full_path))
-
-      cond do
-        mode == :create_only and File.exists?(full_path) ->
+      case Druzhok.TenantFiles.write(data_root, Path.split(rel_path), content,
+             create: mode == :create_only
+           ) do
+        :ok ->
           :ok
 
-        true ->
-          File.write!(full_path, content)
+        {:ok, :exists} ->
+          :ok
+
+        {:error, reason} ->
+          raise "cannot write #{rel_path} in #{data_root}: #{inspect(reason)}"
       end
     end
 

@@ -84,9 +84,14 @@ defmodule Druzhok.Ruoc do
 
       {:ok, 409, %{} = resp} ->
         case error_type(resp) do
-          "account_exists" -> reissue_key(resp)
-          "invite_" <> reason when reason in ["invalid", "spent", "expired"] -> {:error, {:invite, invite_reason(reason)}}
-          _ -> {:error, describe({:ok, 409, resp})}
+          "account_exists" ->
+            reissue_key(resp)
+
+          "invite_" <> reason when reason in ["invalid", "spent", "expired"] ->
+            {:error, {:invite, invite_reason(reason)}}
+
+          _ ->
+            {:error, describe({:ok, 409, resp})}
         end
 
       {:ok, 429, %{} = resp} = other ->
@@ -143,8 +148,11 @@ defmodule Druzhok.Ruoc do
   def check_invite(code) do
     # A person is waiting on this one in the superbot's poll loop, so it gets a
     # short leash rather than the client's two-minute default.
-    case partner_get("/partner/invites/check?code=" <> URI.encode_www_form(code), receive_timeout: 10_000) do
-      {:ok, 200, %{"status" => status}} when status in ["available", "spent", "expired", "invalid"] ->
+    case partner_get("/partner/invites/check?code=" <> URI.encode_www_form(code),
+           receive_timeout: 10_000
+         ) do
+      {:ok, 200, %{"status" => status}}
+      when status in ["available", "spent", "expired", "invalid"] ->
         {:ok, invite_status(status)}
 
       other ->
@@ -194,10 +202,17 @@ defmodule Druzhok.Ruoc do
     path = if query == "", do: "/partner/accounts", else: "/partner/accounts?" <> query
 
     case partner_get(path, receive_timeout: @partner_timeout_ms) do
-      {:ok, 200, list} when is_list(list) -> {:ok, Enum.map(list, &to_account/1)}
-      {:ok, 200, %{"accounts" => list}} when is_list(list) -> {:ok, Enum.map(list, &to_account/1)}
-      {:ok, 200, other} -> {:error, "unexpected accounts payload: #{inspect(other) |> String.slice(0, 200)}"}
-      other -> {:error, describe(other)}
+      {:ok, 200, list} when is_list(list) ->
+        {:ok, Enum.map(list, &to_account/1)}
+
+      {:ok, 200, %{"accounts" => list}} when is_list(list) ->
+        {:ok, Enum.map(list, &to_account/1)}
+
+      {:ok, 200, other} ->
+        {:error, "unexpected accounts payload: #{inspect(other) |> String.slice(0, 200)}"}
+
+      other ->
+        {:error, describe(other)}
     end
   end
 
@@ -231,7 +246,12 @@ defmodule Druzhok.Ruoc do
       {:ok, 200, _headers, body} ->
         case Jason.decode(body) do
           {:ok, %{"balance_nanorub" => nano} = payload} when is_integer(nano) ->
-            {:ok, %{balance_rub: format_rub(nano), balance_nanorub: nano, subscription: subscription(payload["subscription"])}}
+            {:ok,
+             %{
+               balance_rub: format_rub(nano),
+               balance_nanorub: nano,
+               subscription: subscription(payload["subscription"])
+             }}
 
           _ ->
             {:error, "unexpected balance payload"}
@@ -305,6 +325,7 @@ defmodule Druzhok.Ruoc do
   defp format_rub(nano) do
     kopecks = div(abs(nano) + 5_000_000, 10_000_000)
     sign = if nano < 0, do: "-", else: ""
+
     "#{sign}#{div(kopecks, 100)}.#{kopecks |> rem(100) |> Integer.to_string() |> String.pad_leading(2, "0")}"
   end
 
@@ -359,10 +380,11 @@ defmodule Druzhok.Ruoc do
             # Keep serving the last good list (or nothing) and do not retry
             # before the TTL: every model picker would otherwise hit the
             # gateway again.
-            list = case stale do
-              {_, list} -> list
-              nil -> []
-            end
+            list =
+              case stale do
+                {_, list} -> list
+                nil -> []
+              end
 
             :persistent_term.put(@cache_key, {now, list})
             list
@@ -381,14 +403,25 @@ defmodule Druzhok.Ruoc do
   def vision_models, do: Enum.filter(models(), &(&1.capabilities["attachment"] == true))
 
   @doc """
-  Whether `model` reads images, from the cached catalogue without waiting on
-  ruoc: `true`/`false`, or `nil` while the catalogue is not fetched yet or
-  does not list the model.
+  What a bot's config needs to know about `model`, from the cached catalogue
+  without waiting on ruoc: `{:ok, %{sees_images: bool, context: int | nil}}`;
+  `:unknown_model` when the catalogue is loaded but does not list it; or
+  `:no_catalogue` while the cached list is empty (never fetched, or the first
+  fetch failed).
   """
-  def sees_images?(model) do
-    case Enum.find(cached_models(), &(&1.id == model)) do
-      nil -> nil
-      m -> m.capabilities["attachment"] == true
+  def model_facts(model) do
+    case cached_models() do
+      [] ->
+        :no_catalogue
+
+      list ->
+        case Enum.find(list, &(&1.id == model)) do
+          nil ->
+            :unknown_model
+
+          m ->
+            {:ok, %{sees_images: m.capabilities["attachment"] == true, context: m.limits.context}}
+        end
     end
   end
 
@@ -423,8 +456,11 @@ defmodule Druzhok.Ruoc do
         case Client.get("/v1/images/models", key) do
           {:ok, 200, _headers, body} ->
             case Jason.decode(body) do
-              {:ok, %{"models" => list}} when is_list(list) -> {:ok, Enum.map(list, &to_image_model/1)}
-              _ -> {:error, "unexpected image models payload"}
+              {:ok, %{"models" => list}} when is_list(list) ->
+                {:ok, Enum.map(list, &to_image_model/1)}
+
+              _ ->
+                {:error, "unexpected image models payload"}
             end
 
           {:ok, status, _headers, body} ->
@@ -475,9 +511,16 @@ defmodule Druzhok.Ruoc do
       id: m["id"],
       name: m["name"] || m["id"],
       price: %{input: price["input_rub_per_million"], output: price["output_rub_per_million"]},
-      capabilities: m["capabilities"] || %{}
+      capabilities: m["capabilities"] || %{},
+      limits: %{
+        context: positive_int(get_in(m, ["limit", "context"])),
+        output: positive_int(get_in(m, ["limit", "output"]))
+      }
     }
   end
+
+  defp positive_int(n) when is_integer(n) and n > 0, do: n
+  defp positive_int(_), do: nil
 
   # A create is safe to send twice (the ref), so a transport error or a
   # timeout gets one more try before it is given up.
@@ -519,7 +562,8 @@ defmodule Druzhok.Ruoc do
     end
   end
 
-  defp partner_timeout, do: Application.get_env(:druzhok, :ruoc_partner_timeout_ms, @partner_timeout_ms)
+  defp partner_timeout,
+    do: Application.get_env(:druzhok, :ruoc_partner_timeout_ms, @partner_timeout_ms)
 
   defp decode(body) do
     case Jason.decode(body) do
@@ -531,5 +575,7 @@ defmodule Druzhok.Ruoc do
   defp describe({:error, {:transport, reason}}), do: inspect(reason)
   defp describe({:error, reason}), do: reason
   defp describe({:ok, status, %{"error" => %{"message" => msg}}}), do: "HTTP #{status}: #{msg}"
-  defp describe({:ok, status, body}), do: "HTTP #{status}: #{inspect(body) |> String.slice(0, 200)}"
+
+  defp describe({:ok, status, body}),
+    do: "HTTP #{status}: #{inspect(body) |> String.slice(0, 200)}"
 end

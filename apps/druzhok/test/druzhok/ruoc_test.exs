@@ -291,6 +291,10 @@ defmodule Druzhok.RuocTest do
       assert length(Ruoc.models()) == 2
     end
 
+    test "keeps the context limit", %{stub: _stub} do
+      assert %{limits: %{context: 131_072, output: 32_768}} = Ruoc.find_model("ruoc-flash")
+    end
+
     test "is empty without a catalog key", %{stub: stub} do
       RuocStub.unset(:ruoc_catalog_key)
       assert Ruoc.models() == []
@@ -357,4 +361,20 @@ defmodule Druzhok.RuocTest do
   end
 
   defp request_body(raw), do: raw |> String.split("\r\n\r\n", parts: 2) |> List.last()
+
+  describe "model_facts/1" do
+    test "a listed model, an unlisted one, and an empty catalogue", %{stub: stub} do
+      Ruoc.reset_cache()
+      assert length(Ruoc.models()) == 2
+      assert {:ok, %{sees_images: true, context: 131_072}} = Ruoc.model_facts("ruoc-flash")
+      assert {:ok, %{sees_images: false}} = Ruoc.model_facts("ruoc-standard")
+      assert :unknown_model = Ruoc.model_facts("nope")
+
+      # A failed first fetch caches an empty list: unknown, not "unlisted".
+      Ruoc.reset_cache()
+      Bypass.down(stub.bypass)
+      assert Ruoc.models() == []
+      assert :no_catalogue = Ruoc.model_facts("ruoc-flash")
+    end
+  end
 end

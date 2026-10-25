@@ -21,7 +21,7 @@ defmodule Druzhok.Runtime.Hermes do
   """
 
   require Logger
-  alias Druzhok.Instance
+  alias Druzhok.{Instance, TenantFiles}
 
   # ruoc catalogue entry Mnemosyne embeds through, and its vector width.
   @embedding_model "ruoc-embed-gemini"
@@ -100,21 +100,25 @@ defmodule Druzhok.Runtime.Hermes do
     # proxy's /v1/audio/transcriptions endpoint instead of api.openai.com.
     # The provider choice (openai vs local/faster-whisper) lives in
     # config.yaml's `stt:` section — see build_config_yaml/1.
+    #
+    # The model and provider come from config.yaml's `model:` block only
+    # (HERMES_MODEL / HERMES_INFERENCE_PROVIDER, and HERMES_QUIET, which the
+    # gateway forces itself, are no longer set).
     tenant_key = Map.get(instance, :tenant_key, "") || ""
-    model = Map.get(instance, :model) || Druzhok.Ruoc.default_model()
     proxy_url = proxy_url()
 
     %{
       "HERMES_HOME" => data_root(instance),
-      "HERMES_QUIET" => "0",
-      # Set MESSAGING_CWD so hermes's prompt_builder loads AGENTS.md
-      # from the workspace, not from /root or /opt/hermes.
+      # The bot's working directory; `terminal.cwd` in config.yaml is the
+      # canonical setting since hermes 0.22 (sync_terminal_block/2). Kept with
+      # the same value for one release, for rollback.
       "MESSAGING_CWD" => Path.join(data_root(instance), "workspace"),
       "TELEGRAM_BOT_TOKEN" => Map.get(instance, :telegram_token, "") || "",
       "TELEGRAM_FALLBACK_IPS" => @telegram_fallback_ips,
       "HERMES_RESTART_DRAIN_TIMEOUT" => @restart_drain_timeout,
       "TELEGRAM_ALLOWED_USERS" => build_allowlist(instance),
-      "TELEGRAM_ALLOW_ALL_USERS" => to_string(Map.get(instance, :allow_all_telegram_users, false)),
+      "TELEGRAM_ALLOW_ALL_USERS" =>
+        to_string(Map.get(instance, :allow_all_telegram_users, false)),
       # Group chat trigger gating. `require_mention` forces groups to need
       # an @mention / regex trigger / reply-to-bot. `mention_patterns` is
       # a JSON list of regexes hermes compiles with re.IGNORECASE.
@@ -139,14 +143,12 @@ defmodule Druzhok.Runtime.Hermes do
       # base URL; otherwise this is empty and the agent refuses to
       # publish (see workspace/AGENTS.md "Публикация сайтов").
       "BOT_SITE_BASE_URL" => build_bot_site_base_url(instance),
-      "HERMES_INFERENCE_PROVIDER" => "custom",
       "OPENROUTER_API_KEY" => tenant_key,
       # Anything hermes sends to "openrouter" goes to the proxy too. Bots have
       # no internet, and the video tool's catalog fetch to openrouter.ai hung
       # 2 × 10 s on every start (nftables drops), holding the first reply
       # behind hermes's turn warm-up; the proxy answers it 404 at once.
       "OPENROUTER_BASE_URL" => proxy_url,
-      "HERMES_MODEL" => model,
       "STT_OPENAI_BASE_URL" => proxy_url,
       # Web search: firecrawl backend → druzhok /v2/search → perplexity/sonar
       "FIRECRAWL_API_URL" => proxy_url |> String.replace_suffix("/v1", ""),
@@ -165,8 +167,11 @@ defmodule Druzhok.Runtime.Hermes do
 
     port_env =
       case Webhook.port(instance) do
-        nil -> %{}
-        port -> %{"TELEGRAM_WEBHOOK_PORT" => to_string(port), "TELEGRAM_WEBHOOK_HOST" => "127.0.0.1"}
+        nil ->
+          %{}
+
+        port ->
+          %{"TELEGRAM_WEBHOOK_PORT" => to_string(port), "TELEGRAM_WEBHOOK_HOST" => "127.0.0.1"}
       end
 
     if Webhook.webhook?(instance) and port_env != %{} do
@@ -180,8 +185,9 @@ defmodule Druzhok.Runtime.Hermes do
   end
 
   # Mnemosyne memory provider (docs/superpowers/specs/2026-09-06-mnemosyne-memory-design.md):
-  # embeddings go to the proxy's /v1/embeddings with the tenant key, e5 needs
-  # its two prefixes (trailing space included), and LLM consolidation stays
+  # embeddings go to the proxy's /v1/embeddings with the tenant key, with the
+  # e5-era query/passage prefixes (trailing space included; kept for gemini on
+  # eval evidence, R@5 1.00 vs 0.99 without), and LLM consolidation stays
   # off. `MNEMOSYNE_DATA_DIR` keeps the SQLite bank inside the tenant dir; it
   # must be `<HERMES_HOME>/mnemosyne/data`, because the hermes plugin ignores
   # the variable and opens exactly that path, while the `mnemosyne` CLI (reindex,
@@ -229,24 +235,27 @@ defmodule Druzhok.Runtime.Hermes do
     ]
   end
 
+  # config.yaml and AGENTS.md are read whole; anything larger is left alone.
+  @config_limit 1_048_576
+
   def sync_config(instance, data_root) do
     sync_agents_md(instance, data_root)
 
     # Patch druzhok-owned fields in config.yaml on every start so the
     # instance row stays the source of truth without clobbering hermes's
-    # runtime writes (thread IDs etc).
-    config_path = Path.join(data_root, "config.yaml")
+    # runtime writes (thread IDs etc). Read and written through TenantFiles:
+    # the bot owns the file and could make it a symlink.
     model = Map.get(instance, :model) || Druzhok.Ruoc.default_model()
     vision_model = vision_model_for(instance, model)
     tenant_key = Map.get(instance, :tenant_key, "") || ""
 
-    case File.read(config_path) do
-      {:ok, content} ->
+    case TenantFiles.read_text(data_root, ["config.yaml"], @config_limit) do
+      {:ok, %{text: content, truncated: false}} ->
         updated =
           content
           |> sync_model_default(model)
           |> sync_model_api_key()
-          |> sync_auxiliary_vision(vision_model, tenant_key)
+          |> sync_auxiliary_block(vision_model, tenant_key)
           |> sync_group_sessions_per_user(instance)
           |> sync_memory_block(instance)
           |> sync_image_gen_block(instance)
@@ -258,13 +267,27 @@ defmodule Druzhok.Runtime.Hermes do
           |> sync_cron_block()
           |> sync_display_block()
           |> sync_stt_block()
-          |> sync_image_input_mode(instance)
+          |> sync_model_facts(instance)
+          |> sync_agent_block()
+          |> sync_skills_block(bundled_skills(data_root))
+          |> sync_terminal_block(data_root)
+          |> drop_messaging_block()
 
-        if updated != content, do: File.write!(config_path, updated)
+        if updated != content, do: write_tenant_file(data_root, ["config.yaml"], updated)
         :ok
 
-      {:error, _} ->
+      _ ->
         :ok
+    end
+  end
+
+  defp write_tenant_file(data_root, segments, content) do
+    case TenantFiles.write(data_root, segments, content) do
+      :ok ->
+        :ok
+
+      {:error, reason} ->
+        Logger.warning("Not writing #{Path.join(segments)} in #{data_root}: #{inspect(reason)}")
     end
   end
 
@@ -275,7 +298,12 @@ defmodule Druzhok.Runtime.Hermes do
 
   defp sync_gateway_block(content) do
     sync_yaml_block(content, "gateway",
-      upsert: &upsert_indented_line(&1, "systemd_watchdog_seconds", to_string(@systemd_watchdog_seconds)),
+      upsert:
+        &upsert_indented_line(
+          &1,
+          "systemd_watchdog_seconds",
+          to_string(@systemd_watchdog_seconds)
+        ),
       default: "gateway:\n  systemd_watchdog_seconds: #{@systemd_watchdog_seconds}"
     )
   end
@@ -300,31 +328,238 @@ defmodule Druzhok.Runtime.Hermes do
     )
   end
 
-  # How a photo reaches the model (hermes `agent.image_input_mode`). In
-  # `auto` the explicit `auxiliary.vision` block above makes hermes describe
-  # every photo in a separate call and hand the bot 2-4 English sentences
-  # instead (agent/image_routing.py), even when the bot's model reads images.
-  # `native` sends the photo itself. Hermes also checks right before each call
-  # whether the model sees (agent/vision_message_prep.py); models.dev does not
-  # know ruoc's ids, so without `model.supports_vision` it turns every photo
-  # in the history back into a long description. A model ruoc says cannot
-  # read images keeps `auto` and `supports_vision: false`, and so the
-  # description; while the catalogue is unknown (`model_sees_images` nil) the
-  # file is left as it is.
-  defp sync_image_input_mode(content, instance) do
-    case Map.get(instance, :model_sees_images) do
+  # What the bot's model can do, from ruoc's catalogue (`model_facts`, set by
+  # BotManager.prepare_start/1 from Ruoc.model_facts/1):
+  #
+  # - `model.context_length`: hermes cannot probe the proxy for a window and
+  #   falls back to its own table, 1M for "deepseek-flash", so it compressed
+  #   only at 0.5 × 1M. ruoc's real limit (200K) makes it compress at 75 %.
+  # - how a photo reaches the model (`agent.image_input_mode`). In `auto` the
+  #   explicit `auxiliary.vision` block makes hermes describe every photo in a
+  #   separate call and hand the bot 2-4 English sentences instead
+  #   (agent/image_routing.py), even when the bot's model reads images;
+  #   `native` sends the photo itself. Hermes also checks right before each
+  #   call whether the model sees (agent/vision_message_prep.py); models.dev
+  #   does not know ruoc's ids, so without `model.supports_vision` it turns
+  #   every photo in the history back into a long description.
+  #
+  # A model ruoc does not list loses all three numbers (hermes falls back to
+  # its own detection, `auto` describes photos); while the catalogue is empty
+  # (`:no_catalogue`) the file is left as it is.
+  defp sync_model_facts(content, instance) do
+    case Map.get(instance, :model_facts) do
+      {:ok, %{sees_images: sees?, context: context}} ->
+        content
+        |> put_block("model", [
+          {"context_length", if(context, do: to_string(context), else: :delete)},
+          {"supports_vision", to_string(sees?)}
+        ])
+        |> put_block("agent", [{"image_input_mode", if(sees?, do: "native", else: "auto")}])
+
+      :unknown_model ->
+        content
+        |> put_block("model", [{"context_length", :delete}, {"supports_vision", :delete}])
+        |> put_block("agent", [{"image_input_mode", "auto"}])
+
+      _ ->
+        content
+    end
+  end
+
+  # Toolsets a bot can never use: no internet and no browser binary
+  # (browser), no display (computer_use), no route to Nous's connector
+  # gateway or an MCP server (connections). Hermes's global suppression list,
+  # applied last (hermes_cli/tools_config.py:626): a block list, so toolsets
+  # a later hermes adds are not lost silently. Delegation stays (operator).
+  @disabled_toolsets ~w(browser computer_use connections)
+
+  # One reply may take at most 30 tool iterations (hermes default: unlimited)
+  # and 300 s; at 75 % the model is told once to wrap up, so it answers
+  # instead of being cut off mid-task.
+  @turn_budget [
+    {"max_turns", "30"},
+    {"budget_warning_ratio", "0.75"},
+    {"run_budget_seconds", "300"}
+  ]
+
+  defp sync_agent_block(content) do
+    put_block(
+      content,
+      "agent",
+      @turn_budget ++ [{"disabled_toolsets", {:list, @disabled_toolsets}}]
+    )
+  end
+
+  # Bundled skills that need a Mac, GitHub access, an external API or a
+  # coding-agent CLI that is not installed; the skills index in every system
+  # prompt lists them and some send the model after tools it lacks. Coding
+  # itself stays (file, terminal and code-execution tools; codebase-inspection,
+  # plan). google-workspace returns with a Google integration. Disabling is by
+  # name (hermes `skills.disabled`), so only names in the bot's
+  # skills/.bundled_manifest are written: a skill the bot made is not in it.
+  @disabled_skills ~w(
+    claude-code codex opencode computer-use merge-reconciler
+    apple-notes apple-reminders findmy imessage
+    github github-auth github-code-review github-issues github-issue-to-pr github-pr-workflow
+    github-repo-management
+    huggingface-hub serving-llms-vllm llama-cpp weights-and-biases evaluating-llms-harness
+    sdlc-review openhue xurl himalaya comfyui touchdesigner-mcp
+    airtable box google-workspace notion teams-meeting-pipeline
+  )
+
+  def disabled_skills, do: @disabled_skills
+
+  defp sync_skills_block(content, bundled) do
+    case Enum.filter(@disabled_skills, &MapSet.member?(bundled, &1)) do
+      [] -> put_block(content, "skills", [{"disabled", :delete}])
+      names -> put_block(content, "skills", [{"disabled", {:list, names}}])
+    end
+  end
+
+  # Names of the skills hermes copied in (`name:hash` lines), read without
+  # following a symlink; none when the manifest is missing or refused.
+  defp bundled_skills(data_root) do
+    case TenantFiles.read_text(data_root, ["skills", ".bundled_manifest"], 262_144) do
+      {:ok, %{text: text}} ->
+        for line <- String.split(text, "\n"),
+            name = line |> String.split(":", parts: 2) |> hd() |> String.trim(),
+            name != "",
+            into: MapSet.new(),
+            do: name
+
+      _ ->
+        MapSet.new()
+    end
+  end
+
+  # The bot's working directory (`terminal.cwd`, canonical in hermes 0.22,
+  # gateway/run.py:2152). MESSAGING_CWD in env_vars/1 carries the same value
+  # for one more release, for rollback.
+  defp sync_terminal_block(content, data_root) do
+    put_block(content, "terminal", [{"cwd", ~s("#{Path.join(data_root, "workspace")}")}])
+  end
+
+  # `messaging.enabled_platforms` was written by druzhok's first seeds;
+  # nothing in hermes 0.22 reads it (Telegram is on via platforms.telegram).
+  defp drop_messaging_block(content),
+    do: put_block(content, "messaging", [{"enabled_platforms", :delete}])
+
+  @doc false
+  # The keys `sync_config/2` writes for the config-tuning change, removed for
+  # its rollback (spec 2026-10-25-hermes-config-tuning-design.md): the old
+  # sync never removes them, so a plain revert would leave them in force.
+  # `model.supports_vision` and `agent.image_input_mode` stay (live before it).
+  def strip_tuning_keys(content) do
+    content
+    |> put_block("model", [{"context_length", :delete}])
+    |> put_block(
+      "agent",
+      Enum.map(@turn_budget, fn {k, _} -> {k, :delete} end) ++ [{"disabled_toolsets", :delete}]
+    )
+    |> put_block("skills", [{"disabled", :delete}])
+    |> put_block("terminal", [{"cwd", :delete}])
+  end
+
+  # Set druzhok-owned children of the top-level `name:` block. `owned` is
+  # [{key, value}], value one of: a YAML scalar (a string written as is),
+  # {:list, items} (a one-line flow list), {:merge, owned} (a nested block
+  # whose other children are kept), :delete, or :keep (left untouched). Each
+  # owned key is dropped with its whole body (blank lines, deeper lines,
+  # hermes's same-indent `- item` lists) and rendered fresh at the top of the
+  # block, so a changed value leaves nothing behind and a second run changes
+  # nothing. A block left empty loses its header; a missing one is appended.
+  defp put_block(content, name, owned) do
+    lines = String.split(content, "\n")
+
+    case yaml_block(lines, 0, name, 0, length(lines) - 1) do
       nil ->
-        content
+        case put_children([], owned, 2) do
+          [] ->
+            content
 
-      sees? ->
-        mode = if sees?, do: "native", else: "auto"
+          body ->
+            String.trim_trailing(content) <>
+              "\n\n" <> Enum.join([name <> ":" | body], "\n") <> "\n"
+        end
 
-        content
-        |> sync_yaml_block("model", upsert: &upsert_indented_line(&1, "supports_vision", sees?))
-        |> sync_yaml_block("agent",
-          upsert: &upsert_indented_line(&1, "image_input_mode", mode),
-          default: "agent:\n  image_input_mode: #{mode}"
-        )
+      {idx, last} ->
+        case put_children(Enum.slice(lines, (idx + 1)..last//1), owned, 2) do
+          [] -> splice(lines, idx, last, [])
+          body -> splice(lines, idx + 1, last, body)
+        end
+    end
+  end
+
+  defp put_children(body, owned, default_indent) do
+    indent = child_indent(body, default_indent)
+
+    {taken, rest} =
+      Enum.reduce(owned, {%{}, body}, fn
+        {_key, :keep}, acc ->
+          acc
+
+        {key, _}, {taken, lines} ->
+          {child, lines} = take_child(lines, indent, key)
+          {Map.put(taken, key, child), lines}
+      end)
+
+    rendered =
+      Enum.flat_map(owned, fn {key, value} -> render_child(key, value, taken[key], indent) end)
+
+    lines = rendered ++ rest
+    if Enum.all?(lines, &(String.trim(&1) == "")), do: [], else: lines
+  end
+
+  defp render_child(_key, value, _old, _indent) when value in [:keep, :delete], do: []
+
+  defp render_child(key, {:list, items}, _old, indent),
+    do: [pad(indent) <> key <> ": [" <> Enum.join(items, ", ") <> "]"]
+
+  defp render_child(key, {:merge, owned}, old, indent) do
+    old_body =
+      case old do
+        [_header | body] -> body
+        nil -> []
+      end
+
+    case put_children(old_body, owned, indent + 2) do
+      [] -> []
+      body -> [pad(indent) <> key <> ":" | body]
+    end
+  end
+
+  defp render_child(key, value, _old, indent) when is_binary(value),
+    do: [pad(indent) <> key <> ": " <> value]
+
+  defp child_indent(body, default) do
+    case Enum.find(body, fn l ->
+           t = String.trim(l)
+           t != "" and not String.starts_with?(t, "#")
+         end) do
+      nil -> default
+      line -> indent_of(line)
+    end
+  end
+
+  # `key:` at exactly `indent` and its body: blank lines, deeper lines, and
+  # `- item` lines at the key's own indent. `{nil, lines}` when absent.
+  defp take_child(lines, indent, key) do
+    header = ~r/^ {#{indent}}#{Regex.escape(key)}:(\s|$)/
+
+    case Enum.find_index(lines, &Regex.match?(header, &1)) do
+      nil ->
+        {nil, lines}
+
+      i ->
+        {before, [h | after_header]} = Enum.split(lines, i)
+
+        {body, rest} =
+          Enum.split_while(after_header, fn l ->
+            String.trim(l) == "" or indent_of(l) > indent or
+              (indent_of(l) == indent and String.starts_with?(String.trim_leading(l), "- "))
+          end)
+
+        {[h | body], before ++ rest}
     end
   end
 
@@ -336,7 +571,8 @@ defmodule Druzhok.Runtime.Hermes do
   defp sync_stt_block(content) do
     sync_yaml_block(content, "stt",
       upsert: &upsert_indented_line(&1, "cloud_trim_silence", "false"),
-      default: "stt:\n  enabled: true\n  provider: \"openai\"\n  cloud_trim_silence: false\n  openai:\n    model: \"whisper-1\""
+      default:
+        "stt:\n  enabled: true\n  provider: \"openai\"\n  cloud_trim_silence: false\n  openai:\n    model: \"whisper-1\""
     )
   end
 
@@ -398,7 +634,11 @@ defmodule Druzhok.Runtime.Hermes do
 
             case yaml_block(lines, nil, "extra", t_idx + 1, t_end) do
               nil ->
-                insert = [pad(2 * step) <> "extra:" | String.split(render_yaml(owned, 3 * step, step), "\n")]
+                insert = [
+                  pad(2 * step) <> "extra:"
+                  | String.split(render_yaml(owned, 3 * step, step), "\n")
+                ]
+
                 splice(lines, t_idx + 1, t_idx, insert)
 
               {e_idx, e_end} ->
@@ -464,7 +704,8 @@ defmodule Druzhok.Runtime.Hermes do
         # Nested body, or list items hermes's dumper puts at the key's own indent.
         skipping != nil and
             (String.trim(line) == "" or indent_of(line) > skipping or
-               (indent_of(line) == skipping and String.starts_with?(String.trim_leading(line), "- "))) ->
+               (indent_of(line) == skipping and
+                  String.starts_with?(String.trim_leading(line), "- "))) ->
           {acc, skipping}
 
         Regex.run(~r/^([ \t]*)([A-Za-z0-9_]+):/, line) |> owned_key?(keys) ->
@@ -494,7 +735,10 @@ defmodule Druzhok.Runtime.Hermes do
     pairs
     |> Enum.flat_map(fn
       {key, [{_, _} | _] = nested} ->
-        [pad(indent) <> key <> ":" | render_yaml(nested, indent + step, step) |> String.split("\n")]
+        [
+          pad(indent) <> key <> ":"
+          | render_yaml(nested, indent + step, step) |> String.split("\n")
+        ]
 
       {key, items} when is_list(items) ->
         [pad(indent) <> key <> ":" | Enum.map(items, &(pad(indent + step) <> "- " <> &1))]
@@ -598,7 +842,11 @@ defmodule Druzhok.Runtime.Hermes do
 
           binary_part(content, 0, body_start) <>
             new_body <>
-            binary_part(content, body_start + body_len, byte_size(content) - body_start - body_len)
+            binary_part(
+              content,
+              body_start + body_len,
+              byte_size(content) - body_start - body_len
+            )
         end
     end
   end
@@ -615,38 +863,31 @@ defmodule Druzhok.Runtime.Hermes do
     end
   end
 
-  # Compression summaries run on the bot's model. ruoc-flash (GLM) cannot turn
-  # reasoning off ("Reasoning is mandatory"), and at its default depth it spent
-  # a whole 32k output cap thinking over a 60k-token history and returned no
-  # summary, so the session could never compact. "low" keeps it short.
+  # Compression summaries run on the bot's model. ruoc-flash (GLM) could not
+  # turn reasoning off ("Reasoning is mandatory"), and at its default depth it
+  # spent a whole 32k output cap thinking over a 60k-token history and returned
+  # no summary, so the session could never compact. "low" kept it short; the
+  # bots have since moved to DeepSeek and the value stays.
   @compression_block """
     compression:
       reasoning_effort: "low"
   """
 
-  defp sync_auxiliary_vision(content, vision_model, tenant_key) do
-    vision_block = """
-
-    auxiliary:
-      vision:
-        provider: custom
-        base_url: "#{proxy_url()}"
-        api_key: "#{tenant_key}"
-        model: "#{vision_model}"
-    #{@compression_block}
-    """
-    |> String.trim_trailing()
-
-    if String.contains?(content, "auxiliary:") do
-      # Replace existing auxiliary block
-      Regex.replace(
-        ~r/^auxiliary:.*?(?=^\S|\z)/ms,
-        content,
-        String.trim_leading(vision_block) <> "\n"
-      )
-    else
-      content <> "\n" <> vision_block <> "\n"
-    end
+  # Only `auxiliary.vision` and `auxiliary.compression` belong to druzhok;
+  # their other keys and every other aux task (background_review,
+  # title_generation, …) are kept. This used to replace the whole block.
+  defp sync_auxiliary_block(content, vision_model, tenant_key) do
+    put_block(content, "auxiliary", [
+      {"vision",
+       {:merge,
+        [
+          {"provider", "custom"},
+          {"base_url", ~s("#{proxy_url()}")},
+          {"api_key", ~s("#{tenant_key}")},
+          {"model", ~s("#{vision_model}")}
+        ]}},
+      {"compression", {:merge, [{"reasoning_effort", ~s("low")}]}}
+    ])
   end
 
   defp sync_group_sessions_per_user(content, instance) do
@@ -656,7 +897,6 @@ defmodule Druzhok.Runtime.Hermes do
     shared = Map.get(instance, :group_shared_memory, false)
     upsert_yaml_line(content, "group_sessions_per_user", not shared)
   end
-
 
   defp upsert_yaml_line(content, key, value) do
     line = "#{key}: #{value}"
@@ -784,10 +1024,10 @@ defmodule Druzhok.Runtime.Hermes do
   end
 
   def sync_agents_md(_instance, data_root) do
-    agents_path = Path.join([data_root, "workspace", "AGENTS.md"])
+    segments = ["workspace", "AGENTS.md"]
 
-    case File.read(agents_path) do
-      {:ok, content} ->
+    case TenantFiles.read_text(data_root, segments, @config_limit) do
+      {:ok, %{text: content, truncated: false}} ->
         updated =
           content
           |> sync_section("Каждая сессия", @agents_md_session_section)
@@ -795,10 +1035,10 @@ defmodule Druzhok.Runtime.Hermes do
           |> sync_section("Стиль", @agents_md_style_section)
           |> sync_section("Публикация сайтов", @agents_md_sites_section)
 
-        if updated != content, do: File.write!(agents_path, updated)
+        if updated != content, do: write_tenant_file(data_root, segments, updated)
         :ok
 
-      {:error, _} ->
+      _ ->
         :ok
     end
   end
@@ -999,15 +1239,12 @@ defmodule Druzhok.Runtime.Hermes do
       edit_interval: 0.6
       buffer_threshold: 60
 
-    messaging:
-      enabled_platforms:
-        telegram: [hermes-telegram]
-
     stt:
       enabled: true
       provider: "openai"
       cloud_trim_silence: false
       openai:
+        # Ignored: the proxy sends audio to ruoc, which picks the model.
         model: "whisper-1"
 
     tts:

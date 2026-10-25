@@ -37,9 +37,10 @@ defmodule Druzhok.Runtime.HermesTest do
       assert env["MNEMOSYNE_HOST_LLM_ENABLED"] == "false"
     end
 
-    test "flips inference provider to custom so hermes routes via OPENAI_BASE_URL" do
+    test "leaves model and provider to config.yaml" do
       env = Hermes.env_vars(@instance)
-      assert env["HERMES_INFERENCE_PROVIDER"] == "custom"
+      for key <- ~w(HERMES_INFERENCE_PROVIDER HERMES_MODEL HERMES_QUIET), do: refute(Map.has_key?(env, key))
+      assert env["MESSAGING_CWD"] == Path.join(Hermes.data_root(@instance), "workspace")
     end
 
     # Bots have no internet: an openrouter.ai call hangs until its timeout
@@ -155,7 +156,8 @@ defmodule Druzhok.Runtime.HermesTest do
 
       assert config =~ "custom"
       assert config =~ @instance.model
-      assert config =~ "platforms:\n    telegram:"
+      assert config =~ "platforms:\n  telegram:"
+      refute config =~ "messaging:"
 
       for heading <- ["## Каждая сессия", "## Память", "## Стиль", "## Публикация сайтов"],
           do: assert(agents =~ heading)
@@ -525,7 +527,7 @@ defmodule Druzhok.Runtime.HermesTest do
       assert extra["command_menu"]["max_commands"] == 4
       assert extra["dm_topics"] == [%{"chat_id" => 1, "topics" => [%{"name" => "x", "thread_id" => 7}]}]
       refute content =~ "999"
-      refute content =~ "tools"
+      refute content =~ "[model, tools]"
     end
 
     test "is idempotent", %{tmp_dir: tmp_dir} do
@@ -580,41 +582,208 @@ defmodule Druzhok.Runtime.HermesTest do
     end
   end
 
-  describe "sync_config/2 — image input mode" do
+  describe "sync_config/2 — model facts" do
     setup do
-      tmp_dir = Path.join(System.tmp_dir!(), "hermes-images-#{System.unique_integer([:positive])}")
+      tmp_dir = Path.join(System.tmp_dir!(), "hermes-facts-#{System.unique_integer([:positive])}")
       File.mkdir_p!(Path.join(tmp_dir, "workspace"))
       on_exit(fn -> File.rm_rf!(tmp_dir) end)
       %{tmp_dir: tmp_dir}
     end
 
-    defp image_cfg(tmp_dir, yaml, sees) do
-      File.write!(Path.join(tmp_dir, "config.yaml"), yaml)
-      instance = %{name: "b", model: "x", tenant_key: "k", model_sees_images: sees}
+    defp facts_sync(tmp_dir, yaml, facts) do
+      if yaml, do: File.write!(Path.join(tmp_dir, "config.yaml"), yaml)
+      instance = %{name: "b", model: "x", tenant_key: "k", model_facts: facts}
       assert :ok = Hermes.sync_config(instance, tmp_dir)
-      {:ok, cfg} = YamlElixir.read_from_string(File.read!(Path.join(tmp_dir, "config.yaml")))
-      cfg
+      content = File.read!(Path.join(tmp_dir, "config.yaml"))
+      {:ok, cfg} = YamlElixir.read_from_string(content)
+      {cfg, content}
     end
 
-    test "a model that reads images gets native photos and is marked as seeing", %{tmp_dir: tmp_dir} do
-      cfg = image_cfg(tmp_dir, "model:\n  default: \"x\"\n", true)
-      assert cfg["agent"] == %{"image_input_mode" => "native"}
+    test "a known model that reads images: its window, native photos, marked as seeing", %{tmp_dir: tmp_dir} do
+      {cfg, _} = facts_sync(tmp_dir, "model:\n  default: \"x\"\n", {:ok, %{sees_images: true, context: 200_000}})
+      assert cfg["model"]["context_length"] == 200_000
       assert cfg["model"]["supports_vision"] == true
-    end
-
-    test "a model that cannot read images keeps auto, and sibling keys stay", %{tmp_dir: tmp_dir} do
-      yaml = "model:\n  default: \"x\"\n  supports_vision: true\nagent:\n  image_input_mode: native\n  max_turns: 40\n"
-      cfg = image_cfg(tmp_dir, yaml, false)
-      assert cfg["agent"] == %{"image_input_mode" => "auto", "max_turns" => 40}
-      assert cfg["model"]["supports_vision"] == false
       assert cfg["model"]["default"] == "x"
+      assert cfg["agent"]["image_input_mode"] == "native"
     end
 
-    test "an unknown catalogue leaves the file alone", %{tmp_dir: tmp_dir} do
-      cfg = image_cfg(tmp_dir, "model:\n  default: \"x\"\n", nil)
-      assert cfg["agent"] == nil
+    test "a known model without a window or vision: no window, auto photos, other agent keys kept", %{tmp_dir: tmp_dir} do
+      yaml = "model:\n  default: \"x\"\n  context_length: 1000\n  supports_vision: true\nagent:\n  image_input_mode: native\n  gateway_timeout: 1800\n"
+      {cfg, _} = facts_sync(tmp_dir, yaml, {:ok, %{sees_images: false, context: nil}})
+      refute Map.has_key?(cfg["model"], "context_length")
+      assert cfg["model"]["supports_vision"] == false
+      assert cfg["agent"]["image_input_mode"] == "auto"
+      assert cfg["agent"]["gateway_timeout"] == 1800
+    end
+
+    test "a model ruoc does not list loses the previous model's numbers", %{tmp_dir: tmp_dir} do
+      yaml = "model:\n  default: \"x\"\n  context_length: 200000\n  supports_vision: true\nagent:\n  image_input_mode: native\n"
+      {cfg, _} = facts_sync(tmp_dir, yaml, :unknown_model)
+      refute Map.has_key?(cfg["model"], "context_length")
       refute Map.has_key?(cfg["model"], "supports_vision")
-      assert image_cfg(tmp_dir, "agent:\n  image_input_mode: native\n", nil)["agent"] == %{"image_input_mode" => "native"}
+      assert cfg["agent"]["image_input_mode"] == "auto"
+    end
+
+    test "an empty catalogue leaves the model facts alone", %{tmp_dir: tmp_dir} do
+      yaml = "model:\n  default: \"x\"\n  context_length: 200000\nagent:\n  image_input_mode: native\n"
+      {cfg, _} = facts_sync(tmp_dir, yaml, :no_catalogue)
+      assert cfg["model"]["context_length"] == 200_000
+      assert cfg["agent"]["image_input_mode"] == "native"
+    end
+
+    test "a changed window between two syncs leaves no old line", %{tmp_dir: tmp_dir} do
+      facts_sync(tmp_dir, "model:\n  default: \"x\"\n", {:ok, %{sees_images: true, context: 200_000}})
+      {cfg, content} = facts_sync(tmp_dir, nil, {:ok, %{sees_images: true, context: 131_072}})
+      assert cfg["model"]["context_length"] == 131_072
+      assert length(String.split(content, "context_length")) == 2
+    end
+  end
+
+  describe "sync_config/2 — toolsets, skills, turn budget, terminal, dead keys" do
+    setup do
+      tmp_dir = Path.join(System.tmp_dir!(), "hermes-tuning-#{System.unique_integer([:positive])}")
+      File.mkdir_p!(Path.join(tmp_dir, "workspace"))
+      on_exit(fn -> File.rm_rf!(tmp_dir) end)
+      %{tmp_dir: tmp_dir}
+    end
+
+    defp tune(tmp_dir, yaml) do
+      if yaml, do: File.write!(Path.join(tmp_dir, "config.yaml"), yaml)
+      assert :ok = Hermes.sync_config(%{name: "b", model: "x", tenant_key: "k"}, tmp_dir)
+      content = File.read!(Path.join(tmp_dir, "config.yaml"))
+      {:ok, cfg} = YamlElixir.read_from_string(content)
+      {cfg, content}
+    end
+
+    defp manifest!(tmp_dir, names) do
+      File.mkdir_p!(Path.join(tmp_dir, "skills"))
+      File.write!(Path.join([tmp_dir, "skills", ".bundled_manifest"]), Enum.map_join(names, "\n", &"#{&1}:abc123") <> "\n")
+    end
+
+    test "writes the turn budget and the disabled toolsets, replacing an older block list", %{tmp_dir: tmp_dir} do
+      yaml = "model:\n  default: \"x\"\nagent:\n  disabled_toolsets:\n  - kanban\n  - browser\n  - delegation\n  gateway_timeout: 1800\n"
+      {cfg, content} = tune(tmp_dir, yaml)
+      assert cfg["agent"]["disabled_toolsets"] == ["browser", "computer_use", "connections"]
+      assert cfg["agent"]["max_turns"] == 30
+      assert cfg["agent"]["budget_warning_ratio"] == 0.75
+      assert cfg["agent"]["run_budget_seconds"] == 300
+      assert cfg["agent"]["gateway_timeout"] == 1800
+      refute content =~ "kanban"
+      refute content =~ "delegation"
+    end
+
+    test "disables only listed skills hermes bundled, never the bot's own", %{tmp_dir: tmp_dir} do
+      manifest!(tmp_dir, ["claude-code", "notion", "obsidian", "codebase-inspection", "xlsx"])
+      File.mkdir_p!(Path.join([tmp_dir, "skills", "my-own", "github"]))
+      {cfg, _} = tune(tmp_dir, "model:\n  default: \"x\"\n")
+      assert cfg["skills"]["disabled"] == ["claude-code", "notion"]
+    end
+
+    test "without a manifest nothing is disabled and an old list goes", %{tmp_dir: tmp_dir} do
+      {cfg, _} = tune(tmp_dir, "model:\n  default: \"x\"\nskills:\n  disabled: [codex]\n  external_dirs: [/x]\n")
+      assert cfg["skills"] == %{"external_dirs" => ["/x"]}
+    end
+
+    test "a symlinked manifest is not read", %{tmp_dir: tmp_dir} do
+      outside = Path.join(System.tmp_dir!(), "manifest-#{System.unique_integer([:positive])}")
+      File.write!(outside, "claude-code:abc\n")
+      on_exit(fn -> File.rm(outside) end)
+      File.mkdir_p!(Path.join(tmp_dir, "skills"))
+      File.ln_s!(outside, Path.join([tmp_dir, "skills", ".bundled_manifest"]))
+      {cfg, _} = tune(tmp_dir, "model:\n  default: \"x\"\n")
+      refute Map.has_key?(cfg, "skills")
+    end
+
+    test "sets terminal.cwd to the workspace and drops the dead messaging block", %{tmp_dir: tmp_dir} do
+      yaml = "model:\n  default: \"x\"\nmessaging:\n  enabled_platforms:\n    telegram: [hermes-telegram]\nstreaming:\n  enabled: true\n"
+      {cfg, _} = tune(tmp_dir, yaml)
+      assert cfg["terminal"]["cwd"] == Path.join(tmp_dir, "workspace")
+      refute Map.has_key?(cfg, "messaging")
+      assert cfg["streaming"]["enabled"] == true
+    end
+
+    test "a second sync changes nothing", %{tmp_dir: tmp_dir} do
+      manifest!(tmp_dir, ["codex", "notion"])
+      {_, first} = tune(tmp_dir, "model:\n  default: \"x\"\nauxiliary:\n  title_generation:\n    enabled: false\n")
+      {_, second} = tune(tmp_dir, nil)
+      assert first == second
+    end
+
+    test "strip_tuning_keys/1 removes what this change writes and keeps the photo keys", %{tmp_dir: tmp_dir} do
+      manifest!(tmp_dir, ["codex"])
+      File.write!(Path.join(tmp_dir, "config.yaml"), "model:\n  default: \"x\"\nagent:\n  gateway_timeout: 1800\n")
+      facts = {:ok, %{sees_images: true, context: 200_000}}
+      :ok = Hermes.sync_config(%{name: "b", model: "x", tenant_key: "k", model_facts: facts}, tmp_dir)
+      {:ok, cfg} = tmp_dir |> Path.join("config.yaml") |> File.read!() |> Hermes.strip_tuning_keys() |> YamlElixir.read_from_string()
+      refute Map.has_key?(cfg["model"], "context_length")
+      assert cfg["model"]["supports_vision"] == true
+      assert cfg["agent"] == %{"image_input_mode" => "native", "gateway_timeout" => 1800}
+      refute Map.has_key?(cfg, "skills")
+      refute Map.has_key?(cfg, "terminal")
+    end
+  end
+
+  describe "sync_config/2 — auxiliary merge" do
+    setup do
+      tmp_dir = Path.join(System.tmp_dir!(), "hermes-aux-#{System.unique_integer([:positive])}")
+      File.mkdir_p!(Path.join(tmp_dir, "workspace"))
+      on_exit(fn -> File.rm_rf!(tmp_dir) end)
+      %{tmp_dir: tmp_dir}
+    end
+
+    test "rewrites only vision and compression; other aux tasks and keys stay", %{tmp_dir: tmp_dir} do
+      File.write!(Path.join(tmp_dir, "config.yaml"), """
+      model:
+        default: "x"
+      auxiliary:
+        title_generation:
+          model: "cheap-title"
+          enabled: false
+        vision:
+          provider: auto
+          model: "old"
+          timeout: 30
+        background_review:
+          enabled: true
+          extra_tools: [a]
+        compression:
+          reasoning_effort: "high"
+          timeout: 90
+      """)
+
+      assert :ok = Hermes.sync_config(%{name: "b", model: "x", tenant_key: "k", image_model: "seer"}, tmp_dir)
+      {:ok, cfg} = YamlElixir.read_from_string(File.read!(Path.join(tmp_dir, "config.yaml")))
+      aux = cfg["auxiliary"]
+      assert aux["title_generation"] == %{"model" => "cheap-title", "enabled" => false}
+      assert aux["background_review"] == %{"enabled" => true, "extra_tools" => ["a"]}
+
+      assert aux["vision"] == %{
+               "provider" => "custom",
+               "base_url" => Hermes.proxy_url(),
+               "api_key" => "k",
+               "model" => "seer",
+               "timeout" => 30
+             }
+
+      assert aux["compression"] == %{"reasoning_effort" => "low", "timeout" => 90}
+    end
+  end
+
+  describe "sync_config/2 — symlinks" do
+    setup do
+      tmp_dir = Path.join(System.tmp_dir!(), "hermes-links-#{System.unique_integer([:positive])}")
+      File.mkdir_p!(Path.join(tmp_dir, "workspace"))
+      outside = Path.join(System.tmp_dir!(), "outside-#{System.unique_integer([:positive])}.yaml")
+      on_exit(fn -> File.rm_rf!(tmp_dir); File.rm(outside) end)
+      %{tmp_dir: tmp_dir, outside: outside}
+    end
+
+    test "a symlinked config.yaml is neither read nor written", %{tmp_dir: tmp_dir, outside: outside} do
+      File.write!(outside, "model:\n  default: \"secret\"\n")
+      File.ln_s!(outside, Path.join(tmp_dir, "config.yaml"))
+      assert :ok = Hermes.sync_config(%{name: "b", model: "x", tenant_key: "k"}, tmp_dir)
+      assert File.read!(outside) == "model:\n  default: \"secret\"\n"
+      assert {:ok, %File.Stat{type: :symlink}} = File.lstat(Path.join(tmp_dir, "config.yaml"))
     end
   end
 
