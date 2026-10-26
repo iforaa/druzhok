@@ -41,9 +41,12 @@ defmodule Druzhok.Cabinet do
 
   @button %{"ru" => "Кабинет", "en" => "Cabinet"}
   @notice %{
-    "ru" => {"💳 Баланс бота исчерпан. Пополнить его можно в кабинете.", "Открыть кабинет"},
+    "ru" =>
+      {"Лимит тарифа на сейчас исчерпан. Когда он обновится и как сменить тариф — в кабинете.",
+       "Открыть кабинет"},
     "en" =>
-      {"💳 The bot's balance is used up. You can top it up in the cabinet.", "Open the cabinet"}
+      {"The plan's limit is used up for now. When it resets and how to change plans — in the cabinet.",
+       "Open the cabinet"}
   }
 
   def start_link(opts \\ []), do: GenServer.start_link(__MODULE__, opts, name: __MODULE__)

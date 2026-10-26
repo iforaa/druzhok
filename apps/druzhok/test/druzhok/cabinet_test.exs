@@ -146,7 +146,7 @@ defmodule Druzhok.CabinetTest do
 
     [{_, msg}] = telegram(seen, "sendMessage")
     assert msg["chat_id"] == 456
-    assert msg["text"] =~ "Баланс бота исчерпан"
+    assert msg["text"] =~ "Лимит тарифа на сейчас исчерпан"
 
     assert [[%{"text" => "Открыть кабинет", "web_app" => %{"url" => @url}}]] =
              msg["reply_markup"]["inline_keyboard"]
