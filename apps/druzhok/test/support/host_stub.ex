@@ -87,8 +87,17 @@ defmodule Druzhok.HostStub do
   def status(name), do: Agent.get(__MODULE__, &Map.get(&1.units, name, :inactive))
 
   @impl true
+  # `set_procs([1, 2])` answers 1, then 2, then 2 again.
   def procs(name) do
-    if status(name) == :active, do: Agent.get(__MODULE__, & &1.procs), else: 0
+    if status(name) == :active do
+      Agent.get_and_update(__MODULE__, fn
+        %{procs: [n]} = s -> {n, s}
+        %{procs: [n | rest]} = s -> {n, %{s | procs: rest}}
+        %{procs: n} = s -> {n, s}
+      end)
+    else
+      0
+    end
   end
 
   @impl true

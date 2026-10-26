@@ -84,6 +84,10 @@ function panel<T>(path: string): Promise<T> {
   return request<T>(`/app/api/${path}`, "GET")
 }
 
+function panelPost<T>(path: string, body: unknown): Promise<T> {
+  return request<T>(`/app/api/${path}`, "POST", body)
+}
+
 async function request<T>(url: string, method: "GET" | "POST", body?: unknown): Promise<T> {
   const headers: Record<string, string> = {
     Authorization: `tma ${initData()}`,
@@ -132,9 +136,32 @@ export interface Bot {
     memory_provider: string
     group_shared_memory: boolean
   }
+  /** What happens to settings saved in the panel (panel controls spec). */
+  apply: { state: ApplyState; error: string | null }
   access: { allow_all_users: boolean; allowed_users: number; free_response_chats: number }
   billing_url: string
   support_url: string | null
+  /** The superbot's @username, where a delete is confirmed; null when unknown. */
+  superbot: string | null
+}
+
+export type ApplyState = "applied" | "waiting" | "on_wake" | "on_start" | "failed"
+
+/** The settings the owner may change; the names are those of `Bot.settings`. */
+export interface SettingChanges {
+  language?: string
+  timezone?: string
+  mention_only?: boolean
+  image_gen_enabled?: boolean
+  image_gen_model?: string | null
+  website_hosting_enabled?: boolean
+}
+
+export interface ImageModel {
+  id: string
+  name: string
+  rub_per_image: string
+  default: boolean
 }
 
 export interface Invite {
@@ -199,6 +226,9 @@ export const panelApi = {
   skill: (s: Skill) => panel<Text>(`skills/${s.path.map(encodeURIComponent).join("/")}`),
   site: () => panel<{ files: SiteFile[] | null }>("site"),
   invites: () => panel<{ links: Invite[]; used: number }>("invites"),
+  imageModels: () => panel<{ models: ImageModel[] }>("image-models"),
+  saveSettings: (changes: SettingChanges) => panelPost<{ bot: Bot }>("settings", { changes }),
+  deleteBot: () => panelPost<{ confirm_in: string }>("delete", {}),
 }
 
 // Answers the screens share (the account shows on Главная and Счёт), kept
@@ -281,6 +311,20 @@ export function explain(err: unknown): string {
       return "Банк не ответил. Попробуйте через минуту."
     case "invites_unavailable":
       return "Не получилось загрузить приглашения. Попробуйте позже."
+    case "unknown_setting":
+      return "Эту настройку здесь поменять нельзя."
+    case "invalid_setting":
+      return "Такое значение не подходит."
+    case "images_off":
+      return "Сначала включите картинки."
+    case "catalogue_unavailable":
+      return "Не получилось загрузить список моделей. Попробуйте позже."
+    case "save_failed":
+      return "Не получилось сохранить. Попробуйте ещё раз."
+    case "superbot_unreachable":
+      return "Бот-создатель не может вам написать. Откройте его, нажмите «Запустить» и попробуйте снова."
+    case "superbot_unavailable":
+      return "Не получилось связаться с ботом-создателем. Попробуйте позже."
     default:
       return "Что-то пошло не так. Попробуйте ещё раз."
   }

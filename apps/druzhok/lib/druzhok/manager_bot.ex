@@ -140,57 +140,19 @@ defmodule Druzhok.ManagerBot do
         user_id = cb["from"]["id"]
         chat_id = message["chat"]["id"]
         message_id = message["message_id"]
-        data = cb["data"]
+        data = cb["data"] || ""
 
-        API.answer_callback_query(state.token, cb["id"])
+        if moved_to_panel?(data, user_id) do
+          # Old 🎨/🗑 buttons of a bot whose controls are in its panel now.
+          API.answer_callback_query(state.token, cb["id"], %{
+            text: Onboarding.moved_to_panel_alert(),
+            show_alert: true
+          })
 
-        cond do
-          String.starts_with?(data, "del:") ->
-            handle_delete_request(state, user_id, chat_id, message_id, data)
-
-          String.starts_with?(data, "delyes:") ->
-            handle_delete_confirm(state, user_id, chat_id, message_id, data)
-
-          data == "delno" ->
-            edit_plain(state.token, chat_id, message_id, Onboarding.delete_cancelled())
-            state
-
-          String.starts_with?(data, "img:") ->
-            handle_image_menu(state, user_id, chat_id, message_id, data)
-
-          String.starts_with?(data, "imgset:") ->
-            handle_image_set(state, user_id, chat_id, message_id, data)
-
-          String.starts_with?(data, "imgoff:") ->
-            handle_image_off(state, user_id, chat_id, message_id, data)
-
-          data == "imgback" ->
-            # One bot means there is no list to go back to: the card is «Назад».
-            case user_bots(user_id) do
-              [bot] ->
-                # Same ruoc round trip as the «🤖 Мой бот» card, same reason to
-                # build it off the loop.
-                token = state.token
-
-                Task.start(fn ->
-                  {text, rows} = Onboarding.my_bot_message(with_balance(bot))
-                  edit_url_keyboard(token, chat_id, message_id, text, rows)
-                end)
-
-              _ ->
-                edit_my_bots(state, user_id, chat_id, message_id)
-            end
-
-            state
-
-          true ->
-            # Store message_id in session for editing
-            state = update_in(state, [:sessions, user_id], fn
-              nil -> %{Onboarding.new_session() | message_id: message_id}
-              session -> %{session | message_id: message_id}
-            end)
-
-            dispatch_input(state, user_id, chat_id, %{callback_data: data})
+          state
+        else
+          API.answer_callback_query(state.token, cb["id"])
+          handle_callback(state, user_id, chat_id, message_id, data)
         end
     end
   end
@@ -200,6 +162,88 @@ defmodule Druzhok.ManagerBot do
   end
 
   defp process_update(_update, state), do: state
+
+  defp handle_callback(state, user_id, chat_id, message_id, data) do
+    cond do
+      String.starts_with?(data, "pdel:") ->
+        handle_panel_delete(state, user_id, chat_id, message_id, data)
+
+      String.starts_with?(data, "pdelno:") ->
+        handle_panel_delete_cancel(state, chat_id, message_id, data)
+
+      String.starts_with?(data, "del:") ->
+        handle_delete_request(state, user_id, chat_id, message_id, data)
+
+      String.starts_with?(data, "delyes:") ->
+        handle_delete_confirm(state, user_id, chat_id, message_id, data)
+
+      data == "delno" ->
+        edit_plain(state.token, chat_id, message_id, Onboarding.delete_cancelled())
+        state
+
+      String.starts_with?(data, "img:") ->
+        handle_image_menu(state, user_id, chat_id, message_id, data)
+
+      String.starts_with?(data, "imgset:") ->
+        handle_image_set(state, user_id, chat_id, message_id, data)
+
+      String.starts_with?(data, "imgoff:") ->
+        handle_image_off(state, user_id, chat_id, message_id, data)
+
+      data == "imgback" ->
+        # One bot means there is no list to go back to: the card is «Назад».
+        case user_bots(user_id) do
+          [bot] ->
+            # Same ruoc round trip as the «🤖 Мой бот» card, same reason to
+            # build it off the loop.
+            token = state.token
+
+            Task.start(fn ->
+              {text, rows} = Onboarding.my_bot_message(with_balance(bot))
+              edit_url_keyboard(token, chat_id, message_id, text, rows)
+            end)
+
+          _ ->
+            edit_my_bots(state, user_id, chat_id, message_id)
+        end
+
+        state
+
+      true ->
+        # Store message_id in session for editing
+        state = update_in(state, [:sessions, user_id], fn
+          nil -> %{Onboarding.new_session() | message_id: message_id}
+          session -> %{session | message_id: message_id}
+        end)
+
+        dispatch_input(state, user_id, chat_id, %{callback_data: data})
+    end
+  end
+
+  @old_controls ~w(img: imgset: imgoff: del: delyes:)
+
+  # The callbacks of the superbot's own picture and delete controls, on a bot
+  # whose panel works (panel controls spec, «Superbot»): they do nothing.
+  defp moved_to_panel?(data, user_id) do
+    cond do
+      prefix = Enum.find(@old_controls, &String.starts_with?(data, &1)) ->
+        id_str = data |> String.replace_prefix(prefix, "") |> String.split(":") |> hd()
+
+        case owned_instance(user_id, id_str) do
+          {:ok, inst} -> Onboarding.panel_ready?(inst)
+          _ -> false
+        end
+
+      data in ["delno", "imgback"] ->
+        case user_bots(user_id) do
+          [bot] -> Onboarding.panel_ready?(bot)
+          _ -> false
+        end
+
+      true ->
+        false
+    end
+  end
 
   # --- Main menu ---
 
@@ -212,8 +256,14 @@ defmodule Druzhok.ManagerBot do
   # computed from the bot count every time, never cached: creation and
   # deletion change it, and both happen in tasks after this GenServer replied.
   defp send_menu(state, chat_id, user_id, text) do
-    menu = Onboarding.main_menu_keyboard(user_bot_count(user_id))
-    API.send_message(state.token, chat_id, text, %{reply_markup: Jason.encode!(menu)})
+    API.send_message(state.token, chat_id, text, %{reply_markup: Jason.encode!(menu_for(user_id))})
+  end
+
+  defp menu_for(user_id) do
+    case user_bots(user_id) do
+      [bot] -> Onboarding.main_menu_keyboard(1, Onboarding.panel_ready?(bot))
+      bots -> Onboarding.main_menu_keyboard(length(bots))
+    end
   end
 
   defp handle_menu(state, user_id, chat_id, "🤖 Создать бота"),
@@ -249,21 +299,20 @@ defmodule Druzhok.ManagerBot do
     state
   end
 
-  defp one_bot_menu(state, chat_id, bot, "🎨 Картинки") do
-    token = state.token
+  # A stale 🎨/🗑 label of a bot set up in its panel: say where it went, and
+  # replace the persistent keyboard. Other bots keep the superbot's controls.
+  defp one_bot_menu(state, chat_id, bot, label) when label in ["🎨 Картинки", "🗑 Удалить"] do
+    if Onboarding.panel_ready?(bot) do
+      menu = Onboarding.main_menu_keyboard(1, true)
 
-    Task.start(fn ->
-      {text, rows} = Onboarding.image_menu(Map.from_struct(bot), Druzhok.Ruoc.image_models())
-      send_inline(token, chat_id, text, rows)
-    end)
+      API.send_message(state.token, chat_id, Onboarding.moved_to_panel(), %{
+        reply_markup: Jason.encode!(menu)
+      })
 
-    state
-  end
-
-  defp one_bot_menu(state, chat_id, bot, "🗑 Удалить") do
-    {text, rows} = Onboarding.delete_confirm(bot.id, bot_display_handle(bot))
-    send_inline(state.token, chat_id, text, rows)
-    state
+      state
+    else
+      own_control(state, chat_id, bot, label)
+    end
   end
 
   defp one_bot_menu(state, chat_id, bot, "🎁 Пригласить") do
@@ -288,6 +337,23 @@ defmodule Druzhok.ManagerBot do
     state
   end
 
+  defp own_control(state, chat_id, bot, "🎨 Картинки") do
+    token = state.token
+
+    Task.start(fn ->
+      {text, rows} = Onboarding.image_menu(Map.from_struct(bot), Druzhok.Ruoc.image_models())
+      send_inline(token, chat_id, text, rows)
+    end)
+
+    state
+  end
+
+  defp own_control(state, chat_id, bot, "🗑 Удалить") do
+    {text, rows} = Onboarding.delete_confirm(bot.id, bot_display_handle(bot))
+    send_inline(state.token, chat_id, text, rows)
+    state
+  end
+
   defp user_bots(user_id) do
     import Ecto.Query
 
@@ -306,7 +372,11 @@ defmodule Druzhok.ManagerBot do
         _ -> {nil, nil}
       end
 
-    inst |> Map.from_struct() |> Map.put(:ruoc_balance_rub, balance) |> Map.put(:ruoc_subscription, subscription)
+    inst
+    |> Map.from_struct()
+    |> Map.put(:ruoc_balance_rub, balance)
+    |> Map.put(:ruoc_subscription, subscription)
+    |> Map.put(:panel_ready, Onboarding.panel_ready?(inst))
   end
 
   # --- Onboarding dispatch ---
@@ -630,7 +700,7 @@ defmodule Druzhok.ManagerBot do
             case BotManager.delete(name, wait: true) do
               :ok ->
                 edit_plain(token, chat_id, message_id, Onboarding.delete_done(handle))
-                menu = Onboarding.main_menu_keyboard(user_bot_count(owner_id))
+                menu = menu_for(owner_id)
 
                 API.send_message(token, chat_id, Onboarding.after_delete_message(), %{
                   reply_markup: Jason.encode!(menu)
@@ -654,6 +724,64 @@ defmodule Druzhok.ManagerBot do
     end
 
     state
+  end
+
+  # --- Delete started in the bot panel (panel controls spec, «Delete») ---
+
+  # The confirm the panel asked for. The token, its expiry and the tapping
+  # user are all checked; clearing the token is the one-shot (a second tap
+  # finds nothing). The delete is a request the lifecycle controller carries
+  # out, so nothing waits here.
+  defp handle_panel_delete(state, user_id, chat_id, message_id, "pdel:" <> token) do
+    import Ecto.Query
+    now = DateTime.utc_now() |> DateTime.truncate(:second)
+
+    claimed =
+      from(i in Instance,
+        where:
+          i.delete_confirm_token == ^token and i.owner_telegram_id == ^user_id and
+            i.delete_confirm_expires_at > ^now and not i.delete_requested,
+        select: i
+      )
+      |> Repo.update_all(set: [delete_confirm_token: nil, delete_confirm_expires_at: nil])
+
+    case {token, claimed} do
+      {t, {1, [inst]}} when t != "" ->
+        Logger.info("[superbot] #{inst.name}: delete confirmed by the owner (panel)")
+        BotManager.delete(inst.name)
+
+        edit_plain(
+          state.token,
+          chat_id,
+          message_id,
+          Onboarding.panel_delete_started(panel_handle(inst))
+        )
+
+        API.send_message(state.token, chat_id, Onboarding.after_delete_message(), %{
+          reply_markup: Jason.encode!(menu_for(user_id))
+        })
+
+      _ ->
+        edit_plain(state.token, chat_id, message_id, Onboarding.panel_delete_stale())
+    end
+
+    state
+  end
+
+  defp handle_panel_delete_cancel(state, chat_id, message_id, "pdelno:" <> token) do
+    import Ecto.Query
+
+    if token != "" do
+      from(i in Instance, where: i.delete_confirm_token == ^token)
+      |> Repo.update_all(set: [delete_confirm_token: nil, delete_confirm_expires_at: nil])
+    end
+
+    edit_plain(state.token, chat_id, message_id, Onboarding.delete_cancelled())
+    state
+  end
+
+  defp panel_handle(inst) do
+    Druzhok.Telegram.Addressed.username(inst) || bot_display_handle(inst)
   end
 
   # Look up an instance by id and confirm it belongs to the requesting user.
@@ -743,9 +871,10 @@ defmodule Druzhok.ManagerBot do
 
       case result do
         {:ok, _name, _username} ->
-          menu = Onboarding.main_menu_keyboard(user_bot_count(creator_id))
+          menu = menu_for(creator_id)
+          panel? = Druzhok.Telegram.Webhook.public_host?()
 
-          API.send_message(token, creator_id, Onboarding.after_create_message(), %{
+          API.send_message(token, creator_id, Onboarding.after_create_message(panel?), %{
             reply_markup: Jason.encode!(menu)
           })
 

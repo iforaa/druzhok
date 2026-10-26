@@ -36,18 +36,47 @@ defmodule Druzhok.ManagerBot.Onboarding do
   @doc """
   The reply keyboard for a person with `bot_count` bots. One bot is the rule;
   the create button exists only until it is used, and a person with several
-  (only possible from before the rule) keeps the old list.
+  (only possible from before the rule) keeps the old list. A bot whose panel
+  works (`panel_ready?/1`) is set up there, so its owner gets no 🎨 or 🗑.
   """
-  def main_menu_keyboard(bot_count \\ 0) do
+  def main_menu_keyboard(bot_count \\ 0, panel_ready? \\ false) do
     rows =
-      case bot_count do
-        0 -> [[%{text: @create}]]
-        1 -> [[%{text: @my_bot}, %{text: @pictures}], [%{text: @invite}, %{text: @delete}]]
-        _ -> [[%{text: @my_bots}]]
+      case {bot_count, panel_ready?} do
+        {0, _} ->
+          [[%{text: @create}]]
+
+        {1, true} ->
+          [[%{text: @my_bot}], [%{text: @invite}]]
+
+        {1, false} ->
+          [[%{text: @my_bot}, %{text: @pictures}], [%{text: @invite}, %{text: @delete}]]
+
+        _ ->
+          [[%{text: @my_bots}]]
       end
 
     %{keyboard: rows, resize_keyboard: true, one_time_keyboard: false}
   end
+
+  @doc """
+  Whether the owner's «Кабинет» button exists and opens druzhok's panel, so
+  settings and delete live there (panel controls spec, «Superbot»): the
+  panel is on, a public host is set, and the button was set to the panel's
+  address. Any other bot keeps the superbot's own controls.
+  """
+  def panel_ready?(%Druzhok.Instance{} = inst) do
+    url = Druzhok.Panel.url(inst)
+
+    inst.cabinet_off != true and inst.cabinet_menu_set == true and is_binary(url) and
+      inst.cabinet_url == url
+  end
+
+  def panel_ready?(_), do: false
+
+  def moved_to_panel,
+    do: "Теперь это в «Кабинете» бота: откройте бота и нажмите «Кабинет» внизу."
+
+  def moved_to_panel_alert, do: "Теперь это в «Кабинете» бота"
 
   def welcome_message do
     "Привет! Я помогу создать персонального AI-бота."
@@ -149,7 +178,12 @@ defmodule Druzhok.ManagerBot.Onboarding do
   def create_race_message, do: "Код успели использовать. Попроси новый и создай бота заново."
   def name_taken_message, do: "Бот с похожим именем уже есть. Создай бота с другим username."
   def ruoc_quota_message, do: "Сейчас создаётся слишком много ботов, попробуй позже"
-  def after_create_message, do: "Управление ботом — в меню внизу."
+  def after_create_message(panel? \\ false)
+
+  def after_create_message(true),
+    do: "Настройки — в «Кабинете» бота: кнопка внизу в чате с ботом."
+
+  def after_create_message(false), do: "Управление ботом — в меню внизу."
   def after_delete_message, do: "Можно создать нового бота."
 
   # --- Message builders ---
@@ -200,9 +234,20 @@ defmodule Druzhok.ManagerBot.Onboarding do
 
   def limit_message, do: "У тебя уже есть бот. Удали его, чтобы создать нового."
 
-  @doc "The one-bot card: the bot line and a button into its chat."
+  @doc """
+  The one-bot card: the bot line and a button into its chat. A web_app
+  button here would carry init data signed for the superbot, which the
+  panel refuses, so the card points at the bot's own «Кабинет» instead.
+  """
   def my_bot_message(bot) do
-    {bot_line(bot), [[%{text: "💬 Написать", url: "https://t.me/#{bot_handle(bot)}"}]]}
+    text =
+      if bot[:panel_ready],
+        do:
+          bot_line(bot) <>
+            "\n\nНастройки, тариф и удаление — в «Кабинете»: откройте бота и нажмите «Кабинет» внизу.",
+        else: bot_line(bot)
+
+    {text, [[%{text: "💬 Написать", url: "https://t.me/#{bot_handle(bot)}"}]]}
   end
 
   @doc """
@@ -266,11 +311,11 @@ defmodule Druzhok.ManagerBot.Onboarding do
 
       buttons = Enum.map(bots, fn bot ->
         handle = bot_handle(bot)
-        [
-          %{text: "💬 @#{handle}", url: "https://t.me/#{handle}"},
-          %{text: "🎨", callback_data: "img:#{bot[:id]}"},
-          %{text: "🗑", callback_data: "del:#{bot[:id]}"}
-        ]
+        chat = %{text: "💬 @#{handle}", url: "https://t.me/#{handle}"}
+
+        if bot[:panel_ready],
+          do: [chat],
+          else: [chat, %{text: "🎨", callback_data: "img:#{bot[:id]}"}, %{text: "🗑", callback_data: "del:#{bot[:id]}"}]
       end)
 
       {text, buttons}
@@ -342,6 +387,29 @@ defmodule Druzhok.ManagerBot.Onboarding do
     ]]
     {text, rows}
   end
+
+  @doc """
+  The superbot's confirmation for a delete started in the panel. The token
+  is the row's `delete_confirm_token`; the tap is checked against the owner.
+  """
+  def panel_delete_confirm(handle, token) do
+    text =
+      "Удалить бота @#{handle} навсегда? Память, файлы, напоминания и сайт будут удалены. Это нельзя отменить."
+
+    rows = [
+      [
+        %{text: "✅ Удалить", callback_data: "pdel:#{token}"},
+        %{text: "❌ Отмена", callback_data: "pdelno:#{token}"}
+      ]
+    ]
+
+    {text, rows}
+  end
+
+  def panel_delete_started(handle), do: "✅ Бот @#{handle} удаляется."
+
+  def panel_delete_stale,
+    do: "Этот запрос на удаление больше не действует. Начните заново в «Кабинете»."
 
   def delete_done(handle), do: "✅ Бот @#{handle} удалён."
   def delete_cancelled, do: "Отменено."

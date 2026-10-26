@@ -1,7 +1,7 @@
 defmodule DruzhokWebWeb.PanelController do
   @moduledoc """
-  The bot panel's API, read only (spec
-  `docs/superpowers/specs/2026-10-24-bot-panel-design.md`). `Plugs.Edge` and
+  The bot panel's API (spec `docs/superpowers/specs/2026-10-24-bot-panel-design.md`;
+  the two writes: `2026-10-26-panel-controls-design.md`). `Plugs.Edge` and
   `Plugs.PanelAuth` have run: `conn.assigns.instance` is the owner's bot.
 
       GET /app/api/bot
@@ -13,6 +13,9 @@ defmodule DruzhokWebWeb.PanelController do
       GET /app/api/skills/:category/:name
       GET /app/api/site
       GET /app/api/invites
+      GET /app/api/image-models
+      POST /app/api/settings        {"changes": {"language": "en", ...}}
+      POST /app/api/delete          asks the owner to confirm in the superbot
   """
 
   use DruzhokWebWeb, :controller
@@ -46,6 +49,44 @@ defmodule DruzhokWebWeb.PanelController do
     case Panel.invites(conn.assigns.instance) do
       {:ok, body} -> reply(conn, body)
       :error -> PanelAuth.error(conn, 502, "invites_unavailable", "could not load the invites")
+    end
+  end
+
+  def image_models(conn, _params) do
+    case Panel.image_models() do
+      {:ok, models} ->
+        reply(conn, %{models: models})
+
+      :error ->
+        PanelAuth.error(conn, 502, "catalogue_unavailable", "could not load the picture models")
+    end
+  end
+
+  def settings(conn, %{"changes" => changes}) when is_map(changes) do
+    case Druzhok.Panel.Settings.save(conn.assigns.instance, changes) do
+      {:ok, inst} -> reply(conn, %{bot: Panel.bot(inst)})
+      {:error, status, type, message} -> PanelAuth.error(conn, status, type, message)
+    end
+  end
+
+  def settings(conn, _params),
+    do: PanelAuth.error(conn, 400, "invalid_setting", "the body must be {\"changes\": {...}}")
+
+  def delete(conn, _params) do
+    case Panel.request_delete(conn.assigns.instance) do
+      {:ok, superbot} ->
+        conn |> put_status(202) |> reply(%{confirm_in: "@" <> superbot})
+
+      {:error, :superbot_unreachable} ->
+        PanelAuth.error(
+          conn,
+          409,
+          "superbot_unreachable",
+          "the superbot cannot message the owner"
+        )
+
+      {:error, _} ->
+        PanelAuth.error(conn, 502, "superbot_unavailable", "could not reach the superbot")
     end
   end
 

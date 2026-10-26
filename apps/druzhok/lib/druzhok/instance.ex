@@ -64,6 +64,14 @@ defmodule Druzhok.Instance do
     field :soul_sha256, :string
     field :soul_version, :integer
     field :agents_md_sha256, :string
+    # Panel controls (spec 2026-10-26-panel-controls-design.md): a save that
+    # needs a restart bumps settings_seq; a successful start records the seq
+    # it ran with. A delete started in the panel waits for the superbot tap.
+    field :settings_seq, :integer, default: 0
+    field :settings_applied_seq, :integer, default: 0
+    field :settings_saved_at, :utc_datetime_usec
+    field :delete_confirm_token, :string
+    field :delete_confirm_expires_at, :utc_datetime
 
     timestamps()
   end

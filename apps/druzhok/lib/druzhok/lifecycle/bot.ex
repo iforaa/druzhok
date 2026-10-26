@@ -11,7 +11,8 @@ defmodule Druzhok.Lifecycle.Bot do
      and retried on the backoff)
   4. `!active` → stop, acknowledge the stop
   5. asleep → wake when there is a reason
-  6. awake → recover a restart loop, start when down or asked, sleep when idle
+  6. awake → recover a restart loop, start when down or asked, apply saved
+     panel settings at a quiet moment, sleep when idle
 
   It keeps nothing that matters outside the row and the unit, so a new
   controller after a crash just applies the rules again.
@@ -34,7 +35,17 @@ defmodule Druzhok.Lifecycle.Bot do
   @impl true
   def init(id) do
     send(self(), :poke)
-    {:ok, %{id: id, unit: nil, unit_at: nil, activating_since: nil, idle_at: nil, timer: nil}}
+
+    {:ok,
+     %{
+       id: id,
+       unit: nil,
+       unit_at: nil,
+       activating_since: nil,
+       idle_at: nil,
+       quiet_at: nil,
+       timer: nil
+     }}
   end
 
   @impl true
@@ -164,25 +175,77 @@ defmodule Druzhok.Lifecycle.Bot do
   defp awake(state, inst) do
     if is_nil(inst.started_at), do: set(inst, started_at: now())
 
-    if idle_check_due?(state) do
-      state = %{state | idle_at: System.monotonic_time(:millisecond)}
+    cond do
+      settings_pending?(inst) -> apply_settings(state, inst)
+      idle_check_due?(state) -> sleep_check(state, inst)
+      true -> state
+    end
+  end
 
-      case Idle.check(inst) do
-        :idle ->
-          sleep_action(state, inst)
+  defp sleep_check(state, inst) do
+    state = %{state | idle_at: System.monotonic_time(:millisecond)}
 
-        {:busy, _} ->
-          # A hold an interrupted action of ours left behind; the unit is up
-          # and settled, so nothing is draining behind it.
-          if inst.telegram_relay_pause_reason in ["stopping", "sleeping"],
-            do: Webhook.resume_if(inst.id, inst.telegram_relay_pause_reason)
+    case Idle.check(inst) do
+      :idle ->
+        sleep_action(state, inst)
 
+      {:busy, _} ->
+        resume_stale_hold(inst)
+        state
+    end
+  end
+
+  # A hold an interrupted action of ours left behind; the unit is up and
+  # settled, so nothing is draining behind it. Left in place it would also
+  # keep updates unacknowledged, which reads as busy forever.
+  defp resume_stale_hold(inst) do
+    if inst.telegram_relay_pause_reason in ["stopping", "sleeping"],
+      do: Webhook.resume_if(inst.id, inst.telegram_relay_pause_reason)
+  end
+
+  defp settings_pending?(inst), do: (inst.settings_seq || 0) > (inst.settings_applied_seq || 0)
+
+  # Panel controls spec, «A quiet restart»: settings the owner saved in the
+  # panel reach hermes only through a restart, which must not cut off an
+  # answer or kill a job the agent started. So: no Telegram update and no
+  # proxy call for a minute, no turn, no process besides hermes; then hold
+  # the relay, let a delivery in flight land and look again. Never forced: a
+  # bot that is never quiet keeps the change until it is, or until a sleep and
+  # wake apply it.
+  @quiet [:telegram, :proxy, :turns, :processes]
+
+  defp apply_settings(state, inst) do
+    if quiet_check_due?(state) do
+      state = %{state | quiet_at: System.monotonic_time(:millisecond)}
+
+      if quiet?(inst) do
+        hold(inst.id, :stopping)
+        Relay.quiesce(inst.id)
+        latest = Repo.get(Instance, inst.id)
+
+        if latest && settings_pending?(latest) && quiet?(latest) do
+          Logger.info("[life] #{inst.name}: applying saved settings")
+          start_action(state, latest)
+        else
+          Webhook.resume_if(inst.id, :stopping)
+          Relay.notify(inst.id)
           state
+        end
+      else
+        resume_stale_hold(inst)
+        state
       end
     else
       state
     end
   end
+
+  defp quiet?(inst), do: Idle.check(inst, window_s: opt(:quiet_window_s), only: @quiet) == :idle
+
+  defp quiet_check_due?(%{quiet_at: nil}), do: true
+
+  defp quiet_check_due?(%{quiet_at: at}),
+    do: System.monotonic_time(:millisecond) - at >= opt(:quiet_check_ms)
 
   defp describe(:update, inst) do
     case Inbox.next_waking(inst.id) do
@@ -221,6 +284,8 @@ defmodule Druzhok.Lifecycle.Bot do
 
     if runnable?(inst) do
       seq = inst.start_seq
+      # The panel settings this start carries; a save after this read stays pending.
+      settings = inst.settings_seq || 0
       started = System.monotonic_time(:millisecond)
       set(inst, started_at: now(), started_mode: inst.telegram_mode)
 
@@ -231,13 +296,13 @@ defmodule Druzhok.Lifecycle.Bot do
 
       # A stop that did not take (it raised, or the unit still drains) is
       # retried by the next pass; starting now would keep the old hermes.
-      if down?(state.unit), do: run_start(state, inst, seq, started), else: state
+      if down?(state.unit), do: run_start(state, inst, {seq, settings}, started), else: state
     else
       state
     end
   end
 
-  defp run_start(state, inst, seq, started) do
+  defp run_start(state, inst, {seq, settings}, started) do
     {env, data_root} = BotManager.prepare_start(inst)
     latest = Repo.get(Instance, inst.id)
 
@@ -246,7 +311,7 @@ defmodule Druzhok.Lifecycle.Bot do
       case Host.start(inst.name, env, data_root) do
         :ok ->
           case Host.status(inst.name) do
-            :active -> started(state, inst, seq, started)
+            :active -> started(state, inst, {seq, settings}, started)
             other -> failed(state, inst, seq, "unit #{other} after start")
           end
 
@@ -265,8 +330,15 @@ defmodule Druzhok.Lifecycle.Bot do
   defp runnable?(%Instance{active: true, delete_requested: false}), do: true
   defp runnable?(_), do: false
 
-  defp started(state, inst, seq, t0) do
-    set(inst, applied_seq: seq, start_error: nil, start_failed_at: nil, start_failures: 0)
+  defp started(state, inst, {seq, settings}, t0) do
+    set(inst,
+      applied_seq: seq,
+      settings_applied_seq: settings,
+      start_error: nil,
+      start_failed_at: nil,
+      start_failures: 0
+    )
+
     # A restart is how a rejected_config pause gets fixed; a foreign process
     # on the port is not.
     Webhook.resume_except(inst.id, :wrong_owner)
@@ -480,6 +552,8 @@ defmodule Druzhok.Lifecycle.Bot do
     tick_ms: 2_000,
     unit_poll_ms: 30_000,
     idle_check_ms: 60_000,
+    quiet_check_ms: 10_000,
+    quiet_window_s: 60,
     activating_limit_ms: 330_000,
     backoff_ms: [10_000, 60_000, 300_000, 900_000]
   ]

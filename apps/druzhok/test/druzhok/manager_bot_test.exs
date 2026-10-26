@@ -488,6 +488,145 @@ defmodule Druzhok.ManagerBotTest do
     end
   end
 
+  describe "with one bot whose panel works" do
+    setup %{data_root: root} do
+      ruoc = Druzhok.RuocStub.start()
+      prev_phx = System.get_env("PHX_HOST")
+      System.delete_env("PHX_HOST")
+      Application.put_env(:druzhok, :public_host, "druzhok.test")
+
+      on_exit(fn ->
+        Application.delete_env(:druzhok, :public_host)
+        if prev_phx, do: System.put_env("PHX_HOST", prev_phx)
+      end)
+
+      inst =
+        %Instance{}
+        |> Instance.changeset(%{
+          name: "solo",
+          model: "m",
+          workspace: Path.join([root, "solo", "workspace"]),
+          tenant_key: "dk-solo",
+          owner_telegram_id: @owner,
+          trigger_name: "solo_bot",
+          ruoc_api_key: "ruoc_solo",
+          telegram_token: "77:abc",
+          image_gen_enabled: true,
+          image_gen_model: "ruoc-flux-klein"
+        })
+        |> Repo.insert!()
+
+      Repo.update_all(from(i in Instance, where: i.id == ^inst.id),
+        set: [cabinet_menu_set: true, cabinet_url: "https://druzhok.test/app/?bot=77"]
+      )
+
+      on_exit(fn -> Repo.delete_all(from(i in Instance, where: i.name == "solo")) end)
+      %{ruoc: ruoc, inst: Repo.get!(Instance, inst.id)}
+    end
+
+    defp confirm_token(inst, token, expires_in_s) do
+      at = DateTime.utc_now() |> DateTime.add(expires_in_s) |> DateTime.truncate(:second)
+
+      Repo.update_all(from(i in Instance, where: i.id == ^inst.id),
+        set: [delete_confirm_token: token, delete_confirm_expires_at: at]
+      )
+    end
+
+    defp alerts(stub),
+      do: stub |> TelegramStub.calls("answerCallbackQuery") |> Enum.filter(& &1["show_alert"])
+
+    test "the keyboard has no 🎨 or 🗑, and the card points at the Кабинет", %{stub: stub, inst: inst} do
+      assert Druzhok.ManagerBot.Onboarding.panel_ready?(inst)
+      TelegramStub.push_update(stub, message("/start"))
+      params = TelegramStub.await_call(stub, "sendMessage", &(&1["text"] =~ "Привет"))
+
+      assert Jason.decode!(params["reply_markup"])["keyboard"] == [
+               [%{"text" => "🤖 Мой бот"}],
+               [%{"text" => "🎁 Пригласить"}]
+             ]
+
+      TelegramStub.push_update(stub, message("🤖 Мой бот"))
+      card = TelegramStub.await_call(stub, "sendMessage", &(&1["text"] =~ "*solo*"))
+      assert card["text"] =~ "в «Кабинете»: откройте бота и нажмите «Кабинет» внизу."
+    end
+
+    test "a stale 🎨 or 🗑 label says where it went and replaces the keyboard", %{stub: stub, inst: inst} do
+      for label <- ["🎨 Картинки", "🗑 Удалить"] do
+        TelegramStub.push_update(stub, message(label))
+      end
+
+      Process.sleep(300)
+      moved = Enum.filter(TelegramStub.calls(stub, "sendMessage"), &(&1["text"] =~ "Теперь это в «Кабинете»"))
+      assert length(moved) == 2
+      assert Jason.decode!(hd(moved)["reply_markup"])["keyboard"] == [[%{"text" => "🤖 Мой бот"}], [%{"text" => "🎁 Пригласить"}]]
+      refute Enum.any?(sent_texts(stub), &(&1 =~ "Точно удалить"))
+      refute Repo.get!(Instance, inst.id).delete_requested
+    end
+
+    test "old 🎨/🗑 buttons answer an alert and change nothing", %{stub: stub, inst: inst} do
+      for data <- ["img:#{inst.id}", "imgset:#{inst.id}:ruoc-flux-pro", "imgoff:#{inst.id}", "del:#{inst.id}",
+                   "delyes:#{inst.id}", "delno", "imgback"] do
+        TelegramStub.push_update(stub, callback(data))
+      end
+
+      Process.sleep(500)
+      assert length(alerts(stub)) == 7
+      assert TelegramStub.calls(stub, "editMessageText") == []
+      row = Repo.get!(Instance, inst.id)
+      assert {row.image_gen_enabled, row.image_gen_model, row.delete_requested} == {true, "ruoc-flux-klein", false}
+    end
+
+    test "a bot with the cabinet off keeps the superbot's controls", %{stub: stub, inst: inst} do
+      Repo.update_all(from(i in Instance, where: i.id == ^inst.id), set: [cabinet_off: true])
+      TelegramStub.push_update(stub, message("/start"))
+      params = TelegramStub.await_call(stub, "sendMessage", &(&1["text"] =~ "Привет"))
+      assert [[_, %{"text" => "🎨 Картинки"}], _] = Jason.decode!(params["reply_markup"])["keyboard"]
+
+      TelegramStub.push_update(stub, callback("img:#{inst.id}"))
+      assert TelegramStub.await_call(stub, "editMessageText", &(&1["text"] =~ "Картинки для @solo_bot"))
+      assert alerts(stub) == []
+    end
+
+    test "pdel with a live token from the owner deletes; a second tap does nothing", %{stub: stub, inst: inst} do
+      cleanup_instance("solo")
+      confirm_token(inst, "tok-live", 600)
+      TelegramStub.push_update(stub, callback("pdel:tok-live"))
+
+      TelegramStub.await_call(stub, "editMessageText", &(&1["text"] =~ "удаляется"))
+      menu = TelegramStub.await_call(stub, "sendMessage", &(&1["text"] == "Можно создать нового бота."))
+      assert Jason.decode!(menu["reply_markup"])["keyboard"] == [[%{"text" => "🤖 Создать бота"}]]
+      assert eventually(fn -> is_nil(Repo.get(Instance, inst.id)) or Repo.get(Instance, inst.id).delete_requested end)
+
+      TelegramStub.push_update(stub, callback("pdel:tok-live", @owner, 56))
+      TelegramStub.await_call(stub, "editMessageText", &(&1["message_id"] == 56 and &1["text"] =~ "больше не действует"))
+    end
+
+    test "a wrong token, an expired one, or another user deletes nothing", %{stub: stub, inst: inst} do
+      confirm_token(inst, "tok-a", 600)
+      TelegramStub.push_update(stub, callback("pdel:tok-b"))
+      TelegramStub.push_update(stub, callback("pdel:tok-a", @stranger, 57))
+      TelegramStub.push_update(stub, callback("pdel:", @owner, 58))
+      Process.sleep(300)
+      assert Repo.get!(Instance, inst.id).delete_confirm_token == "tok-a"
+
+      confirm_token(inst, "tok-old", -1)
+      TelegramStub.push_update(stub, callback("pdel:tok-old", @owner, 59))
+      TelegramStub.await_call(stub, "editMessageText", &(&1["message_id"] == 59 and &1["text"] =~ "больше не действует"))
+
+      row = Repo.get!(Instance, inst.id)
+      refute row.delete_requested
+      assert row.active == inst.active
+    end
+
+    test "pdelno clears the token", %{stub: stub, inst: inst} do
+      confirm_token(inst, "tok-c", 600)
+      TelegramStub.push_update(stub, callback("pdelno:tok-c"))
+      TelegramStub.await_call(stub, "editMessageText", &(&1["text"] == "Отменено."))
+      row = Repo.get!(Instance, inst.id)
+      assert {row.delete_confirm_token, row.delete_requested} == {nil, false}
+    end
+  end
+
   describe "invite gate" do
     setup do
       %{ruoc: Druzhok.RuocStub.start()}

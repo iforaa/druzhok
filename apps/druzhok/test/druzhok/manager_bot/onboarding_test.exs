@@ -1,5 +1,6 @@
 defmodule Druzhok.ManagerBot.OnboardingTest do
-  use ExUnit.Case, async: true
+  # async: false — one test sets the :public_host app env.
+  use ExUnit.Case, async: false
 
   alias Druzhok.ManagerBot.Onboarding
 
@@ -171,6 +172,65 @@ defmodule Druzhok.ManagerBot.OnboardingTest do
       assert Onboarding.image_result(:disabled, "fedya_bot", nil) == "✅ Картинки выключены для @fedya_bot"
       assert Onboarding.image_restarting(:enabled, "fedya_bot") == "⏳ Включаю картинки для @fedya_bot…"
       assert Onboarding.image_restarting(:disabled, "fedya_bot") == "⏳ Выключаю картинки для @fedya_bot…"
+    end
+  end
+
+  describe "panel-ready owners" do
+    test "one panel-ready bot: no 🎨 or 🗑 on the keyboard" do
+      assert Onboarding.main_menu_keyboard(1, true).keyboard == [
+               [%{text: "🤖 Мой бот"}],
+               [%{text: "🎁 Пригласить"}]
+             ]
+
+      assert Onboarding.main_menu_keyboard(1).keyboard == Onboarding.main_menu_keyboard(1, false).keyboard
+      assert Onboarding.main_menu_keyboard(2, true).keyboard == [[%{text: "📋 Мои боты"}]]
+    end
+
+    test "the list keeps only the chat button for a panel-ready bot" do
+      bots = [
+        %{id: 1, name: "a", panel_ready: true, active: true},
+        %{id: 2, name: "b", active: true}
+      ]
+
+      {_text, [[only], [_chat, img, del]]} = Onboarding.my_bots_message(bots)
+      assert only.url =~ "t.me/a_bot"
+      assert {img.callback_data, del.callback_data} == {"img:2", "del:2"}
+    end
+
+    test "the card and the after-create text point at the Кабинет" do
+      {text, _} = Onboarding.my_bot_message(%{name: "a", panel_ready: true, active: true})
+      assert text =~ "Настройки, тариф и удаление — в «Кабинете»"
+      {text, _} = Onboarding.my_bot_message(%{name: "a", active: true})
+      refute text =~ "Кабинет"
+
+      assert Onboarding.after_create_message(true) =~ "«Кабинете»"
+      assert Onboarding.after_create_message() == "Управление ботом — в меню внизу."
+    end
+
+    test "panel_ready? needs the button set to the panel's own address" do
+      Application.put_env(:druzhok, :public_host, "druzhok.test")
+      on_exit(fn -> Application.delete_env(:druzhok, :public_host) end)
+
+      ready = %Druzhok.Instance{
+        telegram_token: "77:abc",
+        cabinet_menu_set: true,
+        cabinet_url: "https://druzhok.test/app/?bot=77"
+      }
+
+      if System.get_env("PHX_HOST") in [nil, ""] do
+        assert Onboarding.panel_ready?(ready)
+        refute Onboarding.panel_ready?(%{ready | cabinet_off: true})
+        refute Onboarding.panel_ready?(%{ready | cabinet_menu_set: false})
+        refute Onboarding.panel_ready?(%{ready | cabinet_url: "https://oldey.dev/tg/"})
+      end
+
+      refute Onboarding.panel_ready?(%{name: "a"})
+    end
+
+    test "the panel delete confirm carries the token on both buttons" do
+      {text, [[yes, no]]} = Onboarding.panel_delete_confirm("vasya_bot", "t0k")
+      assert text =~ "@vasya_bot навсегда"
+      assert {yes.callback_data, no.callback_data} == {"pdel:t0k", "pdelno:t0k"}
     end
   end
 

@@ -7,6 +7,37 @@ defmodule Druzhok.BotSettingsTest do
 
   defp reload(inst), do: Repo.get!(Instance, inst.id)
 
+  describe "update/3 with restart: :when_quiet" do
+    test "never restarts or wakes, in any state; a restart field bumps settings_seq" do
+      for attrs <- [%{active: true}, %{active: true, sleeping: true}, %{active: false}] do
+        inst = relay_instance(Map.merge(%{mention_only: false}, attrs))
+
+        assert {:ok, row, true} =
+                 BotSettings.update(inst.name, %{mention_only: true}, restart: :when_quiet)
+
+        assert row.mention_only
+        assert row.settings_seq == 1
+        assert row.settings_saved_at
+        assert reload(inst).start_seq == inst.start_seq
+        assert reload(inst).active == inst.active
+      end
+    end
+
+    test "a live-only or unchanged change leaves settings_seq" do
+      inst = relay_instance(%{active: true, mention_only: true})
+
+      assert {:ok, row, false} =
+               BotSettings.update(
+                 inst.name,
+                 %{image_gen_model: "m", mention_only: true},
+                 restart: :when_quiet
+               )
+
+      assert row.settings_seq == 0
+      assert row.start_seq == inst.start_seq
+    end
+  end
+
   describe "update/2" do
     test "a restart field restarts a running bot" do
       inst = relay_instance(%{active: true, mention_only: false})

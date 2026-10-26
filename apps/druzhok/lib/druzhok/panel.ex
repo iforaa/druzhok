@@ -1,8 +1,10 @@
 defmodule Druzhok.Panel do
   @moduledoc """
-  What the bot panel shows a bot's owner, read only (spec
-  `docs/superpowers/specs/2026-10-24-bot-panel-design.md`). Nothing here
-  wakes a sleeping bot: it reads the instance row, the disk through
+  What the bot panel shows a bot's owner (spec
+  `docs/superpowers/specs/2026-10-24-bot-panel-design.md`), and the two
+  things it changes: settings (`Druzhok.Panel.Settings`) and the request to
+  delete the bot, which the owner confirms in the superbot (panel controls
+  spec, «Delete»). Nothing here wakes a sleeping bot: it reads the instance row, the disk through
   `Druzhok.TenantFiles` / `Druzhok.Panel.Lister` and the unit's state, plus
   the bot's name from Telegram's `getMe` (`profile/1`, cached), ruoc's model
   catalogue as last fetched, and the owner's referral codes at ruoc.
@@ -86,10 +88,25 @@ defmodule Druzhok.Panel do
         memory_provider: inst.memory_provider,
         group_shared_memory: inst.group_shared_memory
       },
+      apply: apply(inst),
       access: access(inst),
       billing_url: billing_url(),
-      support_url: support_url()
+      support_url: support_url(),
+      superbot: superbot()
     }
+  end
+
+  # Where a delete is confirmed: the superbot's @username, or nil.
+  defp superbot do
+    case Druzhok.Settings.get("manager_bot_token") do
+      token when is_binary(token) and token != "" -> profile(token) |> then(&(&1 && &1.username))
+      _ -> nil
+    end
+  end
+
+  defp apply(inst) do
+    state = Druzhok.Panel.Settings.apply_state(inst)
+    %{state: state, error: if(state == "failed", do: start_error(inst.start_error))}
   end
 
   # The bot's Telegram name feeds its SOUL.md (Runtime.Hermes.Voice) from the
@@ -227,6 +244,114 @@ defmodule Druzhok.Panel do
   end
 
   def invites(_), do: :error
+
+  @doc "ruoc's picture models for the panel's picker, or `:error`."
+  def image_models do
+    case Druzhok.Ruoc.image_models() do
+      {:ok, models} ->
+        {:ok, Enum.map(models, &Map.take(&1, [:id, :name, :rub_per_image, :default]))}
+
+      {:error, _} ->
+        :error
+    end
+  end
+
+  # --- Delete ---------------------------------------------------------------
+
+  @delete_ttl_s 10 * 60
+
+  @doc """
+  Asks the owner, in the superbot, to confirm deleting the bot. Only creates
+  the request: a token on the row (10 min; a live one is reused) and the
+  superbot's message with ✅/❌ buttons carrying it. The bot itself cannot
+  answer in that chat, so a phished panel session cannot finish a delete.
+  `{:ok, superbot_username}`, `{:error, :superbot_unreachable}` when Telegram
+  refuses to message the owner (they never opened the superbot), or
+  `{:error, :superbot_unavailable}`.
+  """
+  def request_delete(%Instance{} = inst) do
+    :global.trans({{__MODULE__, :delete, inst.id}, self()}, fn ->
+      with token when is_binary(token) and token != "" <-
+             Druzhok.Settings.get("manager_bot_token"),
+           %{username: superbot} when is_binary(superbot) <- profile(token),
+           %Instance{delete_requested: false} = latest <- Druzhok.Repo.get(Instance, inst.id),
+           confirm = live_token(latest) || new_token(latest),
+           {text, rows} =
+             Druzhok.ManagerBot.Onboarding.panel_delete_confirm(handle(latest), confirm),
+           :ok <- send_confirm(token, latest.owner_telegram_id, text, rows) do
+        {:ok, superbot}
+      else
+        {:error, :forbidden} ->
+          clear_token(inst)
+          {:error, :superbot_unreachable}
+
+        _ ->
+          {:error, :superbot_unavailable}
+      end
+    end)
+  end
+
+  defp live_token(%Instance{delete_confirm_token: t, delete_confirm_expires_at: %DateTime{} = at})
+       when is_binary(t) do
+    if DateTime.compare(at, DateTime.utc_now()) == :gt, do: t
+  end
+
+  defp live_token(_), do: nil
+
+  defp new_token(inst) do
+    import Ecto.Query
+    token = :crypto.strong_rand_bytes(16) |> Base.url_encode64(padding: false)
+    expires = DateTime.utc_now() |> DateTime.add(@delete_ttl_s) |> DateTime.truncate(:second)
+
+    from(i in Instance, where: i.id == ^inst.id)
+    |> Druzhok.Repo.update_all(
+      set: [delete_confirm_token: token, delete_confirm_expires_at: expires]
+    )
+
+    token
+  end
+
+  defp clear_token(inst) do
+    import Ecto.Query
+
+    from(i in Instance, where: i.id == ^inst.id)
+    |> Druzhok.Repo.update_all(set: [delete_confirm_token: nil, delete_confirm_expires_at: nil])
+  end
+
+  defp handle(inst) do
+    case profile(inst.telegram_token) do
+      %{username: u} when is_binary(u) -> u
+      _ -> Druzhok.Telegram.Addressed.username(inst) || inst.name
+    end
+  end
+
+  defp send_confirm(_token, owner, _text, _rows) when not is_integer(owner),
+    do: {:error, :forbidden}
+
+  defp send_confirm(token, owner, text, rows) do
+    markup = %{inline_keyboard: rows}
+
+    case Druzhok.Telegram.API.send_message(token, owner, text, %{
+           reply_markup: Jason.encode!(markup)
+         }) do
+      {:ok, _} ->
+        :ok
+
+      {:error, body} ->
+        if forbidden?(body), do: {:error, :forbidden}, else: {:error, :telegram}
+    end
+  end
+
+  # 403 «bot can't initiate conversation with a user» / «bot was blocked by the user».
+  defp forbidden?(body) when is_binary(body) do
+    case Jason.decode(body) do
+      {:ok, %{"error_code" => 403}} -> true
+      _ -> false
+    end
+  end
+
+  defp forbidden?(%{"error_code" => 403}), do: true
+  defp forbidden?(_), do: false
 
   @doc "The panel's word for a bot's state; first matching row of the spec's table wins."
   def state(shown, active) do

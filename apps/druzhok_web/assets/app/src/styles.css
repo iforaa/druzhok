@@ -575,6 +575,64 @@ h2 {
   opacity: 0.7;
 }
 
+.choice__mark {
+  flex: none;
+  width: 22px;
+  color: var(--accent);
+}
+.choice--on .row__title {
+  color: var(--accent);
+}
+.row--danger .row__title {
+  color: var(--danger);
+}
+.switch {
+  flex: none;
+  width: 46px;
+  height: 28px;
+  border-radius: 14px;
+  background: var(--grey-soft);
+  position: relative;
+  transition: background 0.15s;
+}
+.switch--on {
+  background: var(--ok);
+}
+.switch__knob {
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.25);
+  transition: transform 0.15s;
+}
+.switch--on .switch__knob {
+  transform: translateX(18px);
+}
+.note-error {
+  color: var(--danger);
+  font-size: 0.9rem;
+  padding: 0 4px;
+}
+.danger {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  padding: 14px 16px;
+  border-radius: 16px;
+  font-weight: 650;
+  background: var(--danger-soft);
+  color: var(--danger);
+}
+.field-row {
+  display: flex;
+  gap: 8px;
+}
+
 .bubble {
   flex: none;
   width: 38px;

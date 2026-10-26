@@ -76,7 +76,7 @@ export default function App() {
             {nav.tab === "home" && <Home bot={bot} go={go} />}
             {nav.tab === "memory" && <Memory start={nav.screen} />}
             {nav.tab === "billing" && <Billing start={nav.screen} />}
-            {nav.tab === "more" && <More bot={bot} start={nav.screen} />}
+            {nav.tab === "more" && <More bot={bot} start={nav.screen} onBot={setBot} />}
           </div>
         )}
       </main>

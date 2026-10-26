@@ -1,6 +1,6 @@
 # Panel controls: owners change settings and delete the bot in the Mini App; the superbot only creates
 
-Status: draft r4, 2026-10-26 (reviewed by revmux `chat-surface-panel-specs/01-initial`, `02-after-fix`, `03-final`). Follows
+Status: implemented on branch `panel-controls` (2026-10-26); draft r4 (reviewed by revmux `chat-surface-panel-specs/01-initial`, `02-after-fix`, `03-final`). Follows
 `2026-10-24-bot-panel-design.md` (the read-only panel). Second opinions from gpt-6-astra and gpt-6.1-sol
 (2026-10-26) agreed on the shape: the panel is the owner's control centre, the superbot is the way in.
 

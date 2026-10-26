@@ -69,6 +69,9 @@ defmodule DruzhokWebWeb.Router do
       get "/skills/:name", PanelController, :skill
       get "/skills/:category/:name", PanelController, :skill
       get "/site", PanelController, :site
+      get "/image-models", PanelController, :image_models
+      post "/settings", PanelController, :settings
+      post "/delete", PanelController, :delete
     end
   end
 

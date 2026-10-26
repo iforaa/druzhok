@@ -112,9 +112,15 @@ or language change rebinds and resets the old owner's button. The model catalog 
 Bot panel (spec `docs/superpowers/specs/2026-10-24-bot-panel-design.md`): with `PHX_HOST` set, «Кабинет» opens
 druzhok's own Mini App, `https://<PHX_HOST>/app/?bot=<bot_id>` (source `apps/druzhok_web/assets/app`, built by
 `ops/build-app.sh` into the committed `priv/static/app`). Tabs Главная, Память, Счёт, Ещё (own dark/light palette);
-the bot, files, settings and invites (`GET /app/api/invites`, ruoc `/v1/referrals` → superbot links) are read only
-and served by druzhok (`Druzhok.Panel`, `PanelController`); «Поддержка» shows when Settings `support_url` (https)
-is set. Счёт calls ruoc's `/tg/api/*` cross-origin at `RUOC_SITE_URL` (default
+the bot, files and invites (`GET /app/api/invites`, ruoc `/v1/referrals` → superbot links) are read only and
+served by druzhok (`Druzhok.Panel`, `PanelController`); «Поддержка» shows when Settings `support_url` (https)
+is set. Owners change language, timezone, group mode, pictures and site in Ещё (`POST /app/api/settings`,
+allowlist `Druzhok.Panel.Settings`; spec `docs/superpowers/specs/2026-10-26-panel-controls-design.md`): a save
+never restarts or wakes the bot, it bumps `settings_seq`, and the lifecycle controller restarts an awake bot
+at a quiet moment (no update/proxy call for 60 s, no turn, no child process; never forced) while a wake or any
+start applies it (`settings_applied_seq`). «Удалить бота» (`POST /app/api/delete`) only sends the owner a
+`pdel:<token>` confirm in the superbot (10 min), since the bot itself could phish panel init data. For a
+panel-ready bot (`Onboarding.panel_ready?`) the superbot drops 🎨/🗑 and answers old buttons with an alert. Счёт calls ruoc's `/tg/api/*` cross-origin at `RUOC_SITE_URL` (default
 `https://oldey.dev`; ruoc must list druzhok in `TG_PANEL_ORIGINS`). `/app` answers only with Caddy's
 `X-Druzhok-Edge` header (`DRUZHOK_EDGE_SECRET`, env only; bots reach :4000 directly), and the API checks Telegram's
 Ed25519 signature plus the bot-token HMAC and the owner (`Plugs.PanelAuth`). Files are read through

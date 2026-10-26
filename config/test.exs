@@ -20,7 +20,13 @@ config :phoenix, :plug_init_mode, :runtime
 
 # Lifecycle controller timings scaled down for tests (sleep/wake spec).
 config :druzhok,
-  lifecycle: [tick_ms: 50, unit_poll_ms: 0, idle_check_ms: 0, backoff_ms: [300, 600]],
+  lifecycle: [
+    tick_ms: 50,
+    unit_poll_ms: 0,
+    idle_check_ms: 0,
+    quiet_check_ms: 0,
+    backoff_ms: [300, 600]
+  ],
   lifecycle_wait_poll_ms: 20,
   lifecycle_wait_ms: 15_000,
   lifecycle_typing: [every_ms: 50, for_ms: 2_000]

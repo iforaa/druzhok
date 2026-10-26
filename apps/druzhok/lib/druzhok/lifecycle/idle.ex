@@ -31,24 +31,33 @@ defmodule Druzhok.Lifecycle.Idle do
 
   @doc """
   `:idle` or `{:busy, reason}`. `own_pause: true` accepts the `:sleeping`
-  pause the sleep action has just set; any other pause is busy.
+  pause the sleep action has just set; any other pause is busy. `only:`
+  runs just the named checks (`:wanted`, `:paused`, `:started`, `:telegram`,
+  `:proxy`, `:turns`, `:processes`, `:cron`), in this order: the panel's quiet
+  restart asks whether the bot is busy, not whether it may sleep.
   """
   def check(%Instance{} = inst, opts \\ []) do
     window = Keyword.get_lazy(opts, :window_s, &window_s/0)
     cutoff = DateTime.add(DateTime.utc_now(), -window)
 
     checks = [
-      fn -> wanted(inst) end,
-      fn -> not_paused(inst, Keyword.get(opts, :own_pause, false)) end,
-      fn -> started_long_ago(inst, cutoff) end,
-      fn -> no_telegram(inst, cutoff) end,
-      fn -> no_proxy_calls(inst, cutoff) end,
-      fn -> no_turns(inst) end,
-      fn -> one_process(inst) end,
-      fn -> no_cron(inst) end
+      wanted: fn -> wanted(inst) end,
+      paused: fn -> not_paused(inst, Keyword.get(opts, :own_pause, false)) end,
+      started: fn -> started_long_ago(inst, cutoff) end,
+      telegram: fn -> no_telegram(inst, cutoff) end,
+      proxy: fn -> no_proxy_calls(inst, cutoff) end,
+      turns: fn -> no_turns(inst) end,
+      processes: fn -> one_process(inst) end,
+      cron: fn -> no_cron(inst) end
     ]
 
-    Enum.reduce_while(checks, :idle, fn check, :idle ->
+    checks =
+      case Keyword.fetch(opts, :only) do
+        {:ok, names} -> Enum.filter(checks, fn {name, _} -> name in names end)
+        :error -> checks
+      end
+
+    Enum.reduce_while(checks, :idle, fn {_name, check}, :idle ->
       case check.() do
         :ok -> {:cont, :idle}
         {:busy, _} = busy -> {:halt, busy}

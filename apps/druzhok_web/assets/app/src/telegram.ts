@@ -21,6 +21,11 @@ interface WebApp {
   setBackgroundColor?(color: string): void
   setBottomBarColor?(color: string): void
   onEvent?(event: string, cb: () => void): void
+  showConfirm?(message: string, cb: (ok: boolean) => void): void
+  showPopup?(
+    params: { title?: string; message: string; buttons?: { id?: string; type?: string; text?: string }[] },
+    cb?: (id: string) => void,
+  ): void
   BackButton: BackButton
 }
 
@@ -115,6 +120,22 @@ export function openTelegram(url: string): boolean {
     // fall through to an ordinary link
   }
   return openExternal(url)
+}
+
+/** Telegram's own yes/no dialog; false when it cannot be shown. */
+export function confirmDialog(message: string): Promise<boolean> {
+  const app = webApp()
+  return new Promise((resolve) => {
+    try {
+      if (app?.showConfirm) {
+        app.showConfirm(message, (ok) => resolve(ok))
+        return
+      }
+    } catch {
+      // fall through
+    }
+    resolve(false)
+  })
 }
 
 /** Closes the panel, back to the chat with the bot. */

@@ -91,6 +91,21 @@ const paths: Record<string, ReactNode> = {
       <path d="M12 3.5v2.5M12 18v2.5M3.5 12H6M18 12h2.5M6 6l1.8 1.8M16.2 16.2 18 18M6 18l1.8-1.8M16.2 7.8 18 6" />
     </>
   ),
+  image: (
+    <>
+      <rect x="3.5" y="5" width="17" height="14" rx="2" />
+      <circle cx="9" cy="10" r="1.6" />
+      <path d="M20.5 16l-5-5-8 8" />
+    </>
+  ),
+  trash: <path d="M4.5 7h15M10 7V4.5h4V7M6.5 7l1 13h9l1-13M10 11v5M14 11v5" />,
+  group: (
+    <>
+      <circle cx="9" cy="9" r="3" />
+      <circle cx="16.5" cy="10" r="2.4" />
+      <path d="M3.5 19c.8-3 3-4.5 5.5-4.5s4.7 1.5 5.5 4.5M14.5 15c2.6-.4 5 .8 6 3.5" />
+    </>
+  ),
   lock: (
     <>
       <rect x="5" y="10.5" width="14" height="9.5" rx="2" />
@@ -157,6 +172,65 @@ export function Row({
     </button>
   ) : (
     <div className="row row--still">{body}</div>
+  )
+}
+
+/** One option in a list of choices: a check mark on the current one. */
+export function Choice({
+  title,
+  sub,
+  on,
+  busy = false,
+  onPick,
+}: {
+  title: string
+  sub?: ReactNode
+  on: boolean
+  busy?: boolean
+  onPick: () => void
+}) {
+  return (
+    <button className={on ? "row choice choice--on" : "row choice"} onClick={onPick} disabled={busy} aria-pressed={on}>
+      <span className="row__text">
+        <span className="row__title">{title}</span>
+        {sub ? <span className="row__sub">{sub}</span> : null}
+      </span>
+      <span className="choice__mark">{on ? <Icon name="check" size={20} /> : null}</span>
+    </button>
+  )
+}
+
+/** A row with an on/off switch; the whole row toggles it. */
+export function Toggle({
+  icon,
+  tone = "blue",
+  title,
+  sub,
+  on,
+  busy = false,
+  onChange,
+}: {
+  icon: string
+  tone?: "blue" | "green" | "orange" | "purple" | "pink" | "teal" | "grey"
+  title: string
+  sub?: ReactNode
+  on: boolean
+  busy?: boolean
+  onChange: (on: boolean) => void
+}) {
+  return (
+    <button className="row" role="switch" aria-checked={on} disabled={busy} onClick={() => onChange(!on)}>
+      <span className={`bubble bubble--${tone}`}>
+        <Icon name={icon} size={20} />
+      </span>
+      <span className="row__text">
+        <span className="row__title">{title}</span>
+        {sub ? <span className="row__sub">{sub}</span> : null}
+      </span>
+      <span className={on ? "switch switch--on" : "switch"} aria-hidden="true">
+        <span className="switch__knob" />
+      </span>
+    </button>
   )
 }
 

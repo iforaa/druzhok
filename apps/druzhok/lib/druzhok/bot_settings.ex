@@ -54,19 +54,47 @@ defmodule Druzhok.BotSettings do
   to strings parsed by the field's type (`"true"`, `"42"`, `""` for nil).
   Returns `{:ok, instance, restarted?}`; the restart itself is carried out by
   the lifecycle controller.
+
+  `restart: :when_quiet` (the bot panel) never asks for a restart and never
+  wakes a sleeping bot: a changed restart field bumps `settings_seq` in the
+  same write, and the controller applies it at the next start or the next
+  quiet moment (panel controls spec, «Applying a change»). `restarted?` is
+  then whether a restart is pending.
   """
-  def update(name, attrs) do
+  def update(name, attrs, opts \\ []) do
     with {:ok, inst} <- fetch(name),
          {:ok, changes} <- cast(attrs),
-         :ok <- validate(changes),
-         {:ok, updated} <- inst |> Instance.changeset(changes) |> Repo.update() do
-      restart? =
-        inst.active and
-          Enum.any?(changes, fn {k, v} -> k in @restart and Map.get(inst, k) != v end)
+         :ok <- validate(changes) do
+      restart_field? =
+        Enum.any?(changes, fn {k, v} -> k in @restart and Map.get(inst, k) != v end)
 
-      if restart?, do: BotManager.restart(name)
+      case opts[:restart] do
+        :when_quiet -> update_when_quiet(inst, changes, restart_field?)
+        _ -> update_now(inst, changes, inst.active and restart_field?)
+      end
+    end
+  end
+
+  defp update_now(inst, changes, restart?) do
+    with {:ok, updated} <- inst |> Instance.changeset(changes) |> Repo.update() do
+      if restart?, do: BotManager.restart(inst.name)
       {:ok, updated, restart?}
     end
+  end
+
+  defp update_when_quiet(inst, changes, restart_field?) do
+    changeset = Instance.changeset(inst, changes)
+
+    changeset =
+      if restart_field?,
+        do:
+          Ecto.Changeset.change(changeset,
+            settings_seq: (inst.settings_seq || 0) + 1,
+            settings_saved_at: DateTime.utc_now()
+          ),
+        else: changeset
+
+    with {:ok, updated} <- Repo.update(changeset), do: {:ok, updated, restart_field?}
   end
 
   defp cast(attrs) do

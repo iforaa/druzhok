@@ -477,6 +477,113 @@ defmodule Druzhok.LifecycleTest do
     end
   end
 
+  describe "settings saved in the panel" do
+    # sleep off: the bot stays awake, so only a quiet restart can apply them.
+    defp pending_bot(root, attrs \\ %{}) do
+      inst = idle_bot(root, Map.merge(%{sleep_enabled: false}, attrs))
+      set(inst, settings_seq: 1, settings_saved_at: DateTime.utc_now())
+      inst
+    end
+
+    test "a quiet awake bot is restarted once, and the start records them", %{root: root} do
+      inst = pending_bot(root)
+      poke(inst)
+
+      assert eventually(fn -> reload(inst).settings_applied_seq == 1 end)
+      Process.sleep(300)
+      assert HostStub.calls(:start) == [inst.name]
+      assert HostStub.pauses_at_stop() == ["stopping"]
+      refute Webhook.paused(reload(inst))
+    end
+
+    test "a busy bot waits, without a pause, and is restarted once it is quiet", %{root: root} do
+      inst = pending_bot(root)
+      gateway_state(inst, %{"gateway_state" => "running", "active_agents" => 1})
+      poke(inst)
+      Process.sleep(300)
+
+      assert HostStub.calls(:stop) == []
+      refute Webhook.paused(reload(inst))
+      assert reload(inst).settings_applied_seq == 0
+
+      gateway_state(inst, %{"gateway_state" => "running", "active_agents" => 0})
+      assert eventually(fn -> reload(inst).settings_applied_seq == 1 end)
+      assert HostStub.calls(:start) == [inst.name]
+    end
+
+    test "an update or a proxy call in the last minute is busy; a child process too", %{
+      root: root
+    } do
+      inst = pending_bot(root)
+      HostStub.set_procs(2)
+      poke(inst)
+      Process.sleep(300)
+      assert HostStub.calls(:stop) == []
+
+      HostStub.set_procs(1)
+      :ok = Inbox.enqueue(inst.id, 7, ~s({"update_id":7}))
+      Process.sleep(300)
+      assert HostStub.calls(:stop) == []
+    end
+
+    test "busy again after the hold: the relay is resumed and nothing restarts", %{root: root} do
+      inst = pending_bot(root)
+      # Quiet at the first look, a child process at the second, then for good.
+      HostStub.set_procs([1, 2])
+      poke(inst)
+      Process.sleep(300)
+
+      assert HostStub.calls(:stop) == []
+      refute Webhook.paused(reload(inst))
+      assert reload(inst).settings_applied_seq == 0
+    end
+
+    test "an asleep bot stays asleep; its wake applies them and nothing restarts after", %{
+      root: root
+    } do
+      inst = pending_bot(root, %{sleep_enabled: true, sleeping: true, unit: :inactive})
+      poke(inst)
+      Process.sleep(300)
+      assert reload(inst).sleeping
+      assert HostStub.calls(:start) == []
+
+      :ok = Inbox.enqueue(inst.id, 1, ~s({"update_id":1,"message":{"chat":{"id":5}}}))
+      poke(inst)
+      assert eventually(fn -> reload(inst).settings_applied_seq == 1 end)
+      Process.sleep(300)
+      assert HostStub.calls(:start) == [inst.name]
+    end
+
+    test "any start records the seq it read; a save during the start stays pending", %{root: root} do
+      inst = pending_bot(root)
+      # The restart request is carried out before the quiet restart's first look.
+      set(inst, settings_seq: 2)
+
+      HostStub.hook(:start, fn _ ->
+        set(inst, settings_seq: 3, settings_saved_at: DateTime.utc_now())
+        gateway_state(inst, %{"gateway_state" => "running", "active_agents" => 1})
+      end)
+
+      assert {:ok, _} = BotManager.restart(inst.name, wait: true)
+      Process.sleep(300)
+      row = reload(inst)
+      assert {row.settings_seq, row.settings_applied_seq} == {3, 2}
+      assert Druzhok.Panel.Settings.apply_state(row) == "waiting"
+    end
+
+    test "a failed start after the save shows as failed; an older failure does not", %{root: root} do
+      inst = pending_bot(root, %{unit: :inactive})
+      old = DateTime.utc_now() |> DateTime.add(-60)
+      set(inst, start_error: "old", start_failed_at: old, start_failures: 0)
+      assert Druzhok.Panel.Settings.apply_state(reload(inst)) == "waiting"
+
+      HostStub.on_start({:error, :boom})
+      poke(inst)
+      assert eventually(fn -> reload(inst).start_failures >= 1 end)
+      assert Druzhok.Panel.Settings.apply_state(reload(inst)) == "failed"
+    end
+  end
+
   describe "crashes" do
     test "a controller killed inside a sleep's Host.stop is replaced and finishes the job",
          %{root: root} do
