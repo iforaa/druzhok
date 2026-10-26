@@ -208,8 +208,14 @@ defmodule Druzhok.ManagerBot.OnboardingTest do
     end
 
     test "panel_ready? needs the button set to the panel's own address" do
+      prev_phx = System.get_env("PHX_HOST")
+      System.delete_env("PHX_HOST")
       Application.put_env(:druzhok, :public_host, "druzhok.test")
-      on_exit(fn -> Application.delete_env(:druzhok, :public_host) end)
+
+      on_exit(fn ->
+        Application.delete_env(:druzhok, :public_host)
+        if prev_phx, do: System.put_env("PHX_HOST", prev_phx)
+      end)
 
       ready = %Druzhok.Instance{
         telegram_token: "77:abc",
@@ -217,12 +223,10 @@ defmodule Druzhok.ManagerBot.OnboardingTest do
         cabinet_url: "https://druzhok.test/app/?bot=77"
       }
 
-      if System.get_env("PHX_HOST") in [nil, ""] do
-        assert Onboarding.panel_ready?(ready)
-        refute Onboarding.panel_ready?(%{ready | cabinet_off: true})
-        refute Onboarding.panel_ready?(%{ready | cabinet_menu_set: false})
-        refute Onboarding.panel_ready?(%{ready | cabinet_url: "https://oldey.dev/tg/"})
-      end
+      assert Onboarding.panel_ready?(ready)
+      refute Onboarding.panel_ready?(%{ready | cabinet_off: true})
+      refute Onboarding.panel_ready?(%{ready | cabinet_menu_set: false})
+      refute Onboarding.panel_ready?(%{ready | cabinet_url: "https://oldey.dev/tg/"})
 
       refute Onboarding.panel_ready?(%{name: "a"})
     end

@@ -521,6 +521,19 @@ defmodule Druzhok.LifecycleTest do
       assert HostStub.calls(:stop) == []
 
       HostStub.set_procs(1)
+
+      Repo.insert!(%Druzhok.Usage{
+        instance_id: inst.id,
+        model: "m",
+        prompt_tokens: 0,
+        completion_tokens: 0,
+        total_tokens: 0
+      })
+
+      Process.sleep(300)
+      assert HostStub.calls(:stop) == []
+
+      Repo.delete_all(from(u in Druzhok.Usage, where: u.instance_id == ^inst.id))
       :ok = Inbox.enqueue(inst.id, 7, ~s({"update_id":7}))
       Process.sleep(300)
       assert HostStub.calls(:stop) == []

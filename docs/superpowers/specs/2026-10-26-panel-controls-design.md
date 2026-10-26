@@ -107,8 +107,9 @@ changes a restart field) and `settings_applied_seq` (the `settings_seq` a succes
      not count as busy. An update that slipped in before the hold is caught here.
   3. Still quiet: run `start_action` (it stops the unit through `stop_unit` and starts it). Not quiet:
      `Webhook.resume_if(id, :stopping)` and wait for the next tick.
-  There is no deadline. A bot that is never quiet keeps the change pending until it is; a sleep in the
-  meantime applies it on the next wake. The panel says so.
+  There is no deadline. A bot that is never quiet keeps the change pending until it is. While a change
+  is pending an awake bot does not fall asleep: an idle bot is quiet, so it is restarted instead. Only a bot
+  already asleep when the change was saved applies it on its next wake. The panel says so.
 - **Asleep or stopped bots** are left alone: `sync_config` and `env_vars/1` run on every start and wake
   (`BotManager.prepare_start/1`), so the next one applies the change.
 

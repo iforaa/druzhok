@@ -266,6 +266,13 @@ defmodule Druzhok.ManagerBot do
     end
   end
 
+  defp panel_ready_for?(user_id) do
+    case user_bots(user_id) do
+      [bot] -> Onboarding.panel_ready?(bot)
+      _ -> false
+    end
+  end
+
   defp handle_menu(state, user_id, chat_id, "🤖 Создать бота"),
     do: dispatch_input(state, user_id, chat_id, %{text: "🤖 Создать бота"})
 
@@ -871,10 +878,11 @@ defmodule Druzhok.ManagerBot do
 
       case result do
         {:ok, _name, _username} ->
+          # A new bot is panel-ready only once its «Кабинет» button is set,
+          # so text and keyboard both follow the same check.
           menu = menu_for(creator_id)
-          panel? = Druzhok.Telegram.Webhook.public_host?()
 
-          API.send_message(token, creator_id, Onboarding.after_create_message(panel?), %{
+          API.send_message(token, creator_id, Onboarding.after_create_message(panel_ready_for?(creator_id)), %{
             reply_markup: Jason.encode!(menu)
           })
 

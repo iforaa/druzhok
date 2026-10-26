@@ -57,12 +57,17 @@ function useSettings(bot: Bot, onBot: (b: Bot) => void) {
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [saved, setSaved] = useState(false)
+  // Bumped by every save: a poll started before it must not overwrite what the save returned.
+  const generation = useRef(0)
 
   const save = async (changes: SettingChanges) => {
+    generation.current += 1
     setBusy(true)
     setError(null)
     try {
       const r = await panelApi.saveSettings(changes)
+      // Polls sent while the save was in flight may have read the old row.
+      generation.current += 1
       onBot(r.bot)
       setSaved(true)
     } catch (err) {
@@ -76,15 +81,23 @@ function useSettings(bot: Bot, onBot: (b: Bot) => void) {
   const waiting = bot.apply.state === "waiting"
   useEffect(() => {
     if (!waiting) return
+    let live = true
     const started = Date.now()
     const timer = window.setInterval(() => {
       if (Date.now() - started > 120_000) {
         window.clearInterval(timer)
         return
       }
-      panelApi.bot().then(onBot, () => {})
+      const gen = generation.current
+      panelApi.bot().then(
+        (b) => live && gen === generation.current && onBot(b),
+        () => {},
+      )
     }, 3000)
-    return () => window.clearInterval(timer)
+    return () => {
+      live = false
+      window.clearInterval(timer)
+    }
   }, [waiting, onBot])
 
   return { save, busy, error, saved, clearError: () => setError(null) }
@@ -363,33 +376,50 @@ function ImagesScreen({ bot, settings }: { bot: Bot; settings: Settings }) {
   )
 }
 
-type DeleteStep = { kind: "ask" } | { kind: "sent"; superbot: string } | { kind: "done" }
+type DeleteStep = { kind: "ask" } | { kind: "sent"; superbot: string } | { kind: "done" } | { kind: "expired" }
+
+// The superbot's confirm lives 10 minutes (Panel.request_delete/1).
+const confirmWindowMs = 10 * 60 * 1000
 
 function DeleteScreen({ bot }: { bot: Bot }) {
   const [step, setStep] = useState<DeleteStep>({ kind: "ask" })
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<{ text: string; superbot: boolean } | null>(null)
-  const polling = useRef<number | null>(null)
+  const mounted = useRef(true)
+  useEffect(() => () => void (mounted.current = false), [])
 
-  useEffect(() => () => {
-    if (polling.current) window.clearInterval(polling.current)
-  }, [])
+  // Once the owner confirms, the bot is gone from the panel's API (404). A
+  // cancel or an expired confirm never says so: stop with the confirm window.
+  const sent = step.kind === "sent"
+  useEffect(() => {
+    if (!sent) return
+    let live = true
+    const started = Date.now()
+    const timer = window.setInterval(() => {
+      if (Date.now() - started > confirmWindowMs) {
+        window.clearInterval(timer)
+        setStep({ kind: "expired" })
+        return
+      }
+      panelApi.bot().catch((err) => {
+        if (live && err instanceof APIError && err.status === 404) {
+          window.clearInterval(timer)
+          setStep({ kind: "done" })
+        }
+      })
+    }, 3000)
+    return () => {
+      live = false
+      window.clearInterval(timer)
+    }
+  }, [sent])
 
   const request = async () => {
     setBusy(true)
     setError(null)
     try {
       const r = await panelApi.deleteBot()
-      setStep({ kind: "sent", superbot: r.confirm_in.replace(/^@/, "") })
-      // Once the owner confirms, the bot is gone from the panel's API.
-      polling.current = window.setInterval(() => {
-        panelApi.bot().catch((err) => {
-          if (err instanceof APIError && err.status === 404) {
-            if (polling.current) window.clearInterval(polling.current)
-            setStep({ kind: "done" })
-          }
-        })
-      }, 3000)
+      if (mounted.current) setStep({ kind: "sent", superbot: r.confirm_in.replace(/^@/, "") })
     } catch (err) {
       setError({ text: explain(err), superbot: err instanceof APIError && err.kind === "superbot_unreachable" })
     } finally {
@@ -404,6 +434,17 @@ function DeleteScreen({ bot }: { bot: Bot }) {
         <p className="hint">Его память, файлы и напоминания удаляются.</p>
         <button className="primary" onClick={closePanel}>
           Закрыть
+        </button>
+      </>
+    )
+
+  if (step.kind === "expired")
+    return (
+      <>
+        <h1 className="screen-title">Удаление не подтверждено</h1>
+        <p className="hint">Бот остаётся. Если хотите удалить его, начните заново.</p>
+        <button className="secondary" onClick={() => setStep({ kind: "ask" })}>
+          Начать заново
         </button>
       </>
     )

@@ -210,8 +210,9 @@ defmodule Druzhok.Lifecycle.Bot do
   # answer or kill a job the agent started. So: no Telegram update and no
   # proxy call for a minute, no turn, no process besides hermes; then hold
   # the relay, let a delivery in flight land and look again. Never forced: a
-  # bot that is never quiet keeps the change until it is, or until a sleep and
-  # wake apply it.
+  # bot that is never quiet keeps the change until it is. While a change waits
+  # an awake bot does not fall asleep (an idle bot is quiet, so it restarts
+  # instead); only a bot already asleep at the save applies it on its wake.
   @quiet [:telegram, :proxy, :turns, :processes]
 
   defp apply_settings(state, inst) do
