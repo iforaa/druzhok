@@ -90,6 +90,21 @@ defmodule Druzhok.PanelTest do
     assert Panel.profile(nil) == nil
   end
 
+  test "the bot's Telegram name is remembered for its SOUL.md, and filled in at boot", %{inst: inst} do
+    token = "voice:#{System.unique_integer([:positive])}"
+    other = "voice2:#{System.unique_integer([:positive])}"
+    Application.put_env(:druzhok, :test_profiles, %{token => %{"first_name" => "Кот Вася"}, other => %{"first_name" => "Жора"}})
+    on_exit(fn -> Application.delete_env(:druzhok, :test_profiles) end)
+
+    inst = Druzhok.Repo.update!(Ecto.Changeset.change(inst, telegram_token: token))
+    Panel.bot(inst)
+    assert Druzhok.Repo.reload!(inst).display_name == "Кот Вася"
+
+    nameless = relay_instance(%{telegram_token: other})
+    Panel.backfill_display_names()
+    assert Druzhok.Repo.reload!(nameless).display_name == "Жора"
+  end
+
   test "an expired profile is kept when Telegram fails, and the failure is not retried at once" do
     token = "expired:#{System.unique_integer([:positive])}"
     key = {Panel, :profile, :crypto.hash(:sha256, token)}

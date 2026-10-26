@@ -2,6 +2,12 @@ defmodule DruzhokWebWeb.LlmProxy.Ruoc.ChatSyncTest do
   use DruzhokWebWeb.RuocProxyCase
 
   @body %{"model" => "ruoc-flash", "messages" => [%{"role" => "user", "content" => "ping"}]}
+  # A gateway turn: hermes's agent prompt and its tools.
+  @turn %{
+    "model" => "ruoc-flash",
+    "messages" => [%{"role" => "system", "content" => "Тебя зовут Вася."}, %{"role" => "user", "content" => "ping"}],
+    "tools" => [%{"type" => "function", "function" => %{"name" => "memory"}}]
+  }
 
   test "forwards with the bot's ruoc key and relays body, status and request id",
        %{conn: conn, bypass: bypass} do
@@ -57,10 +63,10 @@ defmodule DruzhokWebWeb.LlmProxy.Ruoc.ChatSyncTest do
       gateway_error(req, 402, "insufficient_quota", "account balance is too low for this request")
     end)
 
-    conn = post(conn, "/v1/chat/completions", @body)
+    conn = post(conn, "/v1/chat/completions", @turn)
 
     body = json_response(conn, 200)
-    assert get_in(body, ["choices", Access.at(0), "message", "content"]) == "💳 Баланс бота исчерпан. Пополни счёт, чтобы продолжить."
+    assert get_in(body, ["choices", Access.at(0), "message", "content"]) == "Лимит тарифа на сейчас исчерпан. Когда он обновится и как сменить тариф — в «Кабинете»."
     assert get_in(body, ["choices", Access.at(0), "finish_reason"]) == "stop"
     assert body["model"] == "ruoc-flash"
     assert get_resp_header(conn, "x-ruoc-request-id") == ["req_abc"]
@@ -71,8 +77,39 @@ defmodule DruzhokWebWeb.LlmProxy.Ruoc.ChatSyncTest do
     english = create_instance(%{model: "ruoc-flash", ruoc_account_id: "acct-2", ruoc_api_key: "ruoc_en", language: "en"})
     Bypass.expect_once(bypass, "POST", "/v1/chat/completions", fn req -> gateway_error(req, 402, "insufficient_quota", "no") end)
 
-    conn = post(authed(build_conn(), english), "/v1/chat/completions", @body)
-    assert get_in(json_response(conn, 200), ["choices", Access.at(0), "message", "content"]) =~ "balance is used up"
+    conn = post(authed(build_conn(), english), "/v1/chat/completions", @turn)
+    assert get_in(json_response(conn, 200), ["choices", Access.at(0), "message", "content"]) =~ "plan's limit is used up"
+  end
+
+  describe "a 402 on hermes's auxiliary calls" do
+    for {label, body} <- [
+          {"the compressor's single user message", %{"messages" => [%{"role" => "user", "content" => "summarise"}]}},
+          {"a session title",
+           %{"messages" => [%{"role" => "system", "content" => "You name chat sessions. Given the user's opening message…"}, %{"role" => "user", "content" => "привет"}]}},
+          {"a memory query rewrite",
+           %{"messages" => [%{"role" => "system", "content" => "You rewrite a user's latest message into one concise English question for memory retrieval.\n…"}, %{"role" => "user", "content" => "x"}]}}
+        ] do
+      test "stays a 402: #{label}", %{conn: conn, bypass: bypass} do
+        Bypass.expect_once(bypass, "POST", "/v1/chat/completions", fn req -> gateway_error(req, 402, "insufficient_quota", "no") end)
+
+        conn = post(conn, "/v1/chat/completions", Map.put(unquote(Macro.escape(body)), "model", "ruoc-flash"))
+        assert json_response(conn, 402)["error"]["type"] == "insufficient_quota"
+      end
+    end
+
+    for {label, body} <- [
+          {"a gateway turn with tools", @turn},
+          {"a zero-toolset cron run (agent prompt, no tools)", Map.delete(@turn, "tools")},
+          {"an unknown system prompt, no tools",
+           %{"messages" => [%{"role" => "system", "content" => "Something new"}, %{"role" => "user", "content" => "x"}]}}
+        ] do
+      test "gets the notice: #{label}", %{conn: conn, bypass: bypass} do
+        Bypass.expect_once(bypass, "POST", "/v1/chat/completions", fn req -> gateway_error(req, 402, "insufficient_quota", "no") end)
+
+        conn = post(conn, "/v1/chat/completions", Map.put(unquote(Macro.escape(body)), "model", "ruoc-flash"))
+        assert get_in(json_response(conn, 200), ["choices", Access.at(0), "message", "content"]) =~ "Лимит тарифа"
+      end
+    end
   end
 
   for {status, type} <- [{429, "rate_limit_error"}, {404, "invalid_request_error"}] do

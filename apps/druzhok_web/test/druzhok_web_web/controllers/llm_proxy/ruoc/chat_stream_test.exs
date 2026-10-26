@@ -2,6 +2,7 @@ defmodule DruzhokWebWeb.LlmProxy.Ruoc.ChatStreamTest do
   use DruzhokWebWeb.RuocProxyCase
 
   @body %{"model" => "ruoc-flash", "stream" => true, "messages" => [%{"role" => "user", "content" => "ping"}]}
+  @turn Map.put(@body, "tools", [%{"type" => "function", "function" => %{"name" => "memory"}}])
 
   defp send_gateway_sse(req, lines) do
     req
@@ -61,7 +62,7 @@ defmodule DruzhokWebWeb.LlmProxy.Ruoc.ChatStreamTest do
       gateway_error(req, 402, "insufficient_quota", "account balance is too low for this request")
     end)
 
-    conn = post(conn, "/v1/chat/completions", @body)
+    conn = post(conn, "/v1/chat/completions", @turn)
 
     assert conn.status == 200
     assert get_resp_header(conn, "content-type") |> hd() =~ "text/event-stream"
@@ -70,10 +71,19 @@ defmodule DruzhokWebWeb.LlmProxy.Ruoc.ChatStreamTest do
     events = conn.resp_body |> String.split("\n\n", trim: true) |> Enum.map(&String.trim_leading(&1, "data: "))
     assert [chunk, "[DONE]"] = events
     decoded = Jason.decode!(chunk)
-    assert get_in(decoded, ["choices", Access.at(0), "delta", "content"]) == "💳 Баланс бота исчерпан. Пополни счёт, чтобы продолжить."
+    assert get_in(decoded, ["choices", Access.at(0), "delta", "content"]) == "Лимит тарифа на сейчас исчерпан. Когда он обновится и как сменить тариф — в «Кабинете»."
     assert get_in(decoded, ["choices", Access.at(0), "finish_reason"]) == "stop"
     assert decoded["object"] == "chat.completion.chunk"
     assert usage_logs(instance) == []
+  end
+
+  test "a 402 on a streaming auxiliary call (no tools, no system prompt) stays a 402",
+       %{conn: conn, bypass: bypass} do
+    Bypass.expect_once(bypass, "POST", "/v1/chat/completions", fn req -> gateway_error(req, 402, "insufficient_quota", "no") end)
+
+    conn = post(conn, "/v1/chat/completions", @body)
+    assert conn.status == 402
+    assert Jason.decode!(conn.resp_body)["error"]["type"] == "insufficient_quota"
   end
 
   test "502 when the gateway is down", %{conn: conn, bypass: bypass} do

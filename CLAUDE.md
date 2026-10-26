@@ -47,7 +47,7 @@ apps/druzhok/      core: BotManager, Host (Systemd|Process), Runtime.Hermes, Man
 apps/druzhok_web/  Phoenix, no UI: LLM proxy (LlmProxyController), Telegram webhook, /internal/fetch, BotSite plug
 ops/               druzhok-ctl, hermes@.service, nftables, Caddyfile, bootstrap.sh, smoke.sh
 hermes-agent/      gitignored clone of the hermes fork (see update-hermes skill)
-(workspace seed: config.yaml + AGENTS.md come from Runtime.Hermes.workspace_files/1; SOUL.md from the provisioner)
+(workspace seed: config.yaml comes from Runtime.Hermes.workspace_files/1; SOUL.md from Runtime.Hermes.Voice.sync_soul/2; no AGENTS.md)
 docs/superpowers/specs|plans  design docs (see 2026-08-23-systemd-host-*)
 ```
 
@@ -60,9 +60,13 @@ Prod env (MIX_ENV, DATABASE_PATH, DRUZHOK_HOST, HEX/MIX homes, SECRET_KEY_BASE, 
 Chat, search, transcription and image generation go to **ruoc-gateway** (`Druzhok.Ruoc`, `LlmProxy.Ruoc`),
 one ruoc account per bot (`instances.ruoc_account_id` / `ruoc_api_key`); the balance there is
 the only spending limit (402 when empty). Druzhok records tokens and previews only, `cost_cents`
-is 0 on those rows. A bot without a ruoc key gets 503 from `LlmAuth`. A 402 (empty
-balance) on chat is answered as a normal 200 completion carrying `LlmProxy.BalanceNotice` in the bot's
-language, because hermes's own 402 text tells tenants to add provider credits and switch `/model`.
+is 0 on those rows. A bot without a ruoc key gets 503 from `LlmAuth`. A 402 (plan limit reached)
+on chat is answered as a normal 200 completion carrying `LlmProxy.BalanceNotice` in the bot's
+language, because hermes's own 402 text tells tenants to add provider credits and switch `/model`;
+hermes's auxiliary calls (`LlmProxy.AuxShapes`: no tools, and no system message or a known aux
+prompt) keep the real 402. What a bot is told about itself (SOUL.md, `agent.system_prompt`
+product rules, the Russian Telegram hint) is `Runtime.Hermes.Voice`, spec
+`docs/superpowers/specs/2026-10-25-bot-voice-design.md`.
 Spec: `docs/superpowers/specs/2026-09-05-ruoc-gateway-migration-design.md`.
 
 | Endpoint | Upstream |

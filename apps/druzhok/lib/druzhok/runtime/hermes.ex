@@ -14,14 +14,15 @@ defmodule Druzhok.Runtime.Hermes do
   `<data_root>/platforms/pairing/telegram-approved.json` is left for the bot
   to manage — `ops/druzhok users` reads it, druzhok never writes it.
 
-  `workspace/AGENTS.md` is seeded on first start and the druzhok-owned
-  sections (`## Каждая сессия`, `## Память`, `## Стиль`, `## Публикация
-  сайтов`) are rewritten on every start; everything else in it belongs to
-  the bot.
+  What the bot is told about itself — SOUL.md, druzhok's product rules in
+  `agent.system_prompt`, the Telegram formatting hint, and the retirement of
+  the OpenClaw-era `workspace/AGENTS.md` — is `Runtime.Hermes.Voice`
+  (spec 2026-10-25-bot-voice-design.md).
   """
 
   require Logger
   alias Druzhok.{Instance, TenantFiles}
+  alias Druzhok.Runtime.Hermes.Voice
 
   # ruoc catalogue entry Mnemosyne embeds through, and its vector width.
   @embedding_model "ruoc-embed-gemini"
@@ -40,47 +41,6 @@ defmodule Druzhok.Runtime.Hermes do
   # got "send it again"). Hermes needs TimeoutStopSec >= max(60, max(drain,
   # cron_drain 30 + 10) + 30) = 70 s; hermes@.service has the 90 s default.
   @restart_drain_timeout "30"
-
-  @agents_md_session_section """
-  ## Каждая сессия
-
-  _Эта секция перезаписывается druzhok при каждом старте бота. Не правь руками._
-
-  Перед любыми действиями:
-  1. SOUL.md уже загружен в системный промпт — не читай заново
-  2. Память пользователя уже подгружена в контекст — не лезь в файлы без нужды
-  3. Читай файлы только если нужно обновить
-
-  Не спрашивай разрешения. Просто делай.
-  """
-
-  @agents_md_style_section """
-  ## Стиль
-
-  _Эта секция перезаписывается druzhok при каждом старте бота. Не правь руками._
-
-  - Простой вопрос → простой ответ. Один точный поиск лучше десяти.
-  - Глубже только когда человек явно просит или цена ошибки реально высокая.
-  - Получил достойный ответ — отвечай и останавливайся, не перепроверяй сам себя.
-  - Один и тот же запрос дважды — никогда. Не нашёл — меняй стратегию или скажи "не знаю".
-  - Человек добавил фото или контекст — отвечай на исходный вопрос, а не на новый.
-  - Инструмент не сработал → не повторяй. Максимум 2 попытки, потом другой подход.
-  - Кратко когда нужно, подробно когда важно.
-  """
-
-  @agents_md_sites_section """
-  ## Публикация сайтов
-
-  Если пользователь просит сделать лендинг, сайт, демо-страницу и т.п.:
-
-  1. Проверь переменную окружения `BOT_SITE_BASE_URL`. Если пусто — хостинг не включён; сообщи пользователю и не пиши файлы.
-  2. Выбери короткое имя сайта (`^[a-z0-9][a-z0-9-]*$`, до 50 символов).
-  3. Запиши все файлы в `sites/<имя>/` внутри рабочей директории (workspace). Входная точка — `index.html`. Всего до ~50 MB на сайт, до ~100 файлов.
-  4. Ответь пользователю одной кликабельной ссылкой: `$BOT_SITE_BASE_URL/<имя>/`.
-  5. Удалить сайт: `rm -rf sites/<имя>/`.
-
-  Файлы в `sites/<имя>/` публичны. Не клади туда секреты, токены, файлы, начинающиеся с точки.
-  """
 
   def data_root(instance) do
     case Map.get(instance, :workspace) do
@@ -139,9 +99,8 @@ defmodule Druzhok.Runtime.Hermes do
       "TELEGRAM_REQUIRE_MENTION" => to_string(Map.get(instance, :mention_only, false)),
       "TELEGRAM_MENTION_PATTERNS" => build_mention_patterns(instance),
       "TELEGRAM_FREE_RESPONSE_CHATS" => build_free_response_chats(instance),
-      # Druzhok website hosting: when enabled, the bot knows its public
-      # base URL; otherwise this is empty and the agent refuses to
-      # publish (see workspace/AGENTS.md "Публикация сайтов").
+      # Druzhok website hosting: the bot's public base URL when enabled,
+      # else empty (the publishing steps are in Voice.product_rules/1).
       "BOT_SITE_BASE_URL" => build_bot_site_base_url(instance),
       "OPENROUTER_API_KEY" => tenant_key,
       # Anything hermes sends to "openrouter" goes to the proxy too. Bots have
@@ -229,17 +188,17 @@ defmodule Druzhok.Runtime.Hermes do
     # state (telegram thread IDs, etc.) back into config.yaml at runtime, so
     # we must never overwrite it on restart. sync_config/2 (below) handles
     # targeted updates on every start.
-    [
-      {"config.yaml", build_config_yaml(instance), :create_only},
-      {"workspace/AGENTS.md", default_agents_md(), :create_only}
-    ]
+    [{"config.yaml", build_config_yaml(instance), :create_only}]
   end
 
-  # config.yaml and AGENTS.md are read whole; anything larger is left alone.
+  # config.yaml is read whole; anything larger is left alone.
   @config_limit 1_048_576
 
   def sync_config(instance, data_root) do
-    sync_agents_md(instance, data_root)
+    instance =
+      instance
+      |> Voice.record(Voice.sync_soul(instance, data_root))
+      |> Voice.record(Voice.migrate_agents_md(instance, data_root))
 
     # Patch druzhok-owned fields in config.yaml on every start so the
     # instance row stays the source of truth without clobbering hermes's
@@ -266,6 +225,7 @@ defmodule Druzhok.Runtime.Hermes do
           |> sync_telegram_extra(instance)
           |> sync_cron_block()
           |> sync_display_block()
+          |> sync_voice_keys(instance)
           |> sync_stt_block()
           |> sync_model_facts(instance)
           |> sync_agent_block()
@@ -326,6 +286,29 @@ defmodule Druzhok.Runtime.Hermes do
       upsert: &upsert_indented_line(&1, "memory_notifications", "off"),
       default: "display:\n  memory_notifications: off"
     )
+  end
+
+  # Druzhok's product rules and the Russian Telegram hint (Runtime.Hermes.Voice).
+  # Each is one double-quoted line (a JSON string is valid YAML): a block
+  # scalar's blank lines would end the block bodies sync_yaml_block/3 matches.
+  # put_block drops a key with its whole body, so a block form hermes re-dumped
+  # is replaced too. `display.personality` would replace the rules
+  # (hermes_cli/personality.py), so druzhok removes it.
+  defp sync_voice_keys(content, instance) do
+    content
+    |> put_block("agent", [{"system_prompt", Jason.encode!(Voice.product_rules(instance))}])
+    |> put_block("platform_hints", [
+      {"telegram", {:merge, [{"replace", Jason.encode!(Voice.telegram_hint())}]}}
+    ])
+    |> put_block("display", [{"personality", :delete}])
+  end
+
+  @doc false
+  # The keys sync_voice_keys/2 writes, removed by Rollback.voice/0.
+  def strip_voice_keys(content) do
+    content
+    |> put_block("agent", [{"system_prompt", :delete}])
+    |> put_block("platform_hints", [{"telegram", :delete}])
   end
 
   # What the bot's model can do, from ruoc's catalogue (`model_facts`, set by
@@ -1028,94 +1011,6 @@ defmodule Druzhok.Runtime.Hermes do
       block = "quick_commands:\n  start:\n    type: alias\n    target: new"
       String.trim_trailing(content) <> "\n\n" <> block <> "\n"
     end
-  end
-
-  def sync_agents_md(_instance, data_root) do
-    segments = ["workspace", "AGENTS.md"]
-
-    case TenantFiles.read_text(data_root, segments, @config_limit) do
-      {:ok, %{text: content, truncated: false}} ->
-        updated =
-          content
-          |> sync_section("Каждая сессия", @agents_md_session_section)
-          |> sync_section("Память", memory_section())
-          |> sync_section("Стиль", @agents_md_style_section)
-          |> sync_section("Публикация сайтов", @agents_md_sites_section)
-
-        if updated != content, do: write_tenant_file(data_root, segments, updated)
-        :ok
-
-      _ ->
-        :ok
-    end
-  end
-
-  # Replace one druzhok-owned `## <heading>` section (header + body, up to
-  # the next `## ` or EOF) with `body`, appending it if absent. Druzhok owns
-  # these sections so every restart picks up the latest wording: the session
-  # section because the original lied that IDENTITY.md/USER.md were injected
-  # into the system prompt (hermes only loads SOUL.md and memories), the
-  # style section because it encodes loop-prevention tuned from observed bot
-  # pathology, the sites section because paths changed across hosts.
-  defp sync_section(content, heading, body) do
-    body = String.trim_trailing(body)
-    pattern = ~r/(?ms)^## #{Regex.escape(heading)}[ \t]*\n.*?\n+(?=^## |\z)/
-
-    updated =
-      if Regex.match?(pattern, content) do
-        # Eat trailing newlines and re-emit a stable `\n\n` separator so the
-        # rewrite is idempotent regardless of the original blank-line count.
-        Regex.replace(pattern, content, body <> "\n\n", global: false)
-      else
-        String.trim_trailing(content) <> "\n\n" <> body
-      end
-
-    String.trim_trailing(updated) <> "\n"
-  end
-
-  # Seed for a fresh workspace: the druzhok-owned sections plus a few
-  # starter rules the bot is free to edit.
-  defp default_agents_md do
-    [
-      "# AGENTS.md — Персональный ассистент",
-      @agents_md_session_section,
-      memory_section(),
-      """
-      ## Безопасность
-
-      - Приватные данные не утекают. Никогда.
-      - Деструктивные команды — только с разрешения.
-      - Сомневаешься — спроси.
-
-      ## Групповые чаты
-
-      Участвуй, но не доминируй. Отвечай когда упомянут или когда реально полезен.
-      """,
-      @agents_md_style_section,
-      @agents_md_sites_section,
-      "---\n\n_Этот файл — стартовая точка. Добавляй свои правила._"
-    ]
-    |> Enum.map_join("\n\n", &String.trim_trailing/1)
-    |> Kernel.<>("\n")
-  end
-
-  defp memory_section do
-    """
-    ## Память
-
-    Ты просыпаешься с чистого листа каждую сессию. Файлы — твоя преемственность:
-
-    - **Ежедневные заметки:** `memory/YYYY-MM-DD.md` — сырой лог событий (через memory tools)
-    - **Долгосрочная:** `MEMORY.md` — отобранные воспоминания (загружается автоматически)
-
-    ### Записывай — никаких мысленных заметок!
-
-    - Память ограничена — хочешь запомнить → **запиши в файл**
-    - "Запомни это" → обнови ежедневный файл или MEMORY.md
-    - Выучил урок → обнови AGENTS.md или TOOLS.md
-
-    """
-    |> String.trim_trailing()
   end
 
   def clear_sessions(data_root) do

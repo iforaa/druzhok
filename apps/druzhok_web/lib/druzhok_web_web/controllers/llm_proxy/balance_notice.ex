@@ -7,11 +7,13 @@ defmodule DruzhokWebWeb.LlmProxy.BalanceNotice do
   `/model` — neither of which a tenant can do. So the proxy answers a 402
   with an ordinary completion carrying this notice in the bot's language;
   hermes shows it like any assistant reply. The 402 itself is still logged.
+  Hermes's auxiliary calls (`LlmProxy.AuxShapes`) get the real 402 instead.
   """
 
+  # Plans have limits, not a balance (spec 2026-10-25-bot-voice-design.md).
   @notices %{
-    "ru" => "💳 Баланс бота исчерпан. Пополни счёт, чтобы продолжить.",
-    "en" => "💳 The bot's balance is used up. Top up the account to continue."
+    "ru" => "Лимит тарифа на сейчас исчерпан. Когда он обновится и как сменить тариф — в «Кабинете».",
+    "en" => "The plan's limit is used up for now. When it resets and how to change plans — in «Кабинет»."
   }
 
   @doc "The notice for an instance's language; anything but Russian gets English."

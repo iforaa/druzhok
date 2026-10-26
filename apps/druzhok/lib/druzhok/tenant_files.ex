@@ -20,7 +20,7 @@ defmodule Druzhok.TenantFiles do
   path at every step, so `Druzhok.Panel.Lister` lists as the bot's own user.
 
   Writing (`write/4`, druzhok's own files in the tenant dir: config.yaml,
-  AGENTS.md) has the same problem the other way round: druzhok writes with
+  SOUL.md) has the same problem the other way round: druzhok writes with
   CAP_DAC_OVERRIDE, so a write that follows a symlink lands anywhere on the
   host. Writes never open, chmod or chown anything by name inside the bot's
   dir: the file is prepared in a staging dir next to the tenant dirs, which no
@@ -183,6 +183,19 @@ defmodule Druzhok.TenantFiles do
     end
   end
 
+  @doc """
+  Makes sure `segments` below `tenant_dir` are real directories, creating
+  missing ones owned by the tenant (as `write/4` does). `{:ok, path}` or
+  `{:error, reason}`.
+  """
+  def ensure_dir(tenant_dir, segments, opts \\ []) do
+    with {:ok, uid} <- owner(tenant_dir, opts) do
+      ensure_dirs(tenant_dir, segments, uid)
+    else
+      :not_found -> {:error, :no_tenant_dir}
+    end
+  end
+
   defp ensure_dirs(tenant_dir, dirs, uid) do
     Enum.reduce_while(dirs, {:ok, tenant_dir}, fn seg, {:ok, dir} ->
       path = Path.join(dir, seg)
@@ -288,6 +301,31 @@ defmodule Druzhok.TenantFiles do
     result = :file.write(fd, content)
     :ok = :file.close(fd)
     result
+  end
+
+  @doc """
+  Removes the regular file at `segments` below `tenant_dir` when it belongs
+  to the tenant (`uid:` overrides). unlink(2) removes a link rather than
+  follow it, and the directories are checked to be real first. `:ok`,
+  `:not_found` (nothing there) or `{:error, reason}` (not a regular file of
+  the tenant's, a directory swapped for a link).
+  """
+  def delete(tenant_dir, segments, opts \\ []) do
+    {dirs, [_name]} = Enum.split(segments, -1)
+    target = Path.join([tenant_dir | segments])
+
+    with {:ok, uid} <- owner(tenant_dir, opts),
+         true <- real_dir?(tenant_dir, dirs) || {:error, :not_a_directory} do
+      case File.lstat(target) do
+        {:ok, %File.Stat{type: :regular, uid: ^uid}} -> :file.delete(target)
+        {:ok, _} -> {:error, :not_regular}
+        {:error, :enoent} -> :not_found
+        {:error, reason} -> {:error, reason}
+      end
+    else
+      :not_found -> {:error, :no_tenant_dir}
+      {:error, _} = error -> error
+    end
   end
 
   @doc "Whether every component of `segments` below `tenant_dir` is a real directory."

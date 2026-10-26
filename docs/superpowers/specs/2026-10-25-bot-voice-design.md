@@ -1,6 +1,6 @@
 # The bot's voice: SOUL.md, product rules, no OpenClaw AGENTS.md
 
-Status: draft, 2026-10-25. Batch 2 of the hermes review (batch 1:
+Status: implemented 2026-10-26 (`Runtime.Hermes.Voice`, `LlmProxy.AuxShapes`). Batch 2 of the hermes review (batch 1:
 `2026-10-25-hermes-config-tuning-design.md`).
 
 ## Why

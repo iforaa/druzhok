@@ -86,9 +86,8 @@ defmodule Druzhok.BotManager do
         {:ok, instance} ->
           use_webhook(instance)
           admit_owner(opts)
-          # The row is created stopped; the caller asks for the start once
-          # it has written what the first start should see (SOUL.md), so a
-          # slow or failed first start is never a creation error.
+          # The row is created stopped and the caller asks for the start, so
+          # a slow or failed first start is never a creation error.
           {:ok, %{name: name, model: instance.model}}
 
         error ->
@@ -99,7 +98,7 @@ defmodule Druzhok.BotManager do
 
   defp blank?(v), do: v in [nil, ""]
 
-  # Seed files (config.yaml, AGENTS.md) are written at start
+  # Seed files (config.yaml, SOUL.md) are written at start
   # (`prepare_start/1`); here the row, stopped until a start is asked for.
   # `name_free/1` ran first; the unique index answers a race.
   defp insert(name, opts, workspace) do
@@ -116,6 +115,7 @@ defmodule Druzhok.BotManager do
       allow_all_telegram_users: opts[:allow_all_telegram_users] || false,
       ruoc_account_id: opts[:ruoc_account_id],
       ruoc_api_key: opts[:ruoc_api_key],
+      display_name: opts[:display_name],
       active: false
     })
     |> Repo.insert()
@@ -215,6 +215,14 @@ defmodule Druzhok.BotManager do
     data_root = Hermes.data_root(instance)
 
     write_workspace_files(data_root, Hermes.workspace_files(instance))
+
+    # Hermes runs in the workspace (terminal.cwd); a tenant can leave a file
+    # or a link there.
+    case Druzhok.TenantFiles.ensure_dir(data_root, ["workspace"]) do
+      {:ok, _} -> :ok
+      {:error, reason} -> raise "cannot use workspace in #{data_root}: #{inspect(reason)}"
+    end
+
     # The operator is the hermes slash-command admin on every bot
     # (Runtime.Hermes.sync_config/2), and what the model can do (photos, its
     # context window) comes from ruoc's catalogue; the instance row carries

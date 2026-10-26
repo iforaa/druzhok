@@ -210,6 +210,7 @@ defmodule Druzhok.ManagerBotTest do
     assert inst.model == "ruoc-flash"
     assert inst.mention_only
     refute inst.allow_all_telegram_users
+    assert inst.display_name == "Кот"
     assert File.read!(Path.join([root, "kot_1a2b", "SOUL.md"])) =~ "Тебя зовут Кот"
     assert eventually(fn -> Druzhok.BotManager.status("kot_1a2b") == "active" end)
 
@@ -235,7 +236,8 @@ defmodule Druzhok.ManagerBotTest do
 
     inst = Repo.get_by!(Instance, name: "zhora_ff00")
     assert inst.language == "ru"
-    assert File.read!(Path.join([root, "zhora_ff00", "SOUL.md"])) =~ "Тебя зовут zhora_ff00"
+    # No name typed: the slug is never used as one.
+    assert File.read!(Path.join([root, "zhora_ff00", "SOUL.md"])) =~ "Тебя зовут Дружок"
   end
 
   test "provisioning failure is reported to the creator", %{stub: stub} do

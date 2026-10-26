@@ -3,12 +3,13 @@ defmodule Druzhok.ManagerBot.Provisioner do
   Provisioning pipeline for managed bots.
 
   Called by ManagerBot GenServer when a `managed_bot` update arrives.
-  Handles: token retrieval → instance creation → SOUL.md (identity) write.
+  Handles: token retrieval → instance creation (with the name the owner
+  typed, from which the first start writes SOUL.md) → first start.
   """
 
   require Logger
 
-  alias Druzhok.{BotManager, Instance, Repo, Ruoc}
+  alias Druzhok.{BotManager, Ruoc}
   alias Druzhok.Telegram.API
 
   @doc """
@@ -24,16 +25,15 @@ defmodule Druzhok.ManagerBot.Provisioner do
            model: Ruoc.default_model(),
            owner_id: session[:owner_id],
            language: session[:language] || "ru",
-           invite: session[:invite]
+           invite: session[:invite],
+           display_name: session[:name]
          }),
          {:ok, _result} <- BotManager.create(instance_name, opts) do
       # The owner is already in the allowlist via owner_telegram_id (see
       # runtime/hermes.ex build_allowlist/1), so no auto-pair + restart is
-      # needed. create/2 leaves the bot stopped, so SOUL.md is in place before
-      # the first start is asked for; a slow or failed start is the lifecycle
-      # controller's to retry, not a provisioning error. Waiting keeps the
-      # creator's "created and started" message true in the common case.
-      write_soul(instance_name, session[:name])
+      # needed. A slow or failed start is the lifecycle controller's to retry,
+      # not a provisioning error. Waiting keeps the creator's "created and
+      # started" message true in the common case.
 
       case BotManager.start(instance_name, wait: true) do
         {:ok, _} -> :ok
@@ -61,7 +61,8 @@ defmodule Druzhok.ManagerBot.Provisioner do
       owner_telegram_id: params[:owner_id],
       language: params[:language] || "ru",
       mention_only: true,
-      allow_all_telegram_users: false
+      allow_all_telegram_users: false,
+      display_name: params[:display_name]
     }
 
     case params[:invite] do
@@ -77,21 +78,6 @@ defmodule Druzhok.ManagerBot.Provisioner do
       {:ok, token} when is_binary(token) -> {:ok, token}
       {:ok, other} -> {:error, "unexpected token response: #{inspect(other)}"}
       {:error, reason} -> {:error, "getManagedBotToken failed: #{inspect(reason)}"}
-    end
-  end
-
-  defp write_soul(instance_name, display_name) do
-    case Repo.get_by(Instance, name: instance_name) do
-      nil -> :ok
-      instance ->
-        soul_path = Path.join(Path.dirname(instance.workspace || ""), "SOUL.md")
-        name = display_name || instance_name
-        soul = """
-        Тебя зовут #{name}. Ты персональный AI-ассистент. Ты помогаешь пользователю
-        с любыми задачами: отвечаешь на вопросы, пишешь и редактируешь код, анализируешь
-        информацию, выполняешь действия через инструменты. Общаешься понятно и по делу.
-        """
-        File.write!(soul_path, String.trim(soul))
     end
   end
 end

@@ -53,14 +53,22 @@ defmodule DruzhokWebWeb.LlmProxy.Ruoc.SearchTest do
     assert Jason.decode!(conn.resp_body)["success"] == false
   end
 
-  test "gateway errors keep their status in the Firecrawl error shape", %{conn: conn, bypass: bypass} do
+  test "a 402 keeps its status and carries the plan notice, not ruoc's balance text", %{conn: conn, bypass: bypass} do
     Bypass.expect_once(bypass, "POST", "/v1/search", fn req ->
       gateway_error(req, 402, "insufficient_quota", "account balance is too low")
     end)
 
     conn = post(conn, "/v2/search", %{"query" => "q"})
     assert conn.status == 402
-    assert Jason.decode!(conn.resp_body) == %{"success" => false, "error" => "account balance is too low"}
+    assert Jason.decode!(conn.resp_body) == %{"success" => false, "error" => "Лимит тарифа на сейчас исчерпан. Когда он обновится и как сменить тариф — в «Кабинете»."}
+  end
+
+  test "other gateway errors keep their status in the Firecrawl error shape", %{conn: conn, bypass: bypass} do
+    Bypass.expect_once(bypass, "POST", "/v1/search", fn req -> gateway_error(req, 429, "rate_limit_error", "slow down") end)
+
+    conn = post(conn, "/v2/search", %{"query" => "q"})
+    assert conn.status == 429
+    assert Jason.decode!(conn.resp_body) == %{"success" => false, "error" => "slow down"}
   end
 
   test "502 when the gateway is down", %{conn: conn, bypass: bypass} do

@@ -22,7 +22,7 @@ defmodule DruzhokWebWeb.LlmProxy.Ruoc do
   alias Druzhok.Ruoc.Client
   alias Druzhok.Usage
   alias DruzhokWebWeb.LlmFormat
-  alias DruzhokWebWeb.LlmProxy.BalanceNotice
+  alias DruzhokWebWeb.LlmProxy.{AuxShapes, BalanceNotice}
 
   @request_id_header "x-ruoc-request-id"
   @search_max_results 10
@@ -56,15 +56,24 @@ defmodule DruzhokWebWeb.LlmProxy.Ruoc do
 
   defp sync_chat(conn, instance, body, model, started_at) do
     case Client.post("/v1/chat/completions", instance.ruoc_api_key, Jason.encode!(body)) do
-      {:ok, 402, headers, _resp_body} ->
+      {:ok, 402, headers, resp_body} ->
         request_id = request_id(headers)
-        log(instance, "chat", request_id, started_at, "HTTP 402 -> balance notice")
         Druzhok.Cabinet.out_of_money(instance.id)
 
-        conn
-        |> relay_headers(headers, request_id)
-        |> put_resp_content_type("application/json")
-        |> send_resp(200, Jason.encode!(BalanceNotice.completion(instance, model)))
+        if AuxShapes.aux?(body) do
+          log(instance, "chat", request_id, started_at, "HTTP 402 (auxiliary call)")
+
+          conn
+          |> relay_headers(headers, request_id)
+          |> send_resp(402, resp_body)
+        else
+          log(instance, "chat", request_id, started_at, "HTTP 402 -> balance notice")
+
+          conn
+          |> relay_headers(headers, request_id)
+          |> put_resp_content_type("application/json")
+          |> send_resp(200, Jason.encode!(BalanceNotice.completion(instance, model)))
+        end
 
       {:ok, status, headers, resp_body} ->
         request_id = request_id(headers)
@@ -90,9 +99,12 @@ defmodule DruzhokWebWeb.LlmProxy.Ruoc do
   # The response is only committed once the gateway's status is known, so a
   # 429 on a streaming request reaches the bot as that status with the
   # gateway's own envelope, not as an empty 200 event stream. A 402 becomes
-  # the balance notice as a one-chunk stream (see BalanceNotice).
+  # the balance notice as a one-chunk stream (see BalanceNotice), except on
+  # an auxiliary call (AuxShapes).
   defp stream_chat(conn, instance, body, model, started_at) do
     request = Client.build(:post, "/v1/chat/completions", instance.ruoc_api_key, Jason.encode!(body))
+    # A 402 on one of hermes's auxiliary calls stays a 402 (AuxShapes).
+    aux? = AuxShapes.aux?(body)
     usage_ref = make_ref()
     Process.put(usage_ref, @no_usage)
 
@@ -147,7 +159,7 @@ defmodule DruzhokWebWeb.LlmProxy.Ruoc do
         meter(instance, "chat", model, Process.get(usage_ref), started_at, body, nil, request_id(acc.headers))
         acc.conn
 
-      {:ok, %{status: 402} = acc} ->
+      {:ok, %{status: 402} = acc} when not aux? ->
         request_id = request_id(acc.headers)
         log(instance, "chat", request_id, started_at, "HTTP 402 -> balance notice")
         Druzhok.Cabinet.out_of_money(instance.id)
@@ -160,6 +172,7 @@ defmodule DruzhokWebWeb.LlmProxy.Ruoc do
 
       {:ok, %{status: status} = acc} when is_integer(status) ->
         request_id = request_id(acc.headers)
+        if status == 402, do: Druzhok.Cabinet.out_of_money(instance.id)
         log(instance, "chat", request_id, started_at, "HTTP #{status}")
 
         acc.conn
@@ -201,6 +214,16 @@ defmodule DruzhokWebWeb.LlmProxy.Ruoc do
         conn
         |> relay_headers(headers, request_id)
         |> send_resp(200, Jason.encode!(%{success: true, data: %{web: results}}))
+
+      # ruoc's own 402 text may speak of a balance; the model relays it.
+      {:ok, 402, headers, _resp_body} ->
+        request_id = request_id(headers)
+        log(instance, "search", request_id, started_at, "HTTP 402 -> balance notice")
+
+        conn
+        |> relay_headers(headers, request_id)
+        |> put_resp_content_type("application/json")
+        |> send_resp(402, Jason.encode!(%{success: false, error: BalanceNotice.text(instance)}))
 
       {:ok, status, headers, resp_body} ->
         request_id = request_id(headers)

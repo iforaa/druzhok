@@ -61,6 +61,7 @@ defmodule Druzhok.Panel do
   @doc "State and settings, from an explicit allowlist of fields."
   def bot(%Instance{} = inst) do
     profile = profile(inst.telegram_token)
+    remember_name(inst, profile)
 
     %{
       name: inst.name,
@@ -89,6 +90,36 @@ defmodule Druzhok.Panel do
       billing_url: billing_url(),
       support_url: support_url()
     }
+  end
+
+  # The bot's Telegram name feeds its SOUL.md (Runtime.Hermes.Voice) from the
+  # row, never from a call on the start path; a renamed bot is picked up here.
+  defp remember_name(%Instance{id: id, display_name: old}, %{title: title})
+       when is_binary(title) and title != old do
+    import Ecto.Query
+    from(i in Instance, where: i.id == ^id) |> Druzhok.Repo.update_all(set: [display_name: title])
+  end
+
+  defp remember_name(_inst, _profile), do: :ok
+
+  @doc """
+  Fills `display_name` for bots that have none, from a live getMe each (one at
+  a time, 3 s cap). Run once at boot by druzhok.service; a bot whose getMe
+  fails keeps nil and is tried again on the next boot.
+  """
+  def backfill_display_names do
+    import Ecto.Query
+
+    from(i in Instance,
+      where: is_nil(i.display_name) and i.delete_requested == false and not is_nil(i.telegram_token)
+    )
+    |> Druzhok.Repo.all()
+    |> Enum.each(fn inst ->
+      case profile(inst.telegram_token) do
+        %{title: title} when is_binary(title) -> remember_name(inst, %{title: title})
+        _ -> Logger.info("[panel] no Telegram name for #{inst.name} yet")
+      end
+    end)
   end
 
   @profile_ttl_s 3600
