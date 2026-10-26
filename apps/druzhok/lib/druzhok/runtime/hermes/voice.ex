@@ -73,8 +73,11 @@ defmodule Druzhok.Runtime.Hermes.Voice do
             if name && soul_md(name) != text, do: write_soul(data_root, soul_md(name)), else: %{}
 
           legacy_soul?(text) and name != nil ->
-            backup(data_root, ["SOUL.md"], text)
-            write_soul(data_root, soul_md(name))
+            # No backup, no replacement: the next start tries again.
+            case backup(data_root, ["SOUL.md"], text) do
+              :ok -> write_soul(data_root, soul_md(name))
+              _ -> %{}
+            end
 
           legacy_soul?(text) ->
             %{}
@@ -352,19 +355,49 @@ defmodule Druzhok.Runtime.Hermes.Voice do
     end
   end
 
-  # `<name>.bak-<date>` next to the file, written once (a second run that day
-  # keeps the first copy).
+  # `<name>.bak-<UTC timestamp>` next to the file. A backup already holding
+  # these exact bytes is reused, so a repeat run makes no second copy; any
+  # other text (a migration after a rollback and new edits) gets its own,
+  # newer name, which `Rollback.voice/0` restores first.
   defp backup(data_root, segments, text) do
     {dirs, [name]} = Enum.split(segments, -1)
-    bak = dirs ++ ["#{name}.bak-#{Date.to_iso8601(Date.utc_today(), :basic)}"]
 
-    case TenantFiles.write(data_root, bak, text, create: true) do
-      r when r in [:ok, {:ok, :exists}] ->
-        :ok
+    if Enum.any?(
+         backups(data_root, dirs, name),
+         &(read_bak(data_root, dirs ++ [&1]) == {:ok, text})
+       ) do
+      :ok
+    else
+      stamp = DateTime.utc_now() |> Calendar.strftime("%Y%m%dT%H%M%S")
+      bak = dirs ++ ["#{name}.bak-#{stamp}"]
 
-      {:error, reason} = error ->
-        Logger.warning("Not backing up #{name} in #{data_root}: #{inspect(reason)}")
-        error
+      case TenantFiles.write(data_root, bak, text, create: true) do
+        :ok ->
+          :ok
+
+        other ->
+          Logger.warning("Not backing up #{name} in #{data_root}: #{inspect(other)}")
+          {:error, other}
+      end
+    end
+  end
+
+  @doc false
+  # Backup names of `name` in `dirs`, oldest first.
+  def backups(data_root, dirs, name) do
+    case File.ls(Path.join([data_root | dirs])) do
+      {:ok, files} ->
+        files |> Enum.filter(&String.starts_with?(&1, name <> ".bak-")) |> Enum.sort()
+
+      _ ->
+        []
+    end
+  end
+
+  defp read_bak(data_root, segments) do
+    case TenantFiles.read_text(data_root, segments, @limit) do
+      {:ok, %{text: t, truncated: false}} -> {:ok, t}
+      _ -> :error
     end
   end
 

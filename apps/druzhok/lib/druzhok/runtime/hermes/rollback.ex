@@ -55,7 +55,11 @@ defmodule Druzhok.Runtime.Hermes.Rollback do
     or still what the migration wrote (`instances.agents_md_sha256`).
 
   Anything edited since is kept, its backup left in place and the case
-  logged. Same order as `tuning/0`: deploy the partial revert (sync steps out,
+  logged. AGENTS.md is restored only while the bot's unit is down
+  (`{:skipped, :running}` otherwise): a running bot could swap `workspace`
+  for a link between TenantFiles' check and its rename. Nothing is lost by
+  the skip: the reverted start seeds a missing AGENTS.md and re-adds
+  druzhok's sections. Same order as `tuning/0`: deploy the partial revert (sync steps out,
   this module kept), run this, restart the bots. Returns
   `[{name, %{config:, soul:, agents_md:}}]`.
   """
@@ -67,7 +71,11 @@ defmodule Druzhok.Runtime.Hermes.Rollback do
        %{
          config: strip_config(root),
          soul: restore(root, [], "SOUL.md", inst.soul_sha256, false),
-         agents_md: restore(root, ["workspace"], "AGENTS.md", inst.agents_md_sha256, true)
+         agents_md:
+           if(Druzhok.Host.status(inst.name) in [:inactive, :failed],
+             do: restore(root, ["workspace"], "AGENTS.md", inst.agents_md_sha256, true),
+             else: {:skipped, :running}
+           )
        }}
     end
   end
@@ -105,19 +113,9 @@ defmodule Druzhok.Runtime.Hermes.Rollback do
   end
 
   defp newest_backup(root, dirs, name) do
-    case File.ls(Path.join([root | dirs])) do
-      {:ok, files} ->
-        files
-        |> Enum.filter(&String.starts_with?(&1, name <> ".bak-"))
-        |> Enum.sort()
-        |> List.last()
-        |> case do
-          nil -> :no_backup
-          bak -> {:ok, bak}
-        end
-
-      _ ->
-        :no_backup
+    case Voice.backups(root, dirs, name) |> List.last() do
+      nil -> :no_backup
+      bak -> {:ok, bak}
     end
   end
 

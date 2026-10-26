@@ -117,6 +117,14 @@ defmodule Druzhok.Runtime.Hermes.VoiceTest do
       end
     end
 
+    test "a legacy text is not replaced when its backup cannot be written", %{home: home} do
+      put_soul(home, @hermes_default)
+      # No staging dir can be made: every TenantFiles write fails.
+      File.write!(Path.join(Path.dirname(home), ".druzhok-staging"), "")
+      assert Voice.sync_soul(%{display_name: "Вася"}, home) == %{}
+      assert soul(home) == @hermes_default
+    end
+
     test "a legacy text is kept while the name is unknown", %{home: home} do
       put_soul(home, @hermes_default)
       assert Voice.sync_soul(%{display_name: nil}, home) == %{}
@@ -225,6 +233,11 @@ defmodule Druzhok.Runtime.Hermes.VoiceTest do
       refute Map.has_key?(cfg["display"], "personality")
       assert cfg["platform_hints"]["telegram"]["append"] == "keep me"
       assert [_] = Regex.scan(~r/^agent:/m, content)
+
+      # Rollback's strip takes only what druzhok wrote.
+      stripped = YamlElixir.read_from_string!(Hermes.strip_voice_keys(content))
+      assert stripped["platform_hints"]["telegram"] == %{"append" => "keep me"}
+      refute Map.has_key?(stripped["agent"], "system_prompt")
     end
   end
 
@@ -267,6 +280,22 @@ defmodule Druzhok.Runtime.Hermes.VoiceTest do
       assert Voice.migrate_agents_md(%{}, home) == %{}
       assert File.read!(agents(home)) == "# Мой проект\n\n## Сборка\n\nmake\n"
       assert baks(Path.join(home, "workspace"), "AGENTS.md") == []
+    end
+
+    test "a second migration of different text keeps both backups", %{home: home} do
+      ws = Path.join(home, "workspace")
+      File.write!(agents(home), @spliced_seed <> "\n## Своё\n\nа\n")
+      Voice.migrate_agents_md(%{}, home)
+      # Same bytes again (a rollback restored the backup): no new copy.
+      File.write!(agents(home), @spliced_seed <> "\n## Своё\n\nа\n")
+      Voice.migrate_agents_md(%{}, home)
+      assert length(baks(ws, "AGENTS.md")) == 1
+
+      Process.sleep(1100)
+      File.write!(agents(home), @spliced_seed <> "\n## Своё\n\nа\n\n## Новое\n\nб\n")
+      Voice.migrate_agents_md(%{}, home)
+      assert [_, newest] = Voice.backups(home, ["workspace"], "AGENTS.md")
+      assert File.read!(Path.join(ws, newest)) =~ "## Новое"
     end
 
     test "a missing AGENTS.md is a no-op", %{home: home} do

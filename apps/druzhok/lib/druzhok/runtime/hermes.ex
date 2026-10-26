@@ -308,7 +308,7 @@ defmodule Druzhok.Runtime.Hermes do
   def strip_voice_keys(content) do
     content
     |> put_block("agent", [{"system_prompt", :delete}])
-    |> put_block("platform_hints", [{"telegram", :delete}])
+    |> put_block("platform_hints", [{"telegram", {:merge, [{"replace", :delete}]}}])
   end
 
   # What the bot's model can do, from ruoc's catalogue (`model_facts`, set by
