@@ -355,17 +355,15 @@ defmodule Druzhok.Runtime.Hermes.Voice do
     end
   end
 
-  # `<name>.bak-<UTC timestamp>` next to the file. A backup already holding
-  # these exact bytes is reused, so a repeat run makes no second copy; any
-  # other text (a migration after a rollback and new edits) gets its own,
-  # newer name, which `Rollback.voice/0` restores first.
+  # `<name>.bak-<UTC timestamp>` next to the file. When the newest backup
+  # already holds these exact bytes it is reused, so a repeat run makes no
+  # second copy; any other text gets its own, newer name. Only the newest
+  # counts: it is the one `Rollback.voice/0` restores.
   defp backup(data_root, segments, text) do
     {dirs, [name]} = Enum.split(segments, -1)
+    newest = backups(data_root, dirs, name) |> List.last()
 
-    if Enum.any?(
-         backups(data_root, dirs, name),
-         &(read_bak(data_root, dirs ++ [&1]) == {:ok, text})
-       ) do
+    if newest && read_bak(data_root, dirs ++ [newest]) == {:ok, text} do
       :ok
     else
       stamp = DateTime.utc_now() |> Calendar.strftime("%Y%m%dT%H%M%S")

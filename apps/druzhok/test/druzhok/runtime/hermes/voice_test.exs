@@ -296,6 +296,14 @@ defmodule Druzhok.Runtime.Hermes.VoiceTest do
       Voice.migrate_agents_md(%{}, home)
       assert [_, newest] = Voice.backups(home, ["workspace"], "AGENTS.md")
       assert File.read!(Path.join(ws, newest)) =~ "## Новое"
+
+      # Back to the first text: an older backup holds it, but only the newest
+      # counts, so it is copied again as the newest.
+      Process.sleep(1100)
+      File.write!(agents(home), @spliced_seed <> "\n## Своё\n\nа\n")
+      Voice.migrate_agents_md(%{}, home)
+      assert [_, _, newest] = Voice.backups(home, ["workspace"], "AGENTS.md")
+      refute File.read!(Path.join(ws, newest)) =~ "## Новое"
     end
 
     test "a missing AGENTS.md is a no-op", %{home: home} do
