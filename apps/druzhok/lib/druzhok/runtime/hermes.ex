@@ -589,7 +589,7 @@ defmodule Druzhok.Runtime.Hermes do
   # hermes checks the typed name against the policy, so it must be listed.
   @user_commands ~w(start new compress status voice)
   @menu_commands ~w(new compress status voice)
-  @telegram_extra_keys ~w(allow_admin_from user_allowed_commands group_allow_admin_from group_user_allowed_commands command_menu drop_pending_on_cold_boot)
+  @telegram_extra_keys ~w(allow_admin_from user_allowed_commands group_allow_admin_from group_user_allowed_commands command_menu drop_pending_on_cold_boot gateway_restart_notification)
 
   def user_commands, do: @user_commands
   def menu_commands, do: @menu_commands
@@ -610,7 +610,10 @@ defmodule Druzhok.Runtime.Hermes do
        ]},
       # Hermes's default (true) has Telegram discard every update sent while
       # the bot was down, on every restart. Keep them.
-      {"drop_pending_on_cold_boot", "false"}
+      {"drop_pending_on_cold_boot", "false"},
+      # TELEGRAM_HOME_CHANNEL is the owner, so every stop (each sleep too)
+      # sent «⚠️ Hermes завершает работу…» and the online ping to the owner.
+      {"gateway_restart_notification", "false"}
     ]
 
     lines = String.split(content, "\n")

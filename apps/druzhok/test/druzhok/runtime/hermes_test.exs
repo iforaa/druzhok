@@ -570,6 +570,7 @@ defmodule Druzhok.Runtime.HermesTest do
                        - status
                        - voice
                    drop_pending_on_cold_boot: false
+                   gateway_restart_notification: false
                  enabled: true
                  observe_unmentioned_group_messages: false
 
@@ -589,6 +590,7 @@ defmodule Druzhok.Runtime.HermesTest do
 
       # Hermes's default drops every update sent while the bot was down.
       assert extra["drop_pending_on_cold_boot"] == false
+      assert extra["gateway_restart_notification"] == false
     end
 
     test "rewrites its own keys and keeps what hermes wrote into extra", %{tmp_dir: tmp_dir} do
