@@ -1,6 +1,6 @@
 # Hermes config tuning: context window, tools, skills, turn budget, dead keys
 
-Status: draft, 2026-10-25. Batch 1 of the hermes review (batch 2, the bot's voice:
+Status: implemented 2026-10-26 (deployed to all bots). Drafted 2026-10-25. Batch 1 of the hermes review (batch 2, the bot's voice:
 `2026-10-25-bot-voice-design.md`). Reviewed as a list by gpt-6-astra and gpt-6.1-sol before this spec.
 
 ## Why
