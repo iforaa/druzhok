@@ -132,7 +132,7 @@ The superbot is invite-only: `admissions` (`Druzhok.Admissions`) records who may
 written when a bot is created with the code's first characters as the hint (or `owner` when no code
 was used), and the code itself is spent by ruoc in `POST /partner/accounts`. The operator issues
 referral codes to a bot's account from the ruoc console account page, and «🎁 Пригласить» reads them
-via `GET /v1/referrals`. One bot per person (`@max_bots_per_user 1`), the operator excepted. Spec:
+via `GET /v1/referrals`. Two bots per person (`@max_bots_per_user 2`), the operator excepted. Spec:
 `docs/superpowers/specs/2026-09-19-referral-invites-design.md`.
 
 

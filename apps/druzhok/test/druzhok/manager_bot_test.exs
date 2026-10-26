@@ -200,7 +200,8 @@ defmodule Druzhok.ManagerBotTest do
 
     assert Jason.decode!(menu["reply_markup"])["keyboard"] == [
              [%{"text" => "🤖 Мой бот"}, %{"text" => "🎨 Картинки"}],
-             [%{"text" => "🎁 Пригласить"}, %{"text" => "🗑 Удалить"}]
+             [%{"text" => "🎁 Пригласить"}, %{"text" => "🗑 Удалить"}],
+             [%{"text" => "🤖 Создать бота"}]
            ]
 
     inst = Repo.get_by!(Instance, name: "kot_1a2b")
@@ -252,7 +253,7 @@ defmodule Druzhok.ManagerBotTest do
     assert Repo.get_by(Instance, name: "ghost") == nil
   end
 
-  describe "with two existing bots (grandfathered)" do
+  describe "with two bots, the limit" do
     setup %{data_root: root} do
       for n <- ["own1", "own2"] do
         %Instance{}
@@ -272,9 +273,23 @@ defmodule Druzhok.ManagerBotTest do
       :ok
     end
 
+    test "a managed_bot update from an owner at the limit creates nothing", %{stub: stub} do
+      TelegramStub.push_update(stub, managed_bot_update(562, "extra_bot"))
+
+      assert TelegramStub.await_call(
+               stub,
+               "sendMessage",
+               &(&1["text"] == "У тебя уже 2 бота. Удали одного, чтобы создать нового.")
+             )
+
+      Process.sleep(50)
+      assert Repo.get_by(Instance, name: "extra") == nil
+      assert TelegramStub.calls(stub, "getManagedBotToken") == []
+    end
+
     test "creating a third is refused", %{stub: stub} do
       TelegramStub.push_update(stub, message("🤖 Создать бота"))
-      assert TelegramStub.await_call(stub, "sendMessage", &(&1["text"] =~ "уже есть бот"))
+      assert TelegramStub.await_call(stub, "sendMessage", &(&1["text"] == "У тебя уже 2 бота. Удали одного, чтобы создать нового."))
       refute "Как назовём бота?" in sent_texts(stub)
     end
 
@@ -382,20 +397,21 @@ defmodule Druzhok.ManagerBotTest do
       %{ruoc: ruoc, inst: inst}
     end
 
-    test "/start shows the bot's controls and no create button", %{stub: stub} do
+    test "/start shows the bot's controls and the create button", %{stub: stub} do
       TelegramStub.push_update(stub, message("/start"))
       params = TelegramStub.await_call(stub, "sendMessage", &(&1["text"] =~ "Привет"))
 
       assert Jason.decode!(params["reply_markup"])["keyboard"] == [
                [%{"text" => "🤖 Мой бот"}, %{"text" => "🎨 Картинки"}],
-               [%{"text" => "🎁 Пригласить"}, %{"text" => "🗑 Удалить"}]
+               [%{"text" => "🎁 Пригласить"}, %{"text" => "🗑 Удалить"}],
+               [%{"text" => "🤖 Создать бота"}]
              ]
     end
 
-    test "create is refused with the one-bot message", %{stub: stub} do
+    test "create passes the limit with one bot", %{stub: stub} do
       TelegramStub.push_update(stub, message("🤖 Создать бота"))
-      assert TelegramStub.await_call(stub, "sendMessage", &(&1["text"] == "У тебя уже есть бот. Удали его, чтобы создать нового."))
-      refute "Как назовём бота?" in sent_texts(stub)
+      assert TelegramStub.await_call(stub, "sendMessage", &(&1["text"] =~ "Как назовём бота?"))
+      refute Enum.any?(sent_texts(stub), &(&1 =~ "У тебя уже"))
     end
 
     test "Мой бот is the card with balance and a chat button", %{stub: stub} do
@@ -457,19 +473,6 @@ defmodule Druzhok.ManagerBotTest do
       assert n >= 1
     end
 
-    test "a managed_bot update from an owner at the limit creates nothing", %{stub: stub} do
-      TelegramStub.push_update(stub, managed_bot_update(562, "extra_bot"))
-
-      assert TelegramStub.await_call(
-               stub,
-               "sendMessage",
-               &(&1["text"] == "У тебя уже есть бот. Удали его, чтобы создать нового.")
-             )
-
-      Process.sleep(50)
-      assert Repo.get_by(Instance, name: "extra") == nil
-      assert TelegramStub.calls(stub, "getManagedBotToken") == []
-    end
 
     test "Пригласить lists the codes from ruoc with share buttons", %{stub: stub} do
       TelegramStub.push_update(stub, message("🎁 Пригласить"))
@@ -542,7 +545,8 @@ defmodule Druzhok.ManagerBotTest do
 
       assert Jason.decode!(params["reply_markup"])["keyboard"] == [
                [%{"text" => "🤖 Мой бот"}],
-               [%{"text" => "🎁 Пригласить"}]
+               [%{"text" => "🎁 Пригласить"}],
+               [%{"text" => "🤖 Создать бота"}]
              ]
 
       TelegramStub.push_update(stub, message("🤖 Мой бот"))
@@ -558,7 +562,7 @@ defmodule Druzhok.ManagerBotTest do
       Process.sleep(300)
       moved = Enum.filter(TelegramStub.calls(stub, "sendMessage"), &(&1["text"] =~ "Теперь это в «Кабинете»"))
       assert length(moved) == 2
-      assert Jason.decode!(hd(moved)["reply_markup"])["keyboard"] == [[%{"text" => "🤖 Мой бот"}], [%{"text" => "🎁 Пригласить"}]]
+      assert Jason.decode!(hd(moved)["reply_markup"])["keyboard"] == [[%{"text" => "🤖 Мой бот"}], [%{"text" => "🎁 Пригласить"}], [%{"text" => "🤖 Создать бота"}]]
       refute Enum.any?(sent_texts(stub), &(&1 =~ "Точно удалить"))
       refute Repo.get!(Instance, inst.id).delete_requested
     end
@@ -580,7 +584,7 @@ defmodule Druzhok.ManagerBotTest do
       Repo.update_all(from(i in Instance, where: i.id == ^inst.id), set: [cabinet_off: true])
       TelegramStub.push_update(stub, message("/start"))
       params = TelegramStub.await_call(stub, "sendMessage", &(&1["text"] =~ "Привет"))
-      assert [[_, %{"text" => "🎨 Картинки"}], _] = Jason.decode!(params["reply_markup"])["keyboard"]
+      assert [[_, %{"text" => "🎨 Картинки"}], _, _] = Jason.decode!(params["reply_markup"])["keyboard"]
 
       TelegramStub.push_update(stub, callback("img:#{inst.id}"))
       assert TelegramStub.await_call(stub, "editMessageText", &(&1["text"] =~ "Картинки для @solo_bot"))
@@ -762,7 +766,7 @@ defmodule Druzhok.ManagerBotTest do
       TelegramStub.push_update(stub, message("🤖 Создать бота", 777))
 
       assert eventually(fn -> Enum.count(sent_texts(stub), &(&1 == "Как назовём бота?")) == 2 end)
-      refute "У тебя уже есть бот. Удали его, чтобы создать нового." in sent_texts(stub)
+      refute "У тебя уже 2 бота. Удали одного, чтобы создать нового." in sent_texts(stub)
     end
 
     test "a second message while the code is being checked is ignored", %{stub: stub, ruoc: ruoc} do

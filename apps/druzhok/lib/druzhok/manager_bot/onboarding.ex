@@ -34,9 +34,9 @@ defmodule Druzhok.ManagerBot.Onboarding do
   def menu_texts, do: [@create, @my_bots, @my_bot, @pictures, @invite, @delete]
 
   @doc """
-  The reply keyboard for a person with `bot_count` bots. One bot is the rule;
-  the create button exists only until it is used, and a person with several
-  (only possible from before the rule) keeps the old list. A bot whose panel
+  The reply keyboard for a person with `bot_count` bots. Two bots is the
+  rule (`ManagerBot`'s `@max_bots_per_user`): one bot gets its controls plus
+  the create button, two or more get the list and no create button. A bot whose panel
   works (`panel_ready?/1`) is set up there, so its owner gets no 🎨 or 🗑.
   """
   def main_menu_keyboard(bot_count \\ 0, panel_ready? \\ false) do
@@ -46,10 +46,10 @@ defmodule Druzhok.ManagerBot.Onboarding do
           [[%{text: @create}]]
 
         {1, true} ->
-          [[%{text: @my_bot}], [%{text: @invite}]]
+          [[%{text: @my_bot}], [%{text: @invite}], [%{text: @create}]]
 
         {1, false} ->
-          [[%{text: @my_bot}, %{text: @pictures}], [%{text: @invite}, %{text: @delete}]]
+          [[%{text: @my_bot}, %{text: @pictures}], [%{text: @invite}, %{text: @delete}], [%{text: @create}]]
 
         _ ->
           [[%{text: @my_bots}]]
@@ -232,7 +232,7 @@ defmodule Druzhok.ManagerBot.Onboarding do
 
   def closed_message, do: "Создание новых ботов сейчас закрыто. Уже созданные боты работают как обычно."
 
-  def limit_message, do: "У тебя уже есть бот. Удали его, чтобы создать нового."
+  def limit_message, do: "У тебя уже 2 бота. Удали одного, чтобы создать нового."
 
   @doc """
   The one-bot card: the bot line and a button into its chat. A web_app

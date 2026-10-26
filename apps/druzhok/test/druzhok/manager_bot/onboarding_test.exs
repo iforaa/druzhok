@@ -179,7 +179,8 @@ defmodule Druzhok.ManagerBot.OnboardingTest do
     test "one panel-ready bot: no 🎨 or 🗑 on the keyboard" do
       assert Onboarding.main_menu_keyboard(1, true).keyboard == [
                [%{text: "🤖 Мой бот"}],
-               [%{text: "🎁 Пригласить"}]
+               [%{text: "🎁 Пригласить"}],
+               [%{text: "🤖 Создать бота"}]
              ]
 
       assert Onboarding.main_menu_keyboard(1).keyboard == Onboarding.main_menu_keyboard(1, false).keyboard
@@ -313,12 +314,18 @@ defmodule Druzhok.ManagerBot.OnboardingTest do
       assert Onboarding.main_menu_keyboard() == Onboarding.main_menu_keyboard(0)
     end
 
-    test "one bot: its controls, no create" do
-      assert %{keyboard: [[%{text: "🤖 Мой бот"}, %{text: "🎨 Картинки"}], [%{text: "🎁 Пригласить"}, %{text: "🗑 Удалить"}]]} =
+    test "one bot: its controls and create" do
+      assert %{
+               keyboard: [
+                 [%{text: "🤖 Мой бот"}, %{text: "🎨 Картинки"}],
+                 [%{text: "🎁 Пригласить"}, %{text: "🗑 Удалить"}],
+                 [%{text: "🤖 Создать бота"}]
+               ]
+             } =
                Onboarding.main_menu_keyboard(1)
     end
 
-    test "several bots (grandfathered): the list, no create" do
+    test "two bots: the list, no create" do
       assert %{keyboard: [[%{text: "📋 Мои боты"}]]} = Onboarding.main_menu_keyboard(2)
     end
 
@@ -360,7 +367,7 @@ defmodule Druzhok.ManagerBot.OnboardingTest do
       assert Onboarding.invite_status_message(:invalid) == "Код не найден. Проверь ссылку или попроси новый."
       assert Onboarding.invite_status_message(:error) == "Не получилось проверить код, попробуй позже."
       assert Onboarding.create_race_message() == "Код успели использовать. Попроси новый и создай бота заново."
-      assert Onboarding.limit_message() == "У тебя уже есть бот. Удали его, чтобы создать нового."
+      assert Onboarding.limit_message() == "У тебя уже 2 бота. Удали одного, чтобы создать нового."
     end
   end
 

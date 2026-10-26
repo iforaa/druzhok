@@ -16,7 +16,7 @@ defmodule Druzhok.ManagerBot do
 
   @session_ttl_seconds 600
   @poll_timeout 30
-  @max_bots_per_user 1
+  @max_bots_per_user 2
 
   def start_link(opts \\ []) do
     GenServer.start_link(__MODULE__, opts, name: __MODULE__)
