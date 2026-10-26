@@ -228,93 +228,33 @@ defmodule DruzhokWebWeb.PanelApiTest do
     end
   end
 
-  def get_me("777MGR"), do: {:ok, %{"id" => 777, "username" => "druzhok_super_bot"}}
-  def get_me(_bot), do: {:ok, %{"id" => 123, "first_name" => "Вася", "username" => "vasya_bot"}}
-
   describe "POST /app/api/delete" do
-    # A fake Telegram for the superbot: getMe, and sendMessage answering 200 or 403.
-    setup do
-      bypass = Bypass.open()
-      {:ok, mode} = Agent.start(fn -> :ok end)
-      {:ok, sent} = Agent.start(fn -> [] end)
-      Application.put_env(:druzhok, :telegram_api_base, "http://localhost:#{bypass.port}")
-      Druzhok.Settings.set("manager_bot_token", "777MGR")
-
-      on_exit(fn ->
-        Application.delete_env(:druzhok, :telegram_api_base)
-        Agent.stop(mode)
-        Agent.stop(sent)
-      end)
-
-      reply = fn conn, status, body ->
-        conn
-        |> Plug.Conn.put_resp_content_type("application/json")
-        |> Plug.Conn.resp(status, Jason.encode!(body))
-      end
-
-      Application.put_env(:druzhok, :panel_get_me, {__MODULE__, :get_me})
-      on_exit(fn -> Application.delete_env(:druzhok, :panel_get_me) end)
-
-      Bypass.stub(bypass, "POST", "/bot777MGR/sendMessage", fn conn ->
-        {:ok, raw, conn} = Plug.Conn.read_body(conn)
-        Agent.update(sent, &(&1 ++ [Jason.decode!(raw)]))
-
-        case Agent.get(mode, & &1) do
-          :ok ->
-            reply.(conn, 200, %{ok: true, result: %{message_id: 1}})
-
-          :forbidden ->
-            reply.(conn, 403, %{
-              ok: false,
-              error_code: 403,
-              description: "Forbidden: bot can't initiate conversation with a user"
-            })
-        end
-      end)
-
-      %{mode: mode, sent: sent}
-    end
-
-    test "creates a token, messages the owner, marks nothing deleted; a repeat reuses it",
-         %{conn: conn, inst: inst, sent: sent} do
+    test "deletes the bot at once; the panel then has no bot", %{conn: conn, inst: inst} do
       c = api(conn, "/app/api/delete", post: %{})
-      assert c.status == 202
-      assert Jason.decode!(c.resp_body) == %{"confirm_in" => "@druzhok_super_bot"}
+      assert c.status == 200
+      assert Jason.decode!(c.resp_body) == %{"deleted" => true}
 
       row = Repo.get!(Instance, inst.id)
-      refute row.delete_requested
-      assert byte_size(row.delete_confirm_token) >= 22
-      assert DateTime.diff(row.delete_confirm_expires_at, DateTime.utc_now()) in 500..600
+      assert row.delete_requested
+      refute row.active
 
-      [msg] = Agent.get(sent, & &1)
-      assert msg["chat_id"] == 456
-
-      buttons =
-        msg["reply_markup"] |> Jason.decode!() |> Map.fetch!("inline_keyboard") |> List.flatten()
-
-      assert Enum.map(buttons, & &1["callback_data"]) ==
-               ["pdel:" <> row.delete_confirm_token, "pdelno:" <> row.delete_confirm_token]
-
-      assert api(build_conn(), "/app/api/delete", post: %{}).status == 202
-      assert Repo.get!(Instance, inst.id).delete_confirm_token == row.delete_confirm_token
-      assert length(Agent.get(sent, & &1)) == 2
+      assert api(build_conn(), "/app/api/bot").status == 404
     end
 
-    test "409 when the superbot cannot message the owner; no token is left",
-         %{conn: conn, inst: inst, mode: mode} do
-      Agent.update(mode, fn _ -> :forbidden end)
-      c = api(conn, "/app/api/delete", post: %{})
-      assert {c.status, error_type(c)} == {409, "superbot_unreachable"}
-      row = Repo.get!(Instance, inst.id)
-      refute row.delete_requested
-      assert row.delete_confirm_token == nil
+    test "a panel opened over 10 minutes ago must be reopened first", %{conn: conn, inst: inst} do
+      old = F.build(123, @token, 456, auth_date: System.system_time(:second) - 11 * 60)
+      c = api(conn, "/app/api/delete", init: old, post: %{})
+      assert {c.status, error_type(c)} == {401, "init_stale"}
+      refute Repo.get!(Instance, inst.id).delete_requested
+
+      # The same age still reads.
+      assert api(build_conn(), "/app/api/bot", init: old).status == 200
     end
 
-    test "not the owner: refused before anything", %{conn: conn, inst: inst, sent: sent} do
+    test "not the owner: refused", %{conn: conn, inst: inst} do
       c = api(conn, "/app/api/delete", user: 789, post: %{})
       assert {c.status, error_type(c)} == {403, "not_owner"}
-      assert Agent.get(sent, & &1) == []
-      assert Repo.get!(Instance, inst.id).delete_confirm_token == nil
+      refute Repo.get!(Instance, inst.id).delete_requested
     end
   end
 

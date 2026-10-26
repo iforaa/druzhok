@@ -15,7 +15,7 @@ defmodule DruzhokWebWeb.PanelController do
       GET /app/api/invites
       GET /app/api/image-models
       POST /app/api/settings        {"changes": {"language": "en", ...}}
-      POST /app/api/delete          asks the owner to confirm in the superbot
+      POST /app/api/delete          deletes the bot (init data under 10 min old)
   """
 
   use DruzhokWebWeb, :controller
@@ -72,21 +72,16 @@ defmodule DruzhokWebWeb.PanelController do
   def settings(conn, _params),
     do: PanelAuth.error(conn, 400, "invalid_setting", "the body must be {\"changes\": {...}}")
 
+  # A delete is the one write a replayed init data could do lasting harm with,
+  # so it takes a panel opened in the last 10 minutes rather than 24 hours.
+  @delete_max_age_s 600
+
   def delete(conn, _params) do
-    case Panel.request_delete(conn.assigns.instance) do
-      {:ok, superbot} ->
-        conn |> put_status(202) |> reply(%{confirm_in: "@" <> superbot})
-
-      {:error, :superbot_unreachable} ->
-        PanelAuth.error(
-          conn,
-          409,
-          "superbot_unreachable",
-          "the superbot cannot message the owner"
-        )
-
-      {:error, _} ->
-        PanelAuth.error(conn, 502, "superbot_unavailable", "could not reach the superbot")
+    if System.system_time(:second) - conn.assigns.auth_date > @delete_max_age_s do
+      PanelAuth.error(conn, 401, "init_stale", "close the panel and open it again")
+    else
+      :ok = Druzhok.BotManager.delete(conn.assigns.instance.name)
+      reply(conn, %{deleted: true})
     end
   end
 

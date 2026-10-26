@@ -1,6 +1,5 @@
 import { useEffect, useRef, useState } from "react"
 import {
-  APIError,
   explain,
   panelApi,
   type ApplyState,
@@ -17,8 +16,8 @@ import { Choice, ErrorNote, Icon, Row, Skeleton, Toggle, useLoad } from "./ui"
 // owner's referral codes, as the superbot's «🎁 Пригласить» gives them),
 // support, and deleting the bot. Language, time zone, groups, pictures and
 // the site are the owner's to change (panel controls spec); a choice saves
-// at once, and the bot picks it up when it is not answering. A delete is
-// only requested here and confirmed in the superbot.
+// at once, and the bot picks it up when it is not answering. A delete asks
+// once in a Telegram dialog and then deletes.
 
 type Screen = "main" | "invites" | "language" | "timezone" | "groups" | "images" | "delete"
 
@@ -386,86 +385,35 @@ function ImagesScreen({ bot, settings }: { bot: Bot; settings: Settings }) {
   )
 }
 
-type DeleteStep = { kind: "ask" } | { kind: "sent"; superbot: string } | { kind: "done" } | { kind: "expired" }
-
-// The superbot's confirm lives 10 minutes (Panel.request_delete/1).
-const confirmWindowMs = 10 * 60 * 1000
-
 function DeleteScreen({ bot }: { bot: Bot }) {
-  const [step, setStep] = useState<DeleteStep>({ kind: "ask" })
+  const [done, setDone] = useState(false)
   const [busy, setBusy] = useState(false)
-  const [error, setError] = useState<{ text: string; superbot: boolean } | null>(null)
-  const mounted = useRef(true)
-  useEffect(() => () => void (mounted.current = false), [])
+  const [error, setError] = useState<string | null>(null)
 
-  // Once the owner confirms, the bot is gone from the panel's API (404). A
-  // cancel or an expired confirm never says so: stop with the confirm window.
-  const sent = step.kind === "sent"
-  useEffect(() => {
-    if (!sent) return
-    let live = true
-    const started = Date.now()
-    const timer = window.setInterval(() => {
-      if (Date.now() - started > confirmWindowMs) {
-        window.clearInterval(timer)
-        setStep({ kind: "expired" })
-        return
-      }
-      panelApi.bot().catch((err) => {
-        if (live && err instanceof APIError && err.status === 404) {
-          window.clearInterval(timer)
-          setStep({ kind: "done" })
-        }
-      })
-    }, 3000)
-    return () => {
-      live = false
-      window.clearInterval(timer)
-    }
-  }, [sent])
-
-  const request = async () => {
+  const remove = async () => {
+    const ok = await confirmDialog(
+      `Удалить бота ${bot.title || bot.name} навсегда? Память, файлы, напоминания и сайт будут удалены. Это нельзя отменить.`,
+    )
+    if (!ok) return
     setBusy(true)
     setError(null)
     try {
-      const r = await panelApi.deleteBot()
-      if (mounted.current) setStep({ kind: "sent", superbot: r.confirm_in.replace(/^@/, "") })
+      await panelApi.deleteBot()
+      setDone(true)
     } catch (err) {
-      setError({ text: explain(err), superbot: err instanceof APIError && err.kind === "superbot_unreachable" })
+      setError(explain(err))
     } finally {
       setBusy(false)
     }
   }
 
-  if (step.kind === "done")
+  if (done)
     return (
       <>
         <h1 className="screen-title">Бот удалён</h1>
         <p className="hint">Его память, файлы и напоминания удаляются.</p>
         <button className="primary" onClick={closePanel}>
           Закрыть
-        </button>
-      </>
-    )
-
-  if (step.kind === "expired")
-    return (
-      <>
-        <h1 className="screen-title">Удаление не подтверждено</h1>
-        <p className="hint">Бот остаётся. Если хотите удалить его, начните заново.</p>
-        <button className="secondary" onClick={() => setStep({ kind: "ask" })}>
-          Начать заново
-        </button>
-      </>
-    )
-
-  if (step.kind === "sent")
-    return (
-      <>
-        <h1 className="screen-title">Подтвердите удаление</h1>
-        <p className="hint">Мы отправили вопрос в @{step.superbot}. Нажмите там «✅ Удалить» в течение 10 минут.</p>
-        <button className="primary" onClick={() => openTelegram(`https://t.me/${step.superbot}`)}>
-          Открыть @{step.superbot}
         </button>
       </>
     )
@@ -481,20 +429,10 @@ function DeleteScreen({ bot }: { bot: Bot }) {
           <li>Оплаченный тариф не возвращается.</li>
         </ul>
       </section>
-      {error ? (
-        <div className="card card--error">
-          <p>{error.text}</p>
-          {error.superbot && bot.superbot ? (
-            <button className="link" onClick={() => openTelegram(`https://t.me/${bot.superbot}`)}>
-              Открыть @{bot.superbot}
-            </button>
-          ) : null}
-        </div>
-      ) : null}
-      <button className="danger" disabled={busy} onClick={request}>
+      {error ? <p className="note-error">{error}</p> : null}
+      <button className="danger" disabled={busy} onClick={remove}>
         Удалить бота
       </button>
-      <p className="hint hint--center">Удаление нужно будет подтвердить в {bot.superbot ? `@${bot.superbot}` : "боте-создателе"}.</p>
     </>
   )
 }

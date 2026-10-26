@@ -228,7 +228,7 @@ export const panelApi = {
   invites: () => panel<{ links: Invite[]; used: number }>("invites"),
   imageModels: () => panel<{ models: ImageModel[] }>("image-models"),
   saveSettings: (changes: SettingChanges) => panelPost<{ bot: Bot }>("settings", { changes }),
-  deleteBot: () => panelPost<{ confirm_in: string }>("delete", {}),
+  deleteBot: () => panelPost<{ deleted: true }>("delete", {}),
 }
 
 // Answers the screens share (the account shows on Главная and Счёт), kept
@@ -321,10 +321,6 @@ export function explain(err: unknown): string {
       return "Не получилось загрузить список моделей. Попробуйте позже."
     case "save_failed":
       return "Не получилось сохранить. Попробуйте ещё раз."
-    case "superbot_unreachable":
-      return "Бот-создатель не может вам написать. Откройте его, нажмите «Запустить» и попробуйте снова."
-    case "superbot_unavailable":
-      return "Не получилось связаться с ботом-создателем. Попробуйте позже."
     default:
       return "Что-то пошло не так. Попробуйте ещё раз."
   }

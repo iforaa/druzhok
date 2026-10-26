@@ -118,8 +118,9 @@ is set. Owners change language, timezone, group mode, pictures and site in Ещ�
 allowlist `Druzhok.Panel.Settings`; spec `docs/superpowers/specs/2026-10-26-panel-controls-design.md`): a save
 never restarts or wakes the bot, it bumps `settings_seq`, and the lifecycle controller restarts an awake bot
 at a quiet moment (no update/proxy call for 60 s, no turn, no child process; never forced) while a wake or any
-start applies it (`settings_applied_seq`). «Удалить бота» (`POST /app/api/delete`) only sends the owner a
-`pdel:<token>` confirm in the superbot (10 min), since the bot itself could phish panel init data. For a
+start applies it (`settings_applied_seq`). «Удалить бота» (`POST /app/api/delete`) asks in a Telegram dialog and
+deletes (`BotManager.delete`); it needs init data under 10 min old, against a replay. The superbot's old
+`pdel:<token>` confirm handlers stay only for messages already sent. For a
 panel-ready bot (`Onboarding.panel_ready?`) the superbot drops 🎨/🗑 and answers old buttons with an alert. Счёт calls ruoc's `/tg/api/*` cross-origin at `RUOC_SITE_URL` (default
 `https://oldey.dev`; ruoc must list druzhok in `TG_PANEL_ORIGINS`). `/app` answers only with Caddy's
 `X-Druzhok-Edge` header (`DRUZHOK_EDGE_SECRET`, env only; bots reach :4000 directly), and the API checks Telegram's

@@ -24,7 +24,7 @@ defmodule DruzhokWebWeb.Plugs.PanelAuth do
          {:ok, who} <- verify(init_data, bot_id, inst),
          :ok <- owner(inst, who),
          :ok <- cabinet_on(inst) do
-      assign(conn, :instance, inst)
+      conn |> assign(:instance, inst) |> assign(:auth_date, who.auth_date)
     else
       {:error, status, type, message} -> error(conn, status, type, message)
     end
