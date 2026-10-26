@@ -77,28 +77,38 @@ function useSettings(bot: Bot, onBot: (b: Bot) => void) {
     }
   }
 
-  // While a quiet restart is due, ask every 3 s for up to 2 min, then keep the last text.
-  const waiting = bot.apply.state === "waiting"
+  // While a change waits, keep asking: every 3 s for up to 2 min before a quiet
+  // restart, every 15 s for up to 30 min until a wake or start, and again
+  // whenever the panel comes back into view. Then keep the last text.
+  const state = bot.apply.state
+  const pending = state === "waiting" || state === "on_wake" || state === "on_start"
   useEffect(() => {
-    if (!waiting) return
+    if (!pending) return
     let live = true
     const started = Date.now()
-    const timer = window.setInterval(() => {
-      if (Date.now() - started > 120_000) {
-        window.clearInterval(timer)
-        return
-      }
+    const [every, upTo] = state === "waiting" ? [3000, 120_000] : [15_000, 1_800_000]
+    const refresh = () => {
       const gen = generation.current
       panelApi.bot().then(
         (b) => live && gen === generation.current && onBot(b),
         () => {},
       )
-    }, 3000)
+    }
+    const timer = window.setInterval(() => {
+      if (Date.now() - started > upTo) {
+        window.clearInterval(timer)
+        return
+      }
+      refresh()
+    }, every)
+    const onShow = () => document.visibilityState === "visible" && refresh()
+    document.addEventListener("visibilitychange", onShow)
     return () => {
       live = false
       window.clearInterval(timer)
+      document.removeEventListener("visibilitychange", onShow)
     }
-  }, [waiting, onBot])
+  }, [pending, state, onBot])
 
   return { save, busy, error, saved, clearError: () => setError(null) }
 }
