@@ -99,8 +99,12 @@ defmodule Druzhok.Runtime.Hermes.Locale do
     :ok
   end
 
+  # Jason leaves DEL, C1 controls and U+FFFE/FFFF raw, and hermes's YAML reader
+  # rejects the whole file on them.
+  @yaml_forbidden ~r/[\x{7F}-\x{84}\x{86}-\x{9F}\x{FFFE}\x{FFFF}]/u
+
   defp safe_name(name) when is_binary(name) do
-    case String.trim(name) do
+    case name |> String.replace(@yaml_forbidden, "") |> String.trim() do
       "" ->
         "Дружок"
 

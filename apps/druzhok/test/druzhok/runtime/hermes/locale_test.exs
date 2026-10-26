@@ -46,6 +46,12 @@ defmodule Druzhok.Runtime.Hermes.LocaleTest do
       end
     end
 
+    test "characters YAML forbids are dropped from the name" do
+      text = Locale.render("ru", "a\x7Fb\u0090c￾d")
+      refute text =~ ~r/[\x{7F}\x{90}\x{FFFE}]/u
+      assert parse!(text)["gateway.progress.task_card_title"] =~ "abcd"
+    end
+
     test "no name falls back to Дружок" do
       assert parse!(Locale.render("ru", nil))["gateway.start.greeting"] =~ "Я Дружок."
       assert parse!(Locale.render("ru", "  "))["gateway.start.greeting"] =~ "Я Дружок."
