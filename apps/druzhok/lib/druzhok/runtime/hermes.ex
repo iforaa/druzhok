@@ -22,7 +22,7 @@ defmodule Druzhok.Runtime.Hermes do
 
   require Logger
   alias Druzhok.{Instance, TenantFiles}
-  alias Druzhok.Runtime.Hermes.Voice
+  alias Druzhok.Runtime.Hermes.{Locale, Voice}
 
   # ruoc catalogue entry Mnemosyne embeds through, and its vector width.
   @embedding_model "ruoc-embed-gemini"
@@ -200,6 +200,8 @@ defmodule Druzhok.Runtime.Hermes do
       |> Voice.record(Voice.sync_soul(instance, data_root))
       |> Voice.record(Voice.migrate_agents_md(instance, data_root))
 
+    Locale.sync(instance, data_root)
+
     # Patch druzhok-owned fields in config.yaml on every start so the
     # instance row stays the source of truth without clobbering hermes's
     # runtime writes (thread IDs etc). Read and written through TenantFiles:
@@ -218,7 +220,7 @@ defmodule Druzhok.Runtime.Hermes do
           |> sync_group_sessions_per_user(instance)
           |> sync_memory_block(instance)
           |> sync_image_gen_block(instance)
-          |> sync_quick_commands()
+          |> drop_start_alias()
           |> sync_streaming_block()
           |> sync_plugins_enabled()
           |> sync_gateway_block()
@@ -226,6 +228,7 @@ defmodule Druzhok.Runtime.Hermes do
           |> sync_cron_block()
           |> sync_display_block()
           |> sync_voice_keys(instance)
+          |> sync_end_user_keys()
           |> sync_stt_block()
           |> sync_model_facts(instance)
           |> sync_agent_block()
@@ -301,6 +304,20 @@ defmodule Druzhok.Runtime.Hermes do
       {"telegram", {:merge, [{"replace", Jason.encode!(Voice.telegram_hint())}]}}
     ])
     |> put_block("display", [{"personality", :delete}])
+  end
+
+  # Hosted for end users (spec 2026-10-26-tenant-chat-surface-design.md):
+  # - `display.end_user_mode` (fork flag): no session info or CLI tips after
+  #   /new, a greeting on /start, /status behind the slash gate while busy, no
+  #   shell commands in background-task notices;
+  # - no "are you sure?" before /new: its prompt offers «always approve» and a
+  #   /approve fallback that tenants may not run;
+  # - hermes's English busy-input hint (`/busy queue|steer`) is never shown.
+  defp sync_end_user_keys(content) do
+    content
+    |> put_block("display", [{"end_user_mode", "true"}])
+    |> put_block("approvals", [{"destructive_slash_confirm", "false"}])
+    |> put_block("onboarding", [{"seen", {:merge, [{"busy_input_prompt", "true"}]}}])
   end
 
   @doc false
@@ -568,10 +585,11 @@ defmodule Druzhok.Runtime.Hermes do
   #
   # The menu Telegram shows on "/" is cut to exactly @menu_commands:
   # priority_mode=replace ranks them first, max_commands drops the rest.
-  # `start` is the /start -> /new quick-command alias (sync_quick_commands/1);
+  # `start` is hermes's built-in /start, which greets in end-user mode
+  # (sync_end_user_keys/1);
   # hermes checks the typed name against the policy, so it must be listed.
-  @user_commands ~w(start new compress status voice)
-  @menu_commands ~w(new compress status voice)
+  @user_commands ~w(start new stop voice)
+  @menu_commands ~w(new stop voice help)
   @telegram_extra_keys ~w(allow_admin_from user_allowed_commands group_allow_admin_from group_user_allowed_commands command_menu drop_pending_on_cold_boot gateway_restart_notification)
 
   def user_commands, do: @user_commands
@@ -1002,14 +1020,21 @@ defmodule Druzhok.Runtime.Hermes do
     """
   end
 
-  # /start alias to /new so Telegram's first-interaction command doesn't
-  # show "Unknown command".
-  defp sync_quick_commands(content) do
-    if content =~ ~r/^\s*quick_commands:/m do
-      content
+  # Druzhok used to seed a `quick_commands.start` alias to /new. Hermes's
+  # built-in /start wins over quick commands, so the alias never ran; it is
+  # removed when it is exactly druzhok's, and any other quick command stays.
+  # Can go once every live bot has started on this code.
+  defp drop_start_alias(content) do
+    lines = String.split(content, "\n")
+
+    with {idx, last} <- yaml_block(lines, 0, "quick_commands", 0, length(lines) - 1),
+         body = Enum.slice(lines, (idx + 1)..last//1),
+         {[_ | child], _rest} <- take_child(body, child_indent(body, 2), "start"),
+         ["target: new", "type: alias"] <-
+           child |> Enum.map(&String.trim/1) |> Enum.reject(&(&1 == "")) |> Enum.sort() do
+      put_block(content, "quick_commands", [{"start", :delete}])
     else
-      block = "quick_commands:\n  start:\n    type: alias\n    target: new"
-      String.trim_trailing(content) <> "\n\n" <> block <> "\n"
+      _ -> content
     end
   end
 
@@ -1170,11 +1195,6 @@ defmodule Druzhok.Runtime.Hermes do
       user_profile_enabled: true
       memory_char_limit: 2200
       user_char_limit: 1375
-
-    quick_commands:
-      start:
-        type: alias
-        target: new
 
     # Web search via druzhok /v2/search (perplexity/sonar). Hermes 0.17 gates
     # web search behind this bundled plugin; FIRECRAWL_API_URL/KEY are set in

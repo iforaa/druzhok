@@ -1,0 +1,290 @@
+# Hermes catalog keys under the audited roots that the overlay does not override (spec
+# 2026-10-26-tenant-chat-surface-design.md). One per line: key or prefix.*, a tab, the reason.
+# Druzhok.Runtime.Hermes.LocaleTest fails on a bundled key that is neither overridden nor listed.
+approval.allowed_always	clean
+approval.allowed_once	clean
+approval.allowed_session	clean
+approval.blocklist_message	clean
+approval.cancelled	clean
+approval.choose_long	unreachable: CLI approval prompt
+approval.choose_short	unreachable: CLI approval prompt
+approval.choose_smart_deny	unreachable: CLI approval prompt
+approval.dangerous_header	unreachable: CLI approval prompt
+approval.denied	clean
+approval.inputs.always	clean
+approval.inputs.approve	clean
+approval.inputs.confirm_always	clean
+approval.inputs.confirm_cancel	clean
+approval.inputs.confirm_once	clean
+approval.inputs.deny	clean
+approval.inputs.session	clean
+approval.noun.action	clean
+approval.noun.code	clean
+approval.noun.command	clean
+approval.prompt_long	unreachable: CLI approval prompt
+approval.prompt_short	unreachable: CLI approval prompt
+approval.prompt_smart_deny	unreachable: CLI approval prompt
+approval.smart_deny_deny_inputs	clean
+approval.smart_deny_once_inputs	clean
+approval.summary.blocked	clean
+approval.summary.cancelled	clean
+approval.summary.default	clean
+approval.summary.denied	clean
+approval.summary.notify_failed	clean
+approval.summary.timeout	clean
+approval.timeout	unreachable: CLI approval prompt
+approval.window.hour_one	clean
+approval.window.hour_other	clean
+approval.window.minute_one	clean
+approval.window.minute_other	clean
+approval.window.second_one	clean
+approval.window.second_other	clean
+explainer.file_mutation.failed	clean
+explainer.no_reply_prefix	clean
+explainer.shared.and_more	clean
+explainer.shared.the_model	clean
+gateway.agents.*	unreachable: /agents and its replies are admin-only for tenants
+gateway.approve.*	unreachable: /approve and its replies are admin-only for tenants
+gateway.background.complete_header	unreachable: /bg is admin-only, and process notifications use the concise status only
+gateway.background.exit_code	unreachable: /bg is admin-only, and process notifications use the concise status only
+gateway.background.failed	unreachable: /bg is admin-only, and process notifications use the concise status only
+gateway.background.final_output	unreachable: /bg is admin-only, and process notifications use the concise status only
+gateway.background.last_output	unreachable: /bg is admin-only, and process notifications use the concise status only
+gateway.background.no_credentials	unreachable: /bg is admin-only, and process notifications use the concise status only
+gateway.background.no_response	unreachable: /bg is admin-only, and process notifications use the concise status only
+gateway.background.recent_output	unreachable: /bg is admin-only, and process notifications use the concise status only
+gateway.background.started	unreachable: /bg is admin-only, and process notifications use the concise status only
+gateway.background.still_running	unreachable: /bg is admin-only, and process notifications use the concise status only
+gateway.background.usage	unreachable: /bg is admin-only, and process notifications use the concise status only
+gateway.blueprint.*	unreachable: /blueprint and its replies are admin-only for tenants
+gateway.branch.*	unreachable: /branch and its replies are admin-only for tenants
+gateway.btw.*	unreachable: /btw and its replies are admin-only for tenants
+gateway.bundles.*	unreachable: /bundles and its replies are admin-only for tenants
+gateway.busy.ack	clean
+gateway.busy.ack_detail_joiner	clean
+gateway.busy.ack_detail_wrap	clean
+gateway.busy.action_restarting	clean
+gateway.busy.action_shutting_down	clean
+gateway.busy.behavior_interrupt_long	unreachable: /busy is admin-only
+gateway.busy.behavior_interrupt_short	unreachable: /busy is admin-only
+gateway.busy.behavior_queue_long	unreachable: /busy is admin-only
+gateway.busy.behavior_queue_short	unreachable: /busy is admin-only
+gateway.busy.behavior_steer_long	unreachable: /busy is admin-only
+gateway.busy.behavior_steer_short	unreachable: /busy is admin-only
+gateway.busy.demoted_tail	clean
+gateway.busy.elapsed_min	clean
+gateway.busy.interrupting_head	clean
+gateway.busy.interrupting_tail	clean
+gateway.busy.queued_head	clean
+gateway.busy.queued_tail	clean
+gateway.busy.reject_codex_runtime	unreachable: replies to admin-only commands while busy
+gateway.busy.reject_goal	unreachable: replies to admin-only commands while busy
+gateway.busy.reject_loop	unreachable: replies to admin-only commands while busy
+gateway.busy.reject_moa	unreachable: replies to admin-only commands while busy
+gateway.busy.reject_model	unreachable: replies to admin-only commands while busy
+gateway.busy.save_failed	unreachable: /busy is admin-only
+gateway.busy.set	unreachable: /busy is admin-only
+gateway.busy.status	unreachable: /busy is admin-only
+gateway.busy.unknown_mode	unreachable: /busy is admin-only
+gateway.clarify.*	clean
+gateway.codex_runtime.*	unreachable: /codex_runtime and its replies are admin-only for tenants
+gateway.commands.*	unreachable: /commands and its replies are admin-only for tenants
+gateway.compress.aggressive_unsupported	unreachable: manual /compress is denied for tenants
+gateway.compress.codex_compacted	unreachable: Codex app-server runtime not used
+gateway.compress.codex_incomplete	unreachable: Codex app-server runtime not used
+gateway.compress.codex_nothing	unreachable: Codex app-server runtime not used
+gateway.compress.focus_line	unreachable: manual /compress is denied for tenants
+gateway.compress.no_provider	unreachable: manual /compress is denied for tenants
+gateway.compress.not_enough	unreachable: manual /compress is denied for tenants
+gateway.compress.nothing_to_do	unreachable: manual /compress is denied for tenants
+gateway.confirm.*	unreachable: approvals.destructive_slash_confirm is false
+gateway.context.*	unreachable: /context and its replies are admin-only for tenants
+gateway.credits.*	unreachable: Nous Portal credits, not used
+gateway.debug.*	unreachable: /debug and its replies are admin-only for tenants
+gateway.deny.*	unreachable: /deny and its replies are admin-only for tenants
+gateway.diff.*	unreachable: /diff and its replies are admin-only for tenants
+gateway.draining	unreachable: sent to the admin who asked for a restart
+gateway.errors.empty_response_model_label	clean
+gateway.errors.hint_rate_limited	clean
+gateway.errors.hint_rejected	clean
+gateway.errors.interrupted_before_start	clean
+gateway.errors.no_response	clean
+gateway.errors.previous_turn_cleanup	clean
+gateway.errors.processing_incomplete	clean
+gateway.exec_approval.action_always	clean
+gateway.exec_approval.action_deny	clean
+gateway.exec_approval.action_once	clean
+gateway.exec_approval.action_session	clean
+gateway.exec_approval.deadline	clean
+gateway.exec_approval.default_reason	clean
+gateway.exec_approval.reason_label	clean
+gateway.exec_approval.smart_deny_heading	clean
+gateway.exec_approval.smart_deny_line	clean
+gateway.exec_approval.text_body	unreachable: Telegram shows approval buttons, not the text fallback
+gateway.exec_approval.text_choice_always	unreachable: Telegram shows approval buttons, not the text fallback
+gateway.exec_approval.text_choice_deny	unreachable: Telegram shows approval buttons, not the text fallback
+gateway.exec_approval.text_choice_joiner	unreachable: Telegram shows approval buttons, not the text fallback
+gateway.exec_approval.text_choice_last	unreachable: Telegram shows approval buttons, not the text fallback
+gateway.exec_approval.text_choice_once	unreachable: Telegram shows approval buttons, not the text fallback
+gateway.exec_approval.text_choice_session	unreachable: Telegram shows approval buttons, not the text fallback
+gateway.exec_approval.timed_out_card_body	clean
+gateway.fast.*	unreachable: /fast and its replies are admin-only for tenants
+gateway.footer.*	unreachable: /footer and its replies are admin-only for tenants
+gateway.goal.*	unreachable: /goal and its replies are admin-only for tenants
+gateway.goal_cleared	unreachable: /goal admin-only
+gateway.heartbeat.*	unreachable: /heartbeat and its replies are admin-only for tenants
+gateway.help.more_use_commands	unreachable: listed only for ungated users
+gateway.help.skill_header	unreachable: skill commands are listed only for ungated users
+gateway.hooks.*	unreachable: /hooks and its replies are admin-only for tenants
+gateway.init.*	unreachable: /init and its replies are admin-only for tenants
+gateway.insights.*	unreachable: /insights and its replies are admin-only for tenants
+gateway.kanban.*	unreachable: /kanban and its replies are admin-only for tenants
+gateway.learn.*	unreachable: /learn and its replies are admin-only for tenants
+gateway.loop.*	unreachable: /loop and its replies are admin-only for tenants
+gateway.memory.*	unreachable: /memory and its replies are admin-only for tenants
+gateway.model.*	unreachable: /model and its replies are admin-only for tenants
+gateway.no_active_goal	unreachable: /goal admin-only
+gateway.notify.context_injection_refused	clean
+gateway.notify.delivery_failed_retry	clean
+gateway.notify.media_delivery_failed	clean
+gateway.notify.media_delivery_failed_with_name	clean
+gateway.notify.media_kind.audio	clean
+gateway.notify.media_kind.file	clean
+gateway.notify.media_kind.image	clean
+gateway.notify.media_kind.video	clean
+gateway.notify.no_home_channel	unreachable: druzhok sets the home channel
+gateway.notify.plain_fallback_prefix	clean
+gateway.notify.turn_error	clean
+gateway.notify.turn_error_no_details	clean
+gateway.pairing.*	unreachable: strangers are ignored (allowlist, unauthorized_dm_behavior ignore)
+gateway.pause.*	unreachable: /pause and its replies are admin-only for tenants
+gateway.personality.*	unreachable: /personality and its replies are admin-only for tenants
+gateway.plan.*	unreachable: /plan and its replies are admin-only for tenants
+gateway.platform.*	unreachable: /platform and its replies are admin-only for tenants
+gateway.profile.*	unreachable: /profile and its replies are admin-only for tenants
+gateway.progress.status_fallback_long	clean: tool progress and heartbeat lines
+gateway.progress.status_fallback_short	clean: tool progress and heartbeat lines
+gateway.progress.task_line	clean: tool progress and heartbeat lines
+gateway.progress.task_status_complete	clean: tool progress and heartbeat lines
+gateway.progress.task_status_error	clean: tool progress and heartbeat lines
+gateway.progress.task_status_running	clean: tool progress and heartbeat lines
+gateway.progress.thinking_prefix	clean: tool progress and heartbeat lines
+gateway.progress.tool_head	clean: tool progress and heartbeat lines
+gateway.progress.tool_pending	clean: tool progress and heartbeat lines
+gateway.progress.tool_preview	clean: tool progress and heartbeat lines
+gateway.progress.tool_verbose	clean: tool progress and heartbeat lines
+gateway.progress.working_heartbeat	clean: tool progress and heartbeat lines
+gateway.prompt_command.start_failed	unreachable: admin-only command
+gateway.proxy.*	unreachable: /proxy and its replies are admin-only for tenants
+gateway.queue.*	unreachable: /queue and its replies are admin-only for tenants
+gateway.quick_command.*	unreachable: /quick_command and its replies are admin-only for tenants
+gateway.reasoning.*	unreachable: /reasoning and its replies are admin-only for tenants
+gateway.refine.*	unreachable: /refine and its replies are admin-only for tenants
+gateway.reload_mcp.*	unreachable: /reload_mcp and its replies are admin-only for tenants
+gateway.reload_skills.*	unreachable: /reload_skills and its replies are admin-only for tenants
+gateway.restart.*	unreachable: /restart and its replies are admin-only for tenants
+gateway.resume.*	unreachable: /resume and its replies are admin-only for tenants
+gateway.retry.*	unreachable: /retry and its replies are admin-only for tenants
+gateway.review.*	unreachable: /review and its replies are admin-only for tenants
+gateway.rollback.*	unreachable: /rollback and its replies are admin-only for tenants
+gateway.save.*	unreachable: /save and its replies are admin-only for tenants
+gateway.session.info_acting_model	hidden: session info is not shown with display.end_user_mode
+gateway.session.info_context	hidden: session info is not shown with display.end_user_mode
+gateway.session.info_endpoint	hidden: session info is not shown with display.end_user_mode
+gateway.session.info_model	hidden: session info is not shown with display.end_user_mode
+gateway.session.info_provider	hidden: session info is not shown with display.end_user_mode
+gateway.sessions.*	unreachable: /sessions and its replies are admin-only for tenants
+gateway.set_home.*	unreachable: /set_home and its replies are admin-only for tenants
+gateway.shared.error_prefix	clean
+gateway.shared.none_marker	clean
+gateway.shared.none_value	clean
+gateway.shared.session_db_unavailable	unreachable: session database lookups of admin-only commands
+gateway.shared.session_db_unavailable_prefix	unreachable: session database lookups of admin-only commands
+gateway.shared.session_not_found	unreachable: session database lookups of admin-only commands
+gateway.shared.unknown_error	clean
+gateway.shared.unknown_value	clean
+gateway.shared.warn_passthrough	clean
+gateway.shutdown.action_restarting	clean
+gateway.shutdown.action_shutting_down	clean
+gateway.skills.diff_truncated	unreachable: /skills subcommands are admin-only
+gateway.skills.gate_off	unreachable: /skills subcommands are admin-only
+gateway.skills.unknown_subcommand	unreachable: /skills subcommands are admin-only
+gateway.startup.handoff_thread_title	unreachable: handoff not used
+gateway.status.*	unreachable: /status and its replies are admin-only for tenants
+gateway.steer.*	unreachable: /steer and its replies are admin-only for tenants
+gateway.stop.*	clean
+gateway.subgoal.*	unreachable: /subgoal and its replies are admin-only for tenants
+gateway.suggestions.*	unreachable: /suggestions and its replies are admin-only for tenants
+gateway.title.*	unreachable: /title and its replies are admin-only for tenants
+gateway.topic.*	unreachable: /topic and its replies are admin-only for tenants
+gateway.topup.*	unreachable: /topup and its replies are admin-only for tenants
+gateway.unauthorized.action_notice	unreachable: strangers are ignored (allowlist)
+gateway.unauthorized.owner_hint_env	unreachable: owner notice for dropped strangers goes to the operator's home channel only with pairing
+gateway.unauthorized.owner_hint_generic	unreachable: owner notice for dropped strangers goes to the operator's home channel only with pairing
+gateway.unauthorized.owner_notice	unreachable: owner notice for dropped strangers goes to the operator's home channel only with pairing
+gateway.undo.*	unreachable: /undo and its replies are admin-only for tenants
+gateway.update.*	unreachable: /update and its replies are admin-only for tenants
+gateway.usage.*	unreachable: /usage and its replies are admin-only for tenants
+gateway.verbose.*	unreachable: /verbose and its replies are admin-only for tenants
+gateway.voice.channel_deps_missing	unreachable: Discord voice channels
+gateway.voice.channel_guild_only	unreachable: Discord voice channels
+gateway.voice.channel_join_failed	unreachable: Discord voice channels
+gateway.voice.channel_join_permissions	unreachable: Discord voice channels
+gateway.voice.channel_joined	unreachable: Discord voice channels
+gateway.voice.channel_left	unreachable: Discord voice channels
+gateway.voice.channel_not_in_voice	unreachable: Discord voice channels
+gateway.voice.channel_not_joined	unreachable: Discord voice channels
+gateway.voice.channel_unsupported	unreachable: Discord voice channels
+gateway.voice.disabled_short	clean
+gateway.voice.enabled_short	clean
+gateway.voice.speaking	unreachable: Discord voice channels
+gateway.voice.status_channel	unreachable: Discord voice channels
+gateway.voice.status_member	unreachable: Discord voice channels
+gateway.voice.status_mode	clean
+gateway.voice.status_participants	unreachable: Discord voice channels
+gateway.voice.transcript_echo	clean: echoes the user's own words
+gateway.voice.transcript_echo_short	clean: echoes the user's own words
+gateway.whoami.scope_dm	clean: not used by the overridden header
+gateway.whoami.scope_group	clean: not used by the overridden header
+gateway.yolo.*	unreachable: /yolo and its replies are admin-only for tenants
+platform.telegram.approval.action_always	clean
+platform.telegram.approval.action_deny	clean
+platform.telegram.approval.action_once	clean
+platform.telegram.approval.action_session	clean
+platform.telegram.approval.expired	clean
+platform.telegram.approval.expired_detail	clean
+platform.telegram.approval.resolved_always	clean
+platform.telegram.approval.resolved_by_user	clean
+platform.telegram.approval.resolved_deny	clean
+platform.telegram.approval.resolved_generic	clean
+platform.telegram.approval.resolved_once	clean
+platform.telegram.approval.resolved_session	clean
+platform.telegram.approval.toast_already_resolved	clean
+platform.telegram.approval.toast_invalid_data	clean
+platform.telegram.gmail_triage.*	unreachable: gmail triage plugin not enabled
+platform.telegram.install_hint	unreachable: setup hint for operators
+platform.telegram.media.kind_attachment	clean
+platform.telegram.media.kind_audio	clean
+platform.telegram.media.kind_photo	clean
+platform.telegram.media.kind_video	clean
+platform.telegram.media.kind_voice	clean
+platform.telegram.media.named_suffix	clean
+platform.telegram.picker.*	unreachable: /model picker is admin-only
+platform.telegram.prompt.affirm	clean
+platform.telegram.prompt.affirm_word	clean
+platform.telegram.prompt.awaiting_typed	clean
+platform.telegram.prompt.default_hint	clean
+platform.telegram.prompt.invalid_choice	clean
+platform.telegram.prompt.negate	clean
+platform.telegram.prompt.negate_word	clean
+platform.telegram.prompt.other	clean
+platform.telegram.prompt.type_answer	clean
+platform.telegram.prompt.update_answered	unreachable: /update is admin-only
+platform.telegram.prompt.update_header	unreachable: /update is admin-only
+platform.telegram.prompt.update_sent	unreachable: /update is admin-only
+platform.telegram.slash_confirm.*	unreachable: approvals.destructive_slash_confirm is false
+platform.telegram.user_fallback	clean
+gateway.approvals.admin_only	unreachable: /approvals is admin-only
+gateway.login.free_tier_remaining	unreachable: /login is admin-only
+gateway.moa.prepare_failed	unreachable: /moa is admin-only
+gateway.picker.page_info	unreachable: /model picker is admin-only

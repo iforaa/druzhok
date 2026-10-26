@@ -529,25 +529,23 @@ defmodule Druzhok.Runtime.HermesTest do
                    user_allowed_commands:
                      - start
                      - new
-                     - compress
-                     - status
+                     - stop
                      - voice
                    group_allow_admin_from:
                      - "4242"
                    group_user_allowed_commands:
                      - start
                      - new
-                     - compress
-                     - status
+                     - stop
                      - voice
                    command_menu:
                      priority_mode: replace
                      max_commands: 4
                      priority:
                        - new
-                       - compress
-                       - status
+                       - stop
                        - voice
+                       - help
                    drop_pending_on_cold_boot: false
                    gateway_restart_notification: false
                  enabled: true
@@ -676,7 +674,117 @@ defmodule Druzhok.Runtime.HermesTest do
                YamlElixir.read_from_string(File.read!(Path.join(tmp_dir, "config.yaml")))
 
       assert cfg["cron"] == %{"wrap_response" => false, "timezone" => "UTC"}
-      assert cfg["display"] == %{"tool_progress" => "all", "memory_notifications" => "off"}
+
+      assert cfg["display"] == %{
+               "tool_progress" => "all",
+               "memory_notifications" => "off",
+               "end_user_mode" => true
+             }
+    end
+  end
+
+  describe "sync_config/2 — end-user surface" do
+    setup do
+      tmp_dir =
+        Path.join(System.tmp_dir!(), "hermes-enduser-#{System.unique_integer([:positive])}")
+
+      File.mkdir_p!(Path.join(tmp_dir, "workspace"))
+      on_exit(fn -> File.rm_rf!(tmp_dir) end)
+      %{tmp_dir: tmp_dir}
+    end
+
+    defp sync_cfg!(tmp_dir, yaml) do
+      File.write!(Path.join(tmp_dir, "config.yaml"), yaml)
+      assert :ok = Hermes.sync_config(%{name: "b", model: "x", tenant_key: "k"}, tmp_dir)
+      content = File.read!(Path.join(tmp_dir, "config.yaml"))
+      {content, YamlElixir.read_from_string!(content)}
+    end
+
+    test "turns on end-user mode, drops the /new confirmation and the busy-input hint", %{
+      tmp_dir: tmp_dir
+    } do
+      {_, cfg} = sync_cfg!(tmp_dir, "model:\n  default: \"x\"\n")
+
+      assert cfg["display"]["end_user_mode"] == true
+      assert cfg["approvals"] == %{"destructive_slash_confirm" => false}
+      assert cfg["onboarding"] == %{"seen" => %{"busy_input_prompt" => true}}
+    end
+
+    test "keeps what hermes wrote next to them", %{tmp_dir: tmp_dir} do
+      {_, cfg} =
+        sync_cfg!(tmp_dir, """
+        approvals:
+          mode: manual
+          destructive_slash_confirm: true
+        onboarding:
+          seen:
+            tool_progress_prompt: true
+        """)
+
+      assert cfg["approvals"] == %{"mode" => "manual", "destructive_slash_confirm" => false}
+
+      assert cfg["onboarding"]["seen"] == %{
+               "tool_progress_prompt" => true,
+               "busy_input_prompt" => true
+             }
+    end
+
+    test "removes druzhok's dead /start alias", %{tmp_dir: tmp_dir} do
+      {content, cfg} =
+        sync_cfg!(tmp_dir, """
+        model:
+          default: "x"
+
+        quick_commands:
+          start:
+            type: alias
+            target: new
+
+        streaming:
+          enabled: true
+        """)
+
+      refute content =~ "quick_commands"
+      refute Map.has_key?(cfg, "quick_commands")
+      assert cfg["streaming"] == %{"enabled" => true}
+    end
+
+    test "keeps other quick commands, and a /start that is not druzhok's", %{tmp_dir: tmp_dir} do
+      {_, cfg} =
+        sync_cfg!(tmp_dir, """
+        quick_commands:
+          start:
+            type: exec
+            command: echo hi
+          uptime:
+            type: exec
+            command: uptime
+        """)
+
+      assert cfg["quick_commands"]["start"] == %{"type" => "exec", "command" => "echo hi"}
+      assert cfg["quick_commands"]["uptime"]["command"] == "uptime"
+
+      {_, cfg} =
+        sync_cfg!(tmp_dir, """
+        quick_commands:
+          start:
+            type: alias
+            target: new
+          uptime:
+            type: exec
+            command: uptime
+        """)
+
+      assert cfg["quick_commands"] == %{"uptime" => %{"type" => "exec", "command" => "uptime"}}
+    end
+
+    test "writes the locale overlay", %{tmp_dir: tmp_dir} do
+      sync_cfg!(tmp_dir, "model:\n  default: \"x\"\n")
+
+      for lang <- ~w(ru en) do
+        assert File.read!(Path.join([tmp_dir, "locales", lang <> ".yaml"])) ==
+                 Druzhok.Runtime.Hermes.Locale.render(lang, nil)
+      end
     end
   end
 
@@ -1045,6 +1153,10 @@ defmodule Druzhok.Runtime.HermesTest do
       inst = Map.delete(@instance, :group_shared_memory)
       yaml = Hermes.build_config_yaml(inst)
       assert yaml =~ ~r/^group_sessions_per_user: true$/m
+    end
+
+    test "seeds no quick_commands: hermes's built-in /start wins over an alias" do
+      refute Hermes.build_config_yaml(@instance) =~ "quick_commands"
     end
   end
 

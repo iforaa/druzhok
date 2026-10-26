@@ -108,10 +108,11 @@ parse.
   symlinks), the same way batch 2 writes SOUL.md. The files are druzhok-owned and rewritten whole each time;
   the first line is a marker comment (`# druzhok-owned: rewritten on every start`). If the content is
   unchanged nothing is written.
-- Source: `apps/druzhok/priv/hermes_locale/ru.yaml` and `en.yaml`, the overrides only, as nested YAML in
-  hermes's own format. Druzhok parses the source, substitutes the bot's name, and **emits** the file itself:
-  every value is written as a JSON-encoded string (`Jason.encode!`), which is a valid YAML double-quoted
-  scalar (the technique batch 2 uses for `agent.system_prompt`). No raw text is spliced into YAML.
+- Source: `apps/druzhok/priv/hermes_locale/ru.json` and `en.json`, the overrides only, flat
+  `{"dotted.key": "text"}` (druzhok has no YAML library at runtime). Druzhok substitutes the bot's name and
+  **emits** the file itself, one `"dotted.key": "text"` line per override: key and value are JSON-encoded
+  strings (`Jason.encode!`), which are valid YAML double-quoted scalars (the technique batch 2 uses for
+  `agent.system_prompt`), and hermes's `flatten` keeps a dotted key as it is. No raw text is spliced into YAML.
 - **The bot's name** (`display_name`, the Telegram first name, set by the owner) is the only substitution.
   Source values say `%{bot_name}`; druzhok replaces it with the name with `{` and `}` replaced by `(` and
   `)`. Doubling them would not work: `t()` runs `str.format` only when the caller passes kwargs
@@ -175,7 +176,7 @@ What the overrides say (ru; en is the same in English):
 | `explainer.*` | «Не получилось ответить в этот раз. Напишите ещё раз.» family; persistence cases «Не получилось сохранить разговор, я остановился. Напишите ещё раз через минуту»; no model, /model, /retry, Hermes, paths (`{home}` dropped) |
 | `gateway.progress.timeout_*` | «Ответ занял слишком долго, я остановился. Напишите ещё раз.» (no tool name, no config key) |
 | `gateway.progress.task_card_title` | «%{bot_name} работает» |
-| `gateway.exec_approval.*`, `gateway.confirm.*`, `approval.*` | «%{bot_name} хочет выполнить действие…» (no config keys, no `/approve`) |
+| `gateway.exec_approval.header`, `timed_out_notice`, `gateway.approval_expired` | «%{bot_name} хочет выполнить действие…» (no config keys, no `/approve`). `gateway.confirm.*` is reviewed as unreachable (the confirmation is off); `approval.*` is the CLI prompt or clean |
 
 ### 3. Fork change: `display.end_user_mode`
 
@@ -200,7 +201,8 @@ other display keys (`cfg_get(_load_gateway_config(), "display", "end_user_mode")
    the flag to stay a no-op for upstream by default.)
 
 5. **No shell command in background-task notices.** `_format_concise_process_notification`
-   (`gateway/run.py:2989-2996`) skips the appended command (`— <command>`) and the failure output tail; the status line
+   (`gateway/run.py:2989-2996`) skips the appended command (`— <command>`), the exit code and the failure
+   output tail; the status line
    (overlaid) stays, so the tenant still learns a job finished or failed.
 
 Not in the flag: the `/help` skill section is already hidden for gated users (`allowed` is non-empty,

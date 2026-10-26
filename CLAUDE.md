@@ -24,7 +24,7 @@ Always use `/my-commit` for committing changes.
 - **Bot users have no internet**: `ops/nftables-druzhok.nft` allows only the proxy, DNS and Telegram's CIDRs. Anything a bot needs from the web goes through the proxy (search, `/v2/scrape`).
 - **One Telegram poller per token.** Stop a bot on the old host before starting it elsewhere.
 - Hermes source is the fork `github.com/iforaa/druzhok-hermes` (local clone `hermes-agent/`, remote `origin`; nousresearch is remote `upstream`). Updates go through the `update-hermes` skill.
-- Tenants get hermes's *user* slash tier (`/new /compress /status /voice`, plus `/help /whoami`); the operator
+- Tenants get hermes's *user* slash tier (`/start /new /stop /voice`, plus `/help /whoami`); the operator
   (Settings `operator_telegram_id` / `OPERATOR_TELEGRAM_ID`) is admin on every bot. Enforced via upstream
   `platforms.telegram.extra` keys written by `Runtime.Hermes.sync_config/2` on each start — no fork patch.
 - **Telegram delivery is per bot** (`instances.telegram_mode`): `polling` (hermes long-polls) or `webhook`
@@ -47,7 +47,8 @@ apps/druzhok/      core: BotManager, Host (Systemd|Process), Runtime.Hermes, Man
 apps/druzhok_web/  Phoenix, no UI: LLM proxy (LlmProxyController), Telegram webhook, /internal/fetch, BotSite plug
 ops/               druzhok-ctl, hermes@.service, nftables, Caddyfile, bootstrap.sh, smoke.sh
 hermes-agent/      gitignored clone of the hermes fork (see update-hermes skill)
-(workspace seed: config.yaml comes from Runtime.Hermes.workspace_files/1; SOUL.md from Runtime.Hermes.Voice.sync_soul/2; no AGENTS.md)
+(workspace seed: config.yaml comes from Runtime.Hermes.workspace_files/1; SOUL.md from Runtime.Hermes.Voice.sync_soul/2; no AGENTS.md;
+ locales/{ru,en}.yaml, druzhok's wording for hermes's fixed replies, from Runtime.Hermes.Locale, sources priv/hermes_locale)
 docs/superpowers/specs|plans  design docs (see 2026-08-23-systemd-host-*)
 ```
 
@@ -66,7 +67,9 @@ language, because hermes's own 402 text tells tenants to add provider credits an
 hermes's auxiliary calls (`LlmProxy.AuxShapes`: no tools, and no system message or a known aux
 prompt) keep the real 402. What a bot is told about itself (SOUL.md, `agent.system_prompt`
 product rules, the Russian Telegram hint) is `Runtime.Hermes.Voice`, spec
-`docs/superpowers/specs/2026-10-25-bot-voice-design.md`.
+`docs/superpowers/specs/2026-10-25-bot-voice-design.md`. What hermes itself prints (menu `/new /stop /voice /help`, `/start`
+greeting, failures; locale overlay + fork flag `display.end_user_mode`) is `Runtime.Hermes.Locale`, spec
+`docs/superpowers/specs/2026-10-26-tenant-chat-surface-design.md`.
 Spec: `docs/superpowers/specs/2026-09-05-ruoc-gateway-migration-design.md`.
 
 | Endpoint | Upstream |
