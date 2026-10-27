@@ -33,6 +33,16 @@ export interface Me {
     pending?: { stage: "new" | "current"; email: string }
   }
   pending_payment: Payment | null
+  /**
+   * The Cleo Code account this bot spends from, or null when it spends its
+   * own. Linked, every other field here describes that account, and the
+   * receipt is its owner's verified email.
+   */
+  linked: Linked | null
+}
+
+export interface Linked {
+  email_masked: string
 }
 
 export interface Plan {
@@ -58,14 +68,25 @@ export interface Payment {
   state: "pending" | "paid" | "failed" | "refunded"
 }
 
-/** A refusal from the API: its error type and status. */
+/**
+ * A refusal from the API: its error type and status, and the body it came
+ * in, for a refusal that says more than its type (link_plan_active's date).
+ */
 export class APIError extends Error {
   constructor(
     readonly status: number,
     readonly kind: string,
     message: string,
+    readonly body: Record<string, unknown> = {},
   ) {
     super(message)
+  }
+
+  /** A string field of the refusal, beside the error or inside it. */
+  field(name: string): string | null {
+    const inner = this.body.error
+    const v = this.body[name] ?? (inner && typeof inner === "object" ? (inner as Record<string, unknown>)[name] : undefined)
+    return typeof v === "string" ? v : null
   }
 }
 
@@ -74,6 +95,11 @@ let billingBase = ""
 
 export function setBillingBase(url: string) {
   billingBase = url.replace(/\/+$/, "")
+}
+
+/** ruoc's user portal, where a Cleo Code account is made and signed into. */
+export function portalUrl(): string {
+  return `${billingBase}/account/`
 }
 
 function call<T>(method: "GET" | "POST", path: string, body?: unknown): Promise<T> {
@@ -104,10 +130,13 @@ async function request<T>(url: string, method: "GET" | "POST", body?: unknown): 
   } catch {
     throw new APIError(0, "network", "нет связи")
   }
-  const data = await resp.json().catch(() => ({}))
+  const data: unknown = await resp.json().catch(() => ({}))
+  const answer = data && typeof data === "object" ? (data as Record<string, unknown>) : {}
   if (!resp.ok) {
-    const err = (data as { error?: { type?: string; message?: string } }).error
-    throw new APIError(resp.status, err?.type ?? "unknown", err?.message ?? "")
+    const err = answer.error as { type?: string; code?: string; message?: string } | undefined
+    // ruoc names a refusal in `type`; where it also sets OpenAI's `code`,
+    // that is the specific one and `type` is the generic class.
+    throw new APIError(resp.status, err?.code ?? err?.type ?? "unknown", err?.message ?? "", answer)
   }
   return data as T
 }
@@ -262,6 +291,8 @@ export const api = {
   payment: (id: string) => call<Payment>("GET", `payments/${encodeURIComponent(id)}`),
   receiptEmail: (email: string) => call<{ stage: "new" | "current"; sent_to: string }>("POST", "receipt-email", { email }),
   confirmReceipt: (code: string) => call<{ done: boolean; sent_to?: string }>("POST", "receipt-email/confirm", { code }),
+  /** Points this bot's spending at the Cleo Code account these credentials open. */
+  link: (email: string, password: string) => call<{ linked: Linked }>("POST", "link", { email, password }),
 }
 
 /** What to tell the owner about a refusal, in their words. */
@@ -303,6 +334,10 @@ export function explain(err: unknown): string {
       return "Не получилось отправить письмо. Попробуйте чуть позже."
     case "price_changed":
       return "Цена изменилась. Посмотрите тарифы ещё раз."
+    case "link_changed":
+      return "Счёт бота изменился. Посмотрите тарифы ещё раз."
+    case "linked":
+      return "Чеки приходят на почту подключённого аккаунта Клео Код."
     case "plan_change_scheduled":
       return "Другой тариф уже куплен и начнётся после текущего периода."
     case "plan_change_needs_support":
