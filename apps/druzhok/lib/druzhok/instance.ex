@@ -35,7 +35,7 @@ defmodule Druzhok.Instance do
     field :start_seq, :integer, default: 0
     field :stop_seq, :integer, default: 0
     field :delete_requested, :boolean, default: false
-    field :sleep_enabled, :boolean, default: false
+    field :sleep_enabled, :boolean, default: true
     # ...and what the controller did, written only by Druzhok.Lifecycle.Bot.
     field :sleeping, :boolean, default: false
     field :applied_seq, :integer, default: 0
