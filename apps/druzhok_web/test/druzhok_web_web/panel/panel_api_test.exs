@@ -86,7 +86,7 @@ defmodule DruzhokWebWeb.PanelApiTest do
     conn2 = api(build_conn(), "/app/api/files/soul")
     assert Jason.decode!(conn2.resp_body)["text"] == "# Вася"
 
-    assert api(build_conn(), "/app/api/files/memory").status == 404
+    assert api(build_conn(), "/app/api/files/nope").status == 404
     assert api(build_conn(), "/app/api/files").status == 200
     assert api(build_conn(), "/app/api/jobs").status == 200
     assert api(build_conn(), "/app/api/skills").status == 200
@@ -255,6 +255,342 @@ defmodule DruzhokWebWeb.PanelApiTest do
       c = api(conn, "/app/api/delete", user: 789, post: %{})
       assert {c.status, error_type(c)} == {403, "not_owner"}
       refute Repo.get!(Instance, inst.id).delete_requested
+    end
+  end
+
+  describe "skills" do
+    setup %{dir: dir} do
+      for {rel, body} <- [
+            {"skills/notes/SKILL.md", "---\nname: daily\ndescription: Заметки\n---\nтело"},
+            {"skills/cat/mine/SKILL.md", "---\nname: mine\n---\nтело"},
+            {"skills/github/gh/SKILL.md", "---\nname: gh\ndescription: Гитхаб\n---\nтело"},
+            {"skills/.bundled_manifest", "gh:abc\n"}
+          ] do
+        path = Path.join(dir, rel)
+        File.mkdir_p!(Path.dirname(path))
+        File.write!(path, body)
+      end
+
+      :ok
+    end
+
+    test "GET /skills has both groups; `skills` keeps its meaning", %{conn: conn} do
+      body = Jason.decode!(api(conn, "/app/api/skills").resp_body)
+      assert Enum.map(body["skills"], & &1["name"]) == ["daily", "mine"]
+      assert hd(body["skills"])["path"] == ["notes"]
+
+      assert [%{"name" => "gh", "path" => ["github", "gh"], "description" => "Гитхаб"}] =
+               body["system"]
+
+      assert Jason.decode!(api(build_conn(), "/app/api/files").resp_body)["skills"] ==
+               %{"own" => 2, "bundled" => 1}
+    end
+
+    test "both groups open; only own ones edit; a path outside both is 404", %{conn: conn} do
+      own = Jason.decode!(api(conn, "/app/api/skills/notes").resp_body)
+      assert own["editable"] == true and own["limit"] == 100_000 and is_binary(own["sha256"])
+
+      nested = Jason.decode!(api(build_conn(), "/app/api/skills/cat/mine").resp_body)
+      assert nested["editable"] == true
+
+      system = api(build_conn(), "/app/api/skills/github/gh")
+      assert system.status == 200
+      assert Jason.decode!(system.resp_body)["editable"] == false
+
+      assert api(build_conn(), "/app/api/skills/github/none").status == 404
+      assert api(build_conn(), "/app/api/skills/none").status == 404
+      assert api(build_conn(), "/app/api/skills/..%2Fetc").status == 404
+    end
+  end
+
+  describe "GET /files/:kind" do
+    test "a missing memory file is an empty page to fill in", %{conn: conn} do
+      c = api(conn, "/app/api/files/memory")
+      assert c.status == 200
+
+      assert %{"text" => "", "sha256" => nil, "editable" => true, "limit" => 2200} =
+               Jason.decode!(c.resp_body)
+
+      assert get_resp_header(c, "cache-control") == ["no-store"]
+      assert Jason.decode!(api(build_conn(), "/app/api/files/user").resp_body)["limit"] == 1375
+    end
+
+    test "SOUL.md has its hash; without one it is 404", %{conn: conn, dir: dir} do
+      body = Jason.decode!(api(conn, "/app/api/files/soul").resp_body)
+      assert body["editable"] == true and body["limit"] == 20_000
+      assert body["sha256"] == :crypto.hash(:sha256, "# Вася") |> Base.encode16(case: :lower)
+
+      File.rm!(Path.join(dir, "SOUL.md"))
+      assert api(build_conn(), "/app/api/files/soul").status == 404
+    end
+  end
+
+  # Records the hand-over file while it exists, and answers what the test set.
+  defmodule Saver do
+    def run(name, dir, path) do
+      stat = File.stat!(path)
+
+      send(
+        Application.get_env(:druzhok, :panel_saver_test),
+        {:saved, name, dir, path, File.read!(path), stat}
+      )
+
+      Application.get_env(
+        :druzhok,
+        :panel_saver_reply,
+        {~s({"sha256":"#{String.duplicate("a", 64)}","modified_at":"2026-10-31T10:00:00Z"}\n), 0}
+      )
+    end
+
+    def slow(_name, _dir, _path) do
+      Process.sleep(:infinity)
+    end
+  end
+
+  describe "saving" do
+    setup do
+      Application.put_env(:druzhok, :panel_saver, {Saver, :run})
+      Application.put_env(:druzhok, :panel_saver_test, self())
+
+      on_exit(fn ->
+        for k <- [:panel_saver, :panel_saver_test, :panel_saver_reply, :panel_save_timeout_ms],
+            do: Application.delete_env(:druzhok, k)
+      end)
+
+      :ok
+    end
+
+    defp reply_with(out, code \\ 0),
+      do: Application.put_env(:druzhok, :panel_saver_reply, {out, code})
+
+    defp hand_overs(dir) do
+      dir |> Path.dirname() |> File.ls!() |> Enum.filter(&String.starts_with?(&1, ".panel-save-"))
+    end
+
+    test "POST /files/:kind hands over the input and answers the hash", %{
+      conn: conn,
+      inst: inst,
+      dir: dir
+    } do
+      c = api(conn, "/app/api/files/memory", post: %{text: "запись", base_sha256: nil})
+      assert c.status == 200
+      assert get_resp_header(c, "cache-control") == ["no-store"]
+
+      assert Jason.decode!(c.resp_body) == %{
+               "sha256" => String.duplicate("a", 64),
+               "modified_at" => "2026-10-31T10:00:00Z"
+             }
+
+      name = inst.name
+      assert_received {:saved, ^name, ^dir, path, job, stat}
+
+      assert Jason.decode!(job) == %{
+               "target" => ["memories", "MEMORY.md"],
+               "kind" => "memory",
+               "base_sha256" => nil,
+               "text" => "запись",
+               "limit" => 2200
+             }
+
+      # Next to the tenant dirs, the bot's own, readable by it alone.
+      assert Path.dirname(path) == Path.dirname(Path.expand(dir))
+      assert String.starts_with?(Path.basename(path), ".panel-save-")
+      assert Bitwise.band(stat.mode, 0o777) == 0o400
+      assert stat.uid == File.stat!(dir).uid
+      assert hand_overs(dir) == [], "the hand-over file is removed after the run"
+    end
+
+    test "each route names its target and limit", %{conn: conn, dir: dir} do
+      path = Path.join(dir, "skills/cat/mine/SKILL.md")
+      File.mkdir_p!(Path.dirname(path))
+      File.write!(path, "---\nname: mine\n---\nтело")
+      File.mkdir_p!(Path.join(dir, "skills/solo"))
+      File.write!(Path.join(dir, "skills/solo/SKILL.md"), "---\nname: solo\n---\nтело")
+      base = String.duplicate("b", 64)
+
+      for {route, target, kind, limit} <- [
+            {"files/soul", ["SOUL.md"], "soul", 20_000},
+            {"files/user", ["memories", "USER.md"], "user", 1375},
+            {"skills/solo", ["skills", "solo", "SKILL.md"], "skill", 100_000},
+            {"skills/cat/mine", ["skills", "cat", "mine", "SKILL.md"], "skill", 100_000}
+          ] do
+        c = api(conn, "/app/api/" <> route, post: %{text: "t", base_sha256: base})
+        assert c.status == 200, route
+        assert_received {:saved, _, _, _, job, _}
+
+        assert %{"target" => ^target, "kind" => ^kind, "limit" => ^limit, "base_sha256" => ^base} =
+                 Jason.decode!(job)
+      end
+    end
+
+    test "refused up front, running nothing", %{conn: conn, dir: dir} do
+      for {route, body, status, type} <- [
+            {"files/soul", %{text: 1}, 422, "invalid_text"},
+            {"files/soul", %{}, 422, "invalid_text"},
+            {"files/soul", %{text: "x", base_sha256: "nothex"}, 422, "invalid_text"},
+            {"files/soul", %{text: "x", base_sha256: 5}, 422, "invalid_text"},
+            {"files/soul", %{text: String.duplicate("x", 512 * 1024 + 1)}, 422, "too_long"},
+            {"files/jobs", %{text: "x"}, 404, "not_found"},
+            {"skills/none", %{text: "x"}, 404, "not_found"},
+            {"skills/none/none", %{text: "x"}, 404, "not_found"}
+          ] do
+        c = api(conn, "/app/api/" <> route, post: body)
+        assert {c.status, error_type(c)} == {status, type}, inspect({route, Map.keys(body)})
+        assert get_resp_header(c, "cache-control") == ["no-store"]
+      end
+
+      refute_received {:saved, _, _, _, _, _}
+      assert hand_overs(dir) == []
+
+      big = api(conn, "/app/api/files/soul", post: %{text: String.duplicate("x", 512 * 1024 + 1)})
+      assert Jason.decode!(big.resp_body)["error"]["limit"] == 20_000
+    end
+
+    test "a system skill is 404, running nothing", %{conn: conn, dir: dir} do
+      File.mkdir_p!(Path.join(dir, "skills/github/gh"))
+      File.write!(Path.join(dir, "skills/github/gh/SKILL.md"), "---\nname: gh\n---\nтело")
+      File.write!(Path.join(dir, "skills/.bundled_manifest"), "gh:abc\n")
+
+      c = api(conn, "/app/api/skills/github/gh", post: %{text: "x", base_sha256: nil})
+      assert {c.status, error_type(c)} == {404, "not_found"}
+      refute_received {:saved, _, _, _, _, _}
+    end
+
+    test "the script's answers map to the API's", %{conn: conn} do
+      for {out, status, type, extra} <- [
+            {~s({"error":"too_long","limit":2200}\n), 422, "too_long", %{"limit" => 2200}},
+            {~s({"error":"invalid_text"}\n), 422, "invalid_text", %{}},
+            {~s({"error":"empty_soul"}\n), 422, "empty_soul", %{}},
+            {~s({"error":"invalid_skill"}\n), 422, "invalid_skill", %{}},
+            {~s({"error":"blocked_entry","entry":"начало"}\n), 422, "blocked_entry",
+             %{"entry" => "начало"}},
+            {~s({"error":"file_changed"}\n), 409, "file_changed", %{}},
+            {~s({"error":"save_failed"}\n), 500, "save_failed", %{}}
+          ] do
+        reply_with(out)
+        c = api(conn, "/app/api/files/memory", post: %{text: "x", base_sha256: nil})
+        assert {c.status, error_type(c)} == {status, type}, out
+        assert Map.take(Jason.decode!(c.resp_body)["error"], Map.keys(extra)) == extra
+      end
+    end
+
+    test "any other output is 500 save_failed", %{conn: conn, dir: dir} do
+      good = ~s({"sha256":"#{String.duplicate("a", 64)}","modified_at":"2026-10-31T10:00:00Z"})
+
+      for {out, code} <- [
+            {"", 0},
+            {"Traceback (most recent call last)\n", 1},
+            {"not json\n", 0},
+            {"[1,2]\n", 0},
+            {"{}\n", 0},
+            {"warning: something\n" <> good <> "\n", 0},
+            {good <> "\n" <> good <> "\n", 0},
+            {good <> "\n", 1},
+            {~s({"sha256":"short","modified_at":"2026-10-31T10:00:00Z"}\n), 0},
+            {~s({"sha256":"#{String.duplicate("a", 64)}","modified_at":"<script>"}\n), 0},
+            {~s({"sha256":"#{String.duplicate("a", 64)}","modified_at":7}\n), 0},
+            {~s({"error":"too_long"}\n), 0},
+            {~s({"error":"too_long","limit":"много"}\n), 0},
+            {~s({"error":"blocked_entry","entry":5}\n), 0},
+            {~s({"error":"other"}\n), 0}
+          ] do
+        reply_with(out, code)
+        c = api(conn, "/app/api/files/memory", post: %{text: "x", base_sha256: nil})
+        assert {c.status, error_type(c)} == {500, "save_failed"}, out
+        refute c.resp_body =~ "Traceback"
+        assert hand_overs(dir) == []
+      end
+    end
+
+    test "a failure's reason is logged as a plain word and never answered", %{
+      conn: conn,
+      inst: inst
+    } do
+      for {reason, shown} <- [
+            {"PermissionError", "PermissionError"},
+            {"evil\\nFAKE log line", "unknown"}
+          ] do
+        reply_with(~s({"error":"save_failed","reason":"#{reason}"}\n))
+
+        log =
+          ExUnit.CaptureLog.capture_log(fn ->
+            c = api(conn, "/app/api/files/memory", post: %{text: "x", base_sha256: nil})
+            assert {c.status, error_type(c)} == {500, "save_failed"}
+            refute c.resp_body =~ reason
+          end)
+
+        assert log =~ "the save for #{inst.name} failed: #{shown}"
+        refute log =~ "FAKE"
+      end
+    end
+
+    test "a blocked entry's start is cut to 60 characters", %{conn: conn} do
+      reply_with(
+        Jason.encode!(%{error: "blocked_entry", entry: String.duplicate("я", 500)}) <> "\n"
+      )
+
+      c = api(conn, "/app/api/files/memory", post: %{text: "x", base_sha256: nil})
+      assert Jason.decode!(c.resp_body)["error"]["entry"] == String.duplicate("я", 60)
+    end
+
+    test "a run past the limit is save_failed, and the hand-over file goes", %{
+      conn: conn,
+      dir: dir
+    } do
+      Application.put_env(:druzhok, :panel_saver, {Saver, :slow})
+      Application.put_env(:druzhok, :panel_save_timeout_ms, 50)
+      c = api(conn, "/app/api/files/memory", post: %{text: "x", base_sha256: nil})
+      assert {c.status, error_type(c)} == {500, "save_failed"}
+      assert hand_overs(dir) == []
+    end
+
+    test "init data over an hour old is init_stale; it still reads", %{conn: conn} do
+      old = F.build(123, @token, 456, auth_date: System.system_time(:second) - 61 * 60)
+      c = api(conn, "/app/api/files/memory", init: old, post: %{text: "x", base_sha256: nil})
+      assert {c.status, error_type(c)} == {401, "init_stale"}
+      refute_received {:saved, _, _, _, _, _}
+      assert api(build_conn(), "/app/api/files/memory", init: old).status == 200
+
+      fresh = F.build(123, @token, 456, auth_date: System.system_time(:second) - 59 * 60)
+
+      c =
+        api(build_conn(), "/app/api/files/memory",
+          init: fresh,
+          post: %{text: "x", base_sha256: nil}
+        )
+
+      assert c.status == 200
+    end
+
+    test "the same auth as every panel call", %{conn: conn, inst: inst} do
+      body = [post: %{text: "x", base_sha256: nil}]
+      assert api(conn, "/app/api/files/memory", [edge: nil] ++ body).status == 404
+      c = api(build_conn(), "/app/api/files/memory", [user: 789] ++ body)
+      assert {c.status, error_type(c)} == {403, "not_owner"}
+      c = api(build_conn(), "/app/api/skills/x", [user: 789] ++ body)
+      assert {c.status, error_type(c)} == {403, "not_owner"}
+      c = api(build_conn(), "/app/api/files/memory", [init: "auth_date=1&user=%7B%7D"] ++ body)
+      assert {c.status, error_type(c)} == {401, "init_invalid"}
+      Repo.update!(Ecto.Changeset.change(inst, cabinet_off: true))
+      c = api(build_conn(), "/app/api/files/memory", body)
+      assert {c.status, error_type(c)} == {403, "cabinet_off"}
+      refute_received {:saved, _, _, _, _, _}
+    end
+
+    test "a save does not wake or restart the bot, or touch settings", %{conn: conn, inst: inst} do
+      Repo.update!(Ecto.Changeset.change(inst, active: true, sleeping: true))
+      before = Repo.get!(Instance, inst.id)
+
+      assert api(conn, "/app/api/files/memory", post: %{text: "x", base_sha256: nil}).status ==
+               200
+
+      row = Repo.get!(Instance, inst.id)
+      assert row.sleeping and row.active
+
+      assert {row.settings_seq, row.start_seq, row.stop_seq} ==
+               {before.settings_seq, before.start_seq, before.stop_seq}
+
+      assert Druzhok.BotManager.status(inst.name) == "inactive"
     end
   end
 

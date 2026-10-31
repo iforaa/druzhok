@@ -21,6 +21,8 @@ interface WebApp {
   setBackgroundColor?(color: string): void
   setBottomBarColor?(color: string): void
   onEvent?(event: string, cb: () => void): void
+  enableClosingConfirmation?(): void
+  disableClosingConfirmation?(): void
   showConfirm?(message: string, cb: (ok: boolean) => void): void
   showPopup?(
     params: { title?: string; message: string; buttons?: { id?: string; type?: string; text?: string }[] },
@@ -122,8 +124,24 @@ export function openTelegram(url: string): boolean {
   return openExternal(url)
 }
 
-/** Telegram's own yes/no dialog; false when it cannot be shown. */
-export function confirmDialog(message: string): Promise<boolean> {
+/**
+ * While on, Telegram asks before the panel is closed. An old client without it
+ * closes as it always did.
+ */
+export function closingConfirmation(on: boolean) {
+  try {
+    if (on) webApp()?.enableClosingConfirmation?.()
+    else webApp()?.disableClosingConfirmation?.()
+  } catch {
+    // An old client: nothing to do.
+  }
+}
+
+/**
+ * Telegram's own yes/no dialog; `otherwise` on a client without it. A dialog
+ * already open also makes showConfirm throw: that is no answer, so false.
+ */
+export function confirmDialog(message: string, otherwise = false): Promise<boolean> {
   const app = webApp()
   return new Promise((resolve) => {
     try {
@@ -131,10 +149,11 @@ export function confirmDialog(message: string): Promise<boolean> {
         app.showConfirm(message, (ok) => resolve(ok))
         return
       }
-    } catch {
-      // fall through
+    } catch (err) {
+      resolve(err instanceof Error && err.message === "WebAppMethodUnsupported" ? otherwise : false)
+      return
     }
-    resolve(false)
+    resolve(otherwise)
   })
 }
 

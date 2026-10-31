@@ -1,5 +1,5 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react"
-import { api, cached, panelApi, type Bot, type Files, type Me } from "./api"
+import { api, cached, invalidate, panelApi, type Bot, type Files, type Me } from "./api"
 import { backButton, closePanel, openTelegram } from "./telegram"
 import { initials, plural } from "./format"
 import { Row, useLoad } from "./ui"
@@ -99,16 +99,34 @@ export default function Home({ bot, go }: { bot: Bot; go: Go }) {
     window.scrollTo(0, screen.kind === "main" ? mainY.current : 0)
   }, [screen])
 
+  // An open editor takes the back button first, to ask about unsaved text.
+  const editorBack = useRef<(() => void) | null>(null)
+
   useEffect(() => {
     return backButton(
       screen.kind === "main"
         ? null
-        : () => setScreen(screen.kind === "text" && screen.back ? screen.back : { kind: "main" }),
+        : () => {
+            if (editorBack.current) editorBack.current()
+            else setScreen(screen.kind === "text" && screen.back ? screen.back : { kind: "main" })
+          },
     )
   }, [screen])
 
   if (screen.kind === "invites") return <Invites />
-  if (screen.kind !== "main") return <MemoryView screen={screen} open={open} />
+  if (screen.kind !== "main")
+    return (
+      <MemoryView
+        screen={screen}
+        open={open}
+        mnemosyne={bot.settings.memory_provider === "mnemosyne"}
+        onBack={editorBack}
+        onSaved={() => {
+          invalidate("files")
+          files.reload()
+        }}
+      />
+    )
 
   const list = steps(bot, files.data, me.data, go)
   const left = list.filter((s) => !s.done)

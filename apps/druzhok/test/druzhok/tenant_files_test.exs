@@ -169,4 +169,29 @@ defmodule Druzhok.TenantFilesTest do
       assert {:error, :no_tenant_dir} = TenantFiles.write(dir <> "-nope", ["config.yaml"], "x")
     end
   end
+
+  describe "hand_over/3" do
+    test "the file is next to the tenant dir, 0400, the tenant's", %{dir: tenant} do
+      parent = Path.dirname(tenant)
+
+      assert {:ok, path} = TenantFiles.hand_over(tenant, "данные", ".panel-save-")
+      assert Path.dirname(path) == Path.expand(parent)
+      assert String.starts_with?(Path.basename(path), ".panel-save-")
+      assert File.read!(path) == "данные"
+      stat = File.stat!(path)
+      assert Bitwise.band(stat.mode, 0o777) == 0o400
+      assert stat.uid == File.stat!(tenant).uid
+      assert File.ls!(Path.join(parent, ".druzhok-staging")) == []
+
+      assert {:ok, other} = TenantFiles.hand_over(tenant, "x", ".panel-save-")
+      assert other != path
+    end
+
+    test "no tenant dir: refused" do
+      missing =
+        Path.join(System.tmp_dir!(), "handover-none-#{System.unique_integer([:positive])}")
+
+      assert {:error, :no_tenant_dir} = TenantFiles.hand_over(missing, "x", ".p-")
+    end
+  end
 end

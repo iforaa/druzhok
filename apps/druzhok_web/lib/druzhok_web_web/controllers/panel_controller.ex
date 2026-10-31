@@ -1,7 +1,7 @@
 defmodule DruzhokWebWeb.PanelController do
   @moduledoc """
   The bot panel's API (spec `docs/superpowers/specs/2026-10-24-bot-panel-design.md`;
-  the two writes: `2026-10-26-panel-controls-design.md`). `Plugs.Edge` and
+  the writes: `2026-10-26-panel-controls-design.md`, `2026-10-31-panel-editable-pages-design.md`). `Plugs.Edge` and
   `Plugs.PanelAuth` have run: `conn.assigns.instance` is the owner's bot.
 
       GET /app/api/bot
@@ -14,6 +14,9 @@ defmodule DruzhokWebWeb.PanelController do
       GET /app/api/site
       GET /app/api/invites
       GET /app/api/image-models
+      POST /app/api/files/:kind              {"text": "...", "base_sha256": "..." | null}
+      POST /app/api/skills/:name             same body (init data under 1 hour old)
+      POST /app/api/skills/:category/:name   same body
       POST /app/api/settings        {"changes": {"language": "en", ...}}
       POST /app/api/delete          deletes the bot (init data under 10 min old)
   """
@@ -27,7 +30,11 @@ defmodule DruzhokWebWeb.PanelController do
   def files(conn, _params), do: reply(conn, Panel.files(conn.assigns.instance))
   def file(conn, %{"kind" => kind}), do: content(conn, Panel.file(conn.assigns.instance, kind))
   def jobs(conn, _params), do: reply(conn, Panel.jobs(conn.assigns.instance))
-  def skills(conn, _params), do: reply(conn, %{skills: Panel.skills(conn.assigns.instance)})
+
+  def skills(conn, _params) do
+    groups = Panel.skills(conn.assigns.instance)
+    reply(conn, %{skills: groups.own, system: groups.system})
+  end
 
   def skill(conn, %{"category" => cat, "name" => name}),
     do: content(conn, Panel.skill(conn.assigns.instance, [cat, name]))
@@ -59,6 +66,36 @@ defmodule DruzhokWebWeb.PanelController do
 
       :error ->
         PanelAuth.error(conn, 502, "catalogue_unavailable", "could not load the picture models")
+    end
+  end
+
+  # These files instruct the bot, so a replayed init data should not be good
+  # for 24 hours, but delete's 10 minutes would throw away someone's typing.
+  @save_max_age_s 3600
+
+  def save_file(conn, %{"kind" => kind} = params), do: save(conn, {:file, kind}, params)
+
+  def save_skill(conn, %{"category" => cat, "name" => name} = params),
+    do: save(conn, {:skill, [cat, name]}, params)
+
+  def save_skill(conn, %{"name" => name} = params), do: save(conn, {:skill, [name]}, params)
+
+  defp save(conn, target, params) do
+    if System.system_time(:second) - conn.assigns.auth_date > @save_max_age_s do
+      PanelAuth.error(conn, 401, "init_stale", "close the panel and open it again")
+    else
+      case Panel.Editor.save(
+             conn.assigns.instance,
+             target,
+             params["text"],
+             params["base_sha256"]
+           ) do
+        {:ok, saved} ->
+          reply(conn, saved)
+
+        {:error, status, type, message, extra} ->
+          PanelAuth.error(conn, status, type, message, extra)
+      end
     end
   end
 

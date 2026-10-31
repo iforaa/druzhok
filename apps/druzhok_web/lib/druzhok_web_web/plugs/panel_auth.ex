@@ -30,12 +30,15 @@ defmodule DruzhokWebWeb.Plugs.PanelAuth do
     end
   end
 
-  @doc "Sends an error in ruoc's envelope."
-  def error(conn, status, type, message) do
+  @doc "Sends an error in ruoc's envelope; `extra` goes beside its type and message."
+  def error(conn, status, type, message, extra \\ %{}) do
     conn
     |> put_resp_content_type("application/json")
     |> put_resp_header("cache-control", "no-store")
-    |> send_resp(status, Jason.encode!(%{error: %{type: type, message: message}}))
+    |> send_resp(
+      status,
+      Jason.encode!(%{error: Map.merge(extra, %{type: type, message: message})})
+    )
     |> halt()
   end
 

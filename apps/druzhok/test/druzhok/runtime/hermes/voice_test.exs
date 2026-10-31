@@ -140,6 +140,17 @@ defmodule Druzhok.Runtime.Hermes.VoiceTest do
       assert soul(home) == "Ты — кот Вася. Мурлычешь."
     end
 
+    test "a soul edited in the panel is left alone, even when the Telegram name changes", %{
+      home: home
+    } do
+      written = Voice.sync_soul(%{display_name: "Вася"}, home)
+      edited = "# Характер от владельца\n"
+      File.write!(Path.join(home, "SOUL.md"), edited)
+
+      assert Voice.sync_soul(Map.put(written, :display_name, "Петя"), home) == %{}
+      assert File.read!(Path.join(home, "SOUL.md")) == edited
+    end
+
     test "a symlink and a dangling symlink are refused, never followed", %{home: home} do
       target = Path.join(Path.dirname(home), "outside.md")
       File.write!(target, "host file")
@@ -154,7 +165,7 @@ defmodule Druzhok.Runtime.Hermes.VoiceTest do
       refute File.exists?(dangling)
     end
 
-    test "the persona stays short (hermes re-reads it on every message)" do
+    test "the persona stays short (it is part of every system prompt)" do
       assert String.length(Voice.soul_md("Медицинский Ассистент")) < 900
     end
   end

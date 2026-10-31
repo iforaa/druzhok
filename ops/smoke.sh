@@ -84,6 +84,17 @@ else
   [ -z "$hook_url" ] || { echo "polling bot still has a webhook registered"; exit 1; }
 fi
 
+# Run through the bot's uid, asleep or not: exec neither starts nor wakes it.
+# --check imports every private hermes name the script uses, so a hermes update
+# that renames one fails here instead of in an owner's save.
+echo "== panel save script"
+script=/usr/local/lib/druzhok/panel-save.py
+cmp -s "$ops/../apps/druzhok/priv/panel-save/save.py" "$script" || { echo "$script is missing or stale: install it (CLAUDE.md, deploy recipe)"; exit 1; }
+[ "$(stat -c %U "$script")" = root ] || { echo "$script is not root's"; exit 1; }
+check=$(druzhok-ctl exec "$name" /opt/hermes/.venv/bin/python -I "$script" --check || true)
+echo "$check"
+[ "$check" = '{"ok": true}' ] || { echo "the save script cannot import what it needs from hermes"; exit 1; }
+
 echo "== page fetch (/v2/scrape via ruoc)"
 key=$(run "IO.puts(Druzhok.Repo.get_by!(Druzhok.Instance, name: \"$name\").tenant_key)" | tail -1)
 scrape=$(curl -s -m 60 -H "Authorization: Bearer $key" -H 'Content-Type: application/json' \
