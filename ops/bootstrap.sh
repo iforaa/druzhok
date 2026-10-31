@@ -105,7 +105,7 @@ ENVF=/etc/druzhok/druzhok.env
 # The fetch worker step above may already have created the file, so look for the key.
 if ! grep -q '^SECRET_KEY_BASE=' "$ENVF" 2>/dev/null; then
   printf 'SECRET_KEY_BASE=%s\n' "$(openssl rand -base64 48 | tr -d '\n')" >> "$ENVF"
-  grep -q '^PHX_HOST=' "$ENVF" || echo 'PHX_HOST=oldey.dev' >> "$ENVF"
+  grep -q '^PHX_HOST=' "$ENVF" || echo 'PHX_HOST=druzhok.oldey.dev' >> "$ENVF"
 fi
 while IFS='=' read -r k v; do
   grep -q "^$k=" "$ENVF" || echo "$k=$v" >> "$ENVF"
