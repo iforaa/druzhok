@@ -26,6 +26,11 @@ defmodule Druzhok.TenantFiles do
   dir: the file is prepared in a staging dir next to the tenant dirs, which no
   bot can write, and then renamed over the target (rename(2) replaces a link
   instead of following it) or, for a seed, hard-linked into place.
+
+  `write/4` checks the directories by path and renames by path, so a bot that
+  swaps a directory between the two redirects the write. It runs in start sync;
+  a panel save, which an awake bot can race, runs as the bot's uid instead
+  (`Druzhok.Panel.Editor`), helped by `hand_over/3`.
   """
 
   @doc """
@@ -74,6 +79,36 @@ defmodule Druzhok.TenantFiles do
   end
 
   @doc """
+  Puts `content` where only the bot can read it, for a command run as the bot:
+  `<tenant parent>/<prefix><random>`, owned by the tenant dir's owner, mode 0400.
+  Prepared in the staging dir and renamed into place; the parent is root's, so
+  the bot cannot swap the path, and other bots cannot read the file. `{:ok, path}`
+  or `{:error, reason}`; the caller removes it.
+  """
+  def hand_over(tenant_dir, content, prefix) do
+    with {:ok, uid} <- owner(tenant_dir, []),
+         {:ok, staging} <- staging(tenant_dir),
+         tmp = Path.join(staging, staged_name("h")),
+         {:ok, fd} <- :file.open(tmp, [:write, :exclusive, :binary, :raw]) do
+      path = Path.join(Path.dirname(staging), staged_name(prefix))
+
+      result =
+        with :ok <- write_close(fd, content),
+             :ok <- :file.change_mode(tmp, 0o400),
+             :ok <- :file.change_owner(tmp, uid),
+             :ok <- :file.rename(tmp, path) do
+          {:ok, path}
+        end
+
+      _ = :file.delete(tmp)
+      result
+    else
+      :not_found -> {:error, :no_tenant_dir}
+      {:error, _} = error -> error
+    end
+  end
+
+  @doc """
   Reads at most `limit` bytes of a file through `open/3`:
   `{:ok, %{bytes: binary, size: n, modified_at: DateTime, truncated: bool}}`
   or `:not_found`. Reads `limit + 4` so a cut can be told from an exact fit.
@@ -110,8 +145,8 @@ defmodule Druzhok.TenantFiles do
 
   @doc """
   `read/3` for text: a cut is trimmed back to a whole UTF-8 character, then
-  the text must be valid UTF-8. `{:ok, %{text: …, …}}`, `:not_found` or
-  `:not_text`.
+  the text must be valid UTF-8. `{:ok, %{text: …, sha256: …, …}}`, `:not_found`
+  or `:not_text`. `sha256` is the hex hash of the whole file, nil after a cut.
   """
   def read_text(tenant_dir, segments, limit, opts \\ []) do
     with {:ok, %{bytes: bytes, truncated: truncated} = r} <-
@@ -119,10 +154,13 @@ defmodule Druzhok.TenantFiles do
       text = if truncated, do: trim_utf8(bytes), else: bytes
 
       if String.valid?(text),
-        do: {:ok, r |> Map.delete(:bytes) |> Map.put(:text, text)},
+        do: {:ok, r |> Map.delete(:bytes) |> Map.merge(%{text: text, sha256: sha256(r)})},
         else: :not_text
     end
   end
+
+  defp sha256(%{truncated: true}), do: nil
+  defp sha256(%{bytes: bytes}), do: :crypto.hash(:sha256, bytes) |> Base.encode16(case: :lower)
 
   @doc """
   Drops an incomplete UTF-8 sequence at the end of `bin`: any trailing

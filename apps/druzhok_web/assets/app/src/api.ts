@@ -216,9 +216,24 @@ export interface Files {
 
 export interface Text {
   text: string
-  modified_at: string
+  /** Null when there is no file yet. */
+  modified_at: string | null
   truncated: boolean
+  /** Of the whole file; what a save names as what it was editing. Null when there is no file. */
+  sha256?: string | null
+  editable?: boolean
+  /** The file is there and cannot be read safely. */
+  unreadable?: boolean
+  /** In code points. */
+  limit?: number | null
 }
+
+export interface Saved {
+  sha256: string
+  modified_at: string
+}
+
+export type Save = (text: string, base: string | null) => Promise<Saved>
 
 export interface Job {
   name: string
@@ -251,8 +266,12 @@ export const panelApi = {
   files: () => panel<Files>("files"),
   file: (kind: "soul" | "memory" | "user") => panel<Text>(`files/${kind}`),
   jobs: () => panel<{ jobs: Job[]; error?: string }>("jobs"),
-  skills: () => panel<{ skills: Skill[] }>("skills"),
+  saveFile: (kind: "soul" | "memory" | "user"): Save => (text, base) =>
+    panelPost<Saved>(`files/${kind}`, { text, base_sha256: base }),
+  skills: () => panel<{ skills: Skill[]; system?: Skill[] }>("skills"),
   skill: (s: Skill) => panel<Text>(`skills/${s.path.map(encodeURIComponent).join("/")}`),
+  saveSkill: (s: Skill): Save => (text, base) =>
+    panelPost<Saved>(`skills/${s.path.map(encodeURIComponent).join("/")}`, { text, base_sha256: base }),
   site: () => panel<{ files: SiteFile[] | null }>("site"),
   invites: () => panel<{ links: Invite[]; used: number }>("invites"),
   imageModels: () => panel<{ models: ImageModel[] }>("image-models"),
@@ -356,6 +375,18 @@ export function explain(err: unknown): string {
       return "Не получилось загрузить список моделей. Попробуйте позже."
     case "save_failed":
       return "Не получилось сохранить. Попробуйте ещё раз."
+    case "too_long":
+      return "Текст слишком длинный. Сократите его и сохраните снова."
+    case "invalid_text":
+      return "В тексте есть символы, которые нельзя сохранить."
+    case "empty_soul":
+      return "Характер не может быть пустым."
+    case "invalid_skill":
+      return "Бот не сможет прочитать такой навык. Наверху должен остаться блок между строками ---, с тем же name и с description, а после него текст."
+    case "file_changed":
+      return "Пока вы редактировали, бот изменил этот файл."
+    case "blocked_entry":
+      return "Бот не примет эту запись. Уберите просьбы отправить что-то по ссылке, ключи доступа и скрытые символы."
     default:
       return "Что-то пошло не так. Попробуйте ещё раз."
   }

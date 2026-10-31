@@ -98,6 +98,12 @@ done
 systemctl daemon-reload
 systemd-analyze verify /etc/systemd/system/hermes@.service /etc/systemd/system/druzhok.service || true
 
+step "panel save script"
+# Runs as each bot's uid (Druzhok.Panel.Editor): root's, so no bot can change it.
+# The deploy recipe in CLAUDE.md repeats this; ops/smoke.sh fails on a stale copy.
+install -d -m 0755 -o root -g root /usr/local/lib/druzhok
+install -m 0644 -o root -g root "$OPS/../apps/druzhok/priv/panel-save/save.py" /usr/local/lib/druzhok/panel-save.py
+
 step "druzhok env"
 # Single source of prod env for druzhok.service, druzhok-run.sh and smoke.sh.
 # Secrets are generated once; the fixed keys are (re)asserted on every run.

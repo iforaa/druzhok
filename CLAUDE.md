@@ -117,7 +117,7 @@ or language change rebinds and resets the old owner's button. The model catalog 
 Bot panel (spec `docs/superpowers/specs/2026-10-24-bot-panel-design.md`): with `PHX_HOST` set, «Кабинет» opens
 druzhok's own Mini App, `https://<PHX_HOST>/app/?bot=<bot_id>` (source `apps/druzhok_web/assets/app`, built by
 `ops/build-app.sh` into the committed `priv/static/app`). Tabs Бот, Счёт, Настройки (own dark/light palette);
-the bot, files and invites (`GET /app/api/invites`, ruoc `/v1/referrals` → superbot links) are read only and
+the bot, files and invites (`GET /app/api/invites`, ruoc `/v1/referrals` → superbot links) are
 served by druzhok (`Druzhok.Panel`, `PanelController`); «Поддержка» shows when Settings `support_url` (https)
 is set. Owners change language, timezone, group mode, pictures and site in Настройки (`POST /app/api/settings`,
 allowlist `Druzhok.Panel.Settings`; spec `docs/superpowers/specs/2026-10-26-panel-controls-design.md`): a save
@@ -129,7 +129,14 @@ deletes (`BotManager.delete`); it needs init data under 10 min old, against a re
 panel-ready bot (`Onboarding.panel_ready?`) the superbot drops 🎨/🗑 and answers old buttons with an alert. Счёт calls ruoc's `/tg/api/*` cross-origin at `RUOC_SITE_URL` (default
 `https://oldey.dev`; ruoc must list druzhok in `TG_PANEL_ORIGINS`). `/app` answers only with Caddy's
 `X-Druzhok-Edge` header (`DRUZHOK_EDGE_SECRET`, env only; bots reach :4000 directly), and the API checks Telegram's
-Ed25519 signature plus the bot-token HMAC and the owner (`Plugs.PanelAuth`). Files are read through
+Ed25519 signature plus the bot-token HMAC and the owner (`Plugs.PanelAuth`). Owners edit the text pages (spec `docs/superpowers/specs/2026-10-31-panel-editable-pages-design.md`): `POST /app/api/files/:kind`
+(`soul`, `memory`, `user`) and `POST /app/api/skills[/:category]/:name` (own skills; `GET /app/api/skills` lists `skills` and `system`,
+and system ones stay read only), with init data under 1 hour old. `Druzhok.Panel.Editor` hands the input over in a 0400 file next to the
+tenant dirs and runs `priv/panel-save/save.py`, installed at `/usr/local/lib/druzhok/panel-save.py` (root's, `:panel_save_script`), **as the
+bot's uid** through `druzhok-ctl exec`, so a swapped directory reaches only what the bot could write; never save with `TenantFiles.write/4`.
+The script holds hermes's locks, uses its checks and private names (`ops/smoke.sh` runs `--check`), compares `base_sha256` under the lock and
+keeps one generation in `<file>.panel-bak`. A save neither wakes nor restarts the bot; a running chat sees it after `/new` or compaction. Tasks
+and the site stay read only. Files are read through
 `Druzhok.TenantFiles` (no symlink below the tenant dir, verified descriptor); directory listings run as the bot's
 uid (`Druzhok.Panel.Lister`, `druzhok-ctl exec` + GNU find). `Druzhok.Cabinet` moves each button to the panel on
 the next start, wake, owner message or `bind-cabinet`.
@@ -147,6 +154,8 @@ via `GET /v1/referrals`. Two bots per person (`@max_bots_per_user 2`), the opera
 ```bash
 mix deps.get && mix compile && mix test
 mix test --cover        # enforces per-app thresholds set in each mix.exs; raise them when coverage grows
+# the panel's save script, against a hermes venv (its Elixir end-to-end tests use the same variable):
+HERMES_PYTHON=$PWD/hermes-agent/.venv/bin/python python3 -m unittest discover -s apps/druzhok/test/panel_save
 MIX_ENV=test mix ecto.migrate   # after pulling new migrations (test DB is data/druzhok_test.db)
 # run with a real local hermes venv for Host.Process:
 HERMES_BIN=$PWD/hermes-agent/.venv/bin/hermes DATABASE_PATH=data/druzhok.db mix phx.server
@@ -162,6 +171,7 @@ ssh ubuntu@195.49.213.8
 . ~/.asdf/asdf.sh; set -a; . /etc/druzhok/druzhok.env; set +a
 cd ~/druzhok && MIX_ENV=prod mix compile
 MIX_ENV=prod mix ecto.migrate          # DATABASE_PATH comes from druzhok.env
+sudo install -D -m 0644 -o root -g root apps/druzhok/priv/panel-save/save.py /usr/local/lib/druzhok/panel-save.py   # every deploy
 sudo systemctl restart druzhok
 ```
 

@@ -28,10 +28,15 @@ defmodule Druzhok.Application do
   # an empty profile cache and would ask Telegram for every bot again.
   defp manager_bot do
     if Application.get_env(:druzhok, :manager_bot, true) do
-      [Druzhok.ManagerBot] ++ backfill()
+      [Druzhok.ManagerBot, sweep_panel_saves()] ++ backfill()
     else
       []
     end
+  end
+
+  # Hand-over files left by a save that a crash cut short; a stale save script.
+  defp sweep_panel_saves do
+    Supervisor.child_spec({Task, &Druzhok.Panel.Editor.boot/0}, id: :panel_save_sweep)
   end
 
   defp backfill do

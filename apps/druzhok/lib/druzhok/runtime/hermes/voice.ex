@@ -28,7 +28,7 @@ defmodule Druzhok.Runtime.Hermes.Voice do
 
   # --- SOUL.md ------------------------------------------------------------------
 
-  @doc "The bot's identity in Russian, under ~900 characters (hermes re-reads it on every message)."
+  @doc "The bot's identity in Russian, under ~900 characters (it is part of every system prompt hermes builds)."
   def soul_md(name) do
     """
     Тебя зовут #{name}. Ты личный помощник в Telegram, часть сервиса Дружок.

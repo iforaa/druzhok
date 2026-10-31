@@ -81,7 +81,11 @@ defmodule Druzhok.PanelTest do
 
   test "the bot view names the bot as Telegram does", %{inst: inst} do
     token = "named:#{System.unique_integer([:positive])}"
-    Application.put_env(:druzhok, :test_profiles, %{token => %{"first_name" => "Кот Вася", "username" => "DruzhokVasaBot"}})
+
+    Application.put_env(:druzhok, :test_profiles, %{
+      token => %{"first_name" => "Кот Вася", "username" => "DruzhokVasaBot"}
+    })
+
     on_exit(fn -> Application.delete_env(:druzhok, :test_profiles) end)
 
     view = Panel.bot(%{inst | telegram_token: token})
@@ -90,10 +94,17 @@ defmodule Druzhok.PanelTest do
     assert Panel.profile(nil) == nil
   end
 
-  test "the bot's Telegram name is remembered for its SOUL.md, and filled in at boot", %{inst: inst} do
+  test "the bot's Telegram name is remembered for its SOUL.md, and filled in at boot", %{
+    inst: inst
+  } do
     token = "voice:#{System.unique_integer([:positive])}"
     other = "voice2:#{System.unique_integer([:positive])}"
-    Application.put_env(:druzhok, :test_profiles, %{token => %{"first_name" => "Кот Вася"}, other => %{"first_name" => "Жора"}})
+
+    Application.put_env(:druzhok, :test_profiles, %{
+      token => %{"first_name" => "Кот Вася"},
+      other => %{"first_name" => "Жора"}
+    })
+
     on_exit(fn -> Application.delete_env(:druzhok, :test_profiles) end)
 
     inst = Druzhok.Repo.update!(Ecto.Changeset.change(inst, telegram_token: token))
@@ -126,10 +137,14 @@ defmodule Druzhok.PanelTest do
     unknown = "unknown:#{System.unique_integer([:positive])}"
     on_exit(fn -> :persistent_term.erase({Panel, :profile, :crypto.hash(:sha256, unknown)}) end)
     assert Panel.profile(unknown) == nil
-    assert {:failed, _, nil} = :persistent_term.get({Panel, :profile, :crypto.hash(:sha256, unknown)})
+
+    assert {:failed, _, nil} =
+             :persistent_term.get({Panel, :profile, :crypto.hash(:sha256, unknown)})
   end
 
-  test "the model shows ruoc's catalogue name as last fetched, never waiting on ruoc", %{inst: inst} do
+  test "the model shows ruoc's catalogue name as last fetched, never waiting on ruoc", %{
+    inst: inst
+  } do
     _stub = Druzhok.RuocStub.start()
     [%{"id" => id, "name" => name} | _] = Druzhok.RuocStub.models()
 
@@ -141,7 +156,10 @@ defmodule Druzhok.PanelTest do
   end
 
   test "support_url only takes an https address" do
-    on_exit(fn -> Druzhok.Repo.delete_all(from(s in Druzhok.Settings, where: s.key == "support_url")) end)
+    on_exit(fn ->
+      Druzhok.Repo.delete_all(from(s in Druzhok.Settings, where: s.key == "support_url"))
+    end)
+
     assert Panel.support_url() == nil
     Druzhok.Settings.set("support_url", "javascript:alert(1)")
     assert Panel.support_url() == nil
@@ -155,13 +173,21 @@ defmodule Druzhok.PanelTest do
     Bypass.stub(stub.bypass, "GET", "/v1/referrals", fn conn ->
       Druzhok.RuocStub.reply(conn, 200, %{
         "codes" => [
-          %{"code" => "ABC123", "status" => "available", "you_get_nanorub" => 50_000_000_000, "friend_gets_nanorub" => 0},
+          %{
+            "code" => "ABC123",
+            "status" => "available",
+            "you_get_nanorub" => 50_000_000_000,
+            "friend_gets_nanorub" => 0
+          },
           %{"code" => nil, "status" => "redeemed", "redeemed_at" => "2026-10-01T00:00:00Z"}
         ]
       })
     end)
 
-    Application.put_env(:druzhok, :test_profiles, %{"mgr:token" => %{"first_name" => "Дружок", "username" => "druzhok_bot"}})
+    Application.put_env(:druzhok, :test_profiles, %{
+      "mgr:token" => %{"first_name" => "Дружок", "username" => "druzhok_bot"}
+    })
+
     Druzhok.Settings.set("manager_bot_token", "mgr:token")
 
     on_exit(fn ->
@@ -202,7 +228,7 @@ defmodule Druzhok.PanelTest do
     File.ln_s!(Path.join(outside, "secret"), Path.join(dir, "memories/MEMORY.md"))
 
     assert {:ok, %{text: "# Кот Вася"}} = Panel.file(inst, "soul")
-    assert :not_found = Panel.file(inst, "memory")
+    assert {:ok, %{text: "", unreadable: true, editable: false}} = Panel.file(inst, "memory")
     assert :not_found = Panel.file(inst, "../config")
 
     index = Panel.files(inst)
@@ -267,7 +293,7 @@ defmodule Druzhok.PanelTest do
     assert Panel.job_state(%{}) == "scheduled"
   end
 
-  test "skills: own ones, both layouts; bundled ones counted, not listed", %{
+  test "skills: own and system ones, both layouts, own ones editable", %{
     inst: inst,
     dir: dir,
     outside: outside
@@ -285,8 +311,8 @@ defmodule Druzhok.PanelTest do
       "---\nname: planner\ndescription: План\n---\n"
     )
 
-    put(dir, "skills/productivity/todo/SKILL.md", "---\nname: todo-list\n---\n")
-    put(dir, "skills/github/gh/SKILL.md", "---\nname: gh\n---\n")
+    put(dir, "skills/productivity/todo/SKILL.md", "---\nname: todo-list\n---\nсистемный")
+    put(dir, "skills/github/gh/SKILL.md", "---\nname: gh\ndescription: Гитхаб\n---\n")
     put(dir, "skills/.bundled_manifest", "todo-list:abc\ngh:def\ndeleted-one:000\n")
     File.mkdir_p!(Path.join(outside, "evil"))
     File.write!(Path.join([outside, "evil", "SKILL.md"]), "---\nname: evil\n---\n")
@@ -294,20 +320,101 @@ defmodule Druzhok.PanelTest do
 
     skills = Panel.skills(inst)
 
-    assert Enum.map(skills, &{&1.category, &1.name, &1.path}) == [
+    assert Enum.map(skills.own, &{&1.category, &1.name, &1.path}) == [
              {nil, "daily-notes", ["notes"]},
              {"productivity", "planner", ["productivity", "planner"]}
            ]
 
-    assert hd(skills).description == "Заметки"
+    assert Enum.map(skills.system, &{&1.category, &1.name, &1.path}) == [
+             {"github", "gh", ["github", "gh"]},
+             {"productivity", "todo-list", ["productivity", "todo"]}
+           ]
+
+    assert hd(skills.own).description == "Заметки"
+    assert hd(skills.system).description == "Гитхаб"
     assert Panel.files(inst).skills == %{own: 2, bundled: 2}
 
-    assert {:ok, %{text: text}} = Panel.skill(inst, ["notes"])
+    assert {:ok, %{text: text, editable: true, limit: 100_000, sha256: sha}} =
+             Panel.skill(inst, ["notes"])
+
     assert text =~ "тело"
-    assert {:ok, _} = Panel.skill(inst, ["productivity", "planner"])
-    assert :not_found = Panel.skill(inst, ["productivity", "todo"])
+    assert sha == :crypto.hash(:sha256, text) |> Base.encode16(case: :lower)
+    assert {:ok, %{editable: true}} = Panel.skill(inst, ["productivity", "planner"])
+
+    # A system skill opens and cannot be edited.
+    assert {:ok, %{text: "---\nname: todo-list\n---\nсистемный", editable: false, limit: nil}} =
+             Panel.skill(inst, ["productivity", "todo"])
+
     assert :not_found = Panel.skill(inst, ["evil"])
     assert :not_found = Panel.skill(inst, [".."])
+    assert :not_found = Panel.skill(inst, ["productivity", "nope"])
+
+    assert {:ok, %{kind: "skill", target: ["skills", "notes", "SKILL.md"], limit: 100_000}} =
+             Panel.edit_target(inst, {:skill, ["notes"]})
+
+    assert :not_found = Panel.edit_target(inst, {:skill, ["productivity", "todo"]})
+    assert :not_found = Panel.edit_target(inst, {:skill, ["evil"]})
+    assert :not_found = Panel.edit_target(inst, {:skill, [".."]})
+    assert :not_found = Panel.edit_target(inst, {:file, "jobs"})
+  end
+
+  test "no own skills: the system ones still list", %{inst: inst, dir: dir} do
+    put(dir, "skills/github/gh/SKILL.md", "---\nname: gh\n---\n")
+    put(dir, "skills/.bundled_manifest", "gh:def\n")
+    assert %{own: [], system: [%{name: "gh"}]} = Panel.skills(inst)
+    assert Panel.files(inst).skills == %{own: 0, bundled: 1}
+  end
+
+  describe "file/2, what the editor starts from" do
+    test "a file gives its hash, the limit, and editable", %{inst: inst, dir: dir} do
+      put(dir, "memories/USER.md", "о вас")
+
+      assert {:ok, %{text: "о вас", editable: true, limit: 1375, truncated: false, sha256: sha}} =
+               Panel.file(inst, "user")
+
+      assert sha == :crypto.hash(:sha256, "о вас") |> Base.encode16(case: :lower)
+      put(dir, "memories/MEMORY.md", "x")
+      assert {:ok, %{limit: 2200}} = Panel.file(inst, "memory")
+      put(dir, "SOUL.md", "x")
+      assert {:ok, %{limit: 20_000}} = Panel.file(inst, "soul")
+    end
+
+    test "no memory file is an empty editable page; no soul is not found", %{inst: inst} do
+      for kind <- ["memory", "user"] do
+        assert {:ok,
+                %{text: "", sha256: nil, editable: true, modified_at: nil, unreadable: false}} =
+                 Panel.file(inst, kind)
+      end
+
+      assert :not_found = Panel.file(inst, "soul")
+    end
+
+    test "a link is unreadable, not absent, and cannot be edited", %{
+      inst: inst,
+      dir: dir,
+      outside: outside
+    } do
+      File.write!(Path.join(outside, "m"), "чужое")
+      File.mkdir_p!(Path.join(dir, "memories"))
+      File.ln_s!(Path.join(outside, "m"), Path.join(dir, "memories/MEMORY.md"))
+      File.ln_s!(Path.join(outside, "gone"), Path.join(dir, "memories/USER.md"))
+      File.ln_s!(Path.join(outside, "m"), Path.join(dir, "SOUL.md"))
+
+      for kind <- ["memory", "user", "soul"] do
+        assert {:ok, %{text: "", sha256: nil, editable: false, unreadable: true}} =
+                 Panel.file(inst, kind)
+      end
+    end
+
+    test "a truncated read cannot be edited", %{inst: inst, dir: dir} do
+      put(dir, "SOUL.md", String.duplicate("x", 512 * 1024 + 10))
+      assert {:ok, %{truncated: true, editable: false, sha256: nil}} = Panel.file(inst, "soul")
+    end
+
+    test "not text stays not text", %{inst: inst, dir: dir} do
+      put(dir, "SOUL.md", <<0xFF, 0xFE>>)
+      assert :not_text = Panel.file(inst, "soul")
+    end
   end
 
   test "the site lists workspace/sites by site, without symlinks", %{

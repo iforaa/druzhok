@@ -1,16 +1,19 @@
-import { useEffect, useRef } from "react"
-import { panelApi, type Files, type Skill, type Text } from "./api"
+import { useEffect, useRef, useState, type MutableRefObject } from "react"
+import { panelApi, type Files, type Save, type Skill, type Text } from "./api"
 import { openExternal } from "./telegram"
 import { plural, size, when } from "./format"
 import { render } from "./markdown"
 import { ErrorNote, Row, Skeleton, useLoad } from "./ui"
+import { Editor, type EditorNote } from "./editor"
 
-// Память, a section of Бот: what the bot knows and can do, read only: its
-// character, its notes and what it knows about the owner (Markdown files it
-// keeps), its scheduled jobs, the skills it added, and its site's files.
+// Память, a section of Бот: what the bot knows and can do: its character, its
+// notes and what it knows about the owner (Markdown files it keeps), its skills,
+// which the owner can edit (./editor.tsx), and its scheduled jobs and its site's
+// files, which they can only read. System skills are read only too: an edit
+// stops hermes updating them.
 
 export type MemoryScreen =
-  | { kind: "text"; title: string; load: () => Promise<Text>; back?: MemoryScreen }
+  | { kind: "text"; title: string; load: () => Promise<Text>; save?: Save; note?: EditorNote; back?: MemoryScreen }
   | { kind: "jobs" }
   | { kind: "skills" }
   | { kind: "site" }
@@ -29,19 +32,25 @@ export function MemoryList({
 }) {
   const meta = (m: Files["soul"]) => (m ? `${size(m.size)} · изменён ${when(m.modified_at)}` : "пока пусто")
   const text = (title: string, kind: "soul" | "memory" | "user") => () =>
-    open({ kind: "text", title, load: () => panelApi.file(kind) })
+    open({
+      kind: "text",
+      title,
+      load: () => panelApi.file(kind),
+      save: panelApi.saveFile(kind),
+      note: kind === "soul" ? undefined : "memory",
+    })
 
   return (
     <>
       <span className="label">Память</span>
-      <p className="hint">Что бот знает и умеет. Он ведёт это сам, по ходу разговоров.</p>
+      <p className="hint">Что бот знает и умеет. Он ведёт это сам, по ходу разговоров, а вы можете поправить.</p>
       {error ? <ErrorNote error={error} retry={reload} /> : null}
       {!files && !error ? <Skeleton rows={3} /> : null}
       {files ? (
         <div className="group">
           <Row icon="face" tone="purple" title="Характер" sub={meta(files.soul)} onClick={files.soul ? text("Характер", "soul") : null} />
-          <Row icon="brain" tone="pink" title="Заметки бота" sub={meta(files.memory)} onClick={files.memory ? text("Заметки бота", "memory") : null} />
-          <Row icon="user" tone="blue" title="О вас" sub={meta(files.user)} onClick={files.user ? text("О вас", "user") : null} />
+          <Row icon="brain" tone="pink" title="Заметки бота" sub={meta(files.memory)} onClick={text("Заметки бота", "memory")} />
+          <Row icon="user" tone="blue" title="О вас" sub={meta(files.user)} onClick={text("О вас", "user")} />
           <Row
             icon="clock"
             tone="orange"
@@ -53,8 +62,8 @@ export function MemoryList({
             icon="puzzle"
             tone="green"
             title="Навыки"
-            sub={`добавленные: ${files.skills.own} · встроенные: ${files.skills.bundled}`}
-            onClick={files.skills.own ? () => open({ kind: "skills" }) : null}
+            sub={`мои: ${files.skills.own} · системные: ${files.skills.bundled}`}
+            onClick={files.skills.own + files.skills.bundled > 0 ? () => open({ kind: "skills" }) : null}
           />
           <Row
             icon="globe"
@@ -70,22 +79,73 @@ export function MemoryList({
 }
 
 /** One of the list's screens, open over Бот. */
-export function MemoryView({ screen, open }: { screen: MemoryScreen; open: (s: MemoryScreen) => void }) {
+export function MemoryView({
+  screen,
+  open,
+  mnemosyne,
+  onBack,
+  onSaved,
+}: {
+  screen: MemoryScreen
+  open: (s: MemoryScreen) => void
+  /** Long memory is kept apart from these files. */
+  mnemosyne: boolean
+  /** Set while an editor is open: Telegram's back button goes to it first. */
+  onBack: MutableRefObject<(() => void) | null>
+  onSaved: () => void
+}) {
   switch (screen.kind) {
     case "text":
-      return <TextView title={screen.title} load={screen.load} />
+      return (
+        <TextView
+          title={screen.title}
+          load={screen.load}
+          save={screen.save}
+          note={screen.note}
+          mnemosyne={mnemosyne}
+          onBack={onBack}
+          onSaved={onSaved}
+        />
+      )
     case "jobs":
       return <JobsView />
     case "skills":
-      return <SkillsView open={(title, load) => open({ kind: "text", title, load, back: { kind: "skills" } })} />
+      return (
+        <SkillsView
+          open={(title, load, save) =>
+            open({ kind: "text", title, load, save, note: save ? "skill" : undefined, back: { kind: "skills" } })
+          }
+        />
+      )
     case "site":
       return <SiteView />
   }
 }
 
-function TextView({ title, load }: { title: string; load: () => Promise<Text> }) {
-  const { data: text, error, reload } = useLoad(load, [load])
+function TextView({
+  title,
+  load,
+  save,
+  note,
+  mnemosyne,
+  onBack,
+  onSaved,
+}: {
+  title: string
+  load: () => Promise<Text>
+  save?: Save
+  note?: EditorNote
+  mnemosyne: boolean
+  onBack: MutableRefObject<(() => void) | null>
+  onSaved: () => void
+}) {
+  const { data, error, reload } = useLoad(load, [load])
+  // What the editor last left; a newer read of the file than `data`.
+  const [latest, setLatest] = useState<Text | null>(null)
+  const [editing, setEditing] = useState(false)
+  const [saved, setSaved] = useState(false)
   const box = useRef<HTMLDivElement>(null)
+  const text = latest ?? data
 
   // Links the bot wrote open outside Telegram, never inside the panel.
   useEffect(() => {
@@ -100,7 +160,32 @@ function TextView({ title, load }: { title: string; load: () => Promise<Text> })
     }
     el.addEventListener("click", onClick)
     return () => el.removeEventListener("click", onClick)
-  }, [text])
+  }, [text, editing])
+
+  if (editing && text && save)
+    return (
+      <Editor
+        title={title}
+        file={text}
+        load={load}
+        save={save}
+        note={note}
+        mnemosyne={mnemosyne}
+        onBack={onBack}
+        onChanged={setLatest}
+        onClose={() => {
+          setEditing(false)
+          window.scrollTo(0, 0)
+        }}
+        onSaved={(file) => {
+          setLatest(file)
+          setEditing(false)
+          setSaved(true)
+          onSaved()
+          window.scrollTo(0, 0)
+        }}
+      />
+    )
 
   return (
     <>
@@ -109,9 +194,28 @@ function TextView({ title, load }: { title: string; load: () => Promise<Text> })
       {!text && !error ? <Skeleton rows={5} /> : null}
       {text ? (
         <>
-          <p className="hint">Изменён {when(text.modified_at)}</p>
-          <div ref={box} className="card markdown" dangerouslySetInnerHTML={{ __html: render(text.text) }} />
+          {saved ? <p className="card card--saved">Сохранено. Бот учтёт это в новом разговоре: отправьте ему /new</p> : null}
+          {text.modified_at ? <p className="hint">Изменён {when(text.modified_at)}</p> : null}
+          {text.unreadable ? (
+            <p className="hint">Файл сейчас не читается. Напишите в поддержку.</p>
+          ) : text.text ? (
+            <div ref={box} className="card markdown" dangerouslySetInnerHTML={{ __html: render(text.text) }} />
+          ) : (
+            <p className="hint">Пока пусто.</p>
+          )}
           {text.truncated ? <p className="hint">Файл длинный, показано начало.</p> : null}
+          {text.editable && save ? (
+            <button
+              className="secondary"
+              onClick={() => {
+                setSaved(false)
+                setEditing(true)
+                window.scrollTo(0, 0)
+              }}
+            >
+              Изменить
+            </button>
+          ) : null}
         </>
       ) : null}
     </>
@@ -163,27 +267,38 @@ function JobsView() {
   )
 }
 
-function SkillsView({ open }: { open: (title: string, load: () => Promise<Text>) => void }) {
+function SkillsView({ open }: { open: (title: string, load: () => Promise<Text>, save?: Save) => void }) {
   const { data, error, reload } = useLoad(panelApi.skills)
+  const row = (s: Skill, save?: Save) => (
+    <Row
+      key={s.path.join("/")}
+      icon="puzzle"
+      tone="green"
+      title={s.name}
+      sub={[s.category, s.description].filter(Boolean).join(" · ")}
+      onClick={() => open(s.name, () => panelApi.skill(s), save)}
+    />
+  )
   return (
     <>
       <h1 className="screen-title">Навыки</h1>
-      <p className="hint">Навыки, которые бот добавил сам: написал или установил. Встроенные здесь не показаны.</p>
       {error ? <ErrorNote error={error} retry={reload} /> : null}
       {!data && !error ? <Skeleton rows={6} /> : null}
       {data ? (
-        <div className="group">
-          {data.skills.map((s: Skill) => (
-            <Row
-              key={s.path.join("/")}
-              icon="puzzle"
-              tone="green"
-              title={s.name}
-              sub={[s.category, s.description].filter(Boolean).join(" · ")}
-              onClick={() => open(s.name, () => panelApi.skill(s))}
-            />
-          ))}
-        </div>
+        <>
+          <span className="label">Мои</span>
+          {data.skills.length ? (
+            <div className="group">{data.skills.map((s) => row(s, panelApi.saveSkill(s)))}</div>
+          ) : (
+            <p className="hint">Бот пока ничего не добавил. Попросите его научиться чему-нибудь</p>
+          )}
+          {data.system?.length ? (
+            <>
+              <span className="label">Системные</span>
+              <div className="group">{data.system.map((s) => row(s))}</div>
+            </>
+          ) : null}
+        </>
       ) : null}
     </>
   )

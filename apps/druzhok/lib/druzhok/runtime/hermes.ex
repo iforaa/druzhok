@@ -52,6 +52,12 @@ defmodule Druzhok.Runtime.Hermes do
   @doc "Hermes CLI binary (`HERMES_BIN`); bare `hermes` resolves via PATH."
   def bin, do: Application.get_env(:druzhok, :hermes_bin, "hermes")
 
+  @memory_char_limit 2200
+  @user_char_limit 1375
+
+  @doc "The memory limits written into config.yaml, which a panel save must also keep to."
+  def memory_limits, do: %{memory: @memory_char_limit, user: @user_char_limit}
+
   def env_vars(instance) do
     # base_env/1 already provides OPENAI_BASE_URL, OPENAI_API_KEY, TZ —
     # only add hermes-specific keys here.
@@ -1015,8 +1021,8 @@ defmodule Druzhok.Runtime.Hermes do
       provider: #{provider}
       memory_enabled: true
       user_profile_enabled: true#{mnemosyne}
-      memory_char_limit: 2200
-      user_char_limit: 1375\
+      memory_char_limit: #{@memory_char_limit}
+      user_char_limit: #{@user_char_limit}\
     """
   end
 
@@ -1193,8 +1199,8 @@ defmodule Druzhok.Runtime.Hermes do
       provider: builtin
       memory_enabled: true
       user_profile_enabled: true
-      memory_char_limit: 2200
-      user_char_limit: 1375
+      memory_char_limit: #{@memory_char_limit}
+      user_char_limit: #{@user_char_limit}
 
     # Web search via druzhok /v2/search (perplexity/sonar). Hermes 0.17 gates
     # web search behind this bundled plugin; FIRECRAWL_API_URL/KEY are set in

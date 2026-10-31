@@ -1,10 +1,11 @@
 defmodule Druzhok.Panel do
   @moduledoc """
   What the bot panel shows a bot's owner (spec
-  `docs/superpowers/specs/2026-10-24-bot-panel-design.md`), and the two
-  things it changes: settings (`Druzhok.Panel.Settings`) and the request to
-  delete the bot, which the owner confirms in the superbot (panel controls
-  spec, «Delete»). Nothing here wakes a sleeping bot: it reads the instance row, the disk through
+  `docs/superpowers/specs/2026-10-24-bot-panel-design.md`), and what it
+  changes: settings (`Druzhok.Panel.Settings`), the text pages
+  (`Druzhok.Panel.Editor`) and the request to delete the bot, which the owner
+  confirms in a Telegram dialog on the page (panel controls spec, «Delete»).
+  Nothing here wakes a sleeping bot: it reads the instance row, the disk through
   `Druzhok.TenantFiles` / `Druzhok.Panel.Lister` and the unit's state, plus
   the bot's name from Telegram's `getMe` (`profile/1`, cached), ruoc's model
   catalogue as last fetched, and the owner's referral codes at ruoc.
@@ -17,7 +18,8 @@ defmodule Druzhok.Panel do
   alias Druzhok.{BotManager, Instance, Lifecycle, TenantFiles}
   alias Druzhok.Panel.Lister
 
-  @text_limit 256 * 1024
+  # What a save may write (`Panel.Editor`) must read back whole.
+  @text_limit 512 * 1024
   @json_limit 1024 * 1024
   @max_skills 200
   @max_site_entries 2000
@@ -28,6 +30,11 @@ defmodule Druzhok.Panel do
     "memory" => ["memories", "MEMORY.md"],
     "user" => ["memories", "USER.md"]
   }
+
+  # Hermes's CONTEXT_FILE_MAX_CHARS and MAX_SKILL_CONTENT_CHARS, in code points;
+  # `Panel.EditorTest` compares them with hermes.
+  @soul_limit 20_000
+  @skill_limit 100_000
 
   @doc "The panel's address for a bot, or nil without a public host (dev, test)."
   def url(%Instance{} = inst, query \\ []) do
@@ -128,7 +135,8 @@ defmodule Druzhok.Panel do
     import Ecto.Query
 
     from(i in Instance,
-      where: is_nil(i.display_name) and i.delete_requested == false and not is_nil(i.telegram_token)
+      where:
+        is_nil(i.display_name) and i.delete_requested == false and not is_nil(i.telegram_token)
     )
     |> Druzhok.Repo.all()
     |> Enum.each(fn inst ->
@@ -189,8 +197,11 @@ defmodule Druzhok.Panel do
     {mod, fun} = Application.get_env(:druzhok, :panel_get_me, {Druzhok.Telegram.API, :get_me})
 
     case apply(mod, fun, [token]) do
-      {:ok, %{} = me} -> %{title: text_or_nil(me["first_name"]), username: text_or_nil(me["username"])}
-      _ -> nil
+      {:ok, %{} = me} ->
+        %{title: text_or_nil(me["first_name"]), username: text_or_nil(me["username"])}
+
+      _ ->
+        nil
     end
   rescue
     _ -> nil
@@ -355,20 +366,89 @@ defmodule Druzhok.Panel do
     end
   end
 
-  @doc "One of the fixed Markdown files: `soul`, `memory`, `user`."
+  @doc """
+  One of the fixed Markdown files: `soul`, `memory`, `user`. Nothing at that
+  name (`File.lstat` says `:enoent`) is an empty, editable page for the memory
+  files and `:not_found` for `soul`; a file that is there but cannot be read
+  safely is an empty page that says so and cannot be edited, so that a save can
+  never take it for absent. Invalid UTF-8 is `:not_text`, 422 in place of the file.
+  """
   def file(%Instance{} = inst, kind) do
-    case Map.fetch(@files, kind) do
-      {:ok, segments} -> text(tenant_dir(inst), segments)
+    with {:ok, segments} <- Map.fetch(@files, kind) do
+      dir = tenant_dir(inst)
+      limit = limit(kind)
+
+      case {File.lstat(Path.join([dir | segments])), kind} do
+        {{:error, :enoent}, "soul"} ->
+          :not_found
+
+        {{:error, :enoent}, _} ->
+          {:ok, page("", nil, nil, editable: true, limit: limit)}
+
+        _ ->
+          case text(dir, segments, limit, true) do
+            :not_found -> {:ok, page("", nil, nil, unreadable: true, limit: limit)}
+            other -> other
+          end
+      end
+    else
       :error -> :not_found
     end
   end
 
-  defp text(dir, segments) do
+  defp text(dir, segments, limit, editable?) do
     case TenantFiles.read_text(dir, segments, @text_limit) do
-      {:ok, r} -> {:ok, %{text: r.text, modified_at: r.modified_at, truncated: r.truncated}}
-      other -> other
+      {:ok, r} ->
+        {:ok,
+         page(r.text, r.sha256, r.modified_at,
+           truncated: r.truncated,
+           editable: editable? and not r.truncated,
+           limit: limit
+         )}
+
+      other ->
+        other
     end
   end
+
+  defp page(text, sha256, modified_at, opts) do
+    %{
+      text: text,
+      sha256: sha256,
+      modified_at: modified_at,
+      truncated: Keyword.get(opts, :truncated, false),
+      editable: Keyword.get(opts, :editable, false),
+      unreadable: Keyword.get(opts, :unreadable, false),
+      limit: Keyword.get(opts, :limit)
+    }
+  end
+
+  defp limit("soul"), do: @soul_limit
+  defp limit("memory"), do: Druzhok.Runtime.Hermes.memory_limits().memory
+  defp limit("user"), do: Druzhok.Runtime.Hermes.memory_limits().user
+
+  @doc """
+  What a save may write: `{:file, kind}` or `{:skill, segments}` →
+  `{:ok, %{kind:, target:, limit:}}` with `target` below the tenant dir, or
+  `:not_found` for an unknown path or a system skill.
+  """
+  def edit_target(%Instance{}, {:file, kind}) do
+    case Map.fetch(@files, kind) do
+      {:ok, segments} -> {:ok, %{kind: kind, target: segments, limit: limit(kind)}}
+      :error -> :not_found
+    end
+  end
+
+  def edit_target(%Instance{} = inst, {:skill, segments}) do
+    with true <- TenantFiles.valid_segments?(segments),
+         %{} <- Enum.find(skills_scan(inst).own, &(&1.segments == segments)) do
+      {:ok, %{kind: "skill", target: skill_file(segments), limit: @skill_limit}}
+    else
+      _ -> :not_found
+    end
+  end
+
+  defp skill_file(segments), do: ["skills" | segments] ++ ["SKILL.md"]
 
   # --- Задачи --------------------------------------------------------------
 
@@ -493,22 +573,40 @@ defmodule Druzhok.Panel do
 
   # --- Навыки --------------------------------------------------------------
 
-  @doc "The bot's own skills: name, category (or nil), description."
+  @doc """
+  The bot's skills, each with name, category (or nil) and description: `own`,
+  written by the bot or installed, and `system`, the ones in hermes's manifest.
+  """
   def skills(%Instance{} = inst) do
-    # `path` is the directory segments that open the skill: the front-matter
-    # name shown may differ from the directory's.
-    Enum.map(skills_scan(inst).own, fn s ->
-      s |> Map.take([:name, :category, :description]) |> Map.put(:path, s.segments)
-    end)
+    scan = skills_scan(inst)
+    %{own: Enum.map(scan.own, &skill_row/1), system: Enum.map(scan.system, &skill_row/1)}
   end
 
-  @doc "One own skill's SKILL.md: `segments` is `[name]` or `[category, name]`."
+  # `path` is the directory segments that open the skill: the front-matter
+  # name shown may differ from the directory's.
+  defp skill_row(s),
+    do: s |> Map.take([:name, :category, :description]) |> Map.put(:path, s.segments)
+
+  @doc """
+  One skill's SKILL.md: `segments` is `[name]` or `[category, name]`. Only an
+  own skill can be edited: an edit stops hermes updating a system one.
+  """
   def skill(%Instance{} = inst, segments) do
     with true <- TenantFiles.valid_segments?(segments),
-         %{} <- Enum.find(skills_scan(inst).own, &(&1.segments == segments)) do
-      text(tenant_dir(inst), ["skills" | segments] ++ ["SKILL.md"])
+         scan = skills_scan(inst),
+         {:ok, own?} <- skill_group(scan, segments) do
+      limit = if own?, do: @skill_limit
+      text(tenant_dir(inst), skill_file(segments), limit, own?)
     else
       _ -> :not_found
+    end
+  end
+
+  defp skill_group(scan, segments) do
+    cond do
+      Enum.any?(scan.own, &(&1.segments == segments)) -> {:ok, true}
+      Enum.any?(scan.system, &(&1.segments == segments)) -> {:ok, false}
+      true -> :not_found
     end
   end
 
@@ -528,7 +626,7 @@ defmodule Druzhok.Panel do
         end)
         |> Enum.filter(&TenantFiles.valid_segments?/1)
         |> Enum.map(fn segs ->
-          front = front_matter(dir, ["skills" | segs] ++ ["SKILL.md"])
+          front = front_matter(dir, skill_file(segs))
 
           %{
             segments: segs,
@@ -539,16 +637,20 @@ defmodule Druzhok.Panel do
         end)
 
       bundled = bundled_names(dir)
-      {bundled_on_disk, own} = Enum.split_with(found, &MapSet.member?(bundled, &1.name))
+      {system, own} = Enum.split_with(found, &MapSet.member?(bundled, &1.name))
 
       %{
-        own: own |> Enum.sort_by(&{&1.category || "", &1.name}) |> Enum.take(@max_skills),
-        bundled: bundled_on_disk |> Enum.map(& &1.name) |> Enum.uniq() |> length()
+        own: skill_list(own),
+        system: skill_list(system),
+        bundled: system |> Enum.map(& &1.name) |> Enum.uniq() |> length()
       }
     else
-      %{own: [], bundled: 0}
+      %{own: [], system: [], bundled: 0}
     end
   end
+
+  defp skill_list(skills),
+    do: skills |> Enum.sort_by(&{&1.category || "", &1.name}) |> Enum.take(@max_skills)
 
   defp bundled_names(dir) do
     case TenantFiles.read(dir, ["skills", ".bundled_manifest"], @text_limit) do

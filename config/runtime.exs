@@ -111,6 +111,12 @@ config :druzhok,
   panel_init_max_age: String.to_integer(System.get_env("PANEL_INIT_MAX_AGE") || "86400"),
   # GNU find for the panel's listings (`-printf`); macOS dev has it as gfind.
   find_bin: System.get_env("FIND_BIN") || System.find_executable("gfind") || "/usr/bin/find",
+  # The panel's save script, root-owned on the box (ops/bootstrap.sh, deploy
+  # recipe); nil runs the priv copy, in dev and test.
+  panel_save_script:
+    System.get_env("PANEL_SAVE_SCRIPT") ||
+      (if System.get_env("DRUZHOK_HOST") == "systemd",
+         do: "/usr/local/lib/druzhok/panel-save.py"),
   operator_telegram_id: env_or_nil.("OPERATOR_TELEGRAM_ID"),
   host:
     (if System.get_env("DRUZHOK_HOST") == "systemd",
