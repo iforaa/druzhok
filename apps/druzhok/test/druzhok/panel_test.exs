@@ -358,6 +358,21 @@ defmodule Druzhok.PanelTest do
     assert :not_found = Panel.edit_target(inst, {:file, "jobs"})
   end
 
+  test "a built-in hermes dropped from the manifest stays a system skill", %{
+    inst: inst,
+    dir: dir
+  } do
+    put(dir, "skills/github/github-auth/SKILL.md", "---\nname: github-auth\n---\nстарый")
+    put(dir, "skills/notes/SKILL.md", "---\nname: notes\n---\nсвой")
+    put(dir, "skills/.bundled_manifest", "gh:def\n")
+
+    skills = Panel.skills(inst)
+    assert Enum.map(skills.own, & &1.name) == ["notes"]
+    assert Enum.map(skills.system, & &1.name) == ["github-auth"]
+    assert Panel.files(inst).skills == %{own: 1, bundled: 1}
+    assert :not_found = Panel.edit_target(inst, {:skill, ["github", "github-auth"]})
+  end
+
   test "no own skills: the system ones still list", %{inst: inst, dir: dir} do
     put(dir, "skills/github/gh/SKILL.md", "---\nname: gh\n---\n")
     put(dir, "skills/.bundled_manifest", "gh:def\n")
