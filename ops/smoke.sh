@@ -95,6 +95,10 @@ check=$(druzhok-ctl exec "$name" /opt/hermes/.venv/bin/python -I "$script" --che
 echo "$check"
 [ "$check" = '{"ok": true}' ] || { echo "the save script cannot import what it needs from hermes"; exit 1; }
 
+# Without ops/patch-mnemosyne.py recall silently drops to keyword-only.
+echo "== mnemosyne embeddings allowed on loopback"
+/opt/hermes/.venv/bin/python "$ops/patch-mnemosyne.py" --verify /opt/hermes || exit 1
+
 echo "== page fetch (/v2/scrape via ruoc)"
 key=$(run "IO.puts(Druzhok.Repo.get_by!(Druzhok.Instance, name: \"$name\").tenant_key)" | tail -1)
 scrape=$(curl -s -m 60 -H "Authorization: Bearer $key" -H 'Content-Type: application/json' \
