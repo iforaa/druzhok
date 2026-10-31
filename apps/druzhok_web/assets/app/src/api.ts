@@ -260,7 +260,7 @@ export const panelApi = {
   deleteBot: () => panelPost<{ deleted: true }>("delete", {}),
 }
 
-// Answers the screens share (the account shows on Главная and Счёт), kept
+// Answers the screens share (the account shows on Бот and Счёт), kept
 // for the life of the page; a failure is not kept, and invalidate() drops
 // one after a change so the next read asks again.
 const cache = new Map<string, Promise<unknown>>()

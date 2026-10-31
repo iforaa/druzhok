@@ -1,91 +1,86 @@
-import { useEffect, useRef, useState } from "react"
-import { cached, panelApi, type Files, type Skill, type Text } from "./api"
-import { backButton, openExternal } from "./telegram"
+import { useEffect, useRef } from "react"
+import { panelApi, type Files, type Skill, type Text } from "./api"
+import { openExternal } from "./telegram"
 import { plural, size, when } from "./format"
 import { render } from "./markdown"
 import { ErrorNote, Row, Skeleton, useLoad } from "./ui"
 
-// Память: what the bot knows and can do, read only: its character, its notes
-// and what it knows about the owner (Markdown files it keeps), its scheduled
-// jobs, the skills it added, and its site's files.
+// Память, a section of Бот: what the bot knows and can do, read only: its
+// character, its notes and what it knows about the owner (Markdown files it
+// keeps), its scheduled jobs, the skills it added, and its site's files.
 
-type Screen =
-  | { kind: "list" }
-  | { kind: "text"; title: string; load: () => Promise<Text>; back?: Screen }
+export type MemoryScreen =
+  | { kind: "text"; title: string; load: () => Promise<Text>; back?: MemoryScreen }
   | { kind: "jobs" }
   | { kind: "skills" }
   | { kind: "site" }
 
-function startScreen(start?: string): Screen {
-  if (start === "skills") return { kind: "skills" }
-  if (start === "jobs") return { kind: "jobs" }
-  return { kind: "list" }
-}
-
-export default function Memory({ start }: { start?: string }) {
-  const { data: files, error, reload } = useLoad(() => cached("files", panelApi.files))
-  const [screen, setScreen] = useState<Screen>(() => startScreen(start))
-
-  useEffect(
-    () =>
-      backButton(
-        screen.kind === "list"
-          ? null
-          : () => setScreen(screen.kind === "text" && screen.back ? screen.back : { kind: "list" }),
-      ),
-    [screen],
-  )
-
-  if (screen.kind === "text") return <TextView title={screen.title} load={screen.load} />
-  if (screen.kind === "jobs") return <JobsView />
-  if (screen.kind === "skills")
-    return <SkillsView open={(title, load) => setScreen({ kind: "text", title, load, back: { kind: "skills" } })} />
-  if (screen.kind === "site") return <SiteView />
-
+/** The list on Бот; a row with something to show opens its screen. */
+export function MemoryList({
+  files,
+  error,
+  reload,
+  open,
+}: {
+  files: Files | null
+  error: string | null
+  reload: () => void
+  open: (s: MemoryScreen) => void
+}) {
   const meta = (m: Files["soul"]) => (m ? `${size(m.size)} · изменён ${when(m.modified_at)}` : "пока пусто")
   const text = (title: string, kind: "soul" | "memory" | "user") => () =>
-    setScreen({ kind: "text", title, load: () => panelApi.file(kind) })
+    open({ kind: "text", title, load: () => panelApi.file(kind) })
 
   return (
     <>
-      <h1 className="screen-title">Память</h1>
+      <span className="label">Память</span>
       <p className="hint">Что бот знает и умеет. Он ведёт это сам, по ходу разговоров.</p>
       {error ? <ErrorNote error={error} retry={reload} /> : null}
-      {!files && !error ? <Skeleton rows={6} /> : null}
+      {!files && !error ? <Skeleton rows={3} /> : null}
       {files ? (
-        <>
-          <div className="group">
-            <Row icon="face" tone="purple" title="Характер" sub={meta(files.soul)} onClick={files.soul ? text("Характер", "soul") : null} />
-            <Row icon="brain" tone="pink" title="Заметки бота" sub={meta(files.memory)} onClick={files.memory ? text("Заметки бота", "memory") : null} />
-            <Row icon="user" tone="blue" title="О вас" sub={meta(files.user)} onClick={files.user ? text("О вас", "user") : null} />
-          </div>
-          <div className="group">
-            <Row
-              icon="clock"
-              tone="orange"
-              title="Напоминания и задачи"
-              sub={files.jobs.count ? `${files.jobs.count} ${plural(files.jobs.count, "задача", "задачи", "задач")}` : "пока нет"}
-              onClick={files.jobs.count ? () => setScreen({ kind: "jobs" }) : null}
-            />
-            <Row
-              icon="puzzle"
-              tone="green"
-              title="Навыки"
-              sub={`добавленные: ${files.skills.own} · встроенные: ${files.skills.bundled}`}
-              onClick={files.skills.own ? () => setScreen({ kind: "skills" }) : null}
-            />
-            <Row
-              icon="globe"
-              tone="teal"
-              title="Сайт"
-              sub={files.site?.files ? `${files.site.files} ${plural(files.site.files, "файл", "файла", "файлов")}` : "пока нет"}
-              onClick={files.site?.files ? () => setScreen({ kind: "site" }) : null}
-            />
-          </div>
-        </>
+        <div className="group">
+          <Row icon="face" tone="purple" title="Характер" sub={meta(files.soul)} onClick={files.soul ? text("Характер", "soul") : null} />
+          <Row icon="brain" tone="pink" title="Заметки бота" sub={meta(files.memory)} onClick={files.memory ? text("Заметки бота", "memory") : null} />
+          <Row icon="user" tone="blue" title="О вас" sub={meta(files.user)} onClick={files.user ? text("О вас", "user") : null} />
+          <Row
+            icon="clock"
+            tone="orange"
+            title="Напоминания и задачи"
+            sub={files.jobs.count ? `${files.jobs.count} ${plural(files.jobs.count, "задача", "задачи", "задач")}` : "пока нет"}
+            onClick={files.jobs.count ? () => open({ kind: "jobs" }) : null}
+          />
+          <Row
+            icon="puzzle"
+            tone="green"
+            title="Навыки"
+            sub={`добавленные: ${files.skills.own} · встроенные: ${files.skills.bundled}`}
+            onClick={files.skills.own ? () => open({ kind: "skills" }) : null}
+          />
+          <Row
+            icon="globe"
+            tone="teal"
+            title="Сайт"
+            sub={files.site?.files ? `${files.site.files} ${plural(files.site.files, "файл", "файла", "файлов")}` : "пока нет"}
+            onClick={files.site?.files ? () => open({ kind: "site" }) : null}
+          />
+        </div>
       ) : null}
     </>
   )
+}
+
+/** One of the list's screens, open over Бот. */
+export function MemoryView({ screen, open }: { screen: MemoryScreen; open: (s: MemoryScreen) => void }) {
+  switch (screen.kind) {
+    case "text":
+      return <TextView title={screen.title} load={screen.load} />
+    case "jobs":
+      return <JobsView />
+    case "skills":
+      return <SkillsView open={(title, load) => open({ kind: "text", title, load, back: { kind: "skills" } })} />
+    case "site":
+      return <SiteView />
+  }
 }
 
 function TextView({ title, load }: { title: string; load: () => Promise<Text> }) {
