@@ -8,14 +8,14 @@ defmodule Druzhok.Ops.NftablesTest do
 
   @ruleset Path.expand("../../../../ops/nftables-druzhok.nft", __DIR__)
 
-  # Rules of the output chain that apply to bot uids: everything after the
-  # `meta skuid != @bot_uids accept` line, comments and blanks dropped.
+  # Rules that apply to bot uids: the body of chain `bot_egress`, comments and
+  # blanks dropped.
   defp bot_rules do
     @ruleset
     |> File.read!()
     |> String.split("\n")
     |> Enum.map(&String.trim/1)
-    |> Enum.drop_while(&(not String.starts_with?(&1, "meta skuid != @bot_uids")))
+    |> Enum.drop_while(&(not String.starts_with?(&1, "chain bot_egress")))
     |> Enum.drop(1)
     |> Enum.take_while(&(&1 != "}"))
     |> Enum.reject(&(&1 == "" or String.starts_with?(&1, "#")))
@@ -24,6 +24,10 @@ defmodule Druzhok.Ops.NftablesTest do
   defp set_elements(name) do
     [_, body] = Regex.run(~r/set #{name} \{.*?elements = \{(.*?)\}/s, File.read!(@ruleset))
     body |> String.split(",") |> Enum.map(&String.trim/1)
+  end
+
+  test "bot uids, and only they, are sent through bot_egress" do
+    assert File.read!(@ruleset) =~ ~r/type filter hook output priority 0; policy accept;\s+meta skuid @bot_uids jump bot_egress\s+\}/
   end
 
   test "the bot section is found and ends in a drop" do
