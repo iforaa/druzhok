@@ -4,30 +4,28 @@ import { applyTheme, initData, webApp } from "./telegram"
 import { Icon, Skeleton } from "./ui"
 import type { Tab } from "./nav"
 import Home from "./home"
-import Memory from "./memory"
 import Billing from "./billing"
-import More from "./more"
+import Settings from "./settings"
 
 // The bot panel: what a bot's owner sees inside Telegram (druzhok spec
-// docs/superpowers/specs/2026-10-24-bot-panel-design.md). Four tabs:
-// Главная (the bot, what is left of its plan, setup and shortcuts), Память
-// (what it knows and can do, read only), Счёт (the plan, its limits, plans
-// and payments, served by ruoc-gateway) and Ещё (settings, access, invites,
-// support).
+// docs/superpowers/specs/2026-10-24-bot-panel-design.md). Three tabs: Бот (its
+// state, what is left of its plan, setup, what it knows and can do, invites,
+// support), Счёт (the plan, its limits, plans and payments, served by
+// ruoc-gateway) and Настройки (settings, access, delete).
 
 const tabs: [Tab, string, string][] = [
-  ["home", "Главная", "home"],
-  ["memory", "Память", "spark"],
+  ["home", "Бот", "home"],
   ["billing", "Счёт", "wallet"],
-  ["more", "Ещё", "more"],
+  ["settings", "Настройки", "gear"],
 ]
 
 // ?tab= opens a tab directly: the out-of-money notice sends tab=billing, and
-// buttons made before the rename may still say tab=files.
+// buttons made earlier may still say tab=more, tab=memory or tab=files, the
+// last two now part of Бот.
 function startTab(): Tab {
   const t = new URLSearchParams(window.location.search).get("tab")
-  if (t === "billing" || t === "memory" || t === "more") return t
-  if (t === "files") return "memory"
+  if (t === "billing" || t === "settings") return t
+  if (t === "more") return "settings"
   return "home"
 }
 
@@ -74,9 +72,8 @@ export default function App() {
         ) : (
           <div key={nav.n} className="screen">
             {nav.tab === "home" && <Home bot={bot} go={go} />}
-            {nav.tab === "memory" && <Memory start={nav.screen} />}
             {nav.tab === "billing" && <Billing start={nav.screen} />}
-            {nav.tab === "more" && <More bot={bot} start={nav.screen} onBot={setBot} />}
+            {nav.tab === "settings" && <Settings bot={bot} onBot={setBot} />}
           </div>
         )}
       </main>

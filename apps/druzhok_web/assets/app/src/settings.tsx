@@ -1,27 +1,21 @@
 import { useEffect, useRef, useState } from "react"
-import {
-  explain,
-  panelApi,
-  type ApplyState,
-  type Bot,
-  type ImageModel,
-  type Invite,
-  type SettingChanges,
-} from "./api"
+import { explain, panelApi, type ApplyState, type Bot, type ImageModel, type SettingChanges } from "./api"
 import { backButton, closePanel, confirmDialog, openTelegram } from "./telegram"
 import { plural, when } from "./format"
-import { Choice, ErrorNote, Icon, Row, Skeleton, Toggle, useLoad } from "./ui"
+import { Choice, ErrorNote, Icon, Row, Segmented, Skeleton, Toggle, useLoad } from "./ui"
 
-// Ещё: the bot's settings, who may talk to it, invites for friends (the
-// owner's referral codes, as the superbot's «🎁 Пригласить» gives them),
-// support, and deleting the bot. Language, time zone, groups, pictures and
-// the site are the owner's to change (panel controls spec); a choice saves
-// at once, and the bot picks it up when it is not answering. A delete asks
-// once in a Telegram dialog and then deletes.
+// Настройки: the bot's settings, who may talk to it, and deleting the bot.
+// Language, time zone, groups, pictures and the site are the owner's to change
+// (panel controls spec); a choice saves at once, and the bot picks it up when
+// it is not answering. Only the two longer lists have a screen of their own. A
+// delete asks once in a Telegram dialog and then deletes.
 
-type Screen = "main" | "invites" | "language" | "timezone" | "groups" | "images" | "delete"
+type Screen = "main" | "timezone" | "images" | "deleted"
 
-const languages: Record<string, string> = { ru: "русский", en: "английский" }
+const languages: [string, string][] = [
+  ["ru", "русский"],
+  ["en", "английский"],
+]
 
 const zones: [string, string][] = [
   ["Asia/Almaty", "Алматы"],
@@ -34,13 +28,6 @@ const zones: [string, string][] = [
 
 function zoneName(tz: string): string {
   return zones.find(([id]) => id === tz)?.[1] ?? tz
-}
-
-function groupsText(bot: Bot): string {
-  const s = bot.settings
-  return s.mention_only
-    ? `отвечает, когда зовут${s.trigger_name ? ` «${s.trigger_name}»` : " по имени"}`
-    : "отвечает на всё"
 }
 
 const applyText: Record<ApplyState, string> = {
@@ -114,32 +101,32 @@ function useSettings(bot: Bot, onBot: (b: Bot) => void) {
 
 type Settings = ReturnType<typeof useSettings>
 
-export default function More({ bot, start, onBot }: { bot: Bot; start?: string; onBot: (b: Bot) => void }) {
-  const [screen, setScreen] = useState<Screen>(start === "invites" ? "invites" : "main")
+export default function Settings({ bot, onBot }: { bot: Bot; onBot: (b: Bot) => void }) {
+  const [screen, setScreen] = useState<Screen>("main")
   const settings = useSettings(bot, onBot)
+  const [deleting, setDeleting] = useState(false)
+  const [deleteError, setDeleteError] = useState<string | null>(null)
   const open = (s: Screen) => {
     settings.clearError()
     setScreen(s)
   }
-  useEffect(() => backButton(screen === "main" ? null : () => open("main")), [screen])
+  useEffect(() => {
+    window.scrollTo(0, 0)
+    return backButton(screen === "main" || screen === "deleted" ? null : () => open("main"))
+  }, [screen])
 
   switch (screen) {
-    case "invites":
-      return <Invites />
-    case "language":
-      return <LanguageScreen bot={bot} settings={settings} />
     case "timezone":
       return <TimezoneScreen bot={bot} settings={settings} />
-    case "groups":
-      return <GroupsScreen bot={bot} settings={settings} />
     case "images":
       return <ImagesScreen bot={bot} settings={settings} />
-    case "delete":
-      return <DeleteScreen bot={bot} />
+    case "deleted":
+      return <Deleted />
   }
 
   const s = bot.settings
   const a = bot.access
+  const name = s.trigger_name
 
   const toggleSite = async (on: boolean) => {
     if (on) {
@@ -151,22 +138,57 @@ export default function More({ bot, start, onBot }: { bot: Bot; start?: string; 
     settings.save({ website_hosting_enabled: on })
   }
 
+  const remove = async () => {
+    const ok = await confirmDialog(
+      `Удалить бота ${bot.title || bot.name} навсегда? Память, файлы, напоминания и сайт будут удалены. Оплаченный тариф не возвращается. Это нельзя отменить.`,
+    )
+    if (!ok) return
+    setDeleting(true)
+    setDeleteError(null)
+    try {
+      await panelApi.deleteBot()
+      setScreen("deleted")
+    } catch (err) {
+      setDeleteError(explain(err))
+    } finally {
+      setDeleting(false)
+    }
+  }
+
   return (
     <>
-      <h1 className="screen-title">Ещё</h1>
+      <h1 className="screen-title">Настройки</h1>
 
       <div className="group">
-        <Row icon="gift" tone="pink" title="Пригласить друга" sub="Друг сможет создать своего бота" onClick={() => open("invites")} />
-        {bot.support_url ? (
-          <Row icon="chat" tone="blue" title="Поддержка" sub="Ответим в Telegram" onClick={() => openTelegram(bot.support_url!)} />
-        ) : null}
-      </div>
-
-      <span className="label">Настройки</span>
-      <div className="group">
-        <Row icon="chat" tone="blue" title="Язык ответов" sub={languages[s.language] ?? s.language} onClick={() => open("language")} />
+        <Segmented
+          icon="chat"
+          tone="blue"
+          title="Язык ответов"
+          options={languages}
+          value={s.language}
+          busy={settings.busy}
+          onPick={(language) => settings.save({ language })}
+        />
+        <Segmented
+          icon="group"
+          tone="purple"
+          title="В группах"
+          sub={
+            s.mention_only
+              ? name
+                ? `по имени «${name}» или упоминанию`
+                : "по имени или упоминанию"
+              : "на каждое сообщение в группе"
+          }
+          options={[
+            ["mention", "когда зовут"],
+            ["all", "на всё"],
+          ]}
+          value={s.mention_only ? "mention" : "all"}
+          busy={settings.busy}
+          onPick={(v) => settings.save({ mention_only: v === "mention" })}
+        />
         <Row icon="clock" tone="teal" title="Часовой пояс" sub={zoneName(s.timezone)} onClick={() => open("timezone")} />
-        <Row icon="group" tone="purple" title="В группах" sub={groupsText(bot)} onClick={() => open("groups")} />
         <Row icon="image" tone="orange" title="Картинки" sub={s.image_gen_enabled ? "рисует" : "выключены"} onClick={() => open("images")} />
         <Toggle
           icon="globe"
@@ -198,14 +220,6 @@ export default function More({ bot, start, onBot }: { bot: Bot; start?: string; 
             <dt>Память в группах</dt>
             <dd>{s.group_shared_memory ? "общая на группу" : "своя у каждого"}</dd>
           </div>
-        </dl>
-      </section>
-
-      <section className="card">
-        <div className="card__head">
-          <span className="label">Доступ</span>
-        </div>
-        <dl className="pairs">
           <div>
             <dt>Пишут лично</dt>
             <dd>
@@ -222,7 +236,7 @@ export default function More({ bot, start, onBot }: { bot: Bot; start?: string; 
       </section>
 
       <div className="group">
-        <button className="row row--danger" onClick={() => open("delete")}>
+        <button className="row row--danger" disabled={deleting} onClick={remove}>
           <span className="bubble bubble--grey">
             <Icon name="trash" size={20} />
           </span>
@@ -231,6 +245,7 @@ export default function More({ bot, start, onBot }: { bot: Bot; start?: string; 
           </span>
         </button>
       </div>
+      {deleteError ? <p className="note-error">{deleteError}</p> : null}
 
       <p className="hint hint--center">Последний запуск бота: {when(bot.started_at)}</p>
     </>
@@ -254,27 +269,6 @@ function ApplyNote({ bot, settings }: { bot: Bot; settings: Settings }) {
         </>
       ) : null}
     </p>
-  )
-}
-
-function LanguageScreen({ bot, settings }: { bot: Bot; settings: Settings }) {
-  const current = bot.settings.language
-  return (
-    <>
-      <h1 className="screen-title">Язык ответов</h1>
-      <div className="group">
-        {Object.entries(languages).map(([id, label]) => (
-          <Choice
-            key={id}
-            title={label}
-            on={current === id}
-            busy={settings.busy}
-            onPick={() => id !== current && settings.save({ language: id })}
-          />
-        ))}
-      </div>
-      <ApplyNote bot={bot} settings={settings} />
-    </>
   )
 }
 
@@ -308,33 +302,6 @@ function TimezoneScreen({ bot, settings }: { bot: Bot; settings: Settings }) {
           </button>
         </div>
       </label>
-      <ApplyNote bot={bot} settings={settings} />
-    </>
-  )
-}
-
-function GroupsScreen({ bot, settings }: { bot: Bot; settings: Settings }) {
-  const mention = bot.settings.mention_only
-  const name = bot.settings.trigger_name
-  return (
-    <>
-      <h1 className="screen-title">В группах</h1>
-      <div className="group">
-        <Choice
-          title="Отвечает, когда зовут"
-          sub={name ? `по имени «${name}» или упоминанию` : "по имени или упоминанию"}
-          on={mention}
-          busy={settings.busy}
-          onPick={() => !mention && settings.save({ mention_only: true })}
-        />
-        <Choice
-          title="Отвечает на всё"
-          sub="на каждое сообщение в группе"
-          on={!mention}
-          busy={settings.busy}
-          onPick={() => mention && settings.save({ mention_only: false })}
-        />
-      </div>
       <ApplyNote bot={bot} settings={settings} />
     </>
   )
@@ -385,107 +352,14 @@ function ImagesScreen({ bot, settings }: { bot: Bot; settings: Settings }) {
   )
 }
 
-function DeleteScreen({ bot }: { bot: Bot }) {
-  const [done, setDone] = useState(false)
-  const [busy, setBusy] = useState(false)
-  const [error, setError] = useState<string | null>(null)
-
-  const remove = async () => {
-    const ok = await confirmDialog(
-      `Удалить бота ${bot.title || bot.name} навсегда? Память, файлы, напоминания и сайт будут удалены. Это нельзя отменить.`,
-    )
-    if (!ok) return
-    setBusy(true)
-    setError(null)
-    try {
-      await panelApi.deleteBot()
-      setDone(true)
-    } catch (err) {
-      setError(explain(err))
-    } finally {
-      setBusy(false)
-    }
-  }
-
-  if (done)
-    return (
-      <>
-        <h1 className="screen-title">Бот удалён</h1>
-        <p className="hint">Его память, файлы и напоминания удаляются.</p>
-        <button className="primary" onClick={closePanel}>
-          Закрыть
-        </button>
-      </>
-    )
-
+function Deleted() {
   return (
     <>
-      <h1 className="screen-title">Удалить бота</h1>
-      <section className="card">
-        <ul className="hint">
-          <li>Бот перестанет отвечать.</li>
-          <li>Его память, файлы, напоминания и сайт будут удалены.</li>
-          <li>Это нельзя отменить.</li>
-          <li>Оплаченный тариф не возвращается.</li>
-        </ul>
-      </section>
-      {error ? <p className="note-error">{error}</p> : null}
-      <button className="danger" disabled={busy} onClick={remove}>
-        Удалить бота
+      <h1 className="screen-title">Бот удалён</h1>
+      <p className="hint">Его память, файлы и напоминания удаляются.</p>
+      <button className="primary" onClick={closePanel}>
+        Закрыть
       </button>
     </>
-  )
-}
-
-function Invites() {
-  const { data, error, reload } = useLoad(panelApi.invites)
-  return (
-    <>
-      <h1 className="screen-title">Пригласить друга</h1>
-      <p className="hint">По ссылке друг сможет создать своего бота. Каждая ссылка — на одного человека.</p>
-      {error ? <ErrorNote error={error} retry={reload} /> : null}
-      {!data && !error ? <Skeleton rows={2} /> : null}
-      {data && data.links.length === 0 ? (
-        <section className="card">
-          <p className="hint">Свободных приглашений пока нет.</p>
-        </section>
-      ) : null}
-      {data?.links.map((inv) => <InviteCard key={inv.link} invite={inv} />)}
-      {data && data.used > 0 ? (
-        <p className="hint hint--center">
-          Уже использовано: {data.used}
-        </p>
-      ) : null}
-    </>
-  )
-}
-
-function InviteCard({ invite }: { invite: Invite }) {
-  const [copied, setCopied] = useState(false)
-  const copy = async () => {
-    try {
-      await navigator.clipboard.writeText(invite.link)
-      setCopied(true)
-      window.setTimeout(() => setCopied(false), 2000)
-    } catch {
-      setCopied(false)
-    }
-  }
-  return (
-    <section className="card">
-      <p className="invite__link">{invite.link.replace("https://", "")}</p>
-      {invite.you_rub !== "0.00" ? (
-        <p className="hint">Вам начислят {invite.you_rub.replace(".", ",")} ₽, когда друг создаст бота.</p>
-      ) : null}
-      {invite.friend_rub !== "0.00" ? <p className="hint">Другу — {invite.friend_rub.replace(".", ",")} ₽ на счёт.</p> : null}
-      <div className="buttons">
-        <button className="primary" onClick={() => openTelegram(invite.share_url)}>
-          <Icon name="gift" size={18} /> Поделиться
-        </button>
-        <button className="secondary" onClick={copy}>
-          {copied ? "Скопировано" : "Скопировать"}
-        </button>
-      </div>
-    </section>
   )
 }

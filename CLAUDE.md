@@ -116,10 +116,10 @@ or language change rebinds and resets the old owner's button. The model catalog 
 
 Bot panel (spec `docs/superpowers/specs/2026-10-24-bot-panel-design.md`): with `PHX_HOST` set, «Кабинет» opens
 druzhok's own Mini App, `https://<PHX_HOST>/app/?bot=<bot_id>` (source `apps/druzhok_web/assets/app`, built by
-`ops/build-app.sh` into the committed `priv/static/app`). Tabs Главная, Память, Счёт, Ещё (own dark/light palette);
+`ops/build-app.sh` into the committed `priv/static/app`). Tabs Бот, Счёт, Настройки (own dark/light palette);
 the bot, files and invites (`GET /app/api/invites`, ruoc `/v1/referrals` → superbot links) are read only and
 served by druzhok (`Druzhok.Panel`, `PanelController`); «Поддержка» shows when Settings `support_url` (https)
-is set. Owners change language, timezone, group mode, pictures and site in Ещё (`POST /app/api/settings`,
+is set. Owners change language, timezone, group mode, pictures and site in Настройки (`POST /app/api/settings`,
 allowlist `Druzhok.Panel.Settings`; spec `docs/superpowers/specs/2026-10-26-panel-controls-design.md`): a save
 never restarts or wakes the bot, it bumps `settings_seq`, and the lifecycle controller restarts an awake bot
 at a quiet moment (no update/proxy call for 60 s, no turn, no child process; never forced) while a wake or any

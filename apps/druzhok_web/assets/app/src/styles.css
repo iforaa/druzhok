@@ -195,14 +195,23 @@ h2 {
   color: var(--accent);
 }
 
-/* --- Главная ------------------------------------------------------------- */
+/* --- Бот ---------------------------------------------------------------- */
 
-.topbar {
+.bot-head {
   display: flex;
-  justify-content: space-between;
   align-items: center;
+  gap: 12px;
+  padding-top: 4px;
+}
+.bot-head__text {
+  flex: 1;
+  min-width: 0;
+}
+.bot-head .hero__name {
+  overflow-wrap: anywhere;
 }
 .avatar {
+  flex: none;
   width: 46px;
   height: 46px;
   border-radius: 50%;
@@ -214,16 +223,6 @@ h2 {
   background: linear-gradient(145deg, #5aa9ff, #2f6fe0);
   box-shadow: 0 0 0 3px var(--surface);
 }
-.round-button {
-  width: 46px;
-  height: 46px;
-  border-radius: 50%;
-  display: grid;
-  place-items: center;
-  background: var(--surface);
-  border: 1px solid var(--line);
-}
-
 .hero {
   display: flex;
   flex-direction: column;
@@ -243,12 +242,6 @@ h2 {
   color: var(--hint);
   font-size: 0.92rem;
 }
-.hero__hint {
-  margin: 6px 0 0;
-  color: var(--hint);
-  font-size: 0.86rem;
-  max-width: 22rem;
-}
 .hero__label {
   margin: 26px 0 0;
   font-weight: 600;
@@ -261,9 +254,6 @@ h2 {
   margin: 4px 0 0;
   color: var(--hint);
   font-size: 0.92rem;
-}
-.hero__sub--gap {
-  margin-top: 26px;
 }
 
 .money {
@@ -310,153 +300,9 @@ h2 {
   background: var(--danger-soft);
   color: var(--danger);
 }
-.card__head .chip {
+.card__head .chip,
+.bot-head .chip {
   margin-top: 0;
-}
-
-.setup {
-  display: flex;
-  align-items: center;
-  gap: 14px;
-  width: 100%;
-  text-align: left;
-  padding: 14px 16px;
-  border-radius: 22px;
-  background: var(--surface);
-  color: var(--hint);
-}
-.setup__text {
-  flex: 1;
-  display: flex;
-  flex-direction: column;
-}
-.setup__title {
-  color: var(--text);
-  font-weight: 650;
-  font-size: 1.08rem;
-}
-.setup__sub {
-  font-size: 0.92rem;
-}
-
-.ring {
-  position: relative;
-  width: 52px;
-  height: 52px;
-  flex: none;
-}
-.ring svg {
-  display: block;
-}
-.ring__track,
-.ring__fill {
-  fill: none;
-  stroke-width: 4;
-}
-.ring__track {
-  stroke: var(--surface-2);
-}
-.ring__fill {
-  stroke: var(--accent);
-  stroke-linecap: round;
-}
-.ring__label {
-  position: absolute;
-  inset: 0;
-  display: grid;
-  place-items: center;
-  font-size: 0.78rem;
-  font-weight: 700;
-  color: var(--accent);
-}
-
-.actions {
-  display: grid;
-  grid-template-columns: repeat(4, 1fr);
-  gap: 8px;
-}
-.action {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 8px;
-  padding: 14px 4px 12px;
-  border-radius: 18px;
-  background: var(--surface);
-  color: var(--accent);
-  font-size: 0.76rem;
-  font-weight: 600;
-  overflow-wrap: anywhere;
-}
-.action__icon {
-  width: 30px;
-  height: 30px;
-  border-radius: 50%;
-  display: grid;
-  place-items: center;
-  background: var(--accent);
-  color: var(--accent-text);
-}
-
-.tips {
-  position: relative;
-  border-radius: 22px;
-  overflow: hidden;
-  background: linear-gradient(120deg, var(--tip-from), var(--tip-to));
-  color: #fff;
-}
-.tips__track {
-  display: flex;
-  overflow-x: auto;
-  scroll-snap-type: x mandatory;
-  scrollbar-width: none;
-}
-.tips__track::-webkit-scrollbar {
-  display: none;
-}
-.tip {
-  flex: 0 0 100%;
-  scroll-snap-align: start;
-  padding: 18px 48px 30px 18px;
-}
-.tip__title {
-  margin: 0;
-  font-weight: 700;
-  font-size: 1.08rem;
-}
-.tip__text {
-  margin: 4px 0 0;
-  opacity: 0.92;
-}
-.tips__close {
-  position: absolute;
-  top: 10px;
-  right: 10px;
-  width: 28px;
-  height: 28px;
-  border-radius: 50%;
-  display: grid;
-  place-items: center;
-  background: rgba(255, 255, 255, 0.22);
-  color: #fff;
-}
-.tips__dots {
-  position: absolute;
-  left: 18px;
-  bottom: 12px;
-  display: flex;
-  gap: 5px;
-}
-.dot {
-  width: 6px;
-  height: 6px;
-  border-radius: 3px;
-  background: rgba(255, 255, 255, 0.45);
-  transition: width 0.2s;
-}
-.dot--on {
-  width: 16px;
-  background: #fff;
 }
 
 .step {
@@ -465,20 +311,6 @@ h2 {
   padding: 14px 16px;
   border-radius: 18px;
   background: var(--surface);
-}
-.step__mark {
-  flex: none;
-  width: 24px;
-  height: 24px;
-  border-radius: 50%;
-  border: 2px solid var(--surface-2);
-  display: grid;
-  place-items: center;
-  color: #fff;
-}
-.step--done .step__mark {
-  border-color: var(--ok);
-  background: var(--ok);
 }
 .step__body {
   flex: 1;
@@ -490,9 +322,6 @@ h2 {
   margin: 0;
   font-weight: 600;
 }
-.step--done .step__title {
-  color: var(--hint);
-}
 
 /* --- Cards, rows, lists ------------------------------------------------- */
 
@@ -503,10 +332,6 @@ h2 {
   display: flex;
   flex-direction: column;
   gap: 10px;
-}
-.card--button {
-  width: 100%;
-  text-align: left;
 }
 .card--error p {
   margin: 0;
@@ -544,6 +369,15 @@ h2 {
 }
 .row + .row {
   border-top: 1px solid var(--line);
+}
+.row--stack {
+  flex-direction: column;
+  align-items: stretch;
+}
+.row__line {
+  display: flex;
+  align-items: center;
+  gap: 12px;
 }
 .row--still .row__title {
   color: var(--hint);
@@ -611,6 +445,26 @@ h2 {
 }
 .switch--on .switch__knob {
   transform: translateX(18px);
+}
+.segments {
+  display: grid;
+  grid-auto-flow: column;
+  grid-auto-columns: 1fr;
+  gap: 4px;
+  padding: 3px;
+  border-radius: 13px;
+  background: var(--surface-2);
+}
+.segment {
+  padding: 8px 6px;
+  border-radius: 10px;
+  color: var(--hint);
+  font-size: 0.9rem;
+  font-weight: 600;
+}
+.segment--on {
+  background: var(--accent);
+  color: var(--accent-text);
 }
 .note-error {
   color: var(--danger);
@@ -802,7 +656,11 @@ h2 {
   border-color: var(--accent);
 }
 
+/* Stays in view: Счёт's plans can sit a long way below the top. */
 .banner {
+  position: sticky;
+  top: 8px;
+  z-index: 5;
   margin: 0;
   padding: 12px 14px;
   border-radius: 16px;
@@ -881,7 +739,7 @@ h2 {
 }
 .skeleton__hero,
 .skeleton__row,
-.skeleton__money {
+.skeleton__line {
   border-radius: 20px;
   background: linear-gradient(90deg, var(--skeleton) 25%, var(--skeleton-hi) 50%, var(--skeleton) 75%);
   background-size: 200% 100%;
@@ -893,11 +751,8 @@ h2 {
 .skeleton__row {
   height: 64px;
 }
-.skeleton__money {
-  width: 180px;
-  height: 52px;
-  margin-top: 6px;
-  border-radius: 14px;
+.skeleton__line {
+  height: 64px;
 }
 @keyframes shimmer {
   from {
@@ -912,7 +767,7 @@ h2 {
   .screen,
   .skeleton__hero,
   .skeleton__row,
-  .skeleton__money {
+  .skeleton__line {
     animation: none;
   }
 }

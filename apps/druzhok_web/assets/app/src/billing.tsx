@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react"
 import { api, APIError, cached, explain, fatal, invalidate, portalUrl, type Me, type Payment, type Plan } from "./api"
 import { backButton, openExternal } from "./telegram"
-import { count, date, days, rub } from "./format"
+import { count, date, days, moment, rub } from "./format"
 import { ErrorNote, Figure, Icon, Meter, Row, Skeleton } from "./ui"
 
 // Счёт: ruoc-gateway's bot cabinet (ruoc internal/httpapi/miniapp.go), called
@@ -18,7 +18,7 @@ import { ErrorNote, Figure, Icon, Meter, Row, Skeleton } from "./ui"
 // and the receipt goes to its verified email. Only re-pointing to another
 // account is offered, never unlinking.
 
-type Screen = "account" | "plans" | "receipt" | "link"
+type Screen = "account" | "receipt" | "link"
 
 /**
  * What the period line says, as ruoc's own portal says it: a cancelled plan
@@ -37,8 +37,27 @@ export function periodNote(sub: NonNullable<Me["subscription"]>): string {
 }
 
 /**
- * The plan at a glance, Главная's and Счёт's big figure: what is left of the
- * week, the plan's name and its period. A plan without limits shows its name.
+ * The plan in one line, for Бот's row into Счёт: what is left of the week, or
+ * that the 5-hour limit has run out, since the bot stops answering then
+ * whatever the week says.
+ */
+export function planLine(me: Me): { title: string; sub: string } {
+  const sub = me.subscription
+  const line = sub ? `${sub.plan_name} · ${lowerFirst(periodNote(sub))}` : "Тариф не выбран"
+  if (!me.limits) return sub ? { title: sub.plan_name, sub: lowerFirst(periodNote(sub)) } : { title: "Тариф не выбран", sub: "Посмотреть тарифы" }
+  const session = me.limits.session
+  if (session.used_percent >= 100)
+    return {
+      title: "Лимит на 5 часов исчерпан",
+      sub: session.resets_at ? `Вернётся ${moment(session.resets_at)}` : line,
+    }
+  const left = 100 - Math.max(0, Math.min(100, Math.round(me.limits.weekly.used_percent)))
+  return { title: `Осталось на неделю ${left}%`, sub: line }
+}
+
+/**
+ * The plan at a glance, Счёт's big figure: what is left of the week, the
+ * plan's name and its period. A plan without limits shows its name.
  */
 export function PlanHero({ me }: { me: Me }) {
   const sub = me.subscription
@@ -67,9 +86,7 @@ const lowerFirst = (s: string) => s.charAt(0).toLowerCase() + s.slice(1)
 export default function Billing({ start }: { start?: string }) {
   const [me, setMe] = useState<Me | null>(null)
   const [failure, setFailure] = useState<string | null>(null)
-  const [screen, setScreen] = useState<Screen>(
-    start === "plans" || start === "receipt" || start === "link" ? start : "account",
-  )
+  const [screen, setScreen] = useState<Screen>(start === "receipt" || start === "link" ? start : "account")
   const [watching, setWatching] = useState<string | null>(null)
 
   const load = useCallback(async (fresh = false) => {
@@ -98,7 +115,10 @@ export default function Billing({ start }: { start?: string }) {
     await load(true)
   }, [load])
 
-  useEffect(() => backButton(screen === "account" ? null : () => setScreen("account")), [screen])
+  useEffect(() => {
+    window.scrollTo(0, 0)
+    return backButton(screen === "account" ? null : () => setScreen("account"))
+  }, [screen])
 
   if (failure) return <ErrorNote error={failure} retry={() => load(true)} />
   if (!me) return <Skeleton hero rows={4} />
@@ -118,11 +138,10 @@ export default function Billing({ start }: { start?: string }) {
           }}
         />
       ) : null}
-      {shown === "account" ? <Account me={me} go={setScreen} /> : null}
-      {shown === "plans" ? (
-        <Plans
+      {shown === "account" ? (
+        <Account
           me={me}
-          needReceipt={() => setScreen("receipt")}
+          go={setScreen}
           onOpened={(id) => {
             invalidate("me")
             setWatching(id)
@@ -144,7 +163,17 @@ export default function Billing({ start }: { start?: string }) {
   )
 }
 
-function Account({ me, go }: { me: Me; go: (s: Screen) => void }) {
+function Account({
+  me,
+  go,
+  onOpened,
+  onLinkChanged,
+}: {
+  me: Me
+  go: (s: Screen) => void
+  onOpened: (paymentID: string) => void
+  onLinkChanged: () => void
+}) {
   return (
     <>
       <section className="hero hero--plain">
@@ -183,9 +212,6 @@ function Account({ me, go }: { me: Me; go: (s: Screen) => void }) {
         </dl>
       </section>
 
-      <button className="primary" onClick={() => go("plans")}>
-        Тарифы и оплата
-      </button>
       {me.linked ? (
         <div className="group">
           <Row
@@ -197,30 +223,33 @@ function Account({ me, go }: { me: Me; go: (s: Screen) => void }) {
           <Row icon="lock" tone="grey" title="Подключить другой аккаунт" onClick={() => go("link")} />
         </div>
       ) : (
-        <>
-          <section className="card">
-            <div className="card__head">
-              <span className="label">Один счёт с Клео Код</span>
-            </div>
-            <p className="hint">
-              Есть аккаунт Клео Код? Подключите его — бот будет тратить его тариф, а отдельно платить за бота
-              не придётся.
-            </p>
-            <button className="secondary" onClick={() => go("link")}>
-              <Icon name="user" size={18} />
-              Подключить аккаунт
-            </button>
-          </section>
-          <div className="group">
-            <Row
-              icon="mail"
-              tone="blue"
-              title="Почта для чеков"
-              sub={me.receipt.verified ? me.receipt.email : "не указана"}
-              onClick={() => go("receipt")}
-            />
+        <section className="card">
+          <div className="card__head">
+            <span className="label">Один счёт с Клео Код</span>
           </div>
-        </>
+          <p className="hint">
+            Есть аккаунт Клео Код? Подключите его — бот будет тратить его тариф, а отдельно платить за бота
+            не придётся.
+          </p>
+          <button className="secondary" onClick={() => go("link")}>
+            <Icon name="user" size={18} />
+            Подключить аккаунт
+          </button>
+        </section>
+      )}
+
+      <Plans me={me} needReceipt={() => go("receipt")} onOpened={onOpened} onLinkChanged={onLinkChanged} />
+
+      {me.linked ? null : (
+        <div className="group">
+          <Row
+            icon="mail"
+            tone="blue"
+            title="Почта для чеков"
+            sub={me.receipt.verified ? me.receipt.email : "не указана, нужна для оплаты"}
+            onClick={() => go("receipt")}
+          />
+        </div>
       )}
     </>
   )
@@ -239,22 +268,31 @@ function Plans({
 }) {
   const [plans, setPlans] = useState<Plan[] | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const [loadError, setLoadError] = useState<string | null>(null)
+  const [round, setRound] = useState(0)
   const [busy, setBusy] = useState<string | null>(null)
   const [opened, setOpened] = useState<{ plan: string; id: string; url: string; fallback: boolean } | null>(null)
 
   // The plans are the account's: the bot's own, or the portal's once it is
-  // linked. Asked again when the link changes under this screen.
-  const linked = me.linked?.email_masked ?? ""
+  // linked. Asked again when the link or the plan changes under this screen,
+  // as a finished payment does: which is current, and each one's price, move,
+  // and a payment link already opened is spent. The old list goes first, so a
+  // failed read can never leave old prices with live buttons.
+  const sub = me.subscription
+  const account = [me.linked?.email_masked, sub?.plan_id, sub?.current_period_end, sub?.paid_through, sub?.next_plan_name].join("|")
   useEffect(() => {
     let live = true
+    setOpened(null)
+    setPlans(null)
+    setLoadError(null)
     api.plans().then(
       (p) => live && setPlans(p),
-      (err) => live && setError(explain(err)),
+      (err) => live && setLoadError(explain(err)),
     )
     return () => {
       live = false
     }
-  }, [linked])
+  }, [account, round])
 
   // First tap: ask the bank for a payment. Telegram would not open the link
   // after the bank's wait, so the button turns into a second tap that does.
@@ -285,15 +323,11 @@ function Plans({
     onOpened(opened.id)
   }
 
-  if (!plans) return error ? <ErrorNote error={error} /> : <Skeleton rows={3} />
+  if (!plans)
+    return loadError ? <ErrorNote error={loadError} retry={() => setRound((n) => n + 1)} /> : <Skeleton rows={2} />
   return (
     <>
-      <h1 className="screen-title">Тарифы</h1>
-      {me.receipt.verified ? (
-        <p className="hint">Чек придёт на {me.receipt.email}.</p>
-      ) : (
-        <p className="hint">Перед оплатой нужно подтвердить почту — на неё придёт чек.</p>
-      )}
+      <span className="label">Тарифы</span>
       {error && <p className="error">{error}</p>}
       {plans.length === 0 && <p className="hint">Тарифов пока нет.</p>}
       {plans.map((plan) => (

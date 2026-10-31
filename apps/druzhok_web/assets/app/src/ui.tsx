@@ -2,30 +2,16 @@ import { useCallback, useEffect, useState, type ReactNode } from "react"
 import { explain } from "./api"
 import { inTime, moment } from "./format"
 
-// The panel's small parts: icons, list rows, the big money figure, the
-// progress ring, meters, placeholders while a screen loads, and the hook
+// The panel's small parts: icons, list rows, the big money figure, meters, placeholders while a screen loads, and the hook
 // every screen loads its data with.
 
 const paths: Record<string, ReactNode> = {
   home: <path d="M3 10.5 12 3l9 7.5V20a1 1 0 0 1-1 1h-5v-6h-6v6H4a1 1 0 0 1-1-1z" />,
-  spark: (
-    <>
-      <path d="M12 3l1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8z" />
-      <path d="M19 15l.7 1.8 1.8.7-1.8.7-.7 1.8-.7-1.8-1.8-.7 1.8-.7z" />
-    </>
-  ),
   wallet: (
     <>
       <path d="M4 6.5A2.5 2.5 0 0 1 6.5 4H18v3" />
       <path d="M4 6.5V18a2 2 0 0 0 2 2h14V9H6.5A2.5 2.5 0 0 1 4 6.5z" />
       <circle cx="16.5" cy="14.5" r="1" />
-    </>
-  ),
-  more: (
-    <>
-      <circle cx="6" cy="12" r="1.6" />
-      <circle cx="12" cy="12" r="1.6" />
-      <circle cx="18" cy="12" r="1.6" />
     </>
   ),
   plus: <path d="M12 5v14M5 12h14" />,
@@ -234,6 +220,54 @@ export function Toggle({
   )
 }
 
+/** A row with its options side by side under it; a tap on another one picks it. */
+export function Segmented({
+  icon,
+  tone = "blue",
+  title,
+  sub,
+  options,
+  value,
+  busy = false,
+  onPick,
+}: {
+  icon: string
+  tone?: "blue" | "green" | "orange" | "purple" | "pink" | "teal" | "grey"
+  title: string
+  sub?: ReactNode
+  options: [string, string][]
+  value: string
+  busy?: boolean
+  onPick: (value: string) => void
+}) {
+  return (
+    <div className="row row--stack">
+      <div className="row__line">
+        <span className={`bubble bubble--${tone}`}>
+          <Icon name={icon} size={20} />
+        </span>
+        <span className="row__text">
+          <span className="row__title">{title}</span>
+          {sub ? <span className="row__sub">{sub}</span> : null}
+        </span>
+      </div>
+      <div className="segments" role="group" aria-label={title}>
+        {options.map(([id, label]) => (
+          <button
+            key={id}
+            className={id === value ? "segment segment--on" : "segment"}
+            aria-pressed={id === value}
+            disabled={busy}
+            onClick={() => id !== value && onPick(id)}
+          >
+            {label}
+          </button>
+        ))}
+      </div>
+    </div>
+  )
+}
+
 /** The big figure: "85" large, "%" smaller, as a wallet shows its total. */
 export function Figure({ whole, rest, small = false }: { whole: string; rest?: string; small?: boolean }) {
   return (
@@ -241,29 +275,6 @@ export function Figure({ whole, rest, small = false }: { whole: string; rest?: s
       <span className="money__whole">{whole}</span>
       {rest ? <span className="money__rest">{rest}</span> : null}
     </p>
-  )
-}
-
-/** A ring filled to `done` of `total`, with the share in the middle. */
-export function Ring({ done, total }: { done: number; total: number }) {
-  const share = total ? done / total : 0
-  const r = 21
-  const c = 2 * Math.PI * r
-  return (
-    <span className="ring" aria-hidden="true">
-      <svg width="52" height="52" viewBox="0 0 52 52">
-        <circle cx="26" cy="26" r={r} className="ring__track" />
-        <circle
-          cx="26"
-          cy="26"
-          r={r}
-          className="ring__fill"
-          strokeDasharray={`${c * share} ${c}`}
-          transform="rotate(-90 26 26)"
-        />
-      </svg>
-      <span className="ring__label">{Math.round(share * 100)}%</span>
-    </span>
   )
 }
 
