@@ -36,7 +36,7 @@ echo "== egress locked"
 if [ "$asleep" = 1 ]; then
   echo "skipped (asleep)"
 else
-  nft list set inet druzhok bot_uids | grep -qw "$uid" || { echo "uid $uid not in bot_uids: egress is open"; exit 1; }
+  nft list set inet druzhok bot_uids | grep -w "$uid" >/dev/null || { echo "uid $uid not in bot_uids: egress is open"; exit 1; }
   echo "uid $uid in bot_uids"
 fi
 
@@ -44,7 +44,7 @@ echo "== webhook port isolation"
 if [ "$asleep" = 1 ]; then
   echo "skipped (asleep)"
 elif [ -n "$port" ]; then
-  nft list set inet druzhok bot_webhook | grep -q "$uid . $port" || { echo "{ $uid . $port } not in bot_webhook"; exit 1; }
+  nft list set inet druzhok bot_webhook | grep "$uid . $port" >/dev/null || { echo "{ $uid . $port } not in bot_webhook"; exit 1; }
   echo "only uid $uid may answer from port $port"
 else
   echo "no webhook port (id out of range): webhook mode unavailable"
