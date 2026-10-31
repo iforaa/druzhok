@@ -59,12 +59,15 @@ if [ ! -f "$HERMES_DIR/pyproject.toml" ]; then git clone -q --depth 1 "$HERMES_R
 ( cd "$HERMES_DIR" && UV_CACHE_DIR=/data/opt/uv-cache UV_PYTHON_INSTALL_DIR=/data/opt/uv-python uv sync --frozen --python 3.14 --extra all --extra messaging --extra firecrawl --extra mnemosyne 2>&1 | tail -2 )
 # Bots run under ProtectSystem=strict and cannot write __pycache__: precompile.
 "$HERMES_DIR/.venv/bin/python" -m compileall -q -j0 -x '/(tests?|node_modules)/' "$HERMES_DIR" >/dev/null || true
+# The same for uv's standard library, which the venv only links to.
+"$HERMES_DIR/.venv/bin/python" -m compileall -q -j0 -x '/(tests?|node_modules)/' "$("$HERMES_DIR/.venv/bin/python" -c 'import sysconfig; print(sysconfig.get_path("stdlib"))')" >/dev/null || true
 chown -R root:root "$HERMES_DIR"; chmod -R a+rX "$HERMES_DIR" /data/opt/uv-python
 
 step "fetch worker venv (trafilatura + pymupdf for druzhok's page reader)"
 apt-get install -y -q --no-install-recommends python3-venv >/dev/null
 python3 -m venv /opt/druzhok-fetch/.venv
 /opt/druzhok-fetch/.venv/bin/pip install -q -r "$OPS/../apps/druzhok/priv/fetch-worker/requirements.txt"
+mkdir -p /etc/druzhok
 grep -q '^FETCH_WORKER_BIN=' /etc/druzhok/druzhok.env 2>/dev/null || echo 'FETCH_WORKER_BIN=/opt/druzhok-fetch/.venv/bin/python' >> /etc/druzhok/druzhok.env
 
 step "druzhok-ctl + units + sudoers + nftables"
@@ -74,7 +77,7 @@ install -m 0644 "$OPS/system-hermes.slice" /etc/systemd/system/system-hermes.sli
 install -m 0644 "$OPS/druzhok.service" /etc/systemd/system/druzhok.service
 install -m 0440 "$OPS/sudoers-druzhok" /etc/sudoers.d/druzhok
 visudo -cf /etc/sudoers.d/druzhok
-mkdir -p /etc/druzhok /etc/nftables.d
+mkdir -p /etc/nftables.d
 install -m 0644 "$OPS/nftables-druzhok.nft" /etc/nftables.d/druzhok.nft
 grep -q 'include "/etc/nftables.d/\*.nft"' /etc/nftables.conf || echo 'include "/etc/nftables.d/*.nft"' >> /etc/nftables.conf
 systemctl enable --now nftables
@@ -99,7 +102,11 @@ step "druzhok env"
 # Single source of prod env for druzhok.service, druzhok-run.sh and smoke.sh.
 # Secrets are generated once; the fixed keys are (re)asserted on every run.
 ENVF=/etc/druzhok/druzhok.env
-[ -f "$ENVF" ] || printf 'SECRET_KEY_BASE=%s\nPHX_HOST=oldey.dev\n' "$(openssl rand -base64 48 | tr -d '\n')" > "$ENVF"
+# The fetch worker step above may already have created the file, so look for the key.
+if ! grep -q '^SECRET_KEY_BASE=' "$ENVF" 2>/dev/null; then
+  printf 'SECRET_KEY_BASE=%s\n' "$(openssl rand -base64 48 | tr -d '\n')" >> "$ENVF"
+  grep -q '^PHX_HOST=' "$ENVF" || echo 'PHX_HOST=druzhok.oldey.dev' >> "$ENVF"
+fi
 while IFS='=' read -r k v; do
   grep -q "^$k=" "$ENVF" || echo "$k=$v" >> "$ENVF"
 done <<EOT

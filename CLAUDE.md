@@ -16,10 +16,15 @@ Always use `/my-commit` for committing changes.
   one `Lifecycle.Bot` per bot in druzhok.service starts/stops/sleeps/wakes/deletes it. From `druzhok-run.sh` pass
   `wait: true` to get the outcome (`{:ok, _}` / `{:error, reason}` / `{:error, :timeout}`). An active bot whose unit
   is down is started again (backoff 10 s → 15 min), so `druzhok-ctl stop` does not last: stop through
-  `BotManager.stop`. Opt-in sleep (`sleep_enabled`, `ops/druzhok set <bot> sleep_enabled=true`): a webhook bot idle for `sleep_idle_minutes`
+  `BotManager.stop`. Sleep is on by default (`sleep_enabled`, opt out with `ops/druzhok set <bot> sleep_enabled=false`): a webhook bot idle for `sleep_idle_minutes`
   (Settings, default 30) is stopped and woken by its next queued update that it would answer
   (`Telegram.Addressed`: group chatter a mention-only bot skips waits, and is delivered on the next wake),
   or 3 min before its next cron run.
+- **Bot starts pass one gate** (`Druzhok.Lifecycle.StartGate`): a wake, or a start of an active bot whose unit is down,
+  takes a one-at-a-time `:global` lock held until READY and needs `MemAvailable` ≥ Settings `start_min_free_mb` (default 900;
+  unreadable `/proc/meminfo` passes). Busy is not a failure: no backoff, the next tick retries, a sleeping bot stays asleep and
+  its updates stay held (they expire at 24 h; a warning is logged after 1 h of waiting for memory). Not gated: restart of a
+  running unit, stop, delete, sleep, `druzhok-ctl`, systemd's `Restart=always`.
 - **Never set HTTP_PROXY/HTTPS_PROXY for bots** — breaks multipart uploads.
 - **Bot users have no internet**: `ops/nftables-druzhok.nft` allows only the proxy, DNS and Telegram's CIDRs. Anything a bot needs from the web goes through the proxy (search, `/v2/scrape`).
 - **One Telegram poller per token.** Stop a bot on the old host before starting it elsewhere.
@@ -165,7 +170,7 @@ Operator CLI (replaces the dashboard, spec `docs/superpowers/specs/2026-10-21-da
 needs it, `Druzhok.BotSettings`; `value=-` reads stdin for secrets), `start|stop|restart <bot>` (waits),
 `users|allow|disallow|approve`, `ruoc-check`, `settings [set key=value…]`. Dev: `mix druzhok …`.
 Units: `sudo druzhok-ctl status|logs <name>`; `journalctl -u hermes@<name> -f`.
-All bots share `system-hermes.slice` (`ops/system-hermes.slice`: MemoryHigh 4.5G, MemoryMax 5G; per-bot 800M/1G in `hermes@.service`). Changing it applies live on `daemon-reload`.
+All bots share `system-hermes.slice` (`ops/system-hermes.slice`: MemoryHigh 4.5G, MemoryMax 5G; per-bot 800M/1G in `hermes@.service`). Changing it applies live on `daemon-reload`. A smaller host sets its own ceiling in a drop-in, `/etc/systemd/system/system-hermes.slice.d/size.conf` (`[Slice]`, `MemoryHigh=`, `MemoryMax=`), which reinstalling the slice file does not touch.
 Hermes install: `/opt/hermes` is a symlink to `/data/opt/hermes-<version>` (one dir per version, rsynced from `hermes-agent/`, not a git checkout; Python 3.14 from uv under `/data/opt/uv-python` since 0.22; recipe in the `update-hermes` skill). Bots move onto a new dir one at a time through druzhok (`sudo ops/druzhok restart <bot>`, not `druzhok-ctl restart`, which skips config sync) — operator's bot first, `ops/smoke.sh`.
 
 Legacy Yandex VM (`ssh -l igor 10.129.0.19`, Docker-based) is kept only as a fallback during migration.

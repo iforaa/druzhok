@@ -5,6 +5,10 @@ Status: r5, implemented on `sleep-wake` 2026-10-21 (r1–r4 reviewed by revmux `
 `sleep-wake`. Block A item 6. Builds on the Telegram webhook relay
 (`2026-10-20-telegram-webhook-relay-design.md`).
 
+Changed 2026-10-31: sleep is on by default, no longer per-bot opt-in. The `Instance.sleep_enabled` schema default
+is `true` and a migration set every existing row to 1; opt out per bot with `sleep_enabled=false`. The SQLite column
+default stays false, since changing it would mean rebuilding `instances`. The text below describes the original opt-in.
+
 r3 replaces r2's compare-and-set protocol, where five parties (druzhok.service, `druzhok-run.sh` BEAMs,
 the dashboard, the sweep, the relay) each changed a bot's state, with **one controller per bot** that is
 the only thing allowed to start, stop, sleep, wake or delete it. Everyone else records what they want.
