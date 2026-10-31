@@ -48,6 +48,34 @@ defmodule DruzhokWebWeb.LlmProxy.Ruoc.FetchTest do
     assert usage_logs(instance) == []
   end
 
+  test "a spent window is a 402 with the notice, and tells the owner", %{conn: conn, bypass: bypass, instance: instance} do
+    watch_cabinet()
+    Bypass.expect_once(bypass, "POST", "/v1/fetch", &usage_limit/1)
+
+    conn = post(conn, "/v2/scrape", %{"url" => "https://example.com"})
+
+    assert json_response(conn, 402) == %{"success" => false, "error" => DruzhokWebWeb.LlmProxy.BalanceNotice.text(instance)}
+    assert_owner_told(instance)
+  end
+
+  test "a 402 does not tell the owner, as before", %{conn: conn, bypass: bypass} do
+    watch_cabinet()
+    Bypass.expect_once(bypass, "POST", "/v1/fetch", fn req -> gateway_error(req, 402, "insufficient_quota", "no") end)
+
+    assert post(conn, "/v2/scrape", %{"url" => "https://example.com"}).status == 402
+    refute_owner_told()
+  end
+
+  test "an ordinary 429 keeps its status and tells nobody", %{conn: conn, bypass: bypass} do
+    watch_cabinet()
+    Bypass.expect_once(bypass, "POST", "/v1/fetch", fn req -> gateway_error(req, 429, "rate_limit_error", "slow down") end)
+
+    conn = post(conn, "/v2/scrape", %{"url" => "https://example.com"})
+
+    assert json_response(conn, 429) == %{"success" => false, "error" => "slow down"}
+    refute_owner_told()
+  end
+
   test "other gateway refusals keep their status and message", %{conn: conn, bypass: bypass} do
     Bypass.expect_once(bypass, "POST", "/v1/fetch", fn req ->
       gateway_reply(req, 422, %{"error" => %{"type" => "invalid_request_error", "message" => "the page has no extractable text", "status_code" => 404}})

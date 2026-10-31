@@ -66,6 +66,30 @@ defmodule DruzhokWebWeb.LlmProxy.Ruoc.TranscriptionTest do
     end
   end
 
+  test "a spent window is a 402 with the notice, and tells the owner", %{conn: conn, bypass: bypass, upload: upload, instance: instance} do
+    watch_cabinet()
+    Bypass.expect_once(bypass, "POST", "/v1/transcribe", &usage_limit/1)
+
+    conn = post(conn, "/v1/audio/transcriptions", %{"file" => upload})
+
+    assert json_response(conn, 402) ==
+             %{"error" => %{"message" => DruzhokWebWeb.LlmProxy.BalanceNotice.text(instance), "type" => "insufficient_quota"}}
+
+    assert get_resp_header(conn, "x-ruoc-request-id") == ["req_abc"]
+    assert_owner_told(instance)
+  end
+
+  test "a 402 and an ordinary 429 do not tell the owner", %{conn: conn, bypass: bypass, upload: upload} do
+    watch_cabinet()
+
+    for {status, type} <- [{402, "insufficient_quota"}, {429, "rate_limit_error"}] do
+      Bypass.expect_once(bypass, "POST", "/v1/transcribe", fn req -> gateway_error(req, status, type, "no") end)
+      assert post(conn, "/v1/audio/transcriptions", %{"file" => upload}).status == status
+    end
+
+    refute_owner_told()
+  end
+
   test "502 when the gateway is down", %{conn: conn, bypass: bypass, upload: upload} do
     Bypass.down(bypass)
     assert %{"error" => %{"type" => "api_error"}} = json_response(post(conn, "/v1/audio/transcriptions", %{"file" => upload}), 502)

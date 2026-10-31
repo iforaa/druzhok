@@ -65,12 +65,12 @@ Prod env (MIX_ENV, DATABASE_PATH, DRUZHOK_HOST, HEX/MIX homes, SECRET_KEY_BASE, 
 
 Chat, search, transcription and image generation go to **ruoc-gateway** (`Druzhok.Ruoc`, `LlmProxy.Ruoc`),
 one ruoc account per bot (`instances.ruoc_account_id` / `ruoc_api_key`); the balance there is
-the only spending limit (402 when empty). Druzhok records tokens and previews only, `cost_cents`
-is 0 on those rows. A bot without a ruoc key gets 503 from `LlmAuth`. A 402 (plan limit reached)
-on chat is answered as a normal 200 completion carrying `LlmProxy.BalanceNotice` in the bot's
-language, because hermes's own 402 text tells tenants to add provider credits and switch `/model`;
+the only spending limit (402 when empty, 429 `usage_limit_reached` when a windowed plan's window is spent). Druzhok records tokens and previews only, `cost_cents`
+is 0 on those rows. A bot without a ruoc key gets 503 from `LlmAuth`. A 402 or a 429 `usage_limit_reached` (plan limit reached;
+any other 429 is relayed) on chat is answered as a normal 200 completion carrying `LlmProxy.BalanceNotice` in the bot's
+language, because hermes's own 402 text tells tenants to add provider credits and switch `/model`, and it retries a 429;
 hermes's auxiliary calls (`LlmProxy.AuxShapes`: no tools, and no system message or a known aux
-prompt) keep the real 402. What a bot is told about itself (SOUL.md, `agent.system_prompt`
+prompt) keep the real error. Search, fetch, images and transcription answer that 429 as a 402 with the notice. What a bot is told about itself (SOUL.md, `agent.system_prompt`
 product rules, the Russian Telegram hint) is `Runtime.Hermes.Voice`, spec
 `docs/superpowers/specs/2026-10-25-bot-voice-design.md`. What hermes itself prints (menu `/new /stop /voice /help`, `/start`
 greeting, failures; locale overlay + fork flag `display.end_user_mode`) is `Runtime.Hermes.Locale`, spec
@@ -104,11 +104,11 @@ stays (`delete_error`, `delete_failures`) and the controller retries on the star
 changes happen in the ruoc console; the manager bot and `ops/druzhok show` only show plan + renewal
 date from `GET /v1/balance` (`Druzhok.Ruoc.balance/1`). Bot cabinet (ruoc-gateway spec
 `2026-10-24-telegram-mini-app-design.md`): ruoc serves a Telegram Mini App at `oldey.dev/tg/` where a bot's
-owner sees its account and pays for druzhok's plans (managed in ruoc's Pricing tab, «Партнёр» = druzhok).
+owner sees its account and pays for Cleo's plans.
 `Druzhok.Cabinet` (one GenServer, casts only) binds each bot at ruoc (`PUT /partner/accounts/{id}/telegram`)
 and sets the owner's «Кабинет» menu button on every start/wake when something changed
 (`instances.cabinet_binding/cabinet_url/cabinet_menu_set`); the button is retried on the owner's first private
-message, since Telegram refuses it before the owner opened the bot. A chat 402 also sends the owner an
+message, since Telegram refuses it before the owner opened the bot. A chat 402, or a 429 `usage_limit_reached` on chat, search, fetch, images or transcription, also sends the owner an
 «Открыть кабинет» button, at most every 6 h. `sudo ops/druzhok bind-cabinet [<bot>]` binds now; `--off`
 restores the default button and sets `cabinet_off`, which nothing undoes but a plain `bind-cabinet`. An owner
 or language change rebinds and resets the old owner's button. The model catalog is ruoc's

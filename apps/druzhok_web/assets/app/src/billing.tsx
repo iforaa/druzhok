@@ -14,7 +14,7 @@ import { ErrorNote, Figure, Icon, Meter, Row, Skeleton } from "./ui"
 //
 // A bot can spend from its owner's Cleo Code account instead of its own
 // (ruoc's funding link): the owner proves the account with its password here,
-// and from then on `me` describes that account, its plans are the portal's,
+// and from then on `me` describes that account, plans are bought on it,
 // and the receipt goes to its verified email. Only re-pointing to another
 // account is offered, never unlinking.
 
@@ -273,8 +273,8 @@ function Plans({
   const [busy, setBusy] = useState<string | null>(null)
   const [opened, setOpened] = useState<{ plan: string; id: string; url: string; fallback: boolean } | null>(null)
 
-  // The plans are the account's: the bot's own, or the portal's once it is
-  // linked. Asked again when the link or the plan changes under this screen,
+  // The plans are Cleo's, linked or not; they start on the bot's own account,
+  // or on the funder's once it is linked. Asked again when the link or the plan changes under this screen,
   // as a finished payment does: which is current, and each one's price, move,
   // and a payment link already opened is spent. The old list goes first, so a
   // failed read can never leave old prices with live buttons.

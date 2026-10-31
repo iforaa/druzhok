@@ -5,7 +5,8 @@ defmodule DruzhokWebWeb.LlmProxy.Ruoc do
   `ruoc_api_key`.
 
   Money lives in ruoc-gateway. Nothing here checks a budget or computes a
-  cost; a 402 from the gateway is relayed to the bot as the answer. What
+  cost; a 402 from the gateway, or a windowed plan's 429 `usage_limit_reached`,
+  is relayed to the bot as the answer. What
   stays on this side is the two dialects hermes speaks that the gateway does
   not — Firecrawl-shaped search and OpenAI multipart audio — and the usage
   rows (tokens, previews) the idle check reads.
@@ -31,6 +32,8 @@ defmodule DruzhokWebWeb.LlmProxy.Ruoc do
   @image_timeout 190_000
   # A page read: ruoc allows the fetcher 45 s.
   @fetch_timeout 50_000
+  # The refusal of a windowed plan whose window is spent (ruoc's funding.go).
+  @usage_limit_type "usage_limit_reached"
 
   # --- Chat -------------------------------------------------------------------
 
@@ -55,19 +58,19 @@ defmodule DruzhokWebWeb.LlmProxy.Ruoc do
   end
 
   defp sync_chat(conn, instance, body, model, started_at) do
-    case Client.post("/v1/chat/completions", instance.ruoc_api_key, Jason.encode!(body)) do
-      {:ok, 402, headers, resp_body} ->
+    case plan_refusal(Client.post("/v1/chat/completions", instance.ruoc_api_key, Jason.encode!(body))) do
+      {:plan_refused, status, headers, resp_body} ->
         request_id = request_id(headers)
         Druzhok.Cabinet.out_of_money(instance.id)
 
         if AuxShapes.aux?(body) do
-          log(instance, "chat", request_id, started_at, "HTTP 402 (auxiliary call)")
+          log(instance, "chat", request_id, started_at, "HTTP #{status} (auxiliary call)")
 
           conn
           |> relay_headers(headers, request_id)
-          |> send_resp(402, resp_body)
+          |> send_resp(status, resp_body)
         else
-          log(instance, "chat", request_id, started_at, "HTTP 402 -> balance notice")
+          log(instance, "chat", request_id, started_at, "HTTP #{status} -> balance notice")
 
           conn
           |> relay_headers(headers, request_id)
@@ -98,12 +101,12 @@ defmodule DruzhokWebWeb.LlmProxy.Ruoc do
 
   # The response is only committed once the gateway's status is known, so a
   # 429 on a streaming request reaches the bot as that status with the
-  # gateway's own envelope, not as an empty 200 event stream. A 402 becomes
-  # the balance notice as a one-chunk stream (see BalanceNotice), except on
-  # an auxiliary call (AuxShapes).
+  # gateway's own envelope, not as an empty 200 event stream. A plan's refusal
+  # becomes the balance notice as a one-chunk stream (see BalanceNotice),
+  # except on an auxiliary call (AuxShapes).
   defp stream_chat(conn, instance, body, model, started_at) do
     request = Client.build(:post, "/v1/chat/completions", instance.ruoc_api_key, Jason.encode!(body))
-    # A 402 on one of hermes's auxiliary calls stays a 402 (AuxShapes).
+    # A plan's refusal of one of hermes's auxiliary calls stays as it is (AuxShapes).
     aux? = AuxShapes.aux?(body)
     usage_ref = make_ref()
     Process.put(usage_ref, @no_usage)
@@ -159,25 +162,26 @@ defmodule DruzhokWebWeb.LlmProxy.Ruoc do
         meter(instance, "chat", model, Process.get(usage_ref), started_at, body, nil, request_id(acc.headers))
         acc.conn
 
-      {:ok, %{status: 402} = acc} when not aux? ->
-        request_id = request_id(acc.headers)
-        log(instance, "chat", request_id, started_at, "HTTP 402 -> balance notice")
-        Druzhok.Cabinet.out_of_money(instance.id)
-
-        acc.conn
-        |> relay_headers(acc.headers, request_id)
-        |> put_resp_content_type("text/event-stream")
-        |> put_resp_header("cache-control", "no-cache")
-        |> send_resp(200, BalanceNotice.sse(instance, model))
-
       {:ok, %{status: status} = acc} when is_integer(status) ->
         request_id = request_id(acc.headers)
-        if status == 402, do: Druzhok.Cabinet.out_of_money(instance.id)
-        log(instance, "chat", request_id, started_at, "HTTP #{status}")
+        refused? = plan_refused?(status, acc.error_body)
+        if refused?, do: Druzhok.Cabinet.out_of_money(instance.id)
 
-        acc.conn
-        |> relay_headers(acc.headers, request_id)
-        |> send_resp(status, acc.error_body)
+        if refused? and not aux? do
+          log(instance, "chat", request_id, started_at, "HTTP #{status} -> balance notice")
+
+          acc.conn
+          |> relay_headers(acc.headers, request_id)
+          |> put_resp_content_type("text/event-stream")
+          |> put_resp_header("cache-control", "no-cache")
+          |> send_resp(200, BalanceNotice.sse(instance, model))
+        else
+          log(instance, "chat", request_id, started_at, "HTTP #{status}")
+
+          acc.conn
+          |> relay_headers(acc.headers, request_id)
+          |> send_resp(status, acc.error_body)
+        end
 
       {:error, reason, %{status: 200} = acc} ->
         Logger.error("[ruoc] #{instance.name} chat stream cut: #{inspect(reason)}")
@@ -204,7 +208,7 @@ defmodule DruzhokWebWeb.LlmProxy.Ruoc do
     started_at = System.monotonic_time(:millisecond)
     payload = %{"query" => query, "max_results" => min(limit, @search_max_results)}
 
-    case Client.post("/v1/search", instance.ruoc_api_key, Jason.encode!(payload)) do
+    case plan_refusal(Client.post("/v1/search", instance.ruoc_api_key, Jason.encode!(payload))) do
       {:ok, 200, headers, resp_body} ->
         request_id = request_id(headers)
         results = resp_body |> Jason.decode!() |> Map.get("results", []) |> to_firecrawl()
@@ -215,10 +219,11 @@ defmodule DruzhokWebWeb.LlmProxy.Ruoc do
         |> relay_headers(headers, request_id)
         |> send_resp(200, Jason.encode!(%{success: true, data: %{web: results}}))
 
-      # ruoc's own 402 text may speak of a balance; the model relays it.
-      {:ok, 402, headers, _resp_body} ->
+      # ruoc's own refusal text may speak of a balance; the model relays it.
+      {:plan_refused, status, headers, _resp_body} ->
         request_id = request_id(headers)
-        log(instance, "search", request_id, started_at, "HTTP 402 -> balance notice")
+        tell_owner_of_limit(instance, status)
+        log(instance, "search", request_id, started_at, "HTTP #{status} -> balance notice")
 
         conn
         |> relay_headers(headers, request_id)
@@ -255,14 +260,14 @@ defmodule DruzhokWebWeb.LlmProxy.Ruoc do
   @doc """
   Firecrawl `/v2/scrape` in, `{success, data: {markdown, metadata}}` out, over
   ruoc `POST /v1/fetch`, which routes back to this node's `/internal/fetch`
-  for the actual read. A 402 keeps its status with the localized balance
+  for the actual read. A plan's refusal is a 402 with the localized balance
   notice; every other refusal keeps ruoc's status and message so the SDK
   raises and hermes records a per-URL error.
   """
   def fetch(conn, instance, url) do
     started_at = System.monotonic_time(:millisecond)
 
-    case Client.post("/v1/fetch", instance.ruoc_api_key, Jason.encode!(%{"url" => url}), receive_timeout: @fetch_timeout) do
+    case plan_refusal(Client.post("/v1/fetch", instance.ruoc_api_key, Jason.encode!(%{"url" => url}), receive_timeout: @fetch_timeout)) do
       {:ok, 200, headers, resp_body} ->
         request_id = request_id(headers)
         page = Jason.decode!(resp_body)
@@ -279,9 +284,10 @@ defmodule DruzhokWebWeb.LlmProxy.Ruoc do
           }
         }))
 
-      {:ok, 402, headers, _resp_body} ->
+      {:plan_refused, status, headers, _resp_body} ->
         request_id = request_id(headers)
-        log(instance, "fetch", request_id, started_at, "HTTP 402 -> balance notice")
+        tell_owner_of_limit(instance, status)
+        log(instance, "fetch", request_id, started_at, "HTTP #{status} -> balance notice")
 
         conn
         |> relay_headers(headers, request_id)
@@ -385,7 +391,7 @@ defmodule DruzhokWebWeb.LlmProxy.Ruoc do
   OpenAI `images/generations` in, `{data: [{b64_json}]}` out, over ruoc
   `POST /v1/images`. The client's `model` is ignored (hermes sends OpenAI
   ids); the bot's `image_gen_model` names a ruoc catalogue entry, nil meaning
-  ruoc's default. A 402 keeps its status but carries the localized balance
+  ruoc's default. A plan's refusal is a 402 carrying the localized balance
   notice, so hermes's tool error reaches the tenant in the bot's language.
   """
   def generate_image(conn, instance) do
@@ -398,7 +404,7 @@ defmodule DruzhokWebWeb.LlmProxy.Ruoc do
         model -> %{"prompt" => prompt, "model" => model}
       end
 
-    case Client.post("/v1/images", instance.ruoc_api_key, Jason.encode!(payload), receive_timeout: @image_timeout) do
+    case plan_refusal(Client.post("/v1/images", instance.ruoc_api_key, Jason.encode!(payload), receive_timeout: @image_timeout)) do
       {:ok, 200, headers, resp_body} ->
         request_id = request_id(headers)
         %{"model" => model, "image" => %{"b64" => b64}} = Jason.decode!(resp_body)
@@ -408,9 +414,10 @@ defmodule DruzhokWebWeb.LlmProxy.Ruoc do
         |> relay_headers(headers, request_id)
         |> send_resp(200, Jason.encode!(%{"created" => System.os_time(:second), "data" => [%{"b64_json" => b64}]}))
 
-      {:ok, 402, headers, _resp_body} ->
+      {:plan_refused, status, headers, _resp_body} ->
         request_id = request_id(headers)
-        log(instance, "image_gen", request_id, started_at, "HTTP 402 -> balance notice")
+        tell_owner_of_limit(instance, status)
+        log(instance, "image_gen", request_id, started_at, "HTTP #{status} -> balance notice")
 
         conn
         |> relay_headers(headers, request_id)
@@ -432,7 +439,11 @@ defmodule DruzhokWebWeb.LlmProxy.Ruoc do
 
   # --- Transcription ----------------------------------------------------------
 
-  @doc "OpenAI multipart `file` in, `{text}` (or plain text) out, over ruoc `/v1/transcribe`."
+  @doc """
+  OpenAI multipart `file` in, `{text}` (or plain text) out, over ruoc
+  `/v1/transcribe`. A 402 is relayed as it came; a spent window becomes a 402
+  with the localized balance notice, so hermes's client does not retry it.
+  """
   def transcribe(conn, instance) do
     started_at = System.monotonic_time(:millisecond)
     params = conn.body_params
@@ -453,11 +464,21 @@ defmodule DruzhokWebWeb.LlmProxy.Ruoc do
 
         {:ok, status, headers, resp_body} ->
           request_id = request_id(headers)
-          log(instance, "audio", request_id, started_at, "HTTP #{status}")
 
-          conn
-          |> relay_headers(headers, request_id)
-          |> send_resp(status, resp_body)
+          if usage_limit?(status, resp_body) do
+            tell_owner_of_limit(instance, status)
+            log(instance, "audio", request_id, started_at, "HTTP #{status} -> balance notice")
+
+            conn
+            |> relay_headers(headers, request_id)
+            |> send_resp(402, Jason.encode!(%{error: %{message: BalanceNotice.text(instance), type: "insufficient_quota"}}))
+          else
+            log(instance, "audio", request_id, started_at, "HTTP #{status}")
+
+            conn
+            |> relay_headers(headers, request_id)
+            |> send_resp(status, resp_body)
+          end
 
         {:error, reason} ->
           Logger.error("[ruoc] #{instance.name} transcribe unreachable: #{inspect(reason)}")
@@ -491,6 +512,26 @@ defmodule DruzhokWebWeb.LlmProxy.Ruoc do
   end
 
   # --- Shared -----------------------------------------------------------------
+
+  # Treated as a plan's refusal: a 402, or a 429 `usage_limit_reached` (a spent
+  # window). Every other 429 and ruoc's 503 `plan_unservable` are left alone.
+  defp plan_refusal({:ok, status, headers, body} = result) do
+    if plan_refused?(status, body), do: {:plan_refused, status, headers, body}, else: result
+  end
+
+  defp plan_refusal(result), do: result
+
+  defp plan_refused?(status, body), do: status == 402 or usage_limit?(status, body)
+
+  defp usage_limit?(429, body) do
+    match?({:ok, %{"error" => %{"type" => @usage_limit_type}}}, Jason.decode(body))
+  end
+
+  defp usage_limit?(_status, _body), do: false
+
+  # Outside chat only a spent window tells the owner; a 402 there never has.
+  defp tell_owner_of_limit(instance, 429), do: Druzhok.Cabinet.out_of_money(instance.id)
+  defp tell_owner_of_limit(_instance, _status), do: :ok
 
   defp request_id(headers) do
     case List.keyfind(headers, @request_id_header, 0) do

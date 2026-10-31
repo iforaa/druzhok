@@ -1,8 +1,9 @@
 defmodule DruzhokWebWeb.LlmProxy.AuxShapes do
   @moduledoc """
   Recognises hermes's auxiliary chat calls (compression summary, photo
-  description, session title, memory query rewrite), whose 402 is passed
-  through as a 402 instead of becoming the balance notice: as a completion,
+  description, session title, memory query rewrite), whose plan refusal (a 402,
+  or a 429 `usage_limit_reached`) is passed through as it came instead of
+  becoming the balance notice: as a completion,
   the notice would turn into a summary, a description or a title
   (spec 2026-10-25-bot-voice-design.md, «The 402 notice»).
 

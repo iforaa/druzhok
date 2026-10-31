@@ -67,6 +67,34 @@ defmodule DruzhokWebWeb.LlmProxy.Ruoc.ImageTest do
     assert usage_logs(instance) == []
   end
 
+  test "a spent window is a 402 with the notice, and tells the owner", %{conn: conn, bypass: bypass, instance: instance} do
+    watch_cabinet()
+    Bypass.expect_once(bypass, "POST", "/v1/images", &usage_limit/1)
+
+    assert json_response(post(conn, "/v1/images/generations", %{"prompt" => "x"}), 402) ==
+             %{"error" => %{"message" => DruzhokWebWeb.LlmProxy.BalanceNotice.text(instance), "type" => "insufficient_quota"}}
+
+    assert_owner_told(instance)
+  end
+
+  test "a 402 does not tell the owner, as before", %{conn: conn, bypass: bypass} do
+    watch_cabinet()
+    Bypass.expect_once(bypass, "POST", "/v1/images", fn req -> gateway_error(req, 402, "insufficient_quota", "no") end)
+
+    assert post(conn, "/v1/images/generations", %{"prompt" => "x"}).status == 402
+    refute_owner_told()
+  end
+
+  test "an ordinary 429 is relayed and tells nobody", %{conn: conn, bypass: bypass} do
+    watch_cabinet()
+    Bypass.expect_once(bypass, "POST", "/v1/images", fn req -> gateway_error(req, 429, "rate_limit_error", "slow down") end)
+
+    assert json_response(post(conn, "/v1/images/generations", %{"prompt" => "x"}), 429) ==
+             %{"error" => %{"type" => "rate_limit_error", "message" => "slow down"}}
+
+    refute_owner_told()
+  end
+
   test "an unknown model is relayed as ruoc's 400", %{conn: conn, bypass: bypass} do
     Bypass.expect_once(bypass, "POST", "/v1/images", fn req ->
       gateway_error(req, 400, "invalid_request_error", "unknown image model")

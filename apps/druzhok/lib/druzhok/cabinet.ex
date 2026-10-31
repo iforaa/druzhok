@@ -4,8 +4,8 @@ defmodule Druzhok.Cabinet do
   bot's owner sees the bot's account and pays for it (ruoc-gateway
   docs/superpowers/specs/2026-10-24-telegram-mini-app-design.md). Druzhok
   tells ruoc which bot and owner each account is for, puts the cabinet on the
-  owner's menu button, and offers it when ruoc refuses a request for an empty
-  balance.
+  owner's menu button, and offers it when the bot's plan refuses a request: a
+  402, or a windowed plan's 429 `usage_limit_reached`.
 
   One process does every outward call, so no bot's controller ever waits on
   ruoc or Telegram for it: `sync/1` and `out_of_money/1` are casts, which
@@ -54,7 +54,7 @@ defmodule Druzhok.Cabinet do
   @doc "Binds the bot and sets the owner's button when anything changed. A cast."
   def sync(instance_id), do: GenServer.cast(__MODULE__, {:sync, instance_id})
 
-  @doc "ruoc refused a request for an empty balance: tell the owner, at most every 6 h. A cast."
+  @doc "The bot's plan refused a request (402 or 429 `usage_limit_reached`): tell the owner, at most every 6 h. A cast."
   def out_of_money(instance_id), do: GenServer.cast(__MODULE__, {:out_of_money, instance_id})
 
   @doc """
