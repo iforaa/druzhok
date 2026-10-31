@@ -22,6 +22,15 @@ defmodule Druzhok.Panel do
   @text_limit 512 * 1024
   @json_limit 1024 * 1024
   @max_skills 200
+
+  # See the file's header: built-ins an older hermes dropped from the manifest.
+  @shipped_skills_file Path.expand("../../priv/hermes_shipped_skills.txt", __DIR__)
+  @external_resource @shipped_skills_file
+  @shipped_skills @shipped_skills_file
+                  |> File.read!()
+                  |> String.split("\n", trim: true)
+                  |> Enum.reject(&String.starts_with?(&1, "#"))
+                  |> MapSet.new()
   @max_site_entries 2000
   @site_depth 8
 
@@ -637,7 +646,12 @@ defmodule Druzhok.Panel do
         end)
 
       bundled = bundled_names(dir)
-      {system, own} = Enum.split_with(found, &MapSet.member?(bundled, &1.name))
+
+      {system, own} =
+        Enum.split_with(
+          found,
+          &(MapSet.member?(bundled, &1.name) or List.last(&1.segments) in @shipped_skills)
+        )
 
       %{
         own: skill_list(own),
