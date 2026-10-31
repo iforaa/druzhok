@@ -84,7 +84,10 @@ defmodule Druzhok.HostStub do
   end
 
   @impl true
-  def status(name), do: Agent.get(__MODULE__, &Map.get(&1.units, name, :inactive))
+  def status(name) do
+    record(:status, name)
+    Agent.get(__MODULE__, &Map.get(&1.units, name, :inactive))
+  end
 
   @impl true
   # `set_procs([1, 2])` answers 1, then 2, then 2 again.

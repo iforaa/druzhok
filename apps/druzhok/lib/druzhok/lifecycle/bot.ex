@@ -14,6 +14,10 @@ defmodule Druzhok.Lifecycle.Bot do
   6. awake → recover a restart loop, start when down or asked, apply saved
      panel settings at a quiet moment, sleep when idle
 
+  A wake and the start of a down unit go through `StartGate`; a refused one
+  changes nothing and is tried again on the next tick. A restart of a running
+  unit does not: it already holds its memory.
+
   It keeps nothing that matters outside the row and the unit, so a new
   controller after a crash just applies the rules again.
   """
@@ -21,7 +25,7 @@ defmodule Druzhok.Lifecycle.Bot do
   use GenServer, restart: :transient
   require Logger
   alias Druzhok.{BotManager, Host, Instance, Repo}
-  alias Druzhok.Lifecycle.{Idle, Typing}
+  alias Druzhok.Lifecycle.{Idle, StartGate, Typing}
   alias Druzhok.Telegram.{Addressed, Inbox, Relay, Webhook}
 
   def key(instance_id), do: {:lifecycle, instance_id}
@@ -44,14 +48,20 @@ defmodule Druzhok.Lifecycle.Bot do
        activating_since: nil,
        idle_at: nil,
        quiet_at: nil,
+       waiting_since: nil,
+       wait_warned: false,
+       lock_refused: false,
        timer: nil
      }}
   end
 
   @impl true
+  # While a start waits at the gate the relay pokes every 2 s; the unit is
+  # re-read every unit_poll_ms instead, or each waiting bot runs `sudo
+  # druzhok-ctl status` on every poke.
   def handle_info(:poke, state) do
     flush(:poke)
-    pass(%{state | unit_at: nil})
+    pass(if gate_refused?(state), do: state, else: %{state | unit_at: nil})
   end
 
   def handle_info(:tick, state), do: pass(state)
@@ -140,13 +150,16 @@ defmodule Druzhok.Lifecycle.Bot do
         state
 
       reason = wake_reason(inst) ->
-        Logger.info("[life] #{inst.name}: waking (#{describe(reason, inst)})")
-        set(inst, sleeping: false, woke_at: now())
-        if reason == :update, do: Typing.start(inst)
-        start_action(state, inst)
+        # Refused, the row stays asleep: the relay keeps holding updates.
+        through_gate(state, inst, fn ->
+          Logger.info("[life] #{inst.name}: waking (#{describe(reason, inst)})")
+          set(inst, sleeping: false, woke_at: now())
+          if reason == :update, do: Typing.start(inst)
+          start_action(state, inst)
+        end)
 
       true ->
-        state
+        end_wait(state)
     end
   end
 
@@ -162,7 +175,11 @@ defmodule Druzhok.Lifecycle.Bot do
         state
 
       down?(state.unit) or inst.start_seq > inst.applied_seq ->
-        if backoff_over?(inst), do: start_action(state, inst), else: state
+        cond do
+          not backoff_over?(inst) -> state
+          down?(state.unit) -> through_gate(state, inst, fn -> start_action(state, inst) end)
+          true -> start_action(state, inst)
+        end
 
       state.unit == :active ->
         awake(state, inst)
@@ -171,6 +188,41 @@ defmodule Druzhok.Lifecycle.Bot do
         state
     end
   end
+
+  # Busy is not a failure: nothing is recorded, and the next tick tries again.
+  defp through_gate(state, inst, start) do
+    case StartGate.with_slot(start) do
+      {:busy, :lock} -> %{state | lock_refused: true}
+      {:busy, {:memory, free}} -> wait_for_memory(%{state | lock_refused: false}, inst, free)
+      %{} = state -> end_wait(state)
+    end
+  end
+
+  defp gate_refused?(state), do: is_integer(state.waiting_since) or state.lock_refused
+
+  defp end_wait(state), do: %{state | waiting_since: nil, lock_refused: false}
+
+  defp wait_for_memory(%{waiting_since: nil} = state, inst, free) do
+    Logger.info("[life] #{inst.name}: start waits (free #{free} MB)")
+    %{state | waiting_since: System.monotonic_time(:millisecond), wait_warned: false}
+  end
+
+  defp wait_for_memory(%{wait_warned: false} = state, inst, free) do
+    waited = System.monotonic_time(:millisecond) - state.waiting_since
+
+    if waited >= opt(:wait_warn_ms) do
+      Logger.warning(
+        "[life] #{inst.name}: start has waited #{div(waited, 60_000)} min for memory " <>
+          "(free #{free} MB); held updates expire at 24 h"
+      )
+
+      %{state | wait_warned: true}
+    else
+      state
+    end
+  end
+
+  defp wait_for_memory(state, _inst, _free), do: state
 
   defp awake(state, inst) do
     if is_nil(inst.started_at), do: set(inst, started_at: now())
@@ -478,10 +530,24 @@ defmodule Druzhok.Lifecycle.Bot do
   # --- observation ------------------------------------------------------------
 
   defp observe(state, inst) do
-    if is_nil(state.unit_at) or
-         System.monotonic_time(:millisecond) - state.unit_at >= opt(:unit_poll_ms),
-       do: refresh(state, inst),
-       else: state
+    state = end_wait_if_unwanted(state, inst)
+
+    state =
+      if is_nil(state.unit_at) or
+           System.monotonic_time(:millisecond) - state.unit_at >= opt(:unit_poll_ms),
+         do: refresh(state, inst),
+         else: state
+
+    # Up by other means (druzhok-ctl by hand): nothing is waiting any more.
+    if down?(state.unit), do: state, else: end_wait(state)
+  end
+
+  # A stop or delete ends the wait and must see the unit as it is now, not as
+  # it was at the last unit_poll_ms read: it acts on that, and acknowledges.
+  defp end_wait_if_unwanted(state, inst) do
+    if gate_refused?(state) and not runnable?(inst),
+      do: %{end_wait(state) | unit_at: nil},
+      else: state
   end
 
   defp refresh(state, %{name: nil}), do: state
@@ -555,6 +621,7 @@ defmodule Druzhok.Lifecycle.Bot do
     idle_check_ms: 60_000,
     quiet_check_ms: 10_000,
     quiet_window_s: 60,
+    wait_warn_ms: 3_600_000,
     activating_limit_ms: 330_000,
     backoff_ms: [10_000, 60_000, 300_000, 900_000]
   ]

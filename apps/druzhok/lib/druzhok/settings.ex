@@ -21,7 +21,7 @@ defmodule Druzhok.Settings do
   # previous druzhok and go in a later release.
   @keys ~w(openai_api_key manager_bot_token operator_telegram_id
            ruoc_url ruoc_admin_host ruoc_admin_token ruoc_catalog_key fetch_secret bot_creation
-           sleep_idle_minutes ruoc_site_url support_url)
+           sleep_idle_minutes start_min_free_mb ruoc_site_url support_url)
   @secret ~w(openai_api_key manager_bot_token ruoc_admin_token ruoc_catalog_key
              fetch_secret)
 
