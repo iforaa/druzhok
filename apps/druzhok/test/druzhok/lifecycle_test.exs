@@ -850,6 +850,115 @@ defmodule Druzhok.LifecycleTest do
       assert length(String.split(log, "for memory (free 500 MB); held updates")) == 3
     end
 
+    defp lock_refused?(inst), do: :sys.get_state(controller(inst)).lock_refused
+
+    test "refused on the lock: pokes do not read the unit, no log, and it starts after", %{
+      root: root,
+      meminfo: mem
+    } do
+      Logger.put_module_level(Druzhok.Lifecycle.Bot, :info)
+      on_exit(fn -> Logger.delete_module_level(Druzhok.Lifecycle.Bot) end)
+      free_mb(mem, 2000)
+      lifecycle_env(unit_poll_ms: 60_000, wait_warn_ms: 0)
+      assert :global.set_lock({StartGate, self()}, [node()], 0)
+      inst = idle_bot(root, %{sleeping: true, unit: :inactive})
+      :ok = Inbox.enqueue(inst.id, 1, ~s({"update_id":1}))
+
+      log =
+        ExUnit.CaptureLog.capture_log(fn ->
+          poke(inst)
+          assert eventually(fn -> lock_refused?(inst) end)
+          before = length(HostStub.calls(:status))
+
+          for _ <- 1..10 do
+            poke(inst)
+            Process.sleep(10)
+          end
+
+          :sys.get_state(controller(inst))
+          assert length(HostStub.calls(:status)) == before
+          refute waiting?(inst)
+          assert reload(inst).sleeping
+          no_failure(inst)
+        end)
+
+      refute log =~ "start waits"
+      refute log =~ "for memory"
+
+      :global.del_lock({StartGate, self()}, [node()])
+      assert eventually(fn -> HostStub.calls(:start) == [inst.name] end)
+      refute lock_refused?(inst)
+    end
+
+    test "refused on the lock: stop and delete see the unit now, however long the poll", %{
+      root: root,
+      meminfo: mem
+    } do
+      free_mb(mem, 2000)
+      lifecycle_env(unit_poll_ms: 60_000)
+      assert :global.set_lock({StartGate, self()}, [node()], 0)
+
+      stopped = idle_bot(root, %{sleep_enabled: false, unit: :inactive})
+      poke(stopped)
+      assert eventually(fn -> lock_refused?(stopped) end)
+      HostStub.set_unit(stopped.name, :active)
+      assert :ok = BotManager.stop(stopped.name, wait: true)
+      assert HostStub.calls(:stop) == [stopped.name]
+      refute lock_refused?(stopped)
+
+      deleted = idle_bot(root, %{sleep_enabled: false, unit: :inactive})
+      poke(deleted)
+      assert eventually(fn -> lock_refused?(deleted) end)
+      HostStub.set_unit(deleted.name, :active)
+      assert :ok = BotManager.delete(deleted.name, wait: true)
+      assert deleted.name in HostStub.calls(:stop)
+      assert HostStub.calls(:start) == []
+    end
+
+    test "refused on the lock: a wake reason that goes away, or a unit up by hand, clears it", %{
+      root: root,
+      meminfo: mem
+    } do
+      free_mb(mem, 2000)
+      assert :global.set_lock({StartGate, self()}, [node()], 0)
+
+      asleep = idle_bot(root, %{sleeping: true, unit: :inactive})
+      :ok = Inbox.enqueue(asleep.id, 1, ~s({"update_id":1}))
+      poke(asleep)
+      assert eventually(fn -> lock_refused?(asleep) end)
+      Inbox.next_pending(asleep.id) |> Inbox.ack()
+      assert eventually(fn -> not lock_refused?(asleep) end)
+
+      up = idle_bot(root, %{sleep_enabled: false, unit: :inactive})
+      poke(up)
+      assert eventually(fn -> lock_refused?(up) end)
+      HostStub.set_unit(up.name, :active)
+      assert eventually(fn -> not lock_refused?(up) end)
+    end
+
+    test "a memory wait keeps its log and warning through lock refusals", %{
+      root: root,
+      meminfo: mem
+    } do
+      free_mb(mem, 500)
+      inst = idle_bot(root, %{sleep_enabled: false, unit: :inactive})
+      poke(inst)
+      assert eventually(fn -> waiting?(inst) end)
+      since = :sys.get_state(controller(inst)).waiting_since
+
+      assert :global.set_lock({StartGate, self()}, [node()], 0)
+      assert eventually(fn -> lock_refused?(inst) end)
+      assert :sys.get_state(controller(inst)).waiting_since == since
+
+      :global.del_lock({StartGate, self()}, [node()])
+      assert eventually(fn -> not lock_refused?(inst) end)
+      assert :sys.get_state(controller(inst)).waiting_since == since
+
+      free_mb(mem, 2000)
+      assert eventually(fn -> HostStub.calls(:start) == [inst.name] end)
+      refute waiting?(inst)
+    end
+
     test "lock held by another process: no start, nothing counted", %{root: root, meminfo: mem} do
       free_mb(mem, 2000)
       assert :global.set_lock({StartGate, self()}, [node()], 0)

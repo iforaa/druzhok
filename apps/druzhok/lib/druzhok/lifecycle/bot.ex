@@ -50,22 +50,18 @@ defmodule Druzhok.Lifecycle.Bot do
        quiet_at: nil,
        waiting_since: nil,
        wait_warned: false,
+       lock_refused: false,
        timer: nil
      }}
   end
 
   @impl true
-  # While a start waits for memory the relay pokes every 2 s; the unit is
+  # While a start waits at the gate the relay pokes every 2 s; the unit is
   # re-read every unit_poll_ms instead, or each waiting bot runs `sudo
   # druzhok-ctl status` on every poke.
-  def handle_info(:poke, %{waiting_since: since} = state) when is_integer(since) do
-    flush(:poke)
-    pass(state)
-  end
-
   def handle_info(:poke, state) do
     flush(:poke)
-    pass(%{state | unit_at: nil})
+    pass(if gate_refused?(state), do: state, else: %{state | unit_at: nil})
   end
 
   def handle_info(:tick, state), do: pass(state)
@@ -163,7 +159,7 @@ defmodule Druzhok.Lifecycle.Bot do
         end)
 
       true ->
-        %{state | waiting_since: nil}
+        end_wait(state)
     end
   end
 
@@ -196,11 +192,15 @@ defmodule Druzhok.Lifecycle.Bot do
   # Busy is not a failure: nothing is recorded, and the next tick tries again.
   defp through_gate(state, inst, start) do
     case StartGate.with_slot(start) do
-      {:busy, :lock} -> state
-      {:busy, {:memory, free}} -> wait_for_memory(state, inst, free)
-      %{} = state -> %{state | waiting_since: nil}
+      {:busy, :lock} -> %{state | lock_refused: true}
+      {:busy, {:memory, free}} -> wait_for_memory(%{state | lock_refused: false}, inst, free)
+      %{} = state -> end_wait(state)
     end
   end
+
+  defp gate_refused?(state), do: is_integer(state.waiting_since) or state.lock_refused
+
+  defp end_wait(state), do: %{state | waiting_since: nil, lock_refused: false}
 
   defp wait_for_memory(%{waiting_since: nil} = state, inst, free) do
     Logger.info("[life] #{inst.name}: start waits (free #{free} MB)")
@@ -539,15 +539,15 @@ defmodule Druzhok.Lifecycle.Bot do
          else: state
 
     # Up by other means (druzhok-ctl by hand): nothing is waiting any more.
-    if down?(state.unit), do: state, else: %{state | waiting_since: nil}
+    if down?(state.unit), do: state, else: end_wait(state)
   end
 
   # A stop or delete ends the wait and must see the unit as it is now, not as
   # it was at the last unit_poll_ms read: it acts on that, and acknowledges.
-  defp end_wait_if_unwanted(%{waiting_since: nil} = state, _inst), do: state
-
   defp end_wait_if_unwanted(state, inst) do
-    if runnable?(inst), do: state, else: %{state | waiting_since: nil, unit_at: nil}
+    if gate_refused?(state) and not runnable?(inst),
+      do: %{end_wait(state) | unit_at: nil},
+      else: state
   end
 
   defp refresh(state, %{name: nil}), do: state
