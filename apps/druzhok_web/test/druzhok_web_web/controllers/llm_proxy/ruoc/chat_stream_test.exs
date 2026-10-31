@@ -86,6 +86,48 @@ defmodule DruzhokWebWeb.LlmProxy.Ruoc.ChatStreamTest do
     assert Jason.decode!(conn.resp_body)["error"]["type"] == "insufficient_quota"
   end
 
+  describe "a spent window (429 usage_limit_reached)" do
+    setup do
+      watch_cabinet()
+    end
+
+    test "is a one-chunk stream with the notice and tells the owner", %{conn: conn, bypass: bypass, instance: instance} do
+      Bypass.expect_once(bypass, "POST", "/v1/chat/completions", &usage_limit/1)
+
+      conn = post(conn, "/v1/chat/completions", @turn)
+
+      assert conn.status == 200
+      assert get_resp_header(conn, "content-type") |> hd() =~ "text/event-stream"
+      assert get_resp_header(conn, "x-ruoc-request-id") == ["req_abc"]
+      assert [chunk, "[DONE]"] = conn.resp_body |> String.split("\n\n", trim: true) |> Enum.map(&String.trim_leading(&1, "data: "))
+
+      assert get_in(Jason.decode!(chunk), ["choices", Access.at(0), "delta", "content"]) ==
+               DruzhokWebWeb.LlmProxy.BalanceNotice.text(instance)
+
+      assert_owner_told(instance)
+    end
+
+    test "an auxiliary call keeps the real 429 and still tells the owner", %{conn: conn, bypass: bypass, instance: instance} do
+      Bypass.expect_once(bypass, "POST", "/v1/chat/completions", &usage_limit/1)
+
+      conn = post(conn, "/v1/chat/completions", @body)
+
+      assert conn.status == 429
+      assert %{"type" => "usage_limit_reached", "resets_at" => "2026-11-01T10:00:00Z"} = Jason.decode!(conn.resp_body)["error"]
+      assert_owner_told(instance)
+    end
+
+    test "an ordinary 429 is relayed and the owner is not told", %{conn: conn, bypass: bypass} do
+      Bypass.expect_once(bypass, "POST", "/v1/chat/completions", fn req -> gateway_error(req, 429, "rate_limit_error", "nope") end)
+
+      conn = post(conn, "/v1/chat/completions", @turn)
+
+      assert conn.status == 429
+      assert Jason.decode!(conn.resp_body)["error"]["type"] == "rate_limit_error"
+      refute_owner_told()
+    end
+  end
+
   test "502 when the gateway is down", %{conn: conn, bypass: bypass} do
     Bypass.down(bypass)
     assert %{"error" => %{"type" => "api_error"}} = json_response(post(conn, "/v1/chat/completions", @body), 502)

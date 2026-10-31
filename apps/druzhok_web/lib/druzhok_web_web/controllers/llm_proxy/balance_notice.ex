@@ -1,13 +1,15 @@
 defmodule DruzhokWebWeb.LlmProxy.BalanceNotice do
   @moduledoc """
-  What a bot says when its ruoc account is empty.
+  What a bot says when its plan refuses: a 402, or a windowed plan's 429
+  `usage_limit_reached`.
 
   Hermes turns any 402 into its own English "billing exhausted" lecture that
   tells the user to add credits at the provider and to switch providers with
-  `/model` — neither of which a tenant can do. So the proxy answers a 402
-  with an ordinary completion carrying this notice in the bot's language;
-  hermes shows it like any assistant reply. The 402 itself is still logged.
-  Hermes's auxiliary calls (`LlmProxy.AuxShapes`) get the real 402 instead.
+  `/model` — neither of which a tenant can do — and a 429 into a retry. So the
+  proxy answers either with an ordinary completion carrying this notice in the
+  bot's language; hermes shows it like any assistant reply. The refusal itself
+  is still logged. Hermes's auxiliary calls (`LlmProxy.AuxShapes`) get the real
+  refusal instead.
   """
 
   # Plans have limits, not a balance (spec 2026-10-25-bot-voice-design.md).

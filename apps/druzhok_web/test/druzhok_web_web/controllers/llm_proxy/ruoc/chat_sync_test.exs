@@ -112,6 +112,61 @@ defmodule DruzhokWebWeb.LlmProxy.Ruoc.ChatSyncTest do
     end
   end
 
+  describe "a spent window (429 usage_limit_reached)" do
+    setup do
+      watch_cabinet()
+    end
+
+    test "becomes the notice and tells the owner", %{conn: conn, bypass: bypass, instance: instance} do
+      Bypass.expect_once(bypass, "POST", "/v1/chat/completions", &usage_limit/1)
+
+      conn = post(conn, "/v1/chat/completions", @turn)
+
+      assert get_in(json_response(conn, 200), ["choices", Access.at(0), "message", "content"]) ==
+               DruzhokWebWeb.LlmProxy.BalanceNotice.text(instance)
+
+      assert get_resp_header(conn, "x-ruoc-request-id") == ["req_abc"]
+      assert usage_logs(instance) == []
+      assert_owner_told(instance)
+    end
+
+    test "an auxiliary call keeps the real 429 and still tells the owner", %{conn: conn, bypass: bypass, instance: instance} do
+      Bypass.expect_once(bypass, "POST", "/v1/chat/completions", &usage_limit/1)
+
+      conn = post(conn, "/v1/chat/completions", @body)
+
+      assert %{"type" => "usage_limit_reached", "resets_at" => "2026-11-01T10:00:00Z"} = json_response(conn, 429)["error"]
+      assert_owner_told(instance)
+    end
+
+    test "an ordinary 429 is relayed and the owner is not told", %{conn: conn, bypass: bypass} do
+      Bypass.expect_once(bypass, "POST", "/v1/chat/completions", fn req -> gateway_error(req, 429, "rate_limit_error", "nope") end)
+
+      conn = post(conn, "/v1/chat/completions", @turn)
+
+      assert json_response(conn, 429) == %{"error" => %{"type" => "rate_limit_error", "message" => "nope"}}
+      refute_owner_told()
+    end
+
+    test "a 429 whose body is not JSON is relayed", %{conn: conn, bypass: bypass} do
+      Bypass.expect_once(bypass, "POST", "/v1/chat/completions", fn req -> gateway_reply(req, 429, "busy") end)
+
+      conn = post(conn, "/v1/chat/completions", @turn)
+
+      assert conn.status == 429
+      assert conn.resp_body == "busy"
+      refute_owner_told()
+    end
+  end
+
+  test "a 402 still tells the owner", %{conn: conn, bypass: bypass, instance: instance} do
+    watch_cabinet()
+    Bypass.expect_once(bypass, "POST", "/v1/chat/completions", fn req -> gateway_error(req, 402, "insufficient_quota", "no") end)
+
+    assert json_response(post(conn, "/v1/chat/completions", @turn), 200)
+    assert_owner_told(instance)
+  end
+
   for {status, type} <- [{429, "rate_limit_error"}, {404, "invalid_request_error"}] do
     test "relays a #{status} #{type} with the gateway's envelope", %{conn: conn, bypass: bypass, instance: instance} do
       Bypass.expect_once(bypass, "POST", "/v1/chat/completions", fn req ->

@@ -42,4 +42,35 @@ defmodule DruzhokWebWeb.RuocProxyCase do
   def gateway_error(conn, status, type, message) do
     gateway_reply(conn, status, %{"error" => %{"type" => type, "message" => message}})
   end
+
+  @doc "A windowed plan's refusal, in the shape of ruoc's `writeLimitReached`."
+  def usage_limit(conn) do
+    gateway_reply(conn, 429, %{
+      "error" => %{
+        "type" => "usage_limit_reached",
+        "message" => "Лимит на 5 часов исчерпан. Или сбросьте неделю сейчас за 590 ₽ в личном кабинете.",
+        "window" => "session",
+        "resets_at" => "2026-11-01T10:00:00Z"
+      }
+    })
+  end
+
+  @doc "Stands in for `Druzhok.Cabinet`: its casts arrive at the test process."
+  def watch_cabinet do
+    Process.register(self(), Druzhok.Cabinet)
+    :ok
+  end
+
+  defmacro assert_owner_told(instance) do
+    quote do
+      assert_received {:"$gen_cast", {:out_of_money, id}}
+      assert id == unquote(instance).id
+    end
+  end
+
+  defmacro refute_owner_told do
+    quote do
+      refute_received {:"$gen_cast", {:out_of_money, _}}
+    end
+  end
 end

@@ -63,6 +63,36 @@ defmodule DruzhokWebWeb.LlmProxy.Ruoc.SearchTest do
     assert Jason.decode!(conn.resp_body) == %{"success" => false, "error" => "Лимит тарифа на сейчас исчерпан. Когда он обновится и как сменить тариф — в «Кабинете»."}
   end
 
+  test "a spent window is a 402 with the notice, and tells the owner", %{conn: conn, bypass: bypass, instance: instance} do
+    watch_cabinet()
+    Bypass.expect_once(bypass, "POST", "/v1/search", &usage_limit/1)
+
+    conn = post(conn, "/v2/search", %{"query" => "q"})
+
+    assert conn.status == 402
+    assert Jason.decode!(conn.resp_body) == %{"success" => false, "error" => DruzhokWebWeb.LlmProxy.BalanceNotice.text(instance)}
+    assert_owner_told(instance)
+  end
+
+  test "a 402 does not tell the owner, as before", %{conn: conn, bypass: bypass} do
+    watch_cabinet()
+    Bypass.expect_once(bypass, "POST", "/v1/search", fn req -> gateway_error(req, 402, "insufficient_quota", "no") end)
+
+    assert post(conn, "/v2/search", %{"query" => "q"}).status == 402
+    refute_owner_told()
+  end
+
+  test "an ordinary 429 does not tell the owner", %{conn: conn, bypass: bypass} do
+    watch_cabinet()
+    Bypass.expect_once(bypass, "POST", "/v1/search", fn req -> gateway_error(req, 429, "rate_limit_error", "slow down") end)
+
+    conn = post(conn, "/v2/search", %{"query" => "q"})
+
+    assert conn.status == 429
+    assert Jason.decode!(conn.resp_body) == %{"success" => false, "error" => "slow down"}
+    refute_owner_told()
+  end
+
   test "other gateway errors keep their status in the Firecrawl error shape", %{conn: conn, bypass: bypass} do
     Bypass.expect_once(bypass, "POST", "/v1/search", fn req -> gateway_error(req, 429, "rate_limit_error", "slow down") end)
 
