@@ -94,7 +94,14 @@ defmodule Druzhok.Fetch.HTTP do
     else
       transport_opts = [timeout: timeout] ++ tls_opts(scheme, host)
 
-      case Mint.HTTP.connect(scheme, ip, port, hostname: host, mode: :passive, transport_opts: transport_opts) do
+      # HTTP/1 only: the server is whoever a bot's URL names, one GET gains nothing from
+      # HTTP/2, and HTTP/2 hands that server far more parser state in this VM to attack.
+      case Mint.HTTP.connect(scheme, ip, port,
+             hostname: host,
+             mode: :passive,
+             protocols: [:http1],
+             transport_opts: transport_opts
+           ) do
         {:ok, conn} -> {:ok, conn}
         {:error, %Mint.TransportError{reason: :timeout}} -> {:error, :timeout}
         {:error, _} -> {:error, :unreachable}

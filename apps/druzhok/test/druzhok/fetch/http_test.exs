@@ -133,6 +133,62 @@ defmodule Druzhok.Fetch.HTTPTest do
     assert System.monotonic_time(:millisecond) - started < 1_500
   end
 
+  # Mint stopped closing the socket on a receive timeout in 1.11: that is ours to do now.
+  test "a timed-out fetch closes its connection" do
+    {:ok, listener} = :gen_tcp.listen(0, [:binary, active: false, reuseaddr: true])
+    {:ok, port} = :inet.port(listener)
+    parent = self()
+
+    spawn_link(fn ->
+      {:ok, socket} = :gen_tcp.accept(listener)
+      {:ok, _request} = :gen_tcp.recv(socket, 0, 2_000)
+      send(parent, {:after_request, :gen_tcp.recv(socket, 0, 2_000)})
+    end)
+
+    assert {:error, :timeout} = get("http://localhost:#{port}/slow", deadline_ms: 300)
+    assert_receive {:after_request, {:error, :closed}}, 1_000
+  end
+
+  # A raw listener reads the TLS ClientHello: the offer is visible there, with no
+  # certificate needed, and it is what a hostile server would act on.
+  test "an https fetch does not offer HTTP/2" do
+    {:ok, listener} = :gen_tcp.listen(0, [:binary, active: false, reuseaddr: true])
+    {:ok, port} = :inet.port(listener)
+    parent = self()
+
+    spawn_link(fn ->
+      {:ok, socket} = :gen_tcp.accept(listener)
+      {:ok, <<22, _version::16, length::16>>} = :gen_tcp.recv(socket, 5, 2_000)
+      {:ok, hello} = :gen_tcp.recv(socket, length, 2_000)
+      send(parent, {:alpn, alpn_offer(hello)})
+      :gen_tcp.close(socket)
+    end)
+
+    assert {:error, :unreachable} = get("https://localhost:#{port}/", deadline_ms: 2_000)
+    assert_receive {:alpn, offer}, 1_000
+    refute "h2" in offer
+  end
+
+  defp alpn_offer(<<1, _length::24, _version::16, _random::binary-32, rest::binary>>) do
+    <<session::8, _::binary-size(session), ciphers::16, _::binary-size(ciphers), compression::8,
+      _::binary-size(compression), size::16, extensions::binary-size(size), _::binary>> = rest
+
+    alpn_in(extensions)
+  end
+
+  defp alpn_in(<<>>), do: []
+
+  defp alpn_in(<<16::16, size::16, _list_size::16, rest::binary>>) do
+    list_size = size - 2
+    <<list::binary-size(list_size), _::binary>> = rest
+    protocols(list)
+  end
+
+  defp alpn_in(<<_type::16, size::16, _::binary-size(size), rest::binary>>), do: alpn_in(rest)
+
+  defp protocols(<<>>), do: []
+  defp protocols(<<size::8, name::binary-size(size), rest::binary>>), do: [name | protocols(rest)]
+
   test "a host that refuses the connection is unreachable", %{bypass: bypass, base: base} do
     Bypass.down(bypass)
     assert {:error, :unreachable} = get(base <> "/x")

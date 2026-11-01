@@ -38,8 +38,10 @@ defmodule Druzhok.MixProject do
       {:jason, "~> 1.4"},
       {:ecto_sql, "~> 3.12"},
       {:ecto_sqlite3, "~> 0.17"},
-      {:finch, "~> 0.18"},
-      {:mint, "~> 1.7"},
+      # Finch before 0.24 returns a timed-out connection to the pool open under Mint 1.11,
+      # so a late answer could reach the next request. Keep these two together.
+      {:finch, "~> 0.24"},
+      {:mint, "~> 1.11"},
       {:tz, "~> 0.28"},
     ]
   end
