@@ -133,6 +133,22 @@ defmodule Druzhok.Fetch.HTTPTest do
     assert System.monotonic_time(:millisecond) - started < 1_500
   end
 
+  # Mint stopped closing the socket on a receive timeout in 1.11: that is ours to do now.
+  test "a timed-out fetch closes its connection" do
+    {:ok, listener} = :gen_tcp.listen(0, [:binary, active: false, reuseaddr: true])
+    {:ok, port} = :inet.port(listener)
+    parent = self()
+
+    spawn_link(fn ->
+      {:ok, socket} = :gen_tcp.accept(listener)
+      {:ok, _request} = :gen_tcp.recv(socket, 0, 2_000)
+      send(parent, {:after_request, :gen_tcp.recv(socket, 0, 2_000)})
+    end)
+
+    assert {:error, :timeout} = get("http://localhost:#{port}/slow", deadline_ms: 300)
+    assert_receive {:after_request, {:error, :closed}}, 1_000
+  end
+
   test "a host that refuses the connection is unreachable", %{bypass: bypass, base: base} do
     Bypass.down(bypass)
     assert {:error, :unreachable} = get(base <> "/x")

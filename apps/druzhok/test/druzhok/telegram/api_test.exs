@@ -59,7 +59,7 @@ defmodule Druzhok.Telegram.APITest do
 
   test "returns {:error, reason} when unreachable", %{bypass: bypass} do
     Bypass.down(bypass)
-    assert {:error, %Mint.TransportError{}} = API.get_me("TOK")
+    assert {:error, %Finch.TransportError{}} = API.get_me("TOK")
   end
 
   test "get_managed_bot_token sends user_id", %{bypass: bypass} do
