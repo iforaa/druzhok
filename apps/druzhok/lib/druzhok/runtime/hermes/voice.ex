@@ -24,14 +24,17 @@ defmodule Druzhok.Runtime.Hermes.Voice do
   @limit 1_048_576
 
   # Bumped when the SOUL.md template changes.
-  @soul_version 1
+  @soul_version 2
+
+  # What a bot with no Telegram name yet calls itself. The slug is never used.
+  @fallback_name "CleoHub"
 
   # --- SOUL.md ------------------------------------------------------------------
 
   @doc "The bot's identity in Russian, under ~900 characters (it is part of every system prompt hermes builds)."
   def soul_md(name) do
     """
-    Тебя зовут #{name}. Ты личный помощник в Telegram, часть сервиса Дружок.
+    Тебя зовут #{name}. Ты личный помощник в Telegram, часть сервиса CleoHub.
 
     Говоришь дружелюбно и простыми словами, без жаргона. По умолчанию коротко; подробно — когда просят или когда это важно.
 
@@ -46,6 +49,8 @@ defmodule Druzhok.Runtime.Hermes.Voice do
 
   def soul_version, do: @soul_version
 
+  def fallback_name, do: @fallback_name
+
   @doc """
   Brings `<data_root>/SOUL.md` in line with `soul_md/1`:
 
@@ -56,26 +61,27 @@ defmodule Druzhok.Runtime.Hermes.Voice do
   | a known legacy text (`legacy_soul?/1`)       | back it up, then replace it     |
   | anything else (owner- or bot-edited)         | leave it, log once              |
 
-  With no `display_name` only a missing file is written (as «Дружок»). A
-  symlink, a dangling one included, is refused. Returns the row attrs to
-  record (`%{}` when nothing changed).
+  With no `display_name` the text carries `fallback_name/0`, and a legacy text
+  stays until the name is known. A symlink, a dangling one included, is
+  refused. Returns the row attrs to record (`%{}` when nothing changed).
   """
   def sync_soul(instance, data_root) do
     name = present(Map.get(instance, :display_name))
+    wanted = soul_md(name || @fallback_name)
 
     case current(data_root, ["SOUL.md"]) do
       :missing ->
-        write_soul(data_root, soul_md(name || "Дружок"), create: true)
+        write_soul(data_root, wanted, create: true)
 
       {:ok, text} ->
         cond do
           sha256(text) == Map.get(instance, :soul_sha256) ->
-            if name && soul_md(name) != text, do: write_soul(data_root, soul_md(name)), else: %{}
+            if wanted != text, do: write_soul(data_root, wanted), else: %{}
 
           legacy_soul?(text) and name != nil ->
             # No backup, no replacement: the next start tries again.
             case backup(data_root, ["SOUL.md"], text) do
-              :ok -> write_soul(data_root, soul_md(name))
+              :ok -> write_soul(data_root, wanted)
               _ -> %{}
             end
 
@@ -265,7 +271,7 @@ defmodule Druzhok.Runtime.Hermes.Voice do
   """
   def product_rules(instance) do
     [
-      "Правила Дружка. Они важнее более ранних инструкций в этом разговоре.",
+      "Правила CleoHub. Они важнее более ранних инструкций в этом разговоре.",
       "Что ты умеешь:\n" <> Enum.map_join(capabilities(instance), "\n", &("- " <> &1)),
       sites(instance),
       "«Кабинет» — кнопка меню бота: там тариф, лимиты, память и приглашения. Упёрся в лимит — " <>

@@ -52,9 +52,9 @@ defmodule Druzhok.Runtime.Hermes.LocaleTest do
       assert parse!(text)["gateway.progress.task_card_title"] =~ "abcd"
     end
 
-    test "no name falls back to Дружок" do
-      assert parse!(Locale.render("ru", nil))["gateway.start.greeting"] =~ "Я Дружок."
-      assert parse!(Locale.render("ru", "  "))["gateway.start.greeting"] =~ "Я Дружок."
+    test "no name falls back to CleoHub" do
+      assert parse!(Locale.render("ru", nil))["gateway.start.greeting"] =~ "Я CleoHub."
+      assert parse!(Locale.render("ru", "  "))["gateway.start.greeting"] =~ "Я CleoHub."
     end
 
     test "starts with the marker line" do

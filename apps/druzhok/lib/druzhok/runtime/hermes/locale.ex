@@ -18,6 +18,7 @@ defmodule Druzhok.Runtime.Hermes.Locale do
   """
 
   require Logger
+  alias Druzhok.Runtime.Hermes.Voice
   alias Druzhok.TenantFiles
 
   @langs ~w(ru en)
@@ -106,7 +107,7 @@ defmodule Druzhok.Runtime.Hermes.Locale do
   defp safe_name(name) when is_binary(name) do
     case name |> String.replace(@yaml_forbidden, "") |> String.trim() do
       "" ->
-        "Дружок"
+        Voice.fallback_name()
 
       trimmed ->
         String.replace(trimmed, ["{", "}"], fn
@@ -116,5 +117,5 @@ defmodule Druzhok.Runtime.Hermes.Locale do
     end
   end
 
-  defp safe_name(_), do: "Дружок"
+  defp safe_name(_), do: Voice.fallback_name()
 end

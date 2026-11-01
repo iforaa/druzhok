@@ -31,7 +31,7 @@ defmodule Druzhok.BotManagerLifecycleTest do
       assert inst.workspace == Path.join([root, name, "workspace"])
 
       assert File.exists?(Path.join([root, name, "config.yaml"]))
-      assert File.read!(Path.join([root, name, "SOUL.md"])) =~ "Тебя зовут Дружок"
+      assert File.read!(Path.join([root, name, "SOUL.md"])) =~ "Тебя зовут CleoHub"
       refute File.exists?(Path.join([root, name, "workspace", "AGENTS.md"]))
       assert File.read!(Path.join([root, name, "config.yaml"])) =~ ~s(default: "z-ai/glm-5.3-flash")
 

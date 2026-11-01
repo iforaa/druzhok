@@ -75,10 +75,62 @@ defmodule Druzhok.Runtime.Hermes.VoiceTest do
       assert attrs == %{soul_sha256: Voice.sha256(soul(home)), soul_version: Voice.soul_version()}
     end
 
-    test "with no name, a missing SOUL.md is «Дружок»; the slug is never the name", %{home: home} do
+    test "with no name, a missing SOUL.md is «CleoHub»; the slug is never the name", %{home: home} do
       Voice.sync_soul(%{name: "vasya_8b05", display_name: nil}, home)
-      assert soul(home) =~ "Тебя зовут Дружок."
+      assert soul(home) =~ "Тебя зовут CleoHub."
+      assert soul(home) =~ "часть сервиса CleoHub."
       refute soul(home) =~ "vasya"
+      refute soul(home) =~ "Дружок"
+    end
+
+    # What druzhok wrote before the rename, byte for byte: the upgrade must
+    # recognise it by its recorded hash.
+    defp old_soul(name) do
+      name
+      |> Voice.soul_md()
+      |> String.replace("часть сервиса CleoHub.", "часть сервиса Дружок.")
+    end
+
+    test "a nameless bot's unedited SOUL.md moves to the new text", %{home: home} do
+      old = old_soul("Дружок")
+      put_soul(home, old)
+
+      attrs = Voice.sync_soul(%{display_name: nil, soul_sha256: Voice.sha256(old)}, home)
+
+      assert soul(home) == Voice.soul_md("CleoHub")
+      assert attrs == %{soul_sha256: Voice.sha256(soul(home)), soul_version: Voice.soul_version()}
+      assert baks(home, "SOUL.md") == []
+
+      # Settled: the next start changes nothing, and a later name still lands.
+      assert Voice.sync_soul(%{display_name: "  ", soul_sha256: attrs.soul_sha256}, home) == %{}
+      Voice.sync_soul(%{display_name: "Вася", soul_sha256: attrs.soul_sha256}, home)
+      assert soul(home) == Voice.soul_md("Вася")
+    end
+
+    test "a named bot's unedited SOUL.md moves to the new text and keeps its name", %{home: home} do
+      old = old_soul("Вася")
+      put_soul(home, old)
+
+      Voice.sync_soul(%{display_name: "Вася", soul_sha256: Voice.sha256(old)}, home)
+
+      assert soul(home) == Voice.soul_md("Вася")
+      refute soul(home) =~ "Дружок"
+    end
+
+    test "a nameless bot's edited SOUL.md is left alone, the old service name included", %{
+      home: home
+    } do
+      old = old_soul("Дружок")
+      edited = old <> "\nЛюбишь котов.\n"
+      put_soul(home, edited)
+
+      assert Voice.sync_soul(%{display_name: nil, soul_sha256: Voice.sha256(old)}, home) == %{}
+      assert soul(home) == edited
+
+      # So is a file with no hash on record: nothing says druzhok wrote it.
+      put_soul(home, old)
+      assert Voice.sync_soul(%{display_name: nil}, home) == %{}
+      assert soul(home) == old
     end
 
     test "druzhok's own text is rewritten when the name changes, and left when it does not", %{
@@ -171,6 +223,12 @@ defmodule Druzhok.Runtime.Hermes.VoiceTest do
   end
 
   describe "product_rules/1 and the config keys" do
+    test "the rules carry the service's name" do
+      rules = Voice.product_rules(%{name: "b"})
+      assert rules =~ "Правила CleoHub."
+      refute rules =~ "Дружк"
+    end
+
     test "capability lines follow the settings" do
       plain = Voice.product_rules(%{name: "b"})
       refute plain =~ "картинки"
