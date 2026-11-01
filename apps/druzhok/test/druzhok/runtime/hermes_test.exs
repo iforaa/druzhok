@@ -38,6 +38,7 @@ defmodule Druzhok.Runtime.HermesTest do
       assert env["MNEMOSYNE_EMBEDDING_DIM"] == "3072"
       assert env["MNEMOSYNE_EMBEDDING_QUERY_PREFIX"] == "query: "
       assert env["MNEMOSYNE_EMBEDDING_DOC_PREFIX"] == "passage: "
+      assert env["MNEMOSYNE_LEXICAL_GATE_MIN"] == "0"
       assert env["MNEMOSYNE_LLM_ENABLED"] == "false"
       assert env["MNEMOSYNE_HOST_LLM_ENABLED"] == "false"
     end

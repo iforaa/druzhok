@@ -164,6 +164,12 @@ defmodule Druzhok.Runtime.Hermes do
   # google/gemini-embedding-001 via OpenRouter (R@5 1.00 on ops/embed-eval with
   # the prefixes, 0.99 without; since 2026-10-22, replacing e5-large, whose one
   # provider hung for tens of seconds).
+  # `MNEMOSYNE_LEXICAL_GATE_MIN` 0 lets the recall tool return rows found by
+  # meaning alone. Its default demands shared words, and Russian changes word
+  # endings: on made-up facts the tool found 0 of 12 paraphrases and 6 of 12
+  # other word forms, against 7-9 and 11 with 0. The provider's `prefetch` keeps
+  # its own shared-words check, so automatic context stayed the same in that
+  # test, importance 0.7 rows and short messages included.
   defp mnemosyne_env(instance) do
     if memory_provider(instance) == "mnemosyne" do
       %{
@@ -174,6 +180,7 @@ defmodule Druzhok.Runtime.Hermes do
         "MNEMOSYNE_EMBEDDING_DIM" => @embedding_dim,
         "MNEMOSYNE_EMBEDDING_QUERY_PREFIX" => "query: ",
         "MNEMOSYNE_EMBEDDING_DOC_PREFIX" => "passage: ",
+        "MNEMOSYNE_LEXICAL_GATE_MIN" => "0",
         "MNEMOSYNE_LLM_ENABLED" => "false",
         "MNEMOSYNE_HOST_LLM_ENABLED" => "false"
       }
