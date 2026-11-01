@@ -166,8 +166,8 @@ HERMES_BIN=$PWD/hermes-agent/.venv/bin/hermes DATABASE_PATH=data/druzhok.db mix 
 ```bash
 # ~/druzhok on the box is an rsync target (symlink to /data/home-ubuntu/druzhok-new), not a git checkout
 ops/build-app.sh   # only when apps/druzhok_web/assets/app changed; the build output is committed
-rsync -az --delete --exclude=_build --exclude=deps --exclude=node_modules apps config ops mix.exs mix.lock .tool-versions ubuntu@195.49.213.8:~/druzhok/
-ssh ubuntu@195.49.213.8
+rsync -az --delete --exclude=_build --exclude=deps --exclude=node_modules apps config ops mix.exs mix.lock .tool-versions ubuntu@94.247.135.159:~/druzhok/
+ssh ubuntu@94.247.135.159
 . ~/.asdf/asdf.sh; set -a; . /etc/druzhok/druzhok.env; set +a
 cd ~/druzhok && MIX_ENV=prod mix compile
 MIX_ENV=prod mix ecto.migrate          # DATABASE_PATH comes from druzhok.env

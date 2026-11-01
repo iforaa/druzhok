@@ -117,7 +117,7 @@ parse.
   Source values say `%{bot_name}`; druzhok replaces it with the name with `{` and `}` replaced by `(` and
   `)`. Doubling them would not work: `t()` runs `str.format` only when the caller passes kwargs
   (`agent/i18n.py:236-237`), so `{{` would show literally in keys formatted without them, and a single brace
-  breaks the ones formatted with them. Empty name → «Дружок» (as `Voice.sync_soul`).
+  breaks the ones formatted with them. Empty name → «CleoHub» (`Voice.fallback_name/0`, as `Voice.sync_soul`).
 - **Placeholders.** Hermes formats with `str.format(**kwargs)`; unused keyword arguments are ignored, so an
   override may drop placeholders (`{model}`, `{error}`, `{approve_cmd}`). A placeholder hermes does not pass
   does not raise: `t()` catches the formatting error and returns the unformatted text

@@ -30,11 +30,11 @@ The seed also has three bot-editable sections: «Безопасность», «�
 
 No bot ever edited either file. Hermes never asks it to: its prompt routes user facts to the `memory` tool
 and know-how to skills, and treats SOUL.md and AGENTS.md as protected instruction files. Users meet "Hermes"
-and a coding assistant; the product is Дружок.
+and a coding assistant; the product is CleoHub (Дружок until 2026-11-01).
 
 ## Goals
 
-1. Every bot has a Russian Дружок identity with its own name, kept current by druzhok.
+1. Every bot has a Russian CleoHub identity with its own name, kept current by druzhok.
 2. Druzhok's product rules live in one place druzhok owns, outside files the bot may edit.
 3. No instruction contradicts how hermes 0.22.2 actually works (memory, skills, files).
 4. Nothing an owner or a bot wrote is overwritten or lost.
@@ -54,8 +54,9 @@ and a coding assistant; the product is Дружок.
   - **Updates** happen at the instance-aware caller (`Panel.bot/1`, panel.ex:63): when the profile title
     differs from `display_name`, it updates the row. `Panel.profile/1` stays token-only and read only; it
     is also called for the manager bot.
-  - When `display_name` is nil, `sync_soul` keeps the current SOUL.md. The only exception is a missing
-    SOUL.md, which is written with «Дружок». The bot's slug is never used as a name.
+  - When `display_name` is nil, the text carries the fallback name «CleoHub» (`Voice.fallback_name/0`):
+    a missing SOUL.md is written with it and a file matching the recorded hash is rewritten. An edited file
+    is left alone and a legacy text stays until the name is known. The bot's slug is never used as a name.
 - **`ManagerBot.Provisioner.write_soul/2` is removed.** The 'missing' row below covers creation.
 - **Docs to update with the change:**
   - CLAUDE.md's layout line becomes «workspace seed: config.yaml comes from
@@ -64,7 +65,7 @@ and a coding assistant; the product is Дружок.
     hermes's prompt_builder loads AGENTS.md" (:110), and "see workspace/AGENTS.md «Публикация сайтов»"
     (:140, the steps move to `product_rules/1`).
 - **Content (Russian, short):**
-  - who it is: a personal assistant in Telegram, part of Дружок;
+  - who it is: a personal assistant in Telegram, part of CleoHub;
   - its voice: friendly, plain words, no jargon, short by default;
   - what it is not: no "AI language model" disclaimers, not a coding agent unless asked;
   - **rules that must hold in every run.** Cron runs load SOUL.md but not `agent.system_prompt` (see
@@ -236,7 +237,7 @@ text (pre-existing).
 
 - **`sync_soul/2`:**
   - every row of its table (missing; own hash; each legacy text with two names; custom text left alone);
-  - nil `display_name` keeps the file;
+  - nil `display_name` rewrites a hash-matched file with the fallback name, and keeps an edited or legacy one;
   - a symlinked and a dangling-symlink SOUL.md are refused;
   - idempotence, and the backup written once.
 - **`product_rules/1`:**

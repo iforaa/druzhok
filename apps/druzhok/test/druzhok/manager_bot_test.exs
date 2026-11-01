@@ -238,7 +238,7 @@ defmodule Druzhok.ManagerBotTest do
     inst = Repo.get_by!(Instance, name: "zhora_ff00")
     assert inst.language == "ru"
     # No name typed: the slug is never used as one.
-    assert File.read!(Path.join([root, "zhora_ff00", "SOUL.md"])) =~ "Тебя зовут Дружок"
+    assert File.read!(Path.join([root, "zhora_ff00", "SOUL.md"])) =~ "Тебя зовут CleoHub"
   end
 
   test "provisioning failure is reported to the creator", %{stub: stub} do
