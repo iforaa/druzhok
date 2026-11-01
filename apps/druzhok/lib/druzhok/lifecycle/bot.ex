@@ -456,6 +456,7 @@ defmodule Druzhok.Lifecycle.Bot do
   end
 
   defp describe_error({:ruoc_suspend, reason}), do: "ruoc suspend: #{reason}"
+  defp describe_error({:ruoc_sites, reason}), do: "ruoc sites: #{reason}"
   defp describe_error(reason) when is_binary(reason), do: reason
   defp describe_error(reason), do: inspect(reason)
 

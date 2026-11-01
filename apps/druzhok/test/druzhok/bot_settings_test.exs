@@ -7,6 +7,183 @@ defmodule Druzhok.BotSettingsTest do
 
   defp reload(inst), do: Repo.get!(Instance, inst.id)
 
+  describe "turning website hosting off" do
+    setup do
+      stub = Druzhok.RuocStub.start()
+      inst = relay_instance(%{active: true, website_hosting_enabled: true, ruoc_api_key: "ruoc_bot"})
+
+      Bypass.stub(stub.bypass, "GET", "/v1/sites", fn conn ->
+        conn = Druzhok.RuocStub.record(stub, "GET /v1/sites", conn)
+        Druzhok.RuocStub.reply(conn, 200, %{"sites" => [%{"name" => "a"}, %{"name" => "b"}]})
+      end)
+
+      %{stub: stub, inst: inst}
+    end
+
+    defp deleted(stub), do: Druzhok.RuocStub.calls(stub, "DELETE /v1/sites/:site")
+
+    test "takes every published site down under the bot's own key", %{stub: stub, inst: inst} do
+      assert {:ok, row, true} =
+               BotSettings.update(inst.name, %{website_hosting_enabled: false}, restart: :when_quiet)
+
+      refute row.website_hosting_enabled
+      assert deleted(stub) |> Enum.map(& &1.path) |> Enum.uniq() == ["/v1/sites/a", "/v1/sites/b"]
+      assert {"authorization", "Bearer ruoc_bot"} in hd(deleted(stub)).headers
+    end
+
+    test "the operator's `set` does the same, then restarts", %{stub: stub, inst: inst} do
+      assert {:ok, _, true} = BotSettings.update(inst.name, %{website_hosting_enabled: false})
+      assert length(deleted(stub)) >= 2
+      assert reload(inst).start_seq == inst.start_seq + 1
+    end
+
+    test "a site already gone counts as down", %{stub: stub, inst: inst} do
+      Bypass.stub(stub.bypass, "DELETE", "/v1/sites/:site", fn conn ->
+        Druzhok.RuocStub.reply(conn, 404, %{"error" => "not_found"})
+      end)
+
+      assert {:ok, _, _} = BotSettings.update(inst.name, %{website_hosting_enabled: false})
+    end
+
+    test "if the gateway refuses, nothing is saved and no restart is asked", %{stub: stub, inst: inst} do
+      Bypass.stub(stub.bypass, "DELETE", "/v1/sites/:site", fn conn ->
+        Druzhok.RuocStub.reply(conn, 500, %{"error" => "boom"})
+      end)
+
+      assert {:error, {:unpublish_failed, reason}} =
+               BotSettings.update(inst.name, %{website_hosting_enabled: false, mention_only: true})
+
+      assert reason =~ "HTTP 500"
+      row = reload(inst)
+      assert row.website_hosting_enabled
+      refute row.mention_only
+      assert row.start_seq == inst.start_seq
+    end
+
+    test "a refusal under the panel's quiet path leaves nothing for the controller to apply", %{stub: stub, inst: inst} do
+      Bypass.stub(stub.bypass, "DELETE", "/v1/sites/:site", fn conn ->
+        Druzhok.RuocStub.reply(conn, 500, %{"error" => "boom"})
+      end)
+
+      assert {:error, {:unpublish_failed, _}} =
+               BotSettings.update(inst.name, %{website_hosting_enabled: false}, restart: :when_quiet)
+
+      row = reload(inst)
+      assert row.website_hosting_enabled
+      assert row.settings_seq == inst.settings_seq
+      assert row.settings_saved_at == inst.settings_saved_at
+      assert Druzhok.Panel.Settings.apply_state(row) == "applied"
+    end
+
+    test "the row still says on during the first pass, and a site landing behind it is swept", %{stub: stub, inst: inst} do
+      test = self()
+      {:ok, lists} = Agent.start_link(fn -> 0 end)
+
+      Bypass.stub(stub.bypass, "GET", "/v1/sites", fn conn ->
+        send(test, {:listed, reload(inst).website_hosting_enabled})
+
+        sites =
+          if Agent.get_and_update(lists, &{&1, &1 + 1}) == 0,
+            do: [%{"name" => "a"}],
+            else: [%{"name" => "late"}]
+
+        Druzhok.RuocStub.reply(conn, 200, %{"sites" => sites})
+      end)
+
+      assert {:ok, row, _} = BotSettings.update(inst.name, %{website_hosting_enabled: false})
+      refute row.website_hosting_enabled
+      assert_received {:listed, true}
+      assert_received {:listed, false}
+      assert Enum.map(deleted(stub), & &1.path) == ["/v1/sites/a", "/v1/sites/late"]
+    end
+
+    test "a failed sweep keeps the saved off and is logged", %{stub: stub, inst: inst} do
+      {:ok, lists} = Agent.start_link(fn -> 0 end)
+
+      Bypass.stub(stub.bypass, "GET", "/v1/sites", fn conn ->
+        if Agent.get_and_update(lists, &{&1, &1 + 1}) == 0,
+          do: Druzhok.RuocStub.reply(conn, 200, %{"sites" => []}),
+          else: Druzhok.RuocStub.reply(conn, 500, %{"error" => "boom"})
+      end)
+
+      log =
+        ExUnit.CaptureLog.capture_log(fn ->
+          assert {:ok, _, _} = BotSettings.update(inst.name, %{website_hosting_enabled: false})
+        end)
+
+      refute reload(inst).website_hosting_enabled
+      assert log =~ "a late site may be up"
+    end
+
+    test "a change that will not save takes no site down", %{stub: stub, inst: inst} do
+      assert {:error, %Ecto.Changeset{}} =
+               BotSettings.update(inst.name, %{website_hosting_enabled: false, timezone: 12})
+
+      assert Druzhok.RuocStub.calls(stub, "GET /v1/sites") == []
+      assert reload(inst).website_hosting_enabled
+    end
+
+    test "sites gone before the refusal stay gone, and a retry finishes the job", %{stub: stub, inst: inst} do
+      {:ok, ok?} = Agent.start_link(fn -> false end)
+
+      Bypass.stub(stub.bypass, "DELETE", "/v1/sites/:site", fn conn ->
+        conn = Druzhok.RuocStub.record(stub, "DELETE /v1/sites/:site", conn)
+
+        if conn.request_path == "/v1/sites/a" or Agent.get(ok?, & &1),
+          do: Druzhok.RuocStub.reply(conn, 200, %{}),
+          else: Druzhok.RuocStub.reply(conn, 500, %{"error" => "boom"})
+      end)
+
+      assert {:error, {:unpublish_failed, _}} = BotSettings.update(inst.name, %{website_hosting_enabled: false})
+      assert Enum.map(deleted(stub), & &1.path) == ["/v1/sites/a", "/v1/sites/b"]
+      assert reload(inst).website_hosting_enabled
+
+      Agent.update(ok?, fn _ -> true end)
+      assert {:ok, _, _} = BotSettings.update(inst.name, %{website_hosting_enabled: false})
+      refute reload(inst).website_hosting_enabled
+    end
+
+    test "if the gateway cannot list, nothing is saved", %{stub: stub, inst: inst} do
+      Bypass.down(stub.bypass)
+
+      assert {:error, {:unpublish_failed, _}} =
+               BotSettings.update(inst.name, %{website_hosting_enabled: false}, restart: :when_quiet)
+
+      Bypass.up(stub.bypass)
+      assert reload(inst).website_hosting_enabled
+    end
+
+    test "turning it on publishes nothing", %{stub: stub} do
+      off = relay_instance(%{active: true, website_hosting_enabled: false, ruoc_api_key: "ruoc_bot"})
+      assert {:ok, row, _} = BotSettings.update(off.name, %{website_hosting_enabled: true})
+      assert row.website_hosting_enabled
+      assert Druzhok.RuocStub.calls(stub, "GET /v1/sites") == []
+      assert deleted(stub) == []
+    end
+
+    test "a bot with no ruoc key has nothing to take down", %{stub: stub} do
+      bare = relay_instance(%{active: true, website_hosting_enabled: true})
+      assert {:ok, _, _} = BotSettings.update(bare.name, %{website_hosting_enabled: false})
+      assert Druzhok.RuocStub.calls(stub, "GET /v1/sites") == []
+    end
+
+    test "the panel and the CLI name the failure", %{stub: stub, inst: inst} do
+      Bypass.stub(stub.bypass, "DELETE", "/v1/sites/:site", fn conn ->
+        Druzhok.RuocStub.reply(conn, 500, %{"error" => "boom"})
+      end)
+
+      assert {:error, 502, "unpublish_failed", _} =
+               Druzhok.Panel.Settings.save(reload(inst), %{"website_hosting_enabled" => false})
+
+      err =
+        capture_io(:stderr, fn ->
+          assert 1 == CLI.main(["set", inst.name, "website_hosting_enabled=false"])
+        end)
+
+      assert err =~ "could not take all the sites down"
+    end
+  end
+
   describe "update/3 with restart: :when_quiet" do
     test "never restarts or wakes, in any state; a restart field bumps settings_seq" do
       for attrs <- [%{active: true}, %{active: true, sleeping: true}, %{active: false}] do

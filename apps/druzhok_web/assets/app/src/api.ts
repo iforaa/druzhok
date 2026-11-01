@@ -261,6 +261,15 @@ export interface SiteFile {
   type: "file" | "dir"
 }
 
+export interface PublishedSite {
+  name: string
+  url: string
+  files: number
+  bytes: number
+  published_at: string
+  disabled: boolean
+}
+
 export const panelApi = {
   bot: () => panel<Bot>("bot"),
   files: () => panel<Files>("files"),
@@ -273,6 +282,7 @@ export const panelApi = {
   saveSkill: (s: Skill): Save => (text, base) =>
     panelPost<Saved>(`skills/${s.path.map(encodeURIComponent).join("/")}`, { text, base_sha256: base }),
   site: () => panel<{ files: SiteFile[] | null }>("site"),
+  published: () => panel<{ published: PublishedSite[] | null }>("site/published"),
   invites: () => panel<{ links: Invite[]; used: number }>("invites"),
   imageModels: () => panel<{ models: ImageModel[] }>("image-models"),
   saveSettings: (changes: SettingChanges) => panelPost<{ bot: Bot }>("settings", { changes }),
@@ -326,6 +336,8 @@ export function explain(err: unknown): string {
       return "Не найдено."
     case "cabinet_off":
       return "Кабинет для этого бота выключен."
+    case "unpublish_failed":
+      return "Не получилось снять все сайты с публикации, поэтому настройка не изменилась. Часть сайтов могла уже перестать открываться. Попробуйте ещё раз."
     case "not_text":
       return "Этот файл не текстовый, показать его нельзя."
     case "init_stale":

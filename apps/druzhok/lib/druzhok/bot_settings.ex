@@ -9,6 +9,8 @@ defmodule Druzhok.BotSettings do
   druzhok itself apply at once.
   """
 
+  require Logger
+
   alias Druzhok.{BotManager, I18n, Instance, Repo, Telegram}
   alias Druzhok.Runtime.Hermes
 
@@ -60,18 +62,29 @@ defmodule Druzhok.BotSettings do
   same write, and the controller applies it at the next start or the next
   quiet moment (panel controls spec, «Applying a change»). `restarted?` is
   then whether a restart is pending.
+
+  Turning `website_hosting_enabled` off takes the bot's published sites down
+  (`Druzhok.Sites`) first. If the gateway will not, nothing is saved and the answer
+  is `{:error, {:unpublish_failed, reason}}`: the owner was told the pages are
+  gone, so "off" is not saved while they still open. Sites taken down before the
+  refusal stay down.
   """
   def update(name, attrs, opts \\ []) do
     with {:ok, inst} <- fetch(name),
          {:ok, changes} <- cast(attrs),
-         :ok <- validate(changes) do
+         :ok <- validate(changes),
+         :ok <- take_sites_down(inst, changes) do
       restart_field? =
         Enum.any?(changes, fn {k, v} -> k in @restart and Map.get(inst, k) != v end)
 
-      case opts[:restart] do
-        :when_quiet -> update_when_quiet(inst, changes, restart_field?)
-        _ -> update_now(inst, changes, inst.active and restart_field?)
-      end
+      result =
+        case opts[:restart] do
+          :when_quiet -> update_when_quiet(inst, changes, restart_field?)
+          _ -> update_now(inst, changes, inst.active and restart_field?)
+        end
+
+      if match?({:ok, _, _}, result), do: sweep_sites(inst, changes)
+      result
     end
   end
 
@@ -96,6 +109,33 @@ defmodule Druzhok.BotSettings do
 
     with {:ok, updated} <- Repo.update(changeset), do: {:ok, updated, restart_field?}
   end
+
+  # Before the write, so a refusal leaves nothing to undo: not the column, and
+  # not a settings_seq the controller may already have acted on. A change that
+  # will not save anyway must not cost the owner their pages.
+  defp take_sites_down(inst, changes) do
+    if turning_sites_off?(inst, changes) and Instance.changeset(inst, changes).valid? do
+      with {:error, reason} <- Druzhok.Sites.unpublish_all(inst) do
+        {:error, {:unpublish_failed, reason}}
+      end
+    else
+      :ok
+    end
+  end
+
+  # After the write: a publish that landed behind the first pass, whose own
+  # re-read of the row still said on. From here on an upload ending sees "off" and
+  # takes itself down (`SitesController`), so nothing can land behind this pass.
+  defp sweep_sites(inst, changes) do
+    if turning_sites_off?(inst, changes) do
+      with {:error, reason} <- Druzhok.Sites.unpublish_all(inst) do
+        Logger.error("[sites] #{inst.name}: hosting is off, but a late site may be up: #{reason}")
+      end
+    end
+  end
+
+  defp turning_sites_off?(inst, changes),
+    do: inst.website_hosting_enabled == true and changes[:website_hosting_enabled] == false
 
   defp cast(attrs) do
     Enum.reduce_while(attrs, {:ok, %{}}, fn {k, v}, {:ok, acc} ->

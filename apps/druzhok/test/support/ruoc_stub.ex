@@ -59,6 +59,21 @@ defmodule Druzhok.RuocStub do
       reply(conn, 200, %{"status" => "suspended"})
     end)
 
+    Bypass.stub(bypass, "DELETE", "/partner/accounts/:id/sites", fn conn ->
+      conn = record(stub, "DELETE /partner/accounts/:id/sites", conn)
+      reply(conn, 200, %{"removed" => 0})
+    end)
+
+    Bypass.stub(bypass, "GET", "/v1/sites", fn conn ->
+      conn = record(stub, "GET /v1/sites", conn)
+      reply(conn, 200, %{"sites" => []})
+    end)
+
+    Bypass.stub(bypass, "DELETE", "/v1/sites/:site", fn conn ->
+      conn = record(stub, "DELETE /v1/sites/:site", conn)
+      reply(conn, 200, %{})
+    end)
+
     Bypass.stub(bypass, "GET", "/partner/accounts", fn conn ->
       conn = record(stub, "GET /partner/accounts", conn)
       reply(conn, 200, [])

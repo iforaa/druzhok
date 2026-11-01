@@ -26,6 +26,11 @@ defmodule DruzhokWebWeb.Router do
 
     post "/search", LlmProxyController, :firecrawl_search
     post "/scrape", LlmProxyController, :firecrawl_scrape
+
+    # Not Firecrawl: hermes's site_publish and site_delete, forwarded to
+    # ruoc-gateway's site API under the bot's own key.
+    put "/sites/:site", SitesController, :publish
+    delete "/sites/:site", SitesController, :unpublish
   end
 
   # The page fetcher ruoc-gateway routes POST /v1/fetch to. Shared secret,
@@ -69,6 +74,7 @@ defmodule DruzhokWebWeb.Router do
       get "/skills/:name", PanelController, :skill
       get "/skills/:category/:name", PanelController, :skill
       get "/site", PanelController, :site
+      get "/site/published", PanelController, :published
       get "/image-models", PanelController, :image_models
       post "/files/:kind", PanelController, :save_file
       post "/skills/:name", PanelController, :save_skill

@@ -455,6 +455,31 @@ defmodule Druzhok.PanelTest do
     assert Panel.site(%{inst | website_hosting_enabled: false}) == nil
   end
 
+  test "published/1 shows what the gateway serves, [] when off, nil when it does not answer", %{inst: inst} do
+    stub = Druzhok.RuocStub.start()
+    inst = %{inst | ruoc_api_key: "ruoc_bot"}
+
+    Bypass.stub(stub.bypass, "GET", "/v1/sites", fn conn ->
+      Druzhok.RuocStub.reply(conn, 200, %{
+        "sites" => [
+          %{"name" => "cv", "url" => "https://vasya.oldey.dev/cv/", "files" => 2, "bytes" => 10,
+            "published_at" => "2026-11-01T10:00:00Z", "disabled" => false, "secret" => "no"}
+        ]
+      })
+    end)
+
+    assert [%{name: "cv", url: "https://vasya.oldey.dev/cv/", files: 2, bytes: 10, disabled: false} = site] =
+             Panel.published(inst)
+
+    refute Map.has_key?(site, :secret)
+
+    assert Panel.published(%{inst | website_hosting_enabled: false}) == []
+
+    Bypass.down(stub.bypass)
+    assert Panel.published(inst) == nil
+    Bypass.up(stub.bypass)
+  end
+
   test "a symlinked workspace hides the site", %{inst: inst, dir: dir, outside: outside} do
     File.mkdir_p!(Path.join(outside, "sites/x"))
     File.write!(Path.join(outside, "sites/x/index.html"), "other tenant")

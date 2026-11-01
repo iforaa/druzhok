@@ -105,9 +105,10 @@ defmodule Druzhok.Runtime.Hermes do
       "TELEGRAM_REQUIRE_MENTION" => to_string(Map.get(instance, :mention_only, false)),
       "TELEGRAM_MENTION_PATTERNS" => build_mention_patterns(instance),
       "TELEGRAM_FREE_RESPONSE_CHATS" => build_free_response_chats(instance),
-      # Druzhok website hosting: the bot's public base URL when enabled,
-      # else empty (the publishing steps are in Voice.product_rules/1).
-      "BOT_SITE_BASE_URL" => build_bot_site_base_url(instance),
+      # Turns on hermes's `sites` tools (their check_fn is true only for "1"); the
+      # publishing steps are in Voice.product_rules/1.
+      "DRUZHOK_SITES_ENABLED" =>
+        if(Map.get(instance, :website_hosting_enabled) == true, do: "1", else: ""),
       "OPENROUTER_API_KEY" => tenant_key,
       # Anything hermes sends to "openrouter" goes to the proxy too. Bots have
       # no internet, and the video tool's catalog fetch to openrouter.ai hung
@@ -1130,14 +1131,6 @@ defmodule Druzhok.Runtime.Hermes do
         # One regex per name; word-boundary + case-insensitive (the re.IGNORECASE
         # flag is applied by hermes when it compiles the pattern list).
         Jason.encode!(["\\b#{Regex.escape(name)}\\b"])
-    end
-  end
-
-  defp build_bot_site_base_url(instance) do
-    if Map.get(instance, :website_hosting_enabled, false) do
-      "https://#{instance.name}.oldey.dev"
-    else
-      ""
     end
   end
 

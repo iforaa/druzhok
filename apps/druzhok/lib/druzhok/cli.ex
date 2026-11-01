@@ -334,6 +334,10 @@ defmodule Druzhok.CLI do
     do: {:error, "unknown field #{f}; fields: #{Enum.join(BotSettings.fields(), " ")}"}
 
   defp explain({:error, %Ecto.Changeset{} = cs}), do: {:error, inspect(cs.errors)}
+
+  defp explain({:error, {:unpublish_failed, reason}}),
+    do: {:error, "could not take all the sites down, nothing saved (some may be down already): #{reason}"}
+
   defp explain({:error, reason}) when not is_binary(reason), do: {:error, inspect(reason)}
   defp explain(other), do: other
 

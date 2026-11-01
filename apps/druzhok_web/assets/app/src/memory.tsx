@@ -311,9 +311,39 @@ function SiteView() {
   const { data, error, reload } = useLoad(panelApi.site)
   const files = data ? (data.files ?? []) : null
   const sites = files ? Array.from(new Set(files.map((f) => f.site))) : []
+  const published = useLoad(panelApi.published)
+  const live = published.data?.published ?? []
   return (
     <>
       <h1 className="screen-title">Сайт</h1>
+      {live.length ? (
+        <section className="card">
+          <h2>Опубликовано</h2>
+          <ul className="tree">
+            {live.map((p) => (
+              <li key={p.name}>
+                {p.url.startsWith("https://") && !p.disabled ? (
+                  <a
+                    href={p.url}
+                    target="_blank"
+                    rel="noreferrer"
+                    onClick={(e) => {
+                      if (openExternal(p.url)) e.preventDefault()
+                    }}
+                  >
+                    {p.url}
+                  </a>
+                ) : (
+                  <span>{p.name}</span>
+                )}
+                <span className="hint">{p.disabled ? "отключён" : size(p.bytes)}</span>
+              </li>
+            ))}
+          </ul>
+        </section>
+      ) : null}
+      {published.data && !published.data.published ? <p className="hint">Не получилось узнать, что опубликовано.</p> : null}
+      {published.error ? <ErrorNote error={published.error} retry={published.reload} /> : null}
       {error ? <ErrorNote error={error} retry={reload} /> : null}
       {!files && !error ? <Skeleton rows={4} /> : null}
       {sites.map((site) => (

@@ -23,6 +23,18 @@ defmodule DruzhokWebWeb.RouterAuthTest do
     end
   end
 
+  test "the site routes need a tenant key" do
+    gzip = put_req_header(build_conn(), "content-type", "application/gzip")
+
+    assert put(gzip, "/v2/sites/cv", "").status == 401
+    assert delete(build_conn(), "/v2/sites/cv").status == 401
+
+    assert gzip
+           |> put_req_header("authorization", "Bearer nope")
+           |> put("/v2/sites/cv", "")
+           |> Map.get(:status) == 401
+  end
+
   test "the removed OpenRouter passthrough stays removed" do
     conn =
       build_conn()
