@@ -391,8 +391,7 @@ defmodule Druzhok.BotManager do
 
   @doc """
   Canonical host path under which every bot's data dir lives
-  (`<data_root_base>/<bot>/workspace/...`). Public so the web layer can resolve
-  the same root when serving published sites.
+  (`<data_root_base>/<bot>/workspace/...`).
   """
 
   def data_root_base do
@@ -402,13 +401,6 @@ defmodule Druzhok.BotManager do
 
   @doc "A bot's tenant dir, `<data_root_base>/<name>` (its HERMES_HOME)."
   def tenant_dir(bot_name) when is_binary(bot_name), do: Path.join(data_root_base(), bot_name)
-
-  @doc """
-  Absolute host path to a bot's published-sites directory:
-  `<data_root_base>/<bot_name>/workspace/sites`, as the BotSite plug serves it.
-  """
-  def sites_dir(bot_name) when is_binary(bot_name),
-    do: Path.join([data_root_base(), bot_name, "workspace", "sites"])
 
   @doc "Unit/process state as a string: active | activating | restarting | stopping | inactive | failed | unknown"
   def status(name), do: name |> Druzhok.Host.status() |> Atom.to_string()

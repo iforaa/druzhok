@@ -30,8 +30,7 @@ triera.oldey.dev {
 }
 
 # Apex + wildcard are owned by the RuOC gateway (CleoCode) since 2026-08-29.
-# Bot sites (<bot>.oldey.dev, BotSite plug) are therefore NOT reachable
-# until they get their own sub-wildcard.
+# That includes bot sites: the gateway serves <slug>.oldey.dev itself.
 oldey.dev, *.oldey.dev {
   tls {
     dns cloudflare {env.CLOUDFLARE_API_TOKEN}
