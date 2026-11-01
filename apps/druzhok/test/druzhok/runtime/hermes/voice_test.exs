@@ -185,6 +185,37 @@ defmodule Druzhok.Runtime.Hermes.VoiceTest do
       assert full =~ "устарели"
     end
 
+    test "the memory rule follows the provider" do
+      plain = Voice.product_rules(%{name: "b"})
+      assert plain =~ "сохраняй инструментом memory"
+      refute plain =~ "mnemosyne_"
+      assert Voice.product_rules(%{name: "b", memory_provider: "builtin"}) == plain
+
+      rules = Voice.product_rules(%{name: "b", memory_provider: "mnemosyne"})
+      refute rules =~ "сохраняй инструментом memory"
+
+      for tool <- ~w(mnemosyne_remember mnemosyne_recall mnemosyne_forget),
+          do: assert(rules =~ tool)
+
+      assert rules =~ "других mnemosyne_* нет"
+      assert rules =~ "Не обещай, что забыто полностью"
+      assert rules =~ "memory/YYYY-MM-DD.md"
+      assert Voice.product_rules(%Druzhok.Instance{name: "b", memory_provider: "mnemosyne"}) =~ "mnemosyne_recall"
+    end
+
+    test "the Mnemosyne rule reaches config.yaml and a second sync changes nothing", %{home: home} do
+      File.write!(Path.join(home, "config.yaml"), "model:\n  default: \"x\"\n")
+      sync(home, %{memory_provider: "mnemosyne"})
+      # The first sync's fresh memory block lists its keys in another order.
+      second = sync(home, %{memory_provider: "mnemosyne"})
+      cfg = YamlElixir.read_from_string!(second)
+
+      assert cfg["agent"]["system_prompt"] ==
+               Voice.product_rules(%{name: "b", memory_provider: "mnemosyne"})
+
+      assert sync(home, %{memory_provider: "mnemosyne"}) == second
+    end
+
     defp sync(home, inst) do
       :ok = Hermes.sync_config(Map.merge(%{name: "b", model: "x", tenant_key: "k"}, inst), home)
       File.read!(Path.join(home, "config.yaml"))

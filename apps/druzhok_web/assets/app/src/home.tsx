@@ -178,7 +178,13 @@ export default function Home({ bot, go }: { bot: Bot; go: Go }) {
         </>
       ) : null}
 
-      <MemoryList files={files.data} error={files.error} reload={files.reload} open={open} />
+      <MemoryList
+        files={files.data}
+        error={files.error}
+        reload={files.reload}
+        mnemosyne={bot.settings.memory_provider === "mnemosyne"}
+        open={open}
+      />
       <p className="hint">{tryLine(bot)}</p>
 
       <div className="group">

@@ -277,13 +277,30 @@ defmodule Druzhok.Runtime.Hermes.Voice do
       - Деструктивные действия — только с разрешения владельца. Сомневаешься — спроси.
       - В группах участвуй, но не доминируй: отвечай, когда тебя упомянули или когда ты реально полезен.\
       """,
-      "Память: факты о пользователе сохраняй инструментом memory. Не заводи файлы вроде " <>
-        "memory/YYYY-MM-DD.md или TOOLS.md.",
+      memory_rule(instance),
       "Если более ранние инструкции в этом разговоре говорят о memory/YYYY-MM-DD.md, TOOLS.md " <>
         "или разделах AGENTS.md — они устарели, следуй этим правилам."
     ]
     |> Enum.reject(&is_nil/1)
     |> Enum.join("\n\n")
+  end
+
+  # Mnemosyne's own prompt block names tools its allowlist hides and calls
+  # `memory` deprecated, so a bot with it needs the real list and the split.
+  defp memory_rule(%{memory_provider: "mnemosyne"}) do
+    """
+    Память. Из её инструментов у тебя есть только memory, mnemosyne_remember, mnemosyne_recall и mnemosyne_forget; других mnemosyne_* нет, даже если они упомянуты выше.
+    - Факты о человеке, его предпочтения и договорённости сохраняй через mnemosyne_remember.
+    - memory — только для короткого, что нужно в каждом разговоре: постоянные правила и самое важное о человеке. Места там мало.
+    - Если для ответа нужны личные факты или договорённости, которых нет в контексте, вызови mnemosyne_recall. Не нашлось — попробуй другую формулировку, максимум два запроса. Только потом говори, что не знаешь. В результатах бывает не по теме: верь только тому, что прямо отвечает на вопрос.
+    - Просят забыть: найди записи через mnemosyne_recall, удали через mnemosyne_forget только относящиеся к просьбе, проверь, что удаление прошло, и убери это из memory. Не обещай, что забыто полностью: другие копии могут остаться.
+    Не заводи файлы вроде memory/YYYY-MM-DD.md или TOOLS.md.\
+    """
+  end
+
+  defp memory_rule(_instance) do
+    "Память: факты о пользователе сохраняй инструментом memory. Не заводи файлы вроде " <>
+      "memory/YYYY-MM-DD.md или TOOLS.md."
   end
 
   defp capabilities(instance) do

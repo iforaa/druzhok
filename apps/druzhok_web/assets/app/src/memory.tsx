@@ -23,11 +23,13 @@ export function MemoryList({
   files,
   error,
   reload,
+  mnemosyne,
   open,
 }: {
   files: Files | null
   error: string | null
   reload: () => void
+  mnemosyne: boolean
   open: (s: MemoryScreen) => void
 }) {
   const meta = (m: Files["soul"]) => (m ? `${size(m.size)} · изменён ${when(m.modified_at)}` : "пока пусто")
@@ -44,6 +46,7 @@ export function MemoryList({
     <>
       <span className="label">Память</span>
       <p className="hint">Что бот знает и умеет. Он ведёт это сам, по ходу разговоров, а вы можете поправить.</p>
+      {mnemosyne ? <p className="hint">Это не вся память: долгая память хранится отдельно и здесь не видна.</p> : null}
       {error ? <ErrorNote error={error} retry={reload} /> : null}
       {!files && !error ? <Skeleton rows={3} /> : null}
       {files ? (

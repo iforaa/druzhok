@@ -127,7 +127,10 @@ writes through druzhok and updates the hash.
 - **The style rules** from today's «Стиль» section.
 - **Safety, from the seed:** private data never leaks; destructive actions only with the owner's
   permission. **Groups:** take part, don't dominate.
-- **Memory:** user facts go through the memory tool; never invent files like `memory/YYYY-MM-DD.md`.
+- **Memory:** a builtin bot saves user facts with the memory tool. A Mnemosyne bot saves them with
+  `mnemosyne_remember`, keeps only short always-needed items in `memory`, calls `mnemosyne_recall` when an
+  answer needs facts missing from its context, and never promises that forgetting is complete. Neither
+  invents files like `memory/YYYY-MM-DD.md`.
 - **Older instructions:** if earlier instructions in this conversation mention `memory/YYYY-MM-DD.md`,
   TOOLS.md or AGENTS.md sections, they are out of date; follow these rules. This covers the period
   described under Rollout, when a running session still holds the old stored prompt.
