@@ -1,7 +1,6 @@
 defmodule Druzhok.TenantFiles do
   @moduledoc """
-  Reading a file a bot owns, safely, for `DruzhokWebWeb.Plugs.BotSite` and the
-  bot panel.
+  Reading a file a bot owns, safely, for the bot panel.
 
   The bot owns everything below its tenant dir and druzhok reads with
   CAP_DAC_READ_SEARCH: a symlink followed here hands out any file on the host.
@@ -35,7 +34,7 @@ defmodule Druzhok.TenantFiles do
 
   @doc """
   Opens `segments` below `tenant_dir`. `index: true` serves a directory as its
-  `index.html` (BotSite). `{:ok, fd, path, %File.Stat{}}` or `:not_found`; the
+  `index.html`. `{:ok, fd, path, %File.Stat{}}` or `:not_found`; the
   caller closes `fd`. The stat is the open descriptor's. `uid:` overrides the
   owner the file must have (default: the tenant dir's owner).
   """

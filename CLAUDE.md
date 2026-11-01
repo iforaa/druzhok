@@ -49,7 +49,7 @@ Always use `/my-commit` for committing changes.
 
 ```
 apps/druzhok/      core: BotManager, Host (Systemd|Process), Runtime.Hermes, ManagerBot, Lifecycle, CLI
-apps/druzhok_web/  Phoenix, no UI: LLM proxy (LlmProxyController), Telegram webhook, /internal/fetch, BotSite plug
+apps/druzhok_web/  Phoenix, no UI: LLM proxy (LlmProxyController), Telegram webhook, /internal/fetch, site uploads
 ops/               druzhok-ctl, hermes@.service, nftables, Caddyfile, bootstrap.sh, smoke.sh
 hermes-agent/      gitignored clone of the hermes fork (see update-hermes skill)
 (workspace seed: config.yaml comes from Runtime.Hermes.workspace_files/1; SOUL.md from Runtime.Hermes.Voice.sync_soul/2; no AGENTS.md;
@@ -182,8 +182,6 @@ MIX_ENV=prod mix ecto.migrate          # DATABASE_PATH comes from druzhok.env
 sudo install -D -m 0644 -o root -g root apps/druzhok/priv/panel-save/save.py /usr/local/lib/druzhok/panel-save.py   # every deploy
 sudo systemctl restart druzhok
 ```
-
-One-off, once druzhok, the gateway and hermes have the site API: `sudo ops/publish-existing-sites.sh` reports what the hosting-enabled bots have in `workspace/sites`, `--apply` publishes it, each bot as its own uid. Then deploy the commit that removes the `BotSite` plug.
 
 Operator CLI (replaces the dashboard, spec `docs/superpowers/specs/2026-10-21-dashboard-removal-design.md`):
 `sudo ops/druzhok help` — `list`, `show <bot>`, `set <bot> key=value…` (restarts a running bot when the field

@@ -17,11 +17,5 @@ defmodule DruzhokWebWeb.Endpoint do
 
   plug Plug.Head
 
-  # Bot-published static sites for `<bot>.oldey.dev`. Runs before the Router and
-  # halts on bot subdomains, so they can only ever reach files under the bot's
-  # sites dir — never the `/v1/*` proxy routes. Non-bot hosts (incl. the
-  # bare druzhok host) pass through untouched.
-  plug DruzhokWebWeb.Plugs.BotSite
-
   plug DruzhokWebWeb.Router
 end

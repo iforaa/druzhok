@@ -3,7 +3,7 @@ site API. Run as the bot's uid by ops/publish-existing-sites.sh, which passes th
 file's text to `druzhok-ctl exec <bot> python3 -I -c`, so the cwd is the bot's
 workspace and FIRECRAWL_API_URL / FIRECRAWL_API_KEY come from its env file.
 
-Without --apply it only reports. What the old BotSite plug kept private (names
+Without --apply it only reports. What druzhok's old site plug kept private (names
 starting with "." or "_", symlinks) stays out of the archive; a site with no
 index.html, or past the limits, is reported and not sent. One line per site; the
 exit code is 1 when any site failed or was not sendable.
@@ -100,7 +100,7 @@ def publish(name, files):
 
 
 def main(apply):
-    # BotSite served nothing through a linked sites dir, so nothing goes from one.
+    # The old plug served nothing through a linked sites dir, so nothing goes from one.
     if os.path.islink("sites"):
         print("  sites is a symlink: NOT SENDABLE")
         return 1
