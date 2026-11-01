@@ -1,0 +1,36 @@
+#!/usr/sbin/nft -f
+# Inbound policy for the whole host. Load it only through
+# ops/host-input-firewall.sh, which rolls it back after 5 minutes unless confirmed.
+#
+# A table of its own, so `inet druzhok` (bot egress) is never touched. The first
+# two lines make a reload one atomic transaction: there is no moment with the old
+# table gone and the new one missing, and it also works when no table exists yet.
+table inet host_input
+delete table inet host_input
+
+table inet host_input {
+  chain input {
+    type filter hook input priority 0; policy drop;
+
+    # druzhok, the bots' webhook ports, caddy's upstreams and the DNS stub
+    iif "lo" accept
+    ct state established,related accept
+    ct state invalid drop
+
+    tcp dport 22 accept
+    tcp dport { 80, 443 } accept
+    # HTTP/3: caddy advertises it, and a dropped QUIC packet stalls a client
+    # until it falls back to TCP.
+    udp dport 443 accept
+
+    # DHCP renewal. networkd's client gets the reply on a UDP socket, behind this
+    # hook, and the server may answer from another address than it was asked at,
+    # so conntrack cannot be relied on. Losing the lease takes the host offline.
+    udp sport 67 udp dport 68 accept
+    # IPv6 neighbour discovery; conntrack does not cover it. A hop limit of 255
+    # means the packet came from this link.
+    icmpv6 type { nd-neighbor-solicit, nd-neighbor-advert, nd-router-solicit, nd-router-advert } ip6 hoplimit 255 accept
+
+    counter drop
+  }
+}

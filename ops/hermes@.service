@@ -42,10 +42,16 @@ SystemCallFilter=@system-service
 SystemCallErrorNumber=EPERM
 RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
 CapabilityBoundingSet=
+# A bot sees only its own processes in /proc.
+ProtectProc=invisible
+PrivateIPC=yes
 
 MemoryMax=1G
 MemoryHigh=800M
+# The quota stays at one core: a lower one slows cold starts, which have already
+# hit a 10 s plugin timeout. The weight only matters when the CPU is contended.
 CPUQuota=100%
+CPUWeight=50
 TasksMax=256
 
 [Install]
