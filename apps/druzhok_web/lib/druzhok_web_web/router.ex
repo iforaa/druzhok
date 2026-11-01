@@ -33,8 +33,10 @@ defmodule DruzhokWebWeb.Router do
     delete "/sites/:site", SitesController, :unpublish
   end
 
-  # The page fetcher ruoc-gateway routes POST /v1/fetch to. Shared secret,
-  # localhost in practice; see docs/superpowers/specs/2026-09-05-web-fetch-service-design.md.
+  # What ruoc-gateway calls back into, under one shared secret: the page fetcher
+  # it routes POST /v1/fetch to (localhost in practice; see
+  # docs/superpowers/specs/2026-09-05-web-fetch-service-design.md), and the
+  # machine page's status for its CleoHub console.
   pipeline :internal_api do
     plug DruzhokWebWeb.Plugs.FetchAuth
   end
@@ -43,6 +45,7 @@ defmodule DruzhokWebWeb.Router do
     pipe_through :internal_api
 
     post "/fetch", FetchController, :fetch
+    get "/status", StatusController, :show
   end
 
   # The bot panel: a Telegram Mini App for a bot's owner (spec

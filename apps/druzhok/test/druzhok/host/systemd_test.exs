@@ -65,6 +65,33 @@ defmodule Druzhok.Host.SystemdTest do
     assert Systemd.stats("bot-a") == %{mem_bytes: 123_456, cpu_usec: 7_890}
   end
 
+  describe "memory_bytes/1" do
+    setup do
+      dir = Path.join(System.tmp_dir!(), "cgroup-#{System.unique_integer([:positive])}")
+      File.mkdir_p!(Path.join(dir, "hermes@up.service"))
+      File.write!(Path.join([dir, "hermes@up.service", "memory.current"]), "314572800\n")
+      File.mkdir_p!(Path.join(dir, "hermes@odd.service"))
+      File.write!(Path.join([dir, "hermes@odd.service", "memory.current"]), "max\n")
+      Application.put_env(:druzhok, :hermes_cgroup_dir, dir)
+
+      on_exit(fn ->
+        Application.delete_env(:druzhok, :hermes_cgroup_dir)
+        File.rm_rf!(dir)
+      end)
+    end
+
+    test "reads the unit's cgroup without druzhok-ctl", %{log: log} do
+      assert Systemd.memory_bytes("up") == 314_572_800
+      refute File.exists?(log)
+    end
+
+    test "is nil with no unit, an unreadable value or a bad name" do
+      assert Systemd.memory_bytes("asleep") == nil
+      assert Systemd.memory_bytes("odd") == nil
+      assert Systemd.memory_bytes("../up") == nil
+    end
+  end
+
   test "exec passes through" do
     assert {"hello\n", 0} = Systemd.exec("bot-a", ["echo", "hello"])
   end

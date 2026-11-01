@@ -81,6 +81,14 @@ defmodule Druzhok.Host.Process do
   end
 
   @impl Druzhok.Host
+  def memory_bytes(name) do
+    case stats(name) do
+      %{mem_bytes: bytes} -> bytes
+      nil -> nil
+    end
+  end
+
+  @impl Druzhok.Host
   def exec(name, args) do
     case lookup(name) do
       nil ->

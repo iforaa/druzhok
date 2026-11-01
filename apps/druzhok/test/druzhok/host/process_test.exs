@@ -35,6 +35,7 @@ defmodule Druzhok.Host.ProcessTest do
     assert logs =~ "TELEGRAM_BOT_TOKEN=tok123"
     assert %{mem_bytes: m, cpu_usec: _} = HostProcess.stats(name)
     assert m > 0
+    assert HostProcess.memory_bytes(name) > 0
     assert :ok = HostProcess.stop(name)
     assert HostProcess.status(name) == :inactive
   end
@@ -56,6 +57,7 @@ defmodule Druzhok.Host.ProcessTest do
     assert HostProcess.stop("nope") == :ok
     assert HostProcess.logs("nope", 5) == ""
     assert HostProcess.stats("nope") == nil
+    assert HostProcess.memory_bytes("nope") == nil
   end
 
   test "exec runs a command with the bot's env, in its workspace", %{name: name, data_root: root} do

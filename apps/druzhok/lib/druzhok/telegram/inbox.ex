@@ -132,6 +132,17 @@ defmodule Druzhok.Telegram.Inbox do
     |> Repo.one()
   end
 
+  @doc "`%{instance_id => {pending rows, oldest received_at}}`."
+  def pending_by_instance do
+    from(u in __MODULE__,
+      where: is_nil(u.acked_at),
+      group_by: u.instance_id,
+      select: {u.instance_id, {count(), min(u.received_at)}}
+    )
+    |> Repo.all()
+    |> Map.new()
+  end
+
   def drop_pending(instance_id, reason) do
     from(u in __MODULE__, where: u.instance_id == ^instance_id and is_nil(u.acked_at))
     |> Repo.update_all(set: [acked_at: DateTime.utc_now(), dropped_reason: reason])
