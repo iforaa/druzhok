@@ -91,6 +91,7 @@ defmodule DruzhokWebWeb.PanelApiTest do
     assert api(build_conn(), "/app/api/jobs").status == 200
     assert api(build_conn(), "/app/api/skills").status == 200
     assert api(build_conn(), "/app/api/site").status == 200
+    assert Jason.decode!(api(build_conn(), "/app/api/site/published").resp_body) == %{"published" => []}
     assert api(build_conn(), "/app/api/skills/nope").status == 404
 
     # No ruoc key: the invites cannot load, and say so.

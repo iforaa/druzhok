@@ -85,7 +85,14 @@ Spec: `docs/superpowers/specs/2026-09-05-ruoc-gateway-migration-design.md`.
 | `POST /v2/scrape` | ruoc-gateway `/v1/fetch`, which routes back to druzhok `POST /internal/fetch` (shared secret `fetch_secret` / `FETCH_SECRET`); `Druzhok.Fetch` reads the page (SSRF policy, 5 MiB, 30 s) and the Python worker at `FETCH_WORKER_BIN` (venv `/opt/druzhok-fetch`, `apps/druzhok/priv/fetch-worker`) turns it into markdown. Priced per page in ruoc (`ruocd fetch setup -rub 0`, free at launch) |
 | `POST /v1/images/generations` | ruoc-gateway `/v1/images` (per-image price, model = `instances.image_gen_model`, nil = ruoc default; catalogue from `GET /v1/images/models` via `Druzhok.Ruoc.image_models/0`) |
 | `POST /v1/embeddings` | ruoc-gateway `/v1/embeddings` (kind `embedding`, per 1M input tokens, free at launch), computed upstream by ruoc. Bots send entry `ruoc-embed-gemini` (`Runtime.Hermes` `@embedding_model`/`@embedding_dim`, google/gemini-embedding-001 3072-d via OpenRouter, since 2026-10-22; `ruoc-embed-e5-large` before, whose one provider hung). ruoc hedges batches of ≤8 texts (`EMBED_HEDGE_AFTER` 2.5 s, `EMBED_ATTEMPT_TIMEOUT` 5 s). Changing the model = new ruoc entry + `@embedding_model`/`@embedding_dim` + `druzhok-ctl exec <bot> mnemosyne reindex --yes` per bot; a dimension mismatch makes Mnemosyne fall back to keyword recall, never corrupts. `MNEMOSYNE_DATA_DIR` must be `<tenant>/mnemosyne/data` (the plugin hardcodes that path, the CLI follows the variable). Used by the Mnemosyne memory provider (`instances.memory_provider`); spec `docs/superpowers/specs/2026-09-06-mnemosyne-memory-design.md`, eval `ops/embed-eval`. Mnemosyne 4 refuses a credentialed embedding call that is not https, so run `ops/patch-mnemosyne.py <install>` after every `uv sync` of a hermes install (`ops/smoke.sh` checks it). A `mnemosyne/data/config.yaml` now outranks these env vars: a bot must not have one. `MNEMOSYNE_LEXICAL_GATE_MIN=0` lets `mnemosyne_recall` find Russian paraphrases by meaning; automatic context still needs shared words, so `Voice.product_rules/1` tells a Mnemosyne bot to call the tool |
+| `PUT`, `DELETE /v2/sites/:site` | ruoc-gateway `/v1/sites/:site` under the bot's `ruoc_api_key` (`SitesController`). Body is a gzip tar, read a chunk at a time and cut at 60 MiB, the gateway's limit; the gateway's status and JSON pass through, plus 403 `sites_off` and 502 `gateway_unavailable`. Own Finch pool of 8 (`Druzhok.UploadFinch`). A gateway refusal sent before it read a body over about 256 KB can surface as 502, since Mint cannot read a reply mid-upload |
 | `POST /v1/audio/speech` | OpenAI TTS (unmetered for money) |
+
+Sites (`Druzhok.Sites`, CleoHub release spec PR G): ruoc-gateway stores and serves `<slug>.oldey.dev`; hermes's `site_publish` and `site_delete` call
+`/v2/sites/:site` and are on only with env `DRUZHOK_SITES_ENABLED=1`, written when `website_hosting_enabled` is on. Clients use the `url` the API returns and never
+build one. Turning hosting off (`BotSettings.update`, so the panel and `ops/druzhok set`) takes every published site down, then writes the row, then sweeps once more; if
+the gateway refuses the first pass nothing is saved (sites already down stay down), and a publish still uploading takes itself down when it ends. A delete calls `DELETE /partner/accounts/{id}/sites` before the suspend,
+on the same backoff. Files stay in `workspace/sites`. Deploy after the gateway has the site API and hermes has the tools.
 
 ruoc-gateway settings: `RUOC_URL` / `RUOC_CATALOG_KEY` env (or `ops/druzhok settings set`), and
 `RUOC_PARTNER_TOKEN` in `/etc/druzhok/druzhok.env` **only** (never a settings row). Druzhok is a ruoc
@@ -156,6 +163,7 @@ mix deps.get && mix compile && mix test
 mix test --cover        # enforces per-app thresholds set in each mix.exs; raise them when coverage grows
 # the panel's save script, against a hermes venv (its Elixir end-to-end tests use the same variable):
 HERMES_PYTHON=$PWD/hermes-agent/.venv/bin/python python3 -m unittest discover -s apps/druzhok/test/panel_save
+python3 -m unittest discover -s apps/druzhok/test/publish_existing_sites
 MIX_ENV=test mix ecto.migrate   # after pulling new migrations (test DB is data/druzhok_test.db)
 # run with a real local hermes venv for Host.Process:
 HERMES_BIN=$PWD/hermes-agent/.venv/bin/hermes DATABASE_PATH=data/druzhok.db mix phx.server
@@ -174,6 +182,8 @@ MIX_ENV=prod mix ecto.migrate          # DATABASE_PATH comes from druzhok.env
 sudo install -D -m 0644 -o root -g root apps/druzhok/priv/panel-save/save.py /usr/local/lib/druzhok/panel-save.py   # every deploy
 sudo systemctl restart druzhok
 ```
+
+One-off, once druzhok, the gateway and hermes have the site API: `sudo ops/publish-existing-sites.sh` reports what the hosting-enabled bots have in `workspace/sites`, `--apply` publishes it, each bot as its own uid. Then deploy the commit that removes the `BotSite` plug.
 
 Operator CLI (replaces the dashboard, spec `docs/superpowers/specs/2026-10-21-dashboard-removal-design.md`):
 `sudo ops/druzhok help` — `list`, `show <bot>`, `set <bot> key=value…` (restarts a running bot when the field

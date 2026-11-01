@@ -104,6 +104,7 @@ type Settings = ReturnType<typeof useSettings>
 export default function Settings({ bot, onBot }: { bot: Bot; onBot: (b: Bot) => void }) {
   const [screen, setScreen] = useState<Screen>("main")
   const settings = useSettings(bot, onBot)
+  const published = useLoad(panelApi.published, [bot.settings.website_hosting_enabled])
   const [deleting, setDeleting] = useState(false)
   const [deleteError, setDeleteError] = useState<string | null>(null)
   const open = (s: Screen) => {
@@ -126,15 +127,17 @@ export default function Settings({ bot, onBot }: { bot: Bot; onBot: (b: Bot) => 
 
   const s = bot.settings
   const a = bot.access
+  // Only the gateway knows the address, and only after the first publish.
+  const siteAddress = published.data?.published?.[0]?.url?.replace(/^https:\/\//, "").replace(/\/.*$/, "")
   const name = s.trigger_name
 
   const toggleSite = async (on: boolean) => {
-    if (on) {
-      const ok = await confirmDialog(
-        `Сайты, которые сделает бот, будут открыты всем по ссылке ${bot.name}.oldey.dev`,
-      )
-      if (!ok) return
-    }
+    const ok = await confirmDialog(
+      on
+        ? "Сайты, которые опубликует бот, будут открыты всем, у кого есть ссылка. Бот пришлёт её сам."
+        : "Все опубликованные сайты бота перестанут открываться. Файлы останутся у бота, а если включить снова, сайты нужно будет опубликовать заново.",
+    )
+    if (!ok) return
     settings.save({ website_hosting_enabled: on })
   }
 
@@ -194,7 +197,7 @@ export default function Settings({ bot, onBot }: { bot: Bot; onBot: (b: Bot) => 
           icon="globe"
           tone="green"
           title="Сайт"
-          sub={s.website_hosting_enabled ? "может публиковать" : "выключен"}
+          sub={s.website_hosting_enabled ? (siteAddress ?? "может публиковать") : "выключен"}
           on={s.website_hosting_enabled}
           busy={settings.busy}
           onChange={toggleSite}

@@ -238,7 +238,10 @@ defmodule Druzhok.Runtime.Hermes.VoiceTest do
         Voice.product_rules(%{name: "b", image_gen_enabled: true, website_hosting_enabled: true})
 
       assert full =~ "рисовать картинки"
-      assert full =~ "https://b.oldey.dev/<имя>/"
+      assert full =~ "`site_publish`"
+      assert full =~ "`site_delete`"
+      assert full =~ "localStorage"
+      refute full =~ "oldey.dev"
       assert full =~ "«Кабинет»"
       assert full =~ "устарели"
     end

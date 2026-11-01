@@ -1207,20 +1207,14 @@ defmodule Druzhok.Runtime.HermesTest do
     end
   end
 
-  describe "env_vars/1 — BOT_SITE_BASE_URL" do
-    test "emits URL when hosting is enabled" do
-      inst = Map.merge(@instance, %{website_hosting_enabled: true, name: "alice"})
-      assert Hermes.env_vars(inst)["BOT_SITE_BASE_URL"] == "https://alice.oldey.dev"
-    end
+  describe "env_vars/1 — DRUZHOK_SITES_ENABLED" do
+    test "is 1 only when hosting is enabled, and hermes's old base URL is gone" do
+      on = Hermes.env_vars(Map.put(@instance, :website_hosting_enabled, true))
+      assert on["DRUZHOK_SITES_ENABLED"] == "1"
+      refute Map.has_key?(on, "BOT_SITE_BASE_URL")
 
-    test "emits empty string when hosting is disabled" do
-      inst = Map.put(@instance, :website_hosting_enabled, false)
-      assert Hermes.env_vars(inst)["BOT_SITE_BASE_URL"] == ""
-    end
-
-    test "defaults to empty string when key missing on instance map" do
-      inst = Map.delete(@instance, :website_hosting_enabled)
-      assert Hermes.env_vars(inst)["BOT_SITE_BASE_URL"] == ""
+      assert Hermes.env_vars(Map.put(@instance, :website_hosting_enabled, false))["DRUZHOK_SITES_ENABLED"] == ""
+      assert Hermes.env_vars(Map.delete(@instance, :website_hosting_enabled))["DRUZHOK_SITES_ENABLED"] == ""
     end
   end
 end

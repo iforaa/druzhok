@@ -30,6 +30,28 @@ defmodule Druzhok.Ruoc.Client do
     |> run(opts)
   end
 
+  def delete(path, api_key, opts \\ []) do
+    headers = [{"authorization", "Bearer #{api_key}"}] ++ Keyword.get(opts, :headers, [])
+
+    Finch.build(:delete, Druzhok.Ruoc.url() <> path, headers)
+    |> run(opts)
+  end
+
+  @doc """
+  PUT with a body read from `chunks` as it is sent, so nothing is held but the
+  chunk in hand (site uploads). The enumerable runs in the calling process. If
+  it raises or throws, the connection is closed without the final chunk, so the
+  gateway sees a broken upload rather than a short one, and the raise goes on to
+  the caller. A slow upload holds a connection for minutes, so these have their
+  own small pool: a bot cannot use them to starve the chat traffic.
+  """
+  def put_stream(path, api_key, content_type, chunks, opts \\ []) do
+    headers = [{"authorization", "Bearer #{api_key}"}, {"content-type", content_type}]
+
+    Finch.build(:put, Druzhok.Ruoc.url() <> path, headers, {:stream, chunks})
+    |> run(Keyword.put(opts, :finch, Druzhok.UploadFinch))
+  end
+
   @doc "A Finch request for the caller to stream itself (chat SSE)."
   def build(method, path, api_key, body, extra_headers \\ []) do
     headers =
@@ -43,9 +65,16 @@ defmodule Druzhok.Ruoc.Client do
   defp run(request, opts) do
     timeout = Keyword.get(opts, :receive_timeout, @receive_timeout)
 
-    case Finch.request(request, Druzhok.Finch, receive_timeout: timeout) do
+    case Finch.request(request, Keyword.get(opts, :finch, Druzhok.Finch), receive_timeout: timeout) do
       {:ok, %Finch.Response{status: status, headers: headers, body: body}} -> {:ok, status, headers, body}
       {:error, reason} -> {:error, reason}
     end
+  rescue
+    # Finch raises this for no free connection within its pool timeout. Anything
+    # else raised here is a put_stream body's own, for its caller.
+    e in RuntimeError -> {:error, e}
+  catch
+    # The pool is gone.
+    :exit, reason -> {:error, reason}
   end
 end

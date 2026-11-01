@@ -171,6 +171,54 @@ defmodule Druzhok.RuocTest do
     assert {:error, "HTTP 404: no such account"} = Ruoc.suspend("acct-9")
   end
 
+  test "delete_account_sites/1 uses the partner route and reports a refusal", %{stub: stub} do
+    assert :ok = Ruoc.delete_account_sites("acct-9")
+    [call] = RuocStub.calls(stub, "DELETE /partner/accounts/:id/sites")
+    assert call.path == "/partner/accounts/acct-9/sites"
+    assert {"authorization", "Bearer " <> RuocStub.partner_token()} in call.headers
+
+    Bypass.expect_once(stub.bypass, "DELETE", "/partner/accounts/:id/sites", fn conn ->
+      RuocStub.reply(conn, 404, %{"error" => %{"type" => "not_found", "message" => "no such account"}})
+    end)
+
+    assert {:error, "HTTP 404: no such account"} = Ruoc.delete_account_sites("acct-9")
+  end
+
+  test "a site upload with no free connection is an error, and chat traffic is unaffected", %{stub: stub} do
+    # Accepts and never answers: each upload holds its connection until the timeout.
+    {:ok, listen} = :gen_tcp.listen(0, [:binary, active: false, backlog: 32])
+    {:ok, port} = :inet.port(listen)
+    Application.put_env(:druzhok, :ruoc_url, "http://127.0.0.1:#{port}")
+    upload = fn -> Druzhok.Ruoc.Client.put_stream("/v1/sites/a", "k", "application/gzip", ["x"], receive_timeout: 7_000) end
+
+    holders = for _ <- 1..8, do: Task.async(upload)
+    Process.sleep(300)
+
+    assert {:error, %RuntimeError{}} = upload.()
+
+    Application.put_env(:druzhok, :ruoc_url, stub.base)
+    assert {:ok, []} = Ruoc.sites("k")
+
+    Enum.each(holders, &Task.shutdown(&1, :brutal_kill))
+    :gen_tcp.close(listen)
+  end
+
+  test "sites/1 lists under the bot's key and reports a refusal", %{stub: stub} do
+    Bypass.expect_once(stub.bypass, "GET", "/v1/sites", fn conn ->
+      conn = RuocStub.record(stub, "GET /v1/sites", conn)
+      RuocStub.reply(conn, 200, %{"sites" => [%{"name" => "a"}]})
+    end)
+
+    assert {:ok, [%{"name" => "a"}]} = Ruoc.sites("ruoc_bot")
+    assert {"authorization", "Bearer ruoc_bot"} in hd(RuocStub.calls(stub, "GET /v1/sites")).headers
+
+    Bypass.expect_once(stub.bypass, "GET", "/v1/sites", fn conn ->
+      RuocStub.reply(conn, 401, %{"error" => %{"message" => "bad key"}})
+    end)
+
+    assert {:error, "HTTP 401: bad key"} = Ruoc.sites("ruoc_bot")
+  end
+
   describe "list_accounts/1" do
     test "lists the partner's accounts with filters", %{stub: stub} do
       Bypass.expect_once(stub.bypass, "GET", "/partner/accounts", fn conn ->

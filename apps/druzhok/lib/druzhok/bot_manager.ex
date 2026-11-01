@@ -295,7 +295,8 @@ defmodule Druzhok.BotManager do
     Druzhok.Host.destroy(instance.name)
     wipe_data_dir(instance)
 
-    with :ok <- suspend_ruoc(instance) do
+    with :ok <- delete_sites(instance),
+         :ok <- suspend_ruoc(instance) do
       Repo.delete(instance, stale_error_field: :id)
       :ok
     end
@@ -332,6 +333,18 @@ defmodule Druzhok.BotManager do
       end
     end
   end
+
+  # Before the suspend: the panel promises that deleting a bot removes its site,
+  # and a suspended account's pages only stop being served, they stay on disk and
+  # keep the slug.
+  defp delete_sites(%Instance{ruoc_account_id: id}) when is_binary(id) and id != "" do
+    case Druzhok.Ruoc.delete_account_sites(id) do
+      :ok -> :ok
+      {:error, reason} -> {:error, {:ruoc_sites, reason}}
+    end
+  end
+
+  defp delete_sites(_), do: :ok
 
   # The ruoc account is suspended, never deleted, so its usage keeps its
   # explanation.

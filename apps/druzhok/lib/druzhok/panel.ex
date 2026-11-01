@@ -724,4 +724,18 @@ defmodule Druzhok.Panel do
   end
 
   def site(_inst), do: nil
+
+  @doc """
+  What the gateway serves for this bot: `[%{name, url, files, bytes,
+  published_at, disabled}]`. `[]` when hosting is off, nil when the gateway did
+  not answer.
+  """
+  def published(%Instance{website_hosting_enabled: true} = inst) do
+    case Druzhok.Sites.published(inst) do
+      {:ok, sites} -> sites
+      {:error, _} -> nil
+    end
+  end
+
+  def published(_inst), do: []
 end

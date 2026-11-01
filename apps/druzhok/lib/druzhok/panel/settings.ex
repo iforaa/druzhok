@@ -43,6 +43,7 @@ defmodule Druzhok.Panel.Settings do
   defp write(inst, accepted) do
     case BotSettings.update(inst.name, accepted, restart: :when_quiet) do
       {:ok, updated, _pending} -> {:ok, updated}
+      {:error, {:unpublish_failed, _}} -> {:error, 502, "unpublish_failed", "could not take all the sites down; hosting stays on"}
       {:error, _} -> {:error, 500, "save_failed", "could not save the settings"}
     end
   end

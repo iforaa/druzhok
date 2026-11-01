@@ -259,6 +259,53 @@ defmodule Druzhok.BotManagerLifecycleTest do
       assert Repo.get_by(Instance, name: name) == nil
     end
 
+    test "delete removes the account's sites before it suspends the account", %{name: name, stub: stub} do
+      {:ok, _} = BotManager.create(name, %{telegram_token: "1A"})
+      id = Repo.get_by!(Instance, name: name).ruoc_account_id
+
+      Bypass.stub(stub.bypass, "POST", "/partner/accounts/:id/suspend", fn conn ->
+        # A suspended account's own key can do nothing, so the order matters.
+        assert [_] = Druzhok.RuocStub.calls(stub, "DELETE /partner/accounts/:id/sites")
+        conn = Druzhok.RuocStub.record(stub, "POST /partner/accounts/:id/suspend", conn)
+        Druzhok.RuocStub.reply(conn, 200, %{"status" => "suspended"})
+      end)
+
+      assert :ok = BotManager.delete(name, wait: true)
+
+      assert [%{path: path, headers: headers}] =
+               Druzhok.RuocStub.calls(stub, "DELETE /partner/accounts/:id/sites")
+
+      assert path == "/partner/accounts/#{id}/sites"
+      assert {"authorization", "Bearer " <> Druzhok.RuocStub.partner_token()} in headers
+      assert [_] = Druzhok.RuocStub.calls(stub, "POST /partner/accounts/:id/suspend")
+    end
+
+    test "a failed site removal keeps the row and the account active, and is retried after the backoff",
+         %{name: name, stub: stub} do
+      {:ok, _} = BotManager.create(name, %{telegram_token: "1A"})
+      {:ok, attempts} = Agent.start_link(fn -> 0 end)
+
+      Bypass.stub(stub.bypass, "DELETE", "/partner/accounts/:id/sites", fn conn ->
+        conn = Druzhok.RuocStub.record(stub, "DELETE /partner/accounts/:id/sites", conn)
+
+        if Agent.get_and_update(attempts, &{&1, &1 + 1}) == 0,
+          do: Druzhok.RuocStub.reply(conn, 502, %{"error" => %{"message" => "upstream down"}}),
+          else: Druzhok.RuocStub.reply(conn, 200, %{"removed" => 2})
+      end)
+
+      ExUnit.CaptureLog.capture_log(fn ->
+        assert {:error, "ruoc sites: HTTP 502: upstream down"} = BotManager.delete(name, wait: true)
+      end)
+
+      inst = Repo.get_by!(Instance, name: name)
+      assert inst.delete_error == "ruoc sites: HTTP 502: upstream down"
+      assert inst.delete_failures == 1
+      assert Druzhok.RuocStub.calls(stub, "POST /partner/accounts/:id/suspend") == []
+
+      assert eventually(fn -> Repo.get_by(Instance, name: name) == nil end)
+      assert [_] = Druzhok.RuocStub.calls(stub, "POST /partner/accounts/:id/suspend")
+    end
+
     test "a failed suspend keeps the row, is recorded and retried after the backoff",
          %{name: name, stub: stub} do
       {:ok, _} = BotManager.create(name, %{telegram_token: "1A"})

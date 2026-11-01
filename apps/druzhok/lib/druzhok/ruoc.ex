@@ -174,6 +174,24 @@ defmodule Druzhok.Ruoc do
   end
 
   @doc """
+  Removes every site of an account and frees its slug
+  (`DELETE /partner/accounts/{id}/sites`). Works on a suspended account, which
+  its own key cannot do, and removing nothing is `:ok`.
+  """
+  def delete_account_sites(account_id) do
+    with {:ok, token} <- require_token(),
+         {:ok, 200, _} <-
+           Client.delete("/partner/accounts/#{URI.encode(account_id)}/sites", token,
+             receive_timeout: partner_timeout()
+           )
+           |> partner_reply() do
+      :ok
+    else
+      other -> {:error, describe(other)}
+    end
+  end
+
+  @doc """
   Binds an account to its Telegram bot and owner for ruoc's bot cabinet
   (`PUT /partner/accounts/{id}/telegram`): `{:ok, mini_app_url}`, the address
   the owner's menu button opens. Idempotent; ruoc logs only a change.
@@ -327,6 +345,23 @@ defmodule Druzhok.Ruoc do
     sign = if nano < 0, do: "-", else: ""
 
     "#{sign}#{div(kopecks, 100)}.#{kopecks |> rem(100) |> Integer.to_string() |> String.pad_leading(2, "0")}"
+  end
+
+  @doc """
+  What this bot key has published (`GET /v1/sites`): `{:ok, [%{"name", "url",
+  "files", "bytes", "published_at", "disabled"}]}`.
+  """
+  def sites(api_key) do
+    case Client.get("/v1/sites", api_key, receive_timeout: partner_timeout()) |> partner_reply() do
+      {:ok, 200, %{"sites" => sites}} when is_list(sites) -> {:ok, sites}
+      other -> {:error, describe(other)}
+    end
+  end
+
+  @doc "`DELETE /v1/sites/{site}`, as the caller decides what its answer means: `{:ok, status, body}`."
+  def delete_site(api_key, site) do
+    Client.delete("/v1/sites/#{URI.encode(site)}", api_key, receive_timeout: partner_timeout())
+    |> partner_reply()
   end
 
   @doc """

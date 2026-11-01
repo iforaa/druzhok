@@ -12,6 +12,7 @@ defmodule DruzhokWebWeb.PanelController do
       GET /app/api/skills/:name
       GET /app/api/skills/:category/:name
       GET /app/api/site
+      GET /app/api/site/published
       GET /app/api/invites
       GET /app/api/image-models
       POST /app/api/files/:kind              {"text": "...", "base_sha256": "..." | null}
@@ -51,6 +52,12 @@ defmodule DruzhokWebWeb.PanelController do
 
     reply(conn, %{files: files})
   end
+
+  # Separate from `site`: the settings screen shows the address on every open,
+  # and that needs no directory listing as the bot's uid. `published` is null
+  # when the gateway did not answer.
+  def published(conn, _params),
+    do: reply(conn, %{published: Panel.published(conn.assigns.instance)})
 
   def invites(conn, _params) do
     case Panel.invites(conn.assigns.instance) do
