@@ -155,18 +155,6 @@ defmodule Druzhok.PanelTest do
     assert Panel.bot(%{inst | model: "nope/x"}).settings.model_name == "nope/x"
   end
 
-  test "support_url only takes an https address" do
-    on_exit(fn ->
-      Druzhok.Repo.delete_all(from(s in Druzhok.Settings, where: s.key == "support_url"))
-    end)
-
-    assert Panel.support_url() == nil
-    Druzhok.Settings.set("support_url", "javascript:alert(1)")
-    assert Panel.support_url() == nil
-    Druzhok.Settings.set("support_url", " https://t.me/druzhok_help ")
-    assert Panel.support_url() == "https://t.me/druzhok_help"
-  end
-
   test "invites: available codes as superbot links, redeemed ones counted", %{inst: inst} do
     stub = Druzhok.RuocStub.start()
 

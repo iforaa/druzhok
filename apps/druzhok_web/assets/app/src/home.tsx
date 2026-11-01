@@ -1,6 +1,6 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react"
 import { api, cached, invalidate, panelApi, type Bot, type Files, type Me } from "./api"
-import { backButton, closePanel, openTelegram } from "./telegram"
+import { backButton, closePanel } from "./telegram"
 import { initials, plural } from "./format"
 import { Row, useLoad } from "./ui"
 import { planLine } from "./billing"
@@ -10,7 +10,7 @@ import type { Go } from "./nav"
 
 // Бот: who the bot is and whether it is up, what is left of its plan in one
 // line into Счёт, what is left to set up, what it knows and can do, what to try,
-// invites and support. Each part loads on its own, so ruoc being slow does not
+// invites. Each part loads on its own, so ruoc being slow does not
 // hide the bot, and a bot whose files cannot be read still shows its plan.
 
 const stateText: Record<Bot["state"], [string, string]> = {
@@ -189,9 +189,6 @@ export default function Home({ bot, go }: { bot: Bot; go: Go }) {
 
       <div className="group">
         <Row icon="gift" tone="pink" title="Пригласить друга" sub="Друг сможет создать своего бота" onClick={() => open({ kind: "invites" })} />
-        {bot.support_url ? (
-          <Row icon="chat" tone="blue" title="Поддержка" sub="Ответим в Telegram" onClick={() => openTelegram(bot.support_url!)} />
-        ) : null}
       </div>
     </>
   )

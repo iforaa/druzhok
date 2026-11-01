@@ -107,7 +107,6 @@ defmodule Druzhok.Panel do
       apply: apply(inst),
       access: access(inst),
       billing_url: billing_url(),
-      support_url: support_url(),
       superbot: superbot()
     }
   end
@@ -227,18 +226,6 @@ defmodule Druzhok.Panel do
     case Enum.find(Druzhok.Ruoc.cached_models(), &(&1.id == id)) do
       %{name: name} when is_binary(name) and name != "" -> name
       _ -> id
-    end
-  end
-
-  @doc "Where the panel's «Поддержка» goes (Settings `support_url`), or nil."
-  def support_url do
-    case Druzhok.Settings.get("support_url") do
-      url when is_binary(url) ->
-        url = String.trim(url)
-        if String.starts_with?(url, "https://"), do: url, else: nil
-
-      _ ->
-        nil
     end
   end
 

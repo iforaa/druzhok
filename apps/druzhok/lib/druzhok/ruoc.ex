@@ -32,6 +32,7 @@ defmodule Druzhok.Ruoc do
   @cache_key {__MODULE__, :models}
   @refresh_key {__MODULE__, :models_refresh}
   @partner_timeout_ms 15_000
+  @support_unread_timeout_ms 5_000
 
   def url, do: setting("ruoc_url") || @default_url
   def catalog_key, do: setting("ruoc_catalog_key")
@@ -188,6 +189,25 @@ defmodule Druzhok.Ruoc do
       :ok
     else
       other -> {:error, describe(other)}
+    end
+  end
+
+  @doc """
+  This partner's accounts with unread support replies
+  (`GET /partner/support/unread`): `{:ok, [%{"account_id", "unread", "latest_at"}]}`,
+  or `{:error, reason}` when the gateway is down, refuses, or does not have the
+  route yet. Answers within 5 s, because a minute's poll calls it.
+  """
+  def support_unread do
+    case partner_get("/partner/support/unread", receive_timeout: @support_unread_timeout_ms) do
+      {:ok, 200, %{"accounts" => list}} when is_list(list) ->
+        {:ok, list}
+
+      {:ok, 200, other} ->
+        {:error, "unexpected unread payload: #{inspect(other) |> String.slice(0, 200)}"}
+
+      other ->
+        {:error, describe(other)}
     end
   end
 
@@ -352,7 +372,8 @@ defmodule Druzhok.Ruoc do
   "files", "bytes", "published_at", "disabled"}]}`.
   """
   def sites(api_key) do
-    case Client.get("/v1/sites", api_key, receive_timeout: partner_timeout()) |> partner_reply() do
+    case Client.get("/v1/sites", api_key, receive_timeout: partner_timeout())
+         |> partner_reply() do
       {:ok, 200, %{"sites" => sites}} when is_list(sites) -> {:ok, sites}
       other -> {:error, describe(other)}
     end

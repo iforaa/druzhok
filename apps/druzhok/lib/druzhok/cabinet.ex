@@ -27,6 +27,12 @@ defmodule Druzhok.Cabinet do
   spec `docs/superpowers/specs/2026-10-24-bot-panel-design.md`) instead of
   ruoc's page; a bot still on another address counts as "button not set", so
   the same triggers move it, with no ruoc call.
+
+  Once a minute it also asks ruoc which accounts have unread support replies
+  (`poll_support/0`) and sends the owner «Поддержка ответила» through the bot's
+  token, which never wakes the bot. `instances.support_notified_at` holds the
+  newest reply told about. A gateway that is down, or has no such route yet,
+  costs one log line when that starts and one when it ends.
   """
 
   use GenServer
@@ -48,6 +54,10 @@ defmodule Druzhok.Cabinet do
       {"The plan's limit is used up for now. When it resets and how to change plans — in the cabinet.",
        "Open the cabinet"}
   }
+
+  @support_poll_ms 60_000
+  @support_note "Поддержка ответила"
+  @support_button "Открыть поддержку"
 
   def start_link(opts \\ []), do: GenServer.start_link(__MODULE__, opts, name: __MODULE__)
 
@@ -74,7 +84,43 @@ defmodule Druzhok.Cabinet do
   def button_moment?(_instance, _update), do: false
 
   @impl true
-  def init(_opts), do: {:ok, %{noticed: %{}}}
+  def init(_opts) do
+    schedule_support_poll()
+    {:ok, %{noticed: %{}, support_problem: nil}}
+  end
+
+  @impl true
+  def handle_info(:poll_support, state) do
+    # Timed from the end of a round, so a slow one never overlaps the next.
+    result = guarded("support poll", &poll_support/0)
+    schedule_support_poll()
+    {:noreply, %{state | support_problem: note_support_problem(result, state.support_problem)}}
+  end
+
+  def handle_info(_other, state), do: {:noreply, state}
+
+  defp schedule_support_poll do
+    every = Application.get_env(:druzhok, :support_poll_ms, @support_poll_ms)
+    Process.send_after(self(), :poll_support, every)
+  end
+
+  # A minute's poll of a missing or dead route must not fill the small system
+  # disk: only a change is logged.
+  defp note_support_problem({:error, reason}, reason), do: reason
+
+  defp note_support_problem({:error, reason}, _before) do
+    Logger.warning("[cabinet] support poll: #{short(reason)}")
+    reason
+  end
+
+  defp note_support_problem(:error, before), do: before
+
+  defp note_support_problem(_ok, nil), do: nil
+
+  defp note_support_problem(_ok, _before) do
+    Logger.info("[cabinet] support poll: working again")
+    nil
+  end
 
   @impl true
   def handle_cast({:sync, id}, state) do
@@ -310,6 +356,110 @@ defmodule Druzhok.Cabinet do
       _ -> :skipped
     end
   end
+
+  @doc """
+  One round of the support poll, synchronously: tells each owner with a reply
+  newer than `support_notified_at`. `:ok`, or `{:error, reason}` when ruoc did
+  not answer. A bot with its cabinet off is skipped and keeps its mark, so a
+  reply still unread is told about once the cabinet is back.
+  """
+  def poll_support do
+    with {:ok, accounts} <- Ruoc.support_unread() do
+      unread =
+        for %{"account_id" => id, "unread" => n, "latest_at" => latest} <- accounts,
+            is_binary(id) and is_integer(n) and n > 0,
+            at = parse_latest(latest),
+            into: %{},
+            do: {id, at}
+
+      ids = Map.keys(unread)
+
+      from(i in Instance,
+        where:
+          i.ruoc_account_id in ^ids and i.delete_requested == false and i.cabinet_off == false and
+            not is_nil(i.telegram_token) and not is_nil(i.owner_telegram_id)
+      )
+      |> Repo.all()
+      |> Enum.each(fn inst ->
+        at = unread[inst.ruoc_account_id]
+
+        if rise?(at, inst.support_notified_at),
+          do: guarded(inst.id, fn -> tell_support(inst, at) end)
+      end)
+    end
+  end
+
+  # Ecto's usec type refuses a shorter precision, and Go drops trailing zeros.
+  defp parse_latest(text) when is_binary(text) do
+    case DateTime.from_iso8601(text) do
+      {:ok, at, _} ->
+        {us, _} = at.microsecond
+        %{at | microsecond: {us, 6}}
+
+      _ ->
+        nil
+    end
+  end
+
+  defp parse_latest(_), do: nil
+
+  defp rise?(_at, nil), do: true
+  defp rise?(at, told), do: DateTime.compare(at, told) == :gt
+
+  # The mark is written after the send: a crash between the two repeats one
+  # note rather than losing it. An owner Telegram will never deliver to is
+  # marked too, or the same refusal would come back every minute.
+  defp tell_support(inst, at) do
+    case API.send_message(
+           inst.telegram_token,
+           inst.owner_telegram_id,
+           @support_note,
+           support_opts(inst)
+         ) do
+      {:ok, _} ->
+        set(inst.id, support_notified_at: at)
+        Logger.info("[cabinet] #{inst.name}: support note sent")
+
+      {:error, reason} ->
+        if undeliverable?(reason) do
+          set(inst.id, support_notified_at: at)
+          Logger.info("[cabinet] #{inst.name}: support note undeliverable (#{short(reason)})")
+        else
+          Logger.warning("[cabinet] #{inst.name}: support note not sent (#{short(reason)})")
+        end
+    end
+  end
+
+  defp support_opts(inst) do
+    case Druzhok.Panel.url(inst, tab: "support") || inst.cabinet_url do
+      url when is_binary(url) ->
+        %{reply_markup: %{inline_keyboard: [[%{text: @support_button, web_app: %{url: url}}]]}}
+
+      _ ->
+        %{}
+    end
+  end
+
+  # Telegram's own refusal of this message (blocked, no such chat, revoked
+  # token, a bad button) comes back the same way every time. A 429, a 5xx or no
+  # answer at all may pass, so those are tried again.
+  defp undeliverable?(reason) do
+    case telegram_code(reason) do
+      code when is_integer(code) -> code in 400..499 and code != 429
+      _ -> false
+    end
+  end
+
+  defp telegram_code(%{"error_code" => code}), do: code
+
+  defp telegram_code(reason) when is_binary(reason) do
+    case Jason.decode(reason) do
+      {:ok, %{"error_code" => code}} -> code
+      _ -> nil
+    end
+  end
+
+  defp telegram_code(_), do: nil
 
   defp set(id, fields), do: Repo.update_all(from(i in Instance, where: i.id == ^id), set: fields)
 

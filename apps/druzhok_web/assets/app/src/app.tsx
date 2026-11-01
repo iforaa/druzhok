@@ -1,30 +1,34 @@
 import { useCallback, useEffect, useState } from "react"
-import { explain, panelApi, setBillingBase, type Bot } from "./api"
+import { explain, panelApi, setBillingBase, support, type Bot } from "./api"
 import { applyTheme, initData, webApp } from "./telegram"
 import { Icon, Skeleton } from "./ui"
 import type { Tab } from "./nav"
 import Home from "./home"
 import Billing from "./billing"
 import Settings from "./settings"
+import Support from "./support"
 
 // The bot panel: what a bot's owner sees inside Telegram (druzhok spec
-// docs/superpowers/specs/2026-10-24-bot-panel-design.md). Three tabs: Бот (its
-// state, what is left of its plan, setup, what it knows and can do, invites,
-// support), Счёт (the plan, its limits, plans and payments, served by
-// ruoc-gateway) and Настройки (settings, access, delete).
+// docs/superpowers/specs/2026-10-24-bot-panel-design.md). Four tabs: Бот (its
+// state, what is left of its plan, setup, what it knows and can do, invites),
+// Счёт (the plan, its limits, plans and payments, served by ruoc-gateway),
+// Поддержка (conversations with the team, also ruoc-gateway's) and Настройки
+// (settings, access, delete).
 
 const tabs: [Tab, string, string][] = [
   ["home", "Бот", "home"],
   ["billing", "Счёт", "wallet"],
+  ["support", "Поддержка", "chat"],
   ["settings", "Настройки", "gear"],
 ]
 
-// ?tab= opens a tab directly: the out-of-money notice sends tab=billing, and
+// ?tab= opens a tab directly: the out-of-money notice sends tab=billing, the
+// support note tab=support, and
 // buttons made earlier may still say tab=more, tab=memory or tab=files, the
 // last two now part of Бот.
 function startTab(): Tab {
   const t = new URLSearchParams(window.location.search).get("tab")
-  if (t === "billing" || t === "settings") return t
+  if (t === "billing" || t === "support" || t === "settings") return t
   if (t === "more") return "settings"
   return "home"
 }
@@ -34,6 +38,7 @@ export default function App() {
   const [failure, setFailure] = useState<string | null>(null)
   // `n` remounts the tab, so going to a sub-screen from elsewhere starts it fresh.
   const [nav, setNav] = useState<{ tab: Tab; screen?: string; n: number }>({ tab: startTab(), n: 0 })
+  const [unread, setUnread] = useState(0)
 
   useEffect(() => {
     applyTheme()
@@ -47,6 +52,8 @@ export default function App() {
       (b) => {
         setBillingBase(b.billing_url)
         setBot(b)
+        // Only the tab's dot: without it the panel works the same.
+        support.unread().then((u) => setUnread(u.unread), () => {})
       },
       (err) => setFailure(explain(err)),
     )
@@ -73,7 +80,8 @@ export default function App() {
           <div key={nav.n} className="screen">
             {nav.tab === "home" && <Home bot={bot} go={go} />}
             {nav.tab === "billing" && <Billing start={nav.screen} />}
-            {nav.tab === "settings" && <Settings bot={bot} onBot={setBot} />}
+            {nav.tab === "settings" && <Settings bot={bot} onBot={setBot} go={go} />}
+            {nav.tab === "support" && <Support onUnread={setUnread} />}
           </div>
         )}
       </main>
@@ -85,7 +93,10 @@ export default function App() {
             aria-current={nav.tab === id ? "page" : undefined}
             onClick={() => go(id)}
           >
-            <Icon name={icon} size={24} />
+            <span className="tabbar__icon">
+              <Icon name={icon} size={24} />
+              {id === "support" && unread > 0 ? <span className="tabbar__dot" role="img" aria-label="Есть непрочитанный ответ" /> : null}
+            </span>
             <span>{label}</span>
           </button>
         ))}

@@ -57,6 +57,7 @@ defmodule Druzhok.Instance do
     field :cabinet_url, :string
     field :cabinet_menu_set, :boolean, default: false
     field :cabinet_off, :boolean, default: false
+    field :support_notified_at, :utc_datetime_usec
     # The bot's voice (Runtime.Hermes.Voice): its Telegram name, and the hash
     # of what druzhok last wrote to SOUL.md and AGENTS.md ("deleted" when the
     # migration removed AGENTS.md).

@@ -130,15 +130,21 @@ async function request<T>(url: string, method: "GET" | "POST", body?: unknown): 
   } catch {
     throw new APIError(0, "network", "нет связи")
   }
+  if (!resp.ok) throw await refused(resp)
+  return (await resp.json().catch(() => ({}))) as T
+}
+
+function authHeaders(): Record<string, string> {
+  return { Authorization: `tma ${initData()}`, "X-Telegram-Bot": botID() }
+}
+
+async function refused(resp: Response): Promise<APIError> {
   const data: unknown = await resp.json().catch(() => ({}))
   const answer = data && typeof data === "object" ? (data as Record<string, unknown>) : {}
-  if (!resp.ok) {
-    const err = answer.error as { type?: string; code?: string; message?: string } | undefined
-    // ruoc names a refusal in `type`; where it also sets OpenAI's `code`,
-    // that is the specific one and `type` is the generic class.
-    throw new APIError(resp.status, err?.code ?? err?.type ?? "unknown", err?.message ?? "", answer)
-  }
-  return data as T
+  const err = answer.error as { type?: string; code?: string; message?: string } | undefined
+  // ruoc names a refusal in `type`; where it also sets OpenAI's `code`,
+  // that is the specific one and `type` is the generic class.
+  return new APIError(resp.status, err?.code ?? err?.type ?? "unknown", err?.message ?? "", answer)
 }
 
 export interface Bot {
@@ -169,7 +175,6 @@ export interface Bot {
   apply: { state: ApplyState; error: string | null }
   access: { allow_all_users: boolean; allowed_users: number; free_response_chats: number }
   billing_url: string
-  support_url: string | null
   /** The superbot's @username, where a delete is confirmed; null when unknown. */
   superbot: string | null
 }
@@ -322,6 +327,87 @@ export const api = {
   confirmReceipt: (code: string) => call<{ done: boolean; sent_to?: string }>("POST", "receipt-email/confirm", { code }),
   /** Points this bot's spending at the Cleo Code account these credentials open. */
   link: (email: string, password: string) => call<{ linked: Linked }>("POST", "link", { email, password }),
+}
+
+export type ThreadStatus = "open" | "answered" | "resolved"
+
+export interface ThreadSummary {
+  id: string
+  number: number
+  subject: string
+  status: ThreadStatus
+  unread: boolean
+  last_message_at: string
+  created_at: string
+}
+
+export interface Attachment {
+  id: string
+  content_type: string
+  size: number
+  width: number
+  height: number
+}
+
+export interface SupportMessage {
+  id: number
+  author: "customer" | "agent" | "system"
+  agent: { name: string; avatar: string | null; ai: boolean } | null
+  body: string
+  created_at: string
+  attachments: Attachment[]
+}
+
+export interface ThreadView {
+  id: string
+  number: number
+  subject: string
+  status: ThreadStatus
+  created_at: string
+  messages: SupportMessage[]
+}
+
+export interface SupportMe {
+  status: string
+  muted: boolean
+  tier: { images_per_message: number; max_image_bytes: number }
+}
+
+export const support = {
+  me: () => call<SupportMe>("GET", "support/me"),
+  unread: () => call<{ unread: number }>("GET", "support/unread"),
+  threads: () => call<ThreadSummary[]>("GET", "support/threads"),
+  thread: (id: string, after?: number) =>
+    call<ThreadView>("GET", `support/threads/${encodeURIComponent(id)}${after ? `?after=${after}` : ""}`),
+  create: (input: { subject?: string; body: string; attachment_ids: string[] }) =>
+    call<ThreadView>("POST", "support/threads", input),
+  reply: (id: string, body: string, attachment_ids: string[]) =>
+    call<ThreadView>("POST", `support/threads/${encodeURIComponent(id)}/messages`, { body, attachment_ids }),
+  resolve: (id: string) => call<ThreadView>("POST", `support/threads/${encodeURIComponent(id)}/resolve`),
+  /** The browser sets the multipart Content-Type, with its boundary. */
+  upload: async (file: File): Promise<Attachment> => {
+    const form = new FormData()
+    form.append("file", file)
+    let resp: Response
+    try {
+      resp = await fetch(`${billingBase}/tg/api/support/attachments`, { method: "POST", headers: authHeaders(), body: form })
+    } catch {
+      throw new APIError(0, "network", "нет связи")
+    }
+    if (!resp.ok) throw await refused(resp)
+    return (await resp.json()) as Attachment
+  },
+  /** An <img> cannot send the tma header, so the bytes come here and show from a blob: URL. */
+  attachment: async (id: string): Promise<Blob> => {
+    let resp: Response
+    try {
+      resp = await fetch(`${billingBase}/tg/api/support/attachments/${encodeURIComponent(id)}`, { headers: authHeaders() })
+    } catch {
+      throw new APIError(0, "network", "нет связи")
+    }
+    if (!resp.ok) throw await refused(resp)
+    return resp.blob()
+  },
 }
 
 /** What to tell the owner about a refusal, in their words. */
