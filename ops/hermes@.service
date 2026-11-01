@@ -42,15 +42,8 @@ SystemCallFilter=@system-service
 SystemCallErrorNumber=EPERM
 RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
 CapabilityBoundingSet=
-# A bot sees only its own processes in /proc, and no host-wide files there
-# (/proc/meminfo, /proc/stat, /proc/net, /proc/sys). `ps`, `free` and `uptime` do
-# not work in its terminal. ProcSubset has a cost: psutil's children() reads
-# /proc/stat and raises, which hermes treats as no descendants. A foreground command
-# still dies with its process group, but killing a background job signals only its
-# bash parent, so its child can survive until it exits or the unit stops, and until
-# then Lifecycle.Idle sees a process and the bot neither sleeps nor takes a quiet restart.
+# A bot sees only its own processes in /proc.
 ProtectProc=invisible
-ProcSubset=pid
 PrivateIPC=yes
 
 MemoryMax=1G

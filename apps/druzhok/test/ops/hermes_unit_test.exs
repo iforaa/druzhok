@@ -15,9 +15,15 @@ defmodule Druzhok.Ops.HermesUnitTest do
   test "a bot sees only its own processes and has its own IPC namespace" do
     lines = directives("hermes@.service")
 
-    for line <- ~w(ProtectProc=invisible ProcSubset=pid PrivateIPC=yes) do
+    for line <- ~w(ProtectProc=invisible PrivateIPC=yes) do
       assert line in lines
     end
+  end
+
+  # Under it psutil's children() raises, so killing a background job can leave its
+  # child running, and that process keeps the bot from sleeping.
+  test "a bot keeps /proc's host-wide files: ProcSubset stays off" do
+    refute Enum.any?(directives("hermes@.service"), &String.starts_with?(&1, "ProcSubset="))
   end
 
   # A lower quota slows cold starts; the weight yields only under contention.
