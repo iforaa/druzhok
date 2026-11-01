@@ -9,6 +9,7 @@ defmodule Druzhok.Host.Systemd do
   require Logger
 
   @default_ctl ["sudo", "-n", "/usr/local/sbin/druzhok-ctl"]
+  @cgroup_dir "/sys/fs/cgroup/system.slice/system-hermes.slice"
 
   @impl true
   def start(name, env, _data_root) do
@@ -76,6 +77,26 @@ defmodule Druzhok.Host.Systemd do
       n
     else
       _ -> nil
+    end
+  end
+
+  # The cgroup is world-readable, and it exists only while the unit does: a
+  # sleeping or stopped bot, or a row with no unit, has none.
+  @impl true
+  def memory_bytes(name) do
+    dir = Application.get_env(:druzhok, :hermes_cgroup_dir, @cgroup_dir)
+
+    with :ok <- check_name(name),
+         {:ok, text} <- File.read(Path.join([dir, "hermes@#{name}.service", "memory.current"])),
+         {bytes, ""} <- Integer.parse(String.trim(text)) do
+      bytes
+    else
+      {:error, reason} when reason in [:enoent, :invalid_name] ->
+        nil
+
+      other ->
+        Logger.warning("[host] #{name}: cannot read memory.current: #{inspect(other)}")
+        nil
     end
   end
 

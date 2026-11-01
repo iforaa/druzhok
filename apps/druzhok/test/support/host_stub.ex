@@ -106,5 +106,11 @@ defmodule Druzhok.HostStub do
   @impl true
   def stats(_name), do: %{mem_bytes: 230 * 1024 * 1024, cpu_usec: 0}
   @impl true
+  def memory_bytes(name) do
+    if Agent.get(__MODULE__, &Map.get(&1.units, name, :inactive)) == :active,
+      do: stats(name).mem_bytes
+  end
+
+  @impl true
   def exec(_name, _args), do: {"", 0}
 end

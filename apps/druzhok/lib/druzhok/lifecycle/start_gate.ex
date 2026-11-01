@@ -33,7 +33,8 @@ defmodule Druzhok.Lifecycle.StartGate do
     end
   end
 
-  defp min_free_mb do
+  @doc "The `MemAvailable` a start needs, in MB."
+  def min_free_mb do
     case opt(:start_min_free_mb) do
       mb when is_integer(mb) -> mb
       _ -> min_free_from_settings()

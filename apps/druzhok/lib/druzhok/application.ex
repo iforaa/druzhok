@@ -15,6 +15,7 @@ defmodule Druzhok.Application do
         # Site uploads (Ruoc.Client.put_stream), each holding one for minutes.
         {Finch, name: Druzhok.UploadFinch, pools: %{default: [size: 8, count: 1]}},
         Druzhok.Fetch.Worker,
+        Druzhok.Status,
         # Warm ruoc's model catalogue: a bot start reads it from the cache
         # without waiting (Runtime.Hermes sync_image_input_mode).
         {Task, &Druzhok.Ruoc.models/0}

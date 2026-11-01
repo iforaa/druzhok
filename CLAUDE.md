@@ -183,6 +183,8 @@ sudo install -D -m 0644 -o root -g root apps/druzhok/priv/panel-save/save.py /us
 sudo systemctl restart druzhok
 ```
 
+Machine page: `GET /internal/status` (`Druzhok.Status`, `FetchAuth` secret, cached 10 s) gives ruoc-gateway's CleoHub console the host, disks, hermes install, queue and bots. Read only, no `sudo`, never wakes a bot: `/proc`, `df -Pk` per disk, the row, and `memory.current` under `system-hermes.slice`; a failed reading is null for that field (a bot's memory reads 0 and its unit counts as down), a failed database read is 503. No owner ids, tokens or message text; `last_error` is scrubbed.
+
 Operator CLI (replaces the dashboard, spec `docs/superpowers/specs/2026-10-21-dashboard-removal-design.md`):
 `sudo ops/druzhok help` — `list`, `show <bot>`, `set <bot> key=value…` (restarts a running bot when the field
 needs it, `Druzhok.BotSettings`; `value=-` reads stdin for secrets), `start|stop|restart <bot>` (waits),
