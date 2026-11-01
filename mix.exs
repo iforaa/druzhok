@@ -16,6 +16,6 @@ defmodule Druzhok.Umbrella.MixProject do
   #
   # Run "mix help deps" for examples and options.
   defp deps do
-    []
+    [{:mix_audit, "~> 2.1", only: [:dev, :test], runtime: false}]
   end
 end

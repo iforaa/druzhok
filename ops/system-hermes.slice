@@ -7,6 +7,10 @@
 # on 8 GB RAM. MemoryHigh throttles and reclaims (page cache first) before the
 # hard MemoryMax, where the kernel OOM-kills inside the slice only and systemd
 # restarts that bot. Per-bot limits stay in hermes@.service.
+#
+# The slice sits beside druzhok.service and caddy.service in system.slice, so
+# its CPUWeight is what makes the bots as a group yield to them under contention
+# (the default weight is 100). With a free CPU it changes nothing.
 [Unit]
 Description=Hermes bots (shared memory ceiling)
 
@@ -14,3 +18,4 @@ Description=Hermes bots (shared memory ceiling)
 MemoryAccounting=yes
 MemoryHigh=4608M
 MemoryMax=5G
+CPUWeight=50
