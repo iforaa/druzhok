@@ -897,7 +897,52 @@ defmodule Druzhok.Runtime.HermesTest do
       assert cfg["agent"]["run_budget_seconds"] == 300
       assert cfg["agent"]["gateway_timeout"] == 1800
       refute content =~ "kanban"
-      refute content =~ "delegation"
+    end
+
+    test "writes the sub-agent limits on a config without the block", %{tmp_dir: tmp_dir} do
+      {cfg, content} = tune(tmp_dir, "model:\n  default: \"x\"\n")
+
+      assert cfg["delegation"] == %{
+               "max_concurrent_children" => 2,
+               "max_iterations" => 30,
+               "child_timeout_seconds" => 300,
+               "max_spawn_depth" => 1
+             }
+
+      assert length(String.split(content, "\ndelegation:")) == 2
+    end
+
+    test "the sub-agent limits replace hermes's values and keep its other delegation keys", %{
+      tmp_dir: tmp_dir
+    } do
+      yaml =
+        "model:\n  default: \"x\"\ndelegation:\n  model: ''\n  max_iterations: 250\n  max_concurrent_children: 10\n  child_timeout_seconds: 0\n  max_spawn_depth: 3\n  request_overrides: {}\n  inherit_mcp_toolsets: true\n"
+
+      {cfg, content} = tune(tmp_dir, yaml)
+
+      assert cfg["delegation"] == %{
+               "model" => "",
+               "request_overrides" => %{},
+               "inherit_mcp_toolsets" => true,
+               "max_concurrent_children" => 2,
+               "max_iterations" => 30,
+               "child_timeout_seconds" => 300,
+               "max_spawn_depth" => 1
+             }
+
+      assert length(String.split(content, "max_iterations")) == 2
+      {_, second} = tune(tmp_dir, nil)
+      assert second == content
+    end
+
+    test "strip_tuning_keys/1 removes the sub-agent limits and keeps hermes's delegation keys", %{
+      tmp_dir: tmp_dir
+    } do
+      {_, content} =
+        tune(tmp_dir, "model:\n  default: \"x\"\ndelegation:\n  model: ''\n  provider: ''\n")
+
+      {:ok, cfg} = content |> Hermes.strip_tuning_keys() |> YamlElixir.read_from_string()
+      assert cfg["delegation"] == %{"model" => "", "provider" => ""}
     end
 
     test "turns off the whole skills list, replacing an old one, keeping other skills keys", %{
@@ -1004,6 +1049,7 @@ defmodule Druzhok.Runtime.HermesTest do
 
       refute Map.has_key?(cfg, "skills")
       refute Map.has_key?(cfg, "terminal")
+      refute Map.has_key?(cfg, "delegation")
     end
   end
 

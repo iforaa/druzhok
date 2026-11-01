@@ -245,6 +245,7 @@ defmodule Druzhok.Runtime.Hermes do
           |> sync_stt_block()
           |> sync_model_facts(instance)
           |> sync_agent_block()
+          |> sync_delegation_block()
           |> sync_skills_block()
           |> sync_terminal_block(data_root)
           |> drop_messaging_block()
@@ -403,6 +404,19 @@ defmodule Druzhok.Runtime.Hermes do
     )
   end
 
+  # Sub-agent limits (hermes defaults: 10 children, 250 iterations, no timeout,
+  # depth 1). Not a bound on total time: child_timeout_seconds counts seconds
+  # with no progress, and each child has its own 30 iterations, not a share of
+  # the parent's. Depth 1: a child cannot spawn children.
+  @delegation_limits [
+    {"max_concurrent_children", "2"},
+    {"max_iterations", "30"},
+    {"child_timeout_seconds", "300"},
+    {"max_spawn_depth", "1"}
+  ]
+
+  defp sync_delegation_block(content), do: put_block(content, "delegation", @delegation_limits)
+
   # Bundled skills that need a Mac, GitHub access, an external API or a
   # coding-agent CLI that is not installed; the skills index in every system
   # prompt lists them and some send the model after tools it lacks. Coding
@@ -448,6 +462,7 @@ defmodule Druzhok.Runtime.Hermes do
       "agent",
       Enum.map(@turn_budget, fn {k, _} -> {k, :delete} end) ++ [{"disabled_toolsets", :delete}]
     )
+    |> put_block("delegation", Enum.map(@delegation_limits, fn {k, _} -> {k, :delete} end))
     |> put_block("skills", [{"disabled", :delete}])
     |> put_block("terminal", [{"cwd", :delete}])
   end
