@@ -609,6 +609,8 @@ defmodule DruzhokWebWeb.PanelApiTest do
     assert csp =~ "frame-ancestors https://web.telegram.org"
     assert csp =~ "connect-src 'self' https://oldey.dev"
     assert csp =~ "script-src 'self' https://telegram.org"
+    # Support attachments need the tma header, so they are shown from blob: URLs.
+    assert csp =~ "img-src 'self' blob:;"
     assert conn.resp_body =~ "/app/assets/"
   end
 

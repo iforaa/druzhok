@@ -123,10 +123,12 @@ or language change rebinds and resets the old owner's button. The model catalog 
 
 Bot panel (spec `docs/superpowers/specs/2026-10-24-bot-panel-design.md`): with `PHX_HOST` set, «Кабинет» opens
 druzhok's own Mini App, `https://<PHX_HOST>/app/?bot=<bot_id>` (source `apps/druzhok_web/assets/app`, built by
-`ops/build-app.sh` into the committed `priv/static/app`). Tabs Бот, Счёт, Настройки (own dark/light palette);
+`ops/build-app.sh` into the committed `priv/static/app`). Tabs Бот, Счёт, Поддержка, Настройки (own dark/light palette);
 the bot, files and invites (`GET /app/api/invites`, ruoc `/v1/referrals` → superbot links) are
-served by druzhok (`Druzhok.Panel`, `PanelController`); «Поддержка» shows when Settings `support_url` (https)
-is set. Owners change language, timezone, group mode, pictures and site in Настройки (`POST /app/api/settings`,
+served by druzhok (`Druzhok.Panel`, `PanelController`). Поддержка calls ruoc's `/tg/api/support/*` like Счёт, and shows attachments
+from `blob:` URLs because the route needs the `tma` header. `Druzhok.Cabinet` polls `GET /partner/support/unread` once a minute and sends the
+owner «Поддержка ответила» through the bot's token, which does not wake the bot (`instances.support_notified_at`, deduped on `latest_at`); a missing
+route or a down gateway only logs when that changes. Owners change language, timezone, group mode, pictures and site in Настройки (`POST /app/api/settings`,
 allowlist `Druzhok.Panel.Settings`; spec `docs/superpowers/specs/2026-10-26-panel-controls-design.md`): a save
 never restarts or wakes the bot, it bumps `settings_seq`, and the lifecycle controller restarts an awake bot
 at a quiet moment (no update/proxy call for 60 s, no turn, no child process; never forced) while a wake or any

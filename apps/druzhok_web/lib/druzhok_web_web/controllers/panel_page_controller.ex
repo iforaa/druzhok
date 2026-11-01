@@ -52,7 +52,7 @@ defmodule DruzhokWebWeb.PanelPageController do
         if(billing.port in [nil, 80, 443], do: "", else: ":#{billing.port}")
 
     "default-src 'none'; script-src 'self' https://telegram.org; " <>
-      "style-src 'self' 'unsafe-inline'; img-src 'self'; connect-src 'self' #{origin}; " <>
+      "style-src 'self' 'unsafe-inline'; img-src 'self' blob:; connect-src 'self' #{origin}; " <>
       "frame-ancestors https://web.telegram.org; base-uri 'none'; form-action 'none'"
   end
 

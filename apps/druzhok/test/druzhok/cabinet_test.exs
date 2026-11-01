@@ -52,6 +52,228 @@ defmodule Druzhok.CabinetTest do
 
   defp reload(inst), do: Repo.get(Instance, inst.id)
 
+  defp unread(stub, status \\ 200, accounts) do
+    Bypass.stub(stub.bypass, "GET", "/partner/support/unread", fn conn ->
+      RuocStub.reply(conn, status, %{"accounts" => accounts})
+    end)
+  end
+
+  defp reply_at(stub, at) do
+    unread(stub, [%{"account_id" => "acct-1", "unread" => 1, "latest_at" => at}])
+  end
+
+  describe "the support poll" do
+    @first "2026-11-01T10:00:00.5Z"
+    @later "2026-11-01T10:05:00Z"
+
+    test "tells the owner once per reply, also after a restart", %{
+      stub: stub,
+      seen: seen,
+      inst: inst
+    } do
+      reply_at(stub, @first)
+      assert :ok = Cabinet.poll_support()
+
+      assert [{_, sent}] = telegram(seen, "sendMessage")
+      assert sent["chat_id"] == 456
+      assert sent["text"] == "Поддержка ответила"
+      # No public host and never bound: no address to offer, and still told.
+      refute sent["reply_markup"]
+      assert reload(inst).support_notified_at == ~U[2026-11-01 10:00:00.500000Z]
+
+      # The mark is the database's, so a fresh process sees the same.
+      assert :ok = Cabinet.poll_support()
+      assert length(telegram(seen, "sendMessage")) == 1
+
+      reply_at(stub, @later)
+      assert :ok = Cabinet.poll_support()
+      assert length(telegram(seen, "sendMessage")) == 2
+      assert reload(inst).support_notified_at == ~U[2026-11-01 10:05:00.000000Z]
+    end
+
+    test "the button opens the panel's support tab", %{stub: stub, seen: seen} do
+      System.put_env("PHX_HOST", "panel.example")
+      on_exit(fn -> System.delete_env("PHX_HOST") end)
+      reply_at(stub, @first)
+      assert :ok = Cabinet.poll_support()
+
+      [{_, sent}] = telegram(seen, "sendMessage")
+      [[button]] = sent["reply_markup"]["inline_keyboard"]
+      assert button["text"] == "Открыть поддержку"
+      assert button["web_app"]["url"] == "https://panel.example/app/?bot=123&tab=support"
+    end
+
+    test "an older latest_at, after a newer thread was read, tells nobody", %{
+      stub: stub,
+      seen: seen,
+      inst: inst
+    } do
+      reply_at(stub, @later)
+      assert :ok = Cabinet.poll_support()
+      reply_at(stub, @first)
+      assert :ok = Cabinet.poll_support()
+      assert length(telegram(seen, "sendMessage")) == 1
+      assert reload(inst).support_notified_at == ~U[2026-11-01 10:05:00.000000Z]
+    end
+
+    test "a failed send keeps the mark, so the next poll sends it", %{
+      stub: stub,
+      seen: seen,
+      inst: inst
+    } do
+      working = Application.get_env(:druzhok, :telegram_api_base)
+      # Nothing listens on this address, as during a Telegram outage.
+      Application.put_env(:druzhok, :telegram_api_base, "http://localhost:1")
+      reply_at(stub, @first)
+      assert :ok = Cabinet.poll_support()
+      assert reload(inst).support_notified_at == nil
+      assert telegram(seen, "sendMessage") == []
+
+      Application.put_env(:druzhok, :telegram_api_base, working)
+      assert :ok = Cabinet.poll_support()
+      assert length(telegram(seen, "sendMessage")) == 1
+      assert reload(inst).support_notified_at == ~U[2026-11-01 10:00:00.500000Z]
+    end
+
+    test "Telegram's rate limit is tried again", %{stub: stub, inst: inst} do
+      tg = Bypass.open()
+      Application.put_env(:druzhok, :telegram_api_base, "http://localhost:#{tg.port}")
+
+      Bypass.expect_once(tg, "POST", "/:bot/sendMessage", fn conn ->
+        Plug.Conn.resp(
+          conn,
+          429,
+          ~s({"ok":false,"error_code":429,"description":"Too Many Requests"})
+        )
+      end)
+
+      reply_at(stub, @first)
+      assert :ok = Cabinet.poll_support()
+      assert reload(inst).support_notified_at == nil
+    end
+
+    test "an owner who blocked the bot is not asked again every minute", %{stub: stub, inst: inst} do
+      tg = Bypass.open()
+      Application.put_env(:druzhok, :telegram_api_base, "http://localhost:#{tg.port}")
+
+      Bypass.expect_once(tg, "POST", "/:bot/sendMessage", fn conn ->
+        Plug.Conn.resp(
+          conn,
+          403,
+          ~s({"ok":false,"error_code":403,"description":"Forbidden: bot was blocked by the user"})
+        )
+      end)
+
+      reply_at(stub, @first)
+      assert :ok = Cabinet.poll_support()
+      assert :ok = Cabinet.poll_support()
+      assert reload(inst).support_notified_at != nil
+    end
+
+    test "skips accounts of other partners' rows, deleted bots and a cabinet that is off", %{
+      stub: stub,
+      seen: seen,
+      inst: inst
+    } do
+      unread(stub, [%{"account_id" => "someone-else", "unread" => 3, "latest_at" => @first}])
+      assert :ok = Cabinet.poll_support()
+
+      Repo.update_all(from(i in Instance, where: i.id == ^inst.id), set: [cabinet_off: true])
+      reply_at(stub, @first)
+      assert :ok = Cabinet.poll_support()
+
+      Repo.update_all(from(i in Instance, where: i.id == ^inst.id),
+        set: [cabinet_off: false, delete_requested: true]
+      )
+
+      assert :ok = Cabinet.poll_support()
+      assert telegram(seen, "sendMessage") == []
+      assert reload(inst).support_notified_at == nil
+    end
+
+    test "a malformed row is skipped and the others are told", %{stub: stub, seen: seen} do
+      unread(stub, [
+        %{"account_id" => "acct-1", "unread" => 1, "latest_at" => "yesterday"},
+        %{"unread" => 1},
+        "nonsense"
+      ])
+
+      assert :ok = Cabinet.poll_support()
+      assert telegram(seen, "sendMessage") == []
+
+      unread(stub, [
+        "nonsense",
+        %{"account_id" => "acct-1", "unread" => 1, "latest_at" => @first}
+      ])
+
+      assert :ok = Cabinet.poll_support()
+      assert length(telegram(seen, "sendMessage")) == 1
+    end
+
+    test "a route that is absent or a gateway that is down is an error, not a raise", %{
+      stub: stub,
+      seen: seen
+    } do
+      Bypass.stub(stub.bypass, "GET", "/partner/support/unread", fn conn ->
+        Plug.Conn.resp(conn, 404, "404 page not found")
+      end)
+
+      assert {:error, reason} = Cabinet.poll_support()
+      assert reason =~ "404"
+
+      Bypass.down(stub.bypass)
+      assert {:error, _} = Cabinet.poll_support()
+      Bypass.up(stub.bypass)
+      assert telegram(seen, "sendMessage") == []
+    end
+
+    test "without a partner token it is an error, not a raise", %{stub: _stub} do
+      prev = Application.get_env(:druzhok, :ruoc_partner_token)
+      Application.delete_env(:druzhok, :ruoc_partner_token)
+      on_exit(fn -> Application.put_env(:druzhok, :ruoc_partner_token, prev) end)
+      assert {:error, _} = Cabinet.poll_support()
+    end
+
+    test "the process survives a bad gateway, logs once, and polls again", %{
+      stub: stub,
+      seen: seen
+    } do
+      Application.put_env(:druzhok, :support_poll_ms, 10)
+      on_exit(fn -> Application.delete_env(:druzhok, :support_poll_ms) end)
+
+      {:ok, hits} = Agent.start(fn -> 0 end)
+      on_exit(fn -> if Process.alive?(hits), do: Agent.stop(hits) end)
+
+      Bypass.stub(stub.bypass, "GET", "/partner/support/unread", fn conn ->
+        n = Agent.get_and_update(hits, &{&1, &1 + 1})
+
+        if n < 3,
+          do: Plug.Conn.resp(conn, 500, "boom"),
+          else:
+            RuocStub.reply(conn, 200, %{
+              "accounts" => [%{"account_id" => "acct-1", "unread" => 1, "latest_at" => @first}]
+            })
+      end)
+
+      log =
+        ExUnit.CaptureLog.capture_log(fn ->
+          pid = start_supervised!(Cabinet)
+
+          Enum.find(1..200, fn _ ->
+            Process.sleep(10)
+            telegram(seen, "sendMessage") != []
+          end)
+
+          # Answers only once the round that sent the note has finished.
+          assert :sys.get_state(pid).support_problem == nil
+          stop_supervised!(Cabinet)
+        end)
+
+      assert length(telegram(seen, "sendMessage")) == 1
+      assert length(Regex.scan(~r/support poll: HTTP 500/, log)) == 1
+    end
+  end
+
   test "telegram_bot_id is the token's numeric prefix" do
     assert Instance.telegram_bot_id(%Instance{telegram_token: "123:abc"}) == 123
     assert Instance.telegram_bot_id(%Instance{telegram_token: "abc:def"}) == nil
@@ -268,7 +490,11 @@ defmodule Druzhok.CabinetTest do
       assert button["menu_button"]["web_app"]["url"] == @panel
     end
 
-    test "a bot bound on ruoc's address moves with no ruoc call", %{stub: stub, seen: seen, inst: inst} do
+    test "a bot bound on ruoc's address moves with no ruoc call", %{
+      stub: stub,
+      seen: seen,
+      inst: inst
+    } do
       set_row(inst, cabinet_binding: "123:456:ru", cabinet_url: @url, cabinet_menu_set: true)
       moved = reload(inst)
 

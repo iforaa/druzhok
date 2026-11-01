@@ -1,8 +1,9 @@
 import { useEffect, useRef, useState } from "react"
 import { explain, panelApi, type ApplyState, type Bot, type ImageModel, type SettingChanges } from "./api"
-import { backButton, closePanel, confirmDialog, openTelegram } from "./telegram"
+import { backButton, closePanel, confirmDialog } from "./telegram"
 import { plural, when } from "./format"
 import { Choice, ErrorNote, Icon, Row, Segmented, Skeleton, Toggle, useLoad } from "./ui"
+import type { Go } from "./nav"
 
 // Настройки: the bot's settings, who may talk to it, and deleting the bot.
 // Language, time zone, groups, pictures and the site are the owner's to change
@@ -101,7 +102,7 @@ function useSettings(bot: Bot, onBot: (b: Bot) => void) {
 
 type Settings = ReturnType<typeof useSettings>
 
-export default function Settings({ bot, onBot }: { bot: Bot; onBot: (b: Bot) => void }) {
+export default function Settings({ bot, onBot, go }: { bot: Bot; onBot: (b: Bot) => void; go: Go }) {
   const [screen, setScreen] = useState<Screen>("main")
   const settings = useSettings(bot, onBot)
   const published = useLoad(panelApi.published, [bot.settings.website_hosting_enabled])
@@ -118,9 +119,9 @@ export default function Settings({ bot, onBot }: { bot: Bot; onBot: (b: Bot) => 
 
   switch (screen) {
     case "timezone":
-      return <TimezoneScreen bot={bot} settings={settings} />
+      return <TimezoneScreen bot={bot} settings={settings} go={go} />
     case "images":
-      return <ImagesScreen bot={bot} settings={settings} />
+      return <ImagesScreen bot={bot} settings={settings} go={go} />
     case "deleted":
       return <Deleted />
   }
@@ -203,7 +204,7 @@ export default function Settings({ bot, onBot }: { bot: Bot; onBot: (b: Bot) => 
           onChange={toggleSite}
         />
       </div>
-      <ApplyNote bot={bot} settings={settings} />
+      <ApplyNote bot={bot} settings={settings} go={go} />
 
       <section className="card">
         <dl className="pairs">
@@ -256,17 +257,17 @@ export default function Settings({ bot, onBot }: { bot: Bot; onBot: (b: Bot) => 
 }
 
 /** What happens to a saved change, and a save's error. */
-function ApplyNote({ bot, settings }: { bot: Bot; settings: Settings }) {
+function ApplyNote({ bot, settings, go }: { bot: Bot; settings: Settings; go: Go }) {
   if (settings.error) return <p className="note-error">{settings.error}</p>
   const state = bot.apply.state
   if (state === "applied" && !settings.saved) return null
   return (
     <p className="hint">
       {applyText[state]}
-      {state === "failed" && bot.support_url ? (
+      {state === "failed" ? (
         <>
           {" "}
-          <button className="link" onClick={() => openTelegram(bot.support_url!)}>
+          <button className="link" onClick={() => go("support")}>
             Поддержка
           </button>
         </>
@@ -275,7 +276,7 @@ function ApplyNote({ bot, settings }: { bot: Bot; settings: Settings }) {
   )
 }
 
-function TimezoneScreen({ bot, settings }: { bot: Bot; settings: Settings }) {
+function TimezoneScreen({ bot, settings, go }: { bot: Bot; settings: Settings; go: Go }) {
   const current = bot.settings.timezone
   const listed = zones.some(([id]) => id === current)
   const [other, setOther] = useState(listed ? "" : current)
@@ -305,12 +306,12 @@ function TimezoneScreen({ bot, settings }: { bot: Bot; settings: Settings }) {
           </button>
         </div>
       </label>
-      <ApplyNote bot={bot} settings={settings} />
+      <ApplyNote bot={bot} settings={settings} go={go} />
     </>
   )
 }
 
-function ImagesScreen({ bot, settings }: { bot: Bot; settings: Settings }) {
+function ImagesScreen({ bot, settings, go }: { bot: Bot; settings: Settings; go: Go }) {
   const on = bot.settings.image_gen_enabled
   const current = bot.settings.image_gen_model
   const { data, error, reload } = useLoad(panelApi.imageModels)
@@ -329,7 +330,7 @@ function ImagesScreen({ bot, settings }: { bot: Bot; settings: Settings }) {
           onChange={(v) => settings.save({ image_gen_enabled: v })}
         />
       </div>
-      <ApplyNote bot={bot} settings={settings} />
+      <ApplyNote bot={bot} settings={settings} go={go} />
       {on ? (
         <>
           <span className="label">Модель</span>
