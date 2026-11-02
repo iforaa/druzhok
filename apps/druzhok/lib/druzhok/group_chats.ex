@@ -84,7 +84,8 @@ defmodule Druzhok.GroupChats do
 
   # A poll update names no chat, so it could come from any group, and hermes has no
   # handler for it: it could only wake the bot for nothing.
-  defp chatless_poll?(update), do: Map.has_key?(update, "poll") or Map.has_key?(update, "poll_answer")
+  defp chatless_poll?(update),
+    do: Map.has_key?(update, "poll") or Map.has_key?(update, "poll_answer")
 
   defp group(inst, update_id, update, chat) do
     case refresh_title(Repo.get_by(__MODULE__, instance_id: inst.id, chat_id: chat["id"]), chat) do
@@ -249,8 +250,7 @@ defmodule Druzhok.GroupChats do
 
     {marked, _} =
       from(g in __MODULE__,
-        where:
-          g.id == ^row.id and (is_nil(g.rate_notice_at) or g.rate_notice_at <= ^since)
+        where: g.id == ^row.id and (is_nil(g.rate_notice_at) or g.rate_notice_at <= ^since)
       )
       |> Repo.update_all(set: [rate_notice_at: now])
 

@@ -52,6 +52,68 @@ defmodule Druzhok.CabinetTest do
 
   defp reload(inst), do: Repo.get(Instance, inst.id)
 
+  describe "group notes" do
+    defp pending(inst) do
+      Repo.insert!(%Druzhok.GroupChats{
+        instance_id: inst.id,
+        chat_id: -100,
+        title: "Дача *x*",
+        status: "pending"
+      })
+    end
+
+    test "the owner gets one plain note, in their chat", %{inst: inst, seen: seen} do
+      row = pending(inst)
+      Cabinet.tell_group_seen(inst.id, -100)
+      Cabinet.tell_group_seen(inst.id, -100)
+
+      assert [{_, sent}] = telegram(seen, "sendMessage")
+      assert sent["chat_id"] == 456
+      assert sent["text"] =~ "«Дача *x*»"
+      refute Map.has_key?(sent, "parse_mode")
+      assert Repo.get!(Druzhok.GroupChats, row.id).notified_at
+    end
+
+    test "the note carries the settings button when there is a public host", %{inst: inst, seen: seen} do
+      Application.put_env(:druzhok, :public_host, "druzhok.example")
+      on_exit(fn -> Application.delete_env(:druzhok, :public_host) end)
+
+      pending(inst)
+      Cabinet.tell_group_seen(inst.id, -100)
+
+      assert [{_, sent}] = telegram(seen, "sendMessage")
+      assert [[button]] = sent["reply_markup"]["inline_keyboard"]
+      assert button["web_app"]["url"] =~ "tab=settings"
+      refute Map.has_key?(button, "callback_data")
+    end
+
+    test "a group already decided gets no note", %{inst: inst, seen: seen} do
+      row = pending(inst)
+      Repo.update!(Ecto.Changeset.change(row, status: "blocked"))
+      Cabinet.tell_group_seen(inst.id, -100)
+      assert telegram(seen, "sendMessage") == []
+    end
+
+    test "a failure with no answer stays untold, for the next update", %{inst: inst, seen: seen} do
+      row = pending(inst)
+      working = Application.get_env(:druzhok, :telegram_api_base)
+      Application.put_env(:druzhok, :telegram_api_base, "http://localhost:1")
+      Cabinet.tell_group_seen(inst.id, -100)
+      refute Repo.get!(Druzhok.GroupChats, row.id).notified_at
+
+      Application.put_env(:druzhok, :telegram_api_base, working)
+      Cabinet.tell_group_seen(inst.id, -100)
+      assert [_] = telegram(seen, "sendMessage")
+    end
+
+    test "the limit notice goes to the group", %{inst: inst, seen: seen} do
+      Cabinet.tell_group_limit(inst.id, -100)
+      assert [{_, sent}] = telegram(seen, "sendMessage")
+      assert sent["chat_id"] == -100
+      assert sent["text"] =~ "слишком много"
+    end
+  end
+
   defp unread(stub, status \\ 200, accounts) do
     Bypass.stub(stub.bypass, "GET", "/partner/support/unread", fn conn ->
       RuocStub.reply(conn, status, %{"accounts" => accounts})

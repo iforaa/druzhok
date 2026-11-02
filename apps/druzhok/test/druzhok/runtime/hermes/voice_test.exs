@@ -229,6 +229,14 @@ defmodule Druzhok.Runtime.Hermes.VoiceTest do
       refute rules =~ "Дружк"
     end
 
+    test "the group rule: web only, no photos, no pictures, nothing private" do
+      rules = Voice.product_rules(%{name: "b", image_gen_enabled: true})
+      assert rules =~ "В группе:"
+      assert rules =~ "только поиск в интернете"
+      assert rules =~ "Фото в группе ты не разбираешь и картинки там не рисуешь"
+      assert rules =~ "о владельце"
+    end
+
     test "capability lines follow the settings" do
       plain = Voice.product_rules(%{name: "b"})
       refute plain =~ "картинки"
