@@ -106,6 +106,55 @@ defmodule Druzhok.CabinetTest do
       assert [_] = telegram(seen, "sendMessage")
     end
 
+    test "a bot with its cabinet off: a note that does not point at the cabinet", %{
+      inst: inst,
+      seen: seen
+    } do
+      Repo.update!(Ecto.Changeset.change(inst, cabinet_off: true))
+      pending(inst)
+      Cabinet.tell_group_seen(inst.id, -100)
+
+      assert [{_, sent}] = telegram(seen, "sendMessage")
+      refute sent["text"] =~ "кабинет"
+      refute Map.has_key?(sent, "reply_markup")
+    end
+
+    test "through the gate: repeated first-sight updates make one owner note", %{
+      inst: inst,
+      seen: seen
+    } do
+      start_supervised!(Cabinet)
+      chat = %{"id" => -100, "type" => "group", "title" => "Дача"}
+
+      for id <- 1..3,
+          do: assert(:drop == Druzhok.GroupChats.gate(inst, id, %{"message" => %{"chat" => chat}}))
+
+      :sys.get_state(Cabinet)
+      assert [{_, %{"chat_id" => 456}}] = telegram(seen, "sendMessage")
+    end
+
+    test "through the gate: over the limit, one notice to the group", %{inst: inst, seen: seen} do
+      start_supervised!(Cabinet)
+      Druzhok.Settings.set("group_rate_user_per_min", "1")
+      on_exit(fn -> Druzhok.Settings.set("group_rate_user_per_min", "") end)
+      Repo.insert!(%Druzhok.GroupChats{instance_id: inst.id, chat_id: -100, status: "approved"})
+
+      update = %{
+        "message" => %{
+          "chat" => %{"id" => -100, "type" => "group"},
+          "from" => %{"id" => 77},
+          "text" => "привет"
+        }
+      }
+
+      assert :pass == Druzhok.GroupChats.gate(inst, 1, update)
+      assert :drop == Druzhok.GroupChats.gate(inst, 2, update)
+      assert :drop == Druzhok.GroupChats.gate(inst, 3, update)
+
+      :sys.get_state(Cabinet)
+      assert [{_, %{"chat_id" => -100}}] = telegram(seen, "sendMessage")
+    end
+
     test "the limit notice goes to the group", %{inst: inst, seen: seen} do
       Cabinet.tell_group_limit(inst.id, -100)
       assert [{_, sent}] = telegram(seen, "sendMessage")

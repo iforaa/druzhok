@@ -46,6 +46,10 @@ defmodule Druzhok.GroupChats do
 
   @message_keys ~w(message edited_message channel_post edited_channel_post)
 
+  # What hermes has a handler for (adapter.py `_register_handlers`). A join, a pin or
+  # a title change is never answered, so it must not use up anyone's limit.
+  @answered_payloads ~w(text photo video audio voice document sticker location venue)
+
   # --- The gate ----------------------------------------------------------------
 
   @doc """
@@ -188,7 +192,10 @@ defmodule Druzhok.GroupChats do
 
   defp answered_message(inst, update) do
     msg = Enum.find_value(@message_keys, &update[&1])
-    if is_map(msg) and Addressed.wakes?(inst, update), do: msg
+
+    if is_map(msg) and Enum.any?(@answered_payloads, &Map.has_key?(msg, &1)) and
+         Addressed.wakes?(inst, update),
+       do: msg
   end
 
   # Someone posting as a channel or as the group has no `from` of their own.

@@ -331,6 +331,26 @@ defmodule DruzhokWebWeb.TelegramWebhookControllerTest do
       assert count == 0
     end
 
+    test "what hermes never answers does not count: joins, pins, titles", %{bot: bot} do
+      Settings.set("group_rate_user_per_min", "1")
+      approve(bot)
+
+      service = fn id, field ->
+        %{
+          "update_id" => id,
+          "message" => %{"chat" => @group, "from" => %{"id" => 77}, field => %{"id" => 1}}
+        }
+      end
+
+      send_update(bot, service.(601, "new_chat_members"))
+      send_update(bot, service.(602, "pinned_message"))
+      [[count]] = Repo.query!("SELECT count(*) FROM group_rate_events").rows
+      assert count == 0
+
+      send_update(bot, message(603))
+      assert Inbox.pending_count(bot.id) == 3
+    end
+
     test "old rate events are pruned", %{bot: bot} do
       approve(bot)
       send_update(bot, message(601))

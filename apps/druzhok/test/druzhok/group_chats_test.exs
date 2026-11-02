@@ -147,20 +147,22 @@ defmodule Druzhok.GroupChatsTest do
       assert after_.settings_seq == inst.settings_seq
     end
 
-    test "what that group had queued goes too; other chats stay", %{inst: inst} do
-      group(inst, "approved")
+    for action <- ~w(block remove) do
+      test "#{action}: what that group had queued goes too; other chats stay", %{inst: inst} do
+        group(inst, "approved")
 
-      msg = fn id ->
-        Jason.encode!(%{"message" => %{"chat" => %{"id" => id, "type" => "group"}}})
+        msg = fn id ->
+          Jason.encode!(%{"message" => %{"chat" => %{"id" => id, "type" => "group"}}})
+        end
+
+        :ok = Inbox.enqueue(inst.id, 1, msg.(@chat))
+        :ok = Inbox.enqueue(inst.id, 2, msg.(-2))
+
+        assert {:ok, _} = GroupChats.decide(inst, @chat, unquote(action))
+
+        assert Inbox.pending_count(inst.id) == 1
+        assert Inbox.next_pending(inst.id).update_id == 2
       end
-
-      :ok = Inbox.enqueue(inst.id, 1, msg.(@chat))
-      :ok = Inbox.enqueue(inst.id, 2, msg.(-2))
-
-      assert {:ok, _} = GroupChats.decide(inst, @chat, "block")
-
-      assert Inbox.pending_count(inst.id) == 1
-      assert Inbox.next_pending(inst.id).update_id == 2
     end
   end
 

@@ -71,6 +71,11 @@ defmodule Druzhok.Cabinet do
       {"The bot was added to the group “~s”. It stays silent there until you allow it. You can do that in the cabinet's settings.",
        "Open settings"}
   }
+  # Their panel refuses them, so the note offers nothing; the operator's `bind-cabinet` reopens it.
+  @group_note_off %{
+    "ru" => "Бота добавили в группу «~s». Пока он там не отвечает.",
+    "en" => "The bot was added to the group “~s”. It stays silent there for now."
+  }
   @group_no_title %{"ru" => "без названия", "en" => "untitled"}
   @group_limit_note %{
     "ru" => "В этой группе сейчас слишком много сообщений боту. Пока он на них не отвечает, попробуйте позже.",
@@ -480,11 +485,10 @@ defmodule Druzhok.Cabinet do
       {%Instance{telegram_token: token, owner_telegram_id: owner},
        %{status: "pending", notified_at: nil}}
       when is_binary(token) and is_integer(owner) ->
-        {line, label} = text(@group_note, inst)
-        title = row.title || text(@group_no_title, inst)
-        line = String.replace(line, "~s", title)
+        {line, opts} = group_note(inst)
+        line = String.replace(line, "~s", row.title || text(@group_no_title, inst))
 
-        case API.send_message(token, owner, line, group_note_opts(inst, label)) do
+        case API.send_message(token, owner, line, opts) do
           {:ok, _} ->
             mark_group_told(row)
 
@@ -506,15 +510,17 @@ defmodule Druzhok.Cabinet do
     |> Repo.update_all(set: [notified_at: now])
   end
 
-  defp group_note_opts(%Instance{cabinet_off: true}, _label), do: %{}
+  defp group_note(%Instance{cabinet_off: true} = inst), do: {text(@group_note_off, inst), %{}}
 
-  defp group_note_opts(inst, label) do
+  defp group_note(inst) do
+    {line, label} = text(@group_note, inst)
+
     case Druzhok.Panel.url(inst, tab: "settings") do
       url when is_binary(url) ->
-        %{reply_markup: %{inline_keyboard: [[%{text: label, web_app: %{url: url}}]]}}
+        {line, %{reply_markup: %{inline_keyboard: [[%{text: label, web_app: %{url: url}}]]}}}
 
       _ ->
-        %{}
+        {line, %{}}
     end
   end
 

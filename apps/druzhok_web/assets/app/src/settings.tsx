@@ -272,10 +272,12 @@ function Groups({ onBot }: { onBot: (b: Bot) => void }) {
   if (!list || list.length === 0) return null
 
   const decide = async (g: GroupChat, action: GroupAction) => {
-    const name = g.title || "без названия"
+    // Telegram refuses a dialog over 256 characters, and the panel would just do nothing.
+    const title = g.title || "без названия"
+    const name = title.length > 40 ? `${title.slice(0, 40)}…` : title
     const ok = await confirmDialog(
       {
-        approve: `Разрешить боту отвечать в группе «${name}»? Бот сразу перезапустится, если сейчас не спит. Писать ему сможет любой участник. В группе бот только ищет в интернете, вашей памяти и файлов у него там нет, а его описание участники могут увидеть.`,
+        approve: `Разрешить боту отвечать в группе «${name}»? Бот сразу перезапустится, если сейчас не спит. Писать ему сможет любой участник.`,
         block: `Запретить боту отвечать в группе «${name}»? Сообщения оттуда перестанут доходить до него сразу.`,
         remove: `Убрать группу «${name}» из списка? Бот перестанет там отвечать. Если он всё ещё в этой группе, она появится здесь снова и будет ждать решения.`,
       }[action],
@@ -321,6 +323,7 @@ function Groups({ onBot }: { onBot: (b: Bot) => void }) {
         ))}
       </section>
       {failed ? <p className="note-error">{failed}</p> : null}
+      <p className="hint">В группе бот только ищет в интернете. Вашей памяти и файлов у него там нет, а его описание участники могут увидеть.</p>
     </>
   )
 }

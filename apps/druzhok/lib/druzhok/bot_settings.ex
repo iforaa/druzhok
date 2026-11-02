@@ -14,7 +14,7 @@ defmodule Druzhok.BotSettings do
   alias Druzhok.{BotManager, I18n, Instance, Repo, Telegram}
   alias Druzhok.Runtime.Hermes
 
-  @restart ~w(model image_model language telegram_token mention_only group_shared_memory
+  @restart ~w(model image_model language telegram_token mention_only
               website_hosting_enabled image_gen_enabled memory_provider trigger_name
               allowed_telegram_chats owner_telegram_id timezone)a
 
