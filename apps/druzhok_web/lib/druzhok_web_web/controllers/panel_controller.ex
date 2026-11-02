@@ -20,6 +20,8 @@ defmodule DruzhokWebWeb.PanelController do
       POST /app/api/skills/:category/:name   same body
       POST /app/api/settings        {"changes": {"language": "en", ...}}
       POST /app/api/delete          deletes the bot (init data under 10 min old)
+      GET /app/api/groups
+      POST /app/api/groups/:chat_id {"action": "approve" | "block" | "remove"} (init data under 10 min old)
   """
 
   use DruzhokWebWeb, :controller
@@ -127,6 +129,35 @@ defmodule DruzhokWebWeb.PanelController do
       :ok = Druzhok.BotManager.delete(conn.assigns.instance.name)
       reply(conn, %{deleted: true})
     end
+  end
+
+  def groups(conn, _params),
+    do: reply(conn, %{groups: Druzhok.GroupChats.list(conn.assigns.instance)})
+
+  # Who may talk to the bot, and approving restarts it: a replayed init data should
+  # not be good for that for 24 hours.
+  @group_max_age_s 600
+
+  def group(conn, %{"chat_id" => chat_id} = params) do
+    if System.system_time(:second) - conn.assigns.auth_date > @group_max_age_s do
+      PanelAuth.error(conn, 401, "init_stale", "close the panel and open it again")
+    else
+      with {:ok, id} <- chat_id(chat_id),
+           {:ok, inst} <- Druzhok.GroupChats.decide(conn.assigns.instance, id, params["action"]) do
+        reply(conn, %{groups: Druzhok.GroupChats.list(inst), bot: Panel.bot(inst)})
+      else
+        {:error, :not_found} -> PanelAuth.error(conn, 404, "not_found", "no such group")
+        {:error, :polling} -> PanelAuth.error(conn, 409, "groups_polling", "this bot cannot work in groups")
+        {:error, :invalid_action} -> PanelAuth.error(conn, 400, "invalid_setting", "unknown action")
+      end
+    end
+  end
+
+  # Telegram's chat ids fit in 52 bits; anything longer is not one.
+  defp chat_id(text) do
+    if Regex.match?(~r/^-?\d{1,18}$/, text),
+      do: {:ok, String.to_integer(text)},
+      else: {:error, :not_found}
   end
 
   defp content(conn, {:ok, body}), do: reply(conn, body)

@@ -33,6 +33,10 @@ defmodule Druzhok.Cabinet do
   token, which never wakes the bot. `instances.support_notified_at` holds the
   newest reply told about. A gateway that is down, or has no such route yet,
   costs one log line when that starts and one when it ends.
+
+  It also sends what `Druzhok.GroupChats` has to say from the webhook, which must
+  not wait on Telegram: the owner's note about a new group, and a group's notice
+  that it is over its rate limit. Neither wakes the bot.
   """
 
   use GenServer
@@ -59,6 +63,20 @@ defmodule Druzhok.Cabinet do
   @support_note "Поддержка ответила"
   @support_button "Открыть поддержку"
 
+  @group_note %{
+    "ru" =>
+      {"Бота добавили в группу «~s». Пока вы не разрешите, он там не отвечает. Разрешить можно в настройках кабинета.",
+       "Открыть настройки"},
+    "en" =>
+      {"The bot was added to the group “~s”. It stays silent there until you allow it. You can do that in the cabinet's settings.",
+       "Open settings"}
+  }
+  @group_no_title %{"ru" => "без названия", "en" => "untitled"}
+  @group_limit_note %{
+    "ru" => "В этой группе сейчас слишком много сообщений боту. Пока он на них не отвечает, попробуйте позже.",
+    "en" => "Too many messages to the bot in this group right now. It is not answering them for now, please try later."
+  }
+
   def start_link(opts \\ []), do: GenServer.start_link(__MODULE__, opts, name: __MODULE__)
 
   @doc "Binds the bot and sets the owner's button when anything changed. A cast."
@@ -66,6 +84,14 @@ defmodule Druzhok.Cabinet do
 
   @doc "The bot's plan refused a request (402 or 429 `usage_limit_reached`): tell the owner, at most every 6 h. A cast."
   def out_of_money(instance_id), do: GenServer.cast(__MODULE__, {:out_of_money, instance_id})
+
+  @doc "A group waits for the owner's decision: tell them once. A cast."
+  def group_seen(instance_id, chat_id),
+    do: GenServer.cast(__MODULE__, {:group_seen, instance_id, chat_id})
+
+  @doc "A group went over its rate limit: tell the group. A cast."
+  def group_over_limit(instance_id, chat_id),
+    do: GenServer.cast(__MODULE__, {:group_over_limit, instance_id, chat_id})
 
   @doc """
   Whether a webhook update is the moment to retry the owner's cabinet: the
@@ -140,6 +166,16 @@ defmodule Druzhok.Cabinet do
         noticed = if sent == :sent, do: Map.put(state.noticed, id, now), else: state.noticed
         {:noreply, %{state | noticed: noticed}}
     end
+  end
+
+  def handle_cast({:group_seen, id, chat_id}, state) do
+    guarded(id, fn -> tell_group_seen(id, chat_id) end)
+    {:noreply, state}
+  end
+
+  def handle_cast({:group_over_limit, id, chat_id}, state) do
+    guarded(id, fn -> tell_group_limit(id, chat_id) end)
+    {:noreply, state}
   end
 
   # Nothing here may take the process down with it: a raise or an exit from
@@ -427,6 +463,71 @@ defmodule Druzhok.Cabinet do
         else
           Logger.warning("[cabinet] #{inst.name}: support note not sent (#{short(reason)})")
         end
+    end
+  end
+
+  @doc """
+  Tells the owner about a pending group, synchronously, unless that was done.
+  Plain text: the title is whatever a stranger typed. As with the support note, a
+  refusal that will not change counts as told, and any other failure is retried on
+  the group's next update.
+  """
+  def tell_group_seen(id, chat_id) do
+    inst = Repo.get(Instance, id)
+    row = Repo.get_by(Druzhok.GroupChats, instance_id: id, chat_id: chat_id)
+
+    case {inst, row} do
+      {%Instance{telegram_token: token, owner_telegram_id: owner},
+       %{status: "pending", notified_at: nil}}
+      when is_binary(token) and is_integer(owner) ->
+        {line, label} = text(@group_note, inst)
+        title = row.title || text(@group_no_title, inst)
+        line = String.replace(line, "~s", title)
+
+        case API.send_message(token, owner, line, group_note_opts(inst, label)) do
+          {:ok, _} ->
+            mark_group_told(row)
+
+          {:error, reason} ->
+            if undeliverable?(reason),
+              do: mark_group_told(row),
+              else: Logger.warning("[cabinet] #{inst.name}: group note not sent (#{short(reason)})")
+        end
+
+      _ ->
+        :skipped
+    end
+  end
+
+  defp mark_group_told(row) do
+    now = DateTime.utc_now()
+
+    from(g in Druzhok.GroupChats, where: g.id == ^row.id)
+    |> Repo.update_all(set: [notified_at: now])
+  end
+
+  defp group_note_opts(%Instance{cabinet_off: true}, _label), do: %{}
+
+  defp group_note_opts(inst, label) do
+    case Druzhok.Panel.url(inst, tab: "settings") do
+      url when is_binary(url) ->
+        %{reply_markup: %{inline_keyboard: [[%{text: label, web_app: %{url: url}}]]}}
+
+      _ ->
+        %{}
+    end
+  end
+
+  @doc "Tells a group it is over its rate limit, synchronously. Best effort."
+  def tell_group_limit(id, chat_id) do
+    with %Instance{telegram_token: token} = inst when is_binary(token) <- Repo.get(Instance, id) do
+      case API.send_message(token, chat_id, text(@group_limit_note, inst)) do
+        {:ok, _} ->
+          :ok
+
+        {:error, reason} ->
+          Logger.info("[cabinet] #{inst.name}: group limit notice not sent (#{short(reason)})")
+      end
     end
   end
 

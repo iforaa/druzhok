@@ -38,6 +38,7 @@ defmodule Druzhok.Telegram.Relay.Housekeeper do
   @impl true
   def handle_info(:sweep, state) do
     sweep()
+    Druzhok.GroupChats.prune_rate_events()
     Process.send_after(self(), :sweep, @interval_ms)
     {:noreply, state}
   end

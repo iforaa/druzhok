@@ -6,8 +6,9 @@ defmodule Druzhok.Telegram.Inbox do
   A row is pending while `acked_at` is nil. The bot's 2xx sets it; a row that
   is dropped instead gets it too, with `dropped_reason`: `"rejected"` (the bot
   answered it with a 4xx other than 403/404/429), `"expired"` (waited past
-  Telegram's own 24 h retention) or `"mode_switch"` (dropped by a forced switch
-  back to polling).
+  Telegram's own 24 h retention), `"mode_switch"` (dropped by a forced switch
+  back to polling) or `"group_refused"` (its group was blocked or removed,
+  `Druzhok.GroupChats`).
   """
 
   use Ecto.Schema
@@ -146,6 +147,29 @@ defmodule Druzhok.Telegram.Inbox do
   def drop_pending(instance_id, reason) do
     from(u in __MODULE__, where: u.instance_id == ^instance_id and is_nil(u.acked_at))
     |> Repo.update_all(set: [acked_at: DateTime.utc_now(), dropped_reason: reason])
+  end
+
+  @doc "Drops the pending rows whose decoded update satisfies `fun`. Returns how many."
+  def drop_pending_where(instance_id, fun, reason) do
+    ids =
+      from(u in __MODULE__,
+        where: u.instance_id == ^instance_id and is_nil(u.acked_at),
+        select: {u.id, u.payload}
+      )
+      |> Repo.all()
+      |> Enum.filter(fn {_id, payload} ->
+        case Jason.decode(payload) do
+          {:ok, %{} = update} -> fun.(update)
+          _ -> false
+        end
+      end)
+      |> Enum.map(&elem(&1, 0))
+
+    {dropped, _} =
+      from(u in __MODULE__, where: u.id in ^ids and is_nil(u.acked_at))
+      |> Repo.update_all(set: [acked_at: DateTime.utc_now(), dropped_reason: reason])
+
+    dropped
   end
 
   @doc "Ids of the bots that have any rows, whatever their mode now."
