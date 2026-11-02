@@ -163,7 +163,11 @@ defmodule DruzhokWebWeb.PanelApiTest do
 
   describe "POST /app/api/settings" do
     setup do
-      %{stub: Druzhok.RuocStub.start()}
+      stub = Druzhok.RuocStub.start()
+      # With an empty cache the panel's bot view fetches the catalogue in a background
+      # task, which can reach the stub after its agent stopped and fail the test.
+      Druzhok.Ruoc.models()
+      %{stub: stub}
     end
 
     test "saves, answers the bot view with apply, and restarts nothing", %{conn: conn, inst: inst} do
