@@ -163,7 +163,11 @@ defmodule DruzhokWebWeb.PanelApiTest do
 
   describe "POST /app/api/settings" do
     setup do
-      %{stub: Druzhok.RuocStub.start()}
+      stub = Druzhok.RuocStub.start()
+      # With an empty cache the panel's bot view fetches the catalogue in a background
+      # task, which can reach the stub after its agent stopped and fail the test.
+      Druzhok.Ruoc.models()
+      %{stub: stub}
     end
 
     test "saves, answers the bot view with apply, and restarts nothing", %{conn: conn, inst: inst} do
@@ -256,6 +260,92 @@ defmodule DruzhokWebWeb.PanelApiTest do
       c = api(conn, "/app/api/delete", user: 789, post: %{})
       assert {c.status, error_type(c)} == {403, "not_owner"}
       refute Repo.get!(Instance, inst.id).delete_requested
+    end
+  end
+
+  describe "groups" do
+    alias Druzhok.GroupChats
+
+    defp seen_group(inst, status \\ "pending") do
+      Repo.insert!(%GroupChats{instance_id: inst.id, chat_id: -100, title: "Дача", status: status})
+    end
+
+    defp webhook(inst),
+      do: Repo.update!(Ecto.Changeset.change(inst, telegram_mode: "webhook", active: true))
+
+    test "GET lists this bot's groups", %{conn: conn, inst: inst} do
+      seen_group(inst)
+      c = api(conn, "/app/api/groups")
+      assert c.status == 200
+
+      assert Jason.decode!(c.resp_body) == %{
+               "groups" => [%{"chat_id" => -100, "title" => "Дача", "status" => "pending"}]
+             }
+    end
+
+    test "approve: an awake bot restarts, and the answer carries the list", %{conn: conn, inst: inst} do
+      inst = webhook(inst)
+      seen_group(inst)
+
+      c = api(conn, "/app/api/groups/-100", post: %{action: "approve"})
+      assert c.status == 200
+      body = Jason.decode!(c.resp_body)
+      assert [%{"status" => "approved"}] = body["groups"]
+      assert body["bot"]["name"] == inst.name
+
+      assert Repo.get!(Instance, inst.id).start_seq == inst.start_seq + 1
+      assert Repo.get_by!(GroupChats, chat_id: -100, instance_id: inst.id).decided_by == 456
+    end
+
+    test "block and remove do not restart", %{conn: conn, inst: inst} do
+      inst = webhook(inst)
+      seen_group(inst, "approved")
+
+      assert api(conn, "/app/api/groups/-100", post: %{action: "block"}).status == 200
+      assert Repo.get!(Instance, inst.id).start_seq == inst.start_seq
+
+      c = api(build_conn(), "/app/api/groups/-100", post: %{action: "remove"})
+      assert Jason.decode!(c.resp_body)["groups"] == []
+      assert Repo.get!(Instance, inst.id).start_seq == inst.start_seq
+    end
+
+    test "init data over 10 minutes old must be renewed", %{conn: conn, inst: inst} do
+      inst = webhook(inst)
+      row = seen_group(inst)
+      old = F.build(123, @token, 456, auth_date: System.system_time(:second) - 11 * 60)
+
+      c = api(conn, "/app/api/groups/-100", init: old, post: %{action: "approve"})
+      assert {c.status, error_type(c)} == {401, "init_stale"}
+      assert Repo.get!(GroupChats, row.id).status == "pending"
+    end
+
+    test "not the owner: refused", %{conn: conn, inst: inst} do
+      inst = webhook(inst)
+      row = seen_group(inst)
+
+      c = api(conn, "/app/api/groups/-100", user: 789, post: %{action: "approve"})
+      assert {c.status, error_type(c)} == {403, "not_owner"}
+      assert Repo.get!(GroupChats, row.id).status == "pending"
+    end
+
+    test "another bot's group, a bad id or a bad action", %{conn: conn, inst: inst} do
+      inst = webhook(inst)
+      other = Repo.insert!(%Instance{name: "other#{System.unique_integer([:positive])}", model: "m", workspace: "/tmp/o"})
+      seen_group(other)
+
+      assert api(conn, "/app/api/groups/-100", post: %{action: "approve"}).status == 404
+      assert api(build_conn(), "/app/api/groups/abc", post: %{action: "approve"}).status == 404
+      assert api(build_conn(), "/app/api/groups/-99999999999999999999", post: %{action: "approve"}).status == 404
+
+      seen_group(inst)
+      assert api(build_conn(), "/app/api/groups/-100", post: %{action: "explode"}).status == 400
+      assert api(build_conn(), "/app/api/groups/-100", post: %{}).status == 400
+    end
+
+    test "a polling bot cannot approve", %{conn: conn, inst: inst} do
+      seen_group(inst)
+      c = api(conn, "/app/api/groups/-100", post: %{action: "approve"})
+      assert {c.status, error_type(c)} == {409, "groups_polling"}
     end
   end
 

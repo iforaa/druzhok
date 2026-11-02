@@ -3,7 +3,8 @@ defmodule Druzhok.Telegram.Relay.Housekeeper do
   Hourly, for every bot that has rows in `telegram_updates`, whatever its
   mode now: expire pending rows past 24 h and delete handled rows past 3 days.
   A bot switched back to polling has no worker, but its old rows hold users'
-  messages and must still go.
+  messages and must still go. Each pass also forgets group rate events past
+  their hour (`Druzhok.GroupChats`), for every bot.
   """
 
   use GenServer
@@ -38,6 +39,7 @@ defmodule Druzhok.Telegram.Relay.Housekeeper do
   @impl true
   def handle_info(:sweep, state) do
     sweep()
+    Druzhok.GroupChats.prune_rate_events()
     Process.send_after(self(), :sweep, @interval_ms)
     {:noreply, state}
   end

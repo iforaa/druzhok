@@ -11,8 +11,8 @@ defmodule Druzhok.Telegram.Addressed do
   bot. When in doubt this says yes: a needless wake costs a start, a missed
   one costs an answer.
 
-  A skipped row stays queued and is delivered, in order, on the next wake, so
-  a bot that observes group chatter (`group_shared_memory`) still sees it.
+  A skipped row stays queued and is delivered, in order, on the next wake.
+  Only approved groups get this far (`Druzhok.GroupChats`).
   """
 
   require Logger

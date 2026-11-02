@@ -1049,3 +1049,13 @@ label.secondary--small {
   max-height: 100%;
   object-fit: contain;
 }
+
+.group-chat + .group-chat {
+  margin-top: 16px;
+}
+
+.group-chat__title {
+  margin: 0;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}

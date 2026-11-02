@@ -169,7 +169,6 @@ export interface Bot {
     image_gen_model: string | null
     website_hosting_enabled: boolean
     memory_provider: string
-    group_shared_memory: boolean
   }
   /** What happens to settings saved in the panel (panel controls spec). */
   apply: { state: ApplyState; error: string | null }
@@ -275,6 +274,15 @@ export interface PublishedSite {
   disabled: boolean
 }
 
+export type GroupStatus = "pending" | "approved" | "blocked"
+export type GroupAction = "approve" | "block" | "remove"
+
+export interface GroupChat {
+  chat_id: number
+  title: string | null
+  status: GroupStatus
+}
+
 export const panelApi = {
   bot: () => panel<Bot>("bot"),
   files: () => panel<Files>("files"),
@@ -292,6 +300,9 @@ export const panelApi = {
   imageModels: () => panel<{ models: ImageModel[] }>("image-models"),
   saveSettings: (changes: SettingChanges) => panelPost<{ bot: Bot }>("settings", { changes }),
   deleteBot: () => panelPost<{ deleted: true }>("delete", {}),
+  groups: () => panel<{ groups: GroupChat[] }>("groups"),
+  decideGroup: (chatId: number, action: GroupAction) =>
+    panelPost<{ groups: GroupChat[]; bot: Bot }>(`groups/${chatId}`, { action }),
 }
 
 // Answers the screens share (the account shows on Бот and Счёт), kept
@@ -424,6 +435,8 @@ export function explain(err: unknown): string {
       return "Кабинет для этого бота выключен."
     case "unpublish_failed":
       return "Не получилось снять все сайты с публикации, поэтому настройка не изменилась. Часть сайтов могла уже перестать открываться. Попробуйте ещё раз."
+    case "groups_polling":
+      return "Этот бот пока не может работать в группах. Напишите в поддержку."
     case "not_text":
       return "Этот файл не текстовый, показать его нельзя."
     case "init_stale":

@@ -465,7 +465,7 @@ defmodule Druzhok.Runtime.HermesTest do
       assert :ok = Hermes.sync_config(inst, tmp_dir)
 
       yaml = File.read!(Path.join(tmp_dir, "config.yaml"))
-      assert yaml =~ ~r/^group_sessions_per_user: false$/m
+      assert yaml =~ ~r/^group_sessions_per_user: true$/m
     end
 
     @tag :tmp_dir
@@ -474,7 +474,7 @@ defmodule Druzhok.Runtime.HermesTest do
       model:
         default: "x"
 
-      group_sessions_per_user: true
+      group_sessions_per_user: false
       """)
 
       inst = Map.put(@instance, :group_shared_memory, true)
@@ -483,7 +483,20 @@ defmodule Druzhok.Runtime.HermesTest do
       yaml = File.read!(Path.join(tmp_dir, "config.yaml"))
       matches = Regex.scan(~r/^group_sessions_per_user:/m, yaml)
       assert length(matches) == 1
-      assert yaml =~ ~r/^group_sessions_per_user: false$/m
+      assert yaml =~ ~r/^group_sessions_per_user: true$/m
+    end
+  end
+
+  describe "sync_config/2 — group tools" do
+    @tag :tmp_dir
+    test "a group gets the web toolset only, and a repeat does not duplicate it", %{tmp_dir: tmp_dir} do
+      File.write!(Path.join(tmp_dir, "config.yaml"), "model:\n  default: \"x\"\n")
+
+      assert :ok = Hermes.sync_config(@instance, tmp_dir)
+      assert :ok = Hermes.sync_config(@instance, tmp_dir)
+
+      config = YamlElixir.read_from_file!(Path.join(tmp_dir, "config.yaml"))
+      assert config["platforms"]["telegram"]["extra"]["group_toolsets"] == ["web"]
     end
   end
 
@@ -539,6 +552,8 @@ defmodule Druzhok.Runtime.HermesTest do
                      - new
                      - stop
                      - voice
+                   group_toolsets:
+                     - web
                    command_menu:
                      priority_mode: replace
                      max_commands: 4
@@ -1184,10 +1199,12 @@ defmodule Druzhok.Runtime.HermesTest do
   end
 
   describe "build_config_yaml/1" do
-    test "emits group_sessions_per_user: false when group_shared_memory is on" do
+    test "group_shared_memory on is forced off: per-user sessions and no observer" do
       inst = Map.put(@instance, :group_shared_memory, true)
       yaml = Hermes.build_config_yaml(inst)
-      assert yaml =~ ~r/^group_sessions_per_user: false$/m
+      assert yaml =~ ~r/^group_sessions_per_user: true$/m
+      assert yaml =~ "observe_unmentioned_group_messages: false"
+      assert Hermes.env_vars(inst)["TELEGRAM_OBSERVE_UNMENTIONED_GROUP_MESSAGES"] == "false"
     end
 
     test "emits group_sessions_per_user: true when group_shared_memory is off" do

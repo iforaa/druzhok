@@ -43,6 +43,13 @@ Always use `/my-commit` for committing changes.
   Every controller stop pauses the bot's relay first and waits out a delivery in flight; a successful start lifts
   every pause but `wrong_owner`. The relay holds updates for a bot that is stopped or asleep. Spec:
   `docs/superpowers/specs/2026-10-20-telegram-webhook-relay-design.md`.
+- **Groups are approved per bot** (`Druzhok.GroupChats`, table `group_chats`, release spec PR M). `TelegramWebhookController` asks `GroupChats.gate/3` before `Inbox.enqueue`,
+  for every update that carries a chat: an unapproved or blocked group gets a 200 with nothing stored, no wake and no spend, the owner's own messages included. The first update makes a
+  `pending` row and a plain note to the owner (`Druzhok.Cabinet`); only the panel decides (`POST /app/api/groups/:chat_id`, init data under 10 min). `DRUZHOK_GROUP_CHATS` carries the approved ids to
+  hermes, empty on a polling bot. Approving restarts an awake bot at once (the one panel save that does); a sleeping bot needs nothing; block or remove holds at once in the gate, drops what
+  that chat had queued, and reaches the env through the `settings_seq` quiet restart. Tools in a group: `group_toolsets` = web only. Limits, counted on what would be answered (`group_rate_events`, so they
+  survive a restart and a sleep): Settings `group_rate_user_per_min` (5) and `group_rate_chat_per_hour` (30); over them the update is acknowledged and not stored, with one notice an hour per chat.
+  `group_shared_memory` is forced off whatever the column says. `poll` and chatless `poll_answer` updates name no chat and are dropped.
 - `hermes-agent/` is a separate, gitignored git repo (the hermes fork clone) — never `git add` it into druzhok.
 
 ## Layout

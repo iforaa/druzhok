@@ -21,7 +21,8 @@ defmodule Druzhok.Settings do
   # previous druzhok and go in a later release.
   @keys ~w(openai_api_key manager_bot_token operator_telegram_id
            ruoc_url ruoc_admin_host ruoc_admin_token ruoc_catalog_key fetch_secret bot_creation
-           sleep_idle_minutes start_min_free_mb ruoc_site_url)
+           sleep_idle_minutes start_min_free_mb ruoc_site_url
+           group_rate_user_per_min group_rate_chat_per_hour)
   @secret ~w(openai_api_key manager_bot_token ruoc_admin_token ruoc_catalog_key
              fetch_secret)
 
@@ -62,6 +63,20 @@ defmodule Druzhok.Settings do
   """
   def fetch_secret do
     Application.get_env(:druzhok, :fetch_secret) || get("fetch_secret")
+  end
+
+  @doc "Answered messages a minute one person may send in a group (default 5)."
+  def group_rate_user_per_min, do: positive("group_rate_user_per_min", 5)
+
+  @doc "Answered messages an hour one group may send (default 30)."
+  def group_rate_chat_per_hour, do: positive("group_rate_chat_per_hour", 30)
+
+  # A typo in a setting must not open the limits or close every group.
+  defp positive(key, default) do
+    case Integer.parse(get(key) || "") do
+      {n, ""} when n > 0 -> n
+      _ -> default
+    end
   end
 
   @doc """

@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react"
-import { explain, panelApi, type ApplyState, type Bot, type ImageModel, type SettingChanges } from "./api"
+import { explain, panelApi, type ApplyState, type Bot, type GroupAction, type GroupChat, type ImageModel, type SettingChanges } from "./api"
 import { backButton, closePanel, confirmDialog } from "./telegram"
 import { plural, when } from "./format"
 import { Choice, ErrorNote, Icon, Row, Segmented, Skeleton, Toggle, useLoad } from "./ui"
@@ -206,6 +206,8 @@ export default function Settings({ bot, onBot, go }: { bot: Bot; onBot: (b: Bot)
       </div>
       <ApplyNote bot={bot} settings={settings} go={go} />
 
+      <Groups onBot={onBot} />
+
       <section className="card">
         <dl className="pairs">
           <div>
@@ -219,10 +221,6 @@ export default function Settings({ bot, onBot, go }: { bot: Bot; onBot: (b: Bot)
           <div>
             <dt>Память</dt>
             <dd>{s.memory_provider === "mnemosyne" ? "долгая, ищет по смыслу" : "обычная"}</dd>
-          </div>
-          <div>
-            <dt>Память в группах</dt>
-            <dd>{s.group_shared_memory ? "общая на группу" : "своя у каждого"}</dd>
           </div>
           <div>
             <dt>Пишут лично</dt>
@@ -252,6 +250,80 @@ export default function Settings({ bot, onBot, go }: { bot: Bot; onBot: (b: Bot)
       {deleteError ? <p className="note-error">{deleteError}</p> : null}
 
       <p className="hint hint--center">Последний запуск бота: {when(bot.started_at)}</p>
+    </>
+  )
+}
+
+const groupStatus: Record<GroupChat["status"], string> = {
+  pending: "ждёт решения, бот там молчит",
+  approved: "разрешена, бот отвечает",
+  blocked: "запрещена, бот молчит",
+}
+
+/** The groups the bot was added to; it answers only in those the owner allowed. */
+function Groups({ onBot }: { onBot: (b: Bot) => void }) {
+  const { data, error, reload } = useLoad(panelApi.groups)
+  const [groups, setGroups] = useState<GroupChat[] | null>(null)
+  const [busy, setBusy] = useState(false)
+  const [failed, setFailed] = useState<string | null>(null)
+  const list = groups ?? data?.groups
+
+  if (error) return <ErrorNote error={error} retry={reload} />
+  if (!list || list.length === 0) return null
+
+  const decide = async (g: GroupChat, action: GroupAction) => {
+    // Telegram refuses a dialog over 256 characters, and the panel would just do nothing.
+    const title = g.title || "без названия"
+    const name = title.length > 40 ? `${title.slice(0, 40)}…` : title
+    const ok = await confirmDialog(
+      {
+        approve: `Разрешить боту отвечать в группе «${name}»? Бот сразу перезапустится, если сейчас не спит. Писать ему сможет любой участник.`,
+        block: `Запретить боту отвечать в группе «${name}»? Сообщения оттуда перестанут доходить до него сразу.`,
+        remove: `Убрать группу «${name}» из списка? Бот перестанет там отвечать. Если он всё ещё в этой группе, она появится здесь снова и будет ждать решения.`,
+      }[action],
+    )
+    if (!ok) return
+    setBusy(true)
+    setFailed(null)
+    try {
+      const r = await panelApi.decideGroup(g.chat_id, action)
+      setGroups(r.groups)
+      onBot(r.bot)
+    } catch (err) {
+      setFailed(explain(err))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <>
+      <span className="label">Группы</span>
+      <section className="card">
+        {list.map((g) => (
+          <div className="group-chat" key={g.chat_id}>
+            <p className="group-chat__title">{g.title || "Без названия"}</p>
+            <p className="hint">{groupStatus[g.status]}</p>
+            <div className="field-row">
+              {g.status !== "approved" ? (
+                <button className="secondary secondary--small" disabled={busy} onClick={() => decide(g, "approve")}>
+                  Разрешить
+                </button>
+              ) : null}
+              {g.status !== "blocked" ? (
+                <button className="secondary secondary--small" disabled={busy} onClick={() => decide(g, "block")}>
+                  Запретить
+                </button>
+              ) : null}
+              <button className="secondary secondary--small" disabled={busy} onClick={() => decide(g, "remove")}>
+                Убрать
+              </button>
+            </div>
+          </div>
+        ))}
+      </section>
+      {failed ? <p className="note-error">{failed}</p> : null}
+      <p className="hint">В группе бот только ищет в интернете. Вашей памяти и файлов у него там нет, а его описание участники могут увидеть.</p>
     </>
   )
 }

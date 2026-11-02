@@ -101,8 +101,7 @@ defmodule Druzhok.Panel do
         image_gen_enabled: inst.image_gen_enabled,
         image_gen_model: inst.image_gen_model,
         website_hosting_enabled: inst.website_hosting_enabled,
-        memory_provider: inst.memory_provider,
-        group_shared_memory: inst.group_shared_memory
+        memory_provider: inst.memory_provider
       },
       apply: apply(inst),
       access: access(inst),

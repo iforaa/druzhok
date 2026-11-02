@@ -6,12 +6,14 @@ defmodule DruzhokWebWeb.TelegramWebhookController do
   `X-Telegram-Bot-Api-Secret-Token`, stores the update and answers 200 at
   once; `Druzhok.Telegram.Relay` hands it to the bot. The 200 goes out only
   after the row is committed, so an update is either queued here or still
-  held (and retried) by Telegram.
+  held (and retried) by Telegram. The exception is what `Druzhok.GroupChats`
+  refuses: an unapproved group or one past its rate limits gets the 200 with
+  nothing stored.
   """
 
   use DruzhokWebWeb, :controller
   require Logger
-  alias Druzhok.{Instance, Repo}
+  alias Druzhok.{GroupChats, Instance, Repo}
   alias Druzhok.Telegram.{Addressed, Inbox, Relay, Webhook}
 
   def receive(conn, %{"bot" => name}) do
@@ -46,18 +48,9 @@ defmodule DruzhokWebWeb.TelegramWebhookController do
   defp store(conn, instance) do
     case conn.body_params do
       %{"update_id" => update_id} = update when is_integer(update_id) ->
-        wakes = Addressed.wakes?(instance, update)
-
-        case Inbox.enqueue(instance.id, update_id, Jason.encode!(update), wakes: wakes) do
-          :ok ->
-            Relay.notify(instance.id)
-            retry_cabinet_button(instance, update)
-            send_resp(conn, 200, "")
-
-          # Switched to polling since the lookup above: Telegram keeps the
-          # update and the polling bot fetches it itself.
-          {:error, :not_webhook} ->
-            send_resp(conn, 404, "")
+        case GroupChats.gate(instance, update_id, update) do
+          :pass -> enqueue(conn, instance, update_id, update)
+          :drop -> send_resp(conn, 200, "")
         end
 
       _ ->
@@ -70,5 +63,21 @@ defmodule DruzhokWebWeb.TelegramWebhookController do
       )
 
       send_resp(conn, 500, "")
+  end
+
+  defp enqueue(conn, instance, update_id, update) do
+    wakes = Addressed.wakes?(instance, update)
+
+    case Inbox.enqueue(instance.id, update_id, Jason.encode!(update), wakes: wakes) do
+      :ok ->
+        Relay.notify(instance.id)
+        retry_cabinet_button(instance, update)
+        send_resp(conn, 200, "")
+
+      # Switched to polling since the lookup above: Telegram keeps the
+      # update and the polling bot fetches it itself.
+      {:error, :not_webhook} ->
+        send_resp(conn, 404, "")
+    end
   end
 end

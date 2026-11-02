@@ -84,6 +84,8 @@ defmodule DruzhokWebWeb.Router do
       post "/skills/:category/:name", PanelController, :save_skill
       post "/settings", PanelController, :settings
       post "/delete", PanelController, :delete
+      get "/groups", PanelController, :groups
+      post "/groups/:chat_id", PanelController, :group
     end
   end
 
