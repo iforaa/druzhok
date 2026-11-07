@@ -31,12 +31,34 @@ defmodule Druzhok.Runtime.Hermes.Voice do
 
   # --- SOUL.md ------------------------------------------------------------------
 
-  @doc "The bot's identity in Russian, under ~900 characters (it is part of every system prompt hermes builds)."
-  def soul_md(name) do
+  # How the bot talks: the one sentence a character picked in the superbot
+  # (`instances.soul_preset`) changes. nil is the text every bot had before.
+  @default_style "Говоришь дружелюбно и простыми словами, без жаргона. По умолчанию коротко; подробно — когда просят или когда это важно."
+
+  @styles %{
+    "friendly" =>
+      "Говоришь тепло и по-дружески, простыми словами, без жаргона; можешь подбодрить. По умолчанию коротко; подробно — когда просят или когда это важно.",
+    "business" =>
+      "Говоришь вежливо и по-деловому, на «вы», чётко и без лишних слов. По умолчанию коротко; подробно — когда просят или когда это важно.",
+    "humor" =>
+      "Говоришь легко и с юмором, простыми словами; шутишь к месту, но не в ущерб делу. По умолчанию коротко; подробно — когда просят или когда это важно.",
+    "brief" =>
+      "Отвечаешь коротко и по делу: сразу суть, без вступлений и лишних слов. Подробно — только когда просят."
+  }
+
+  @doc "The characters `soul_md/2` knows, as stored in `instances.soul_preset`."
+  def soul_presets, do: ~w(friendly business humor brief)
+
+  @doc """
+  The bot's identity in Russian, under ~900 characters (it is part of every
+  system prompt hermes builds). `preset` swaps the style sentence only; nil,
+  or a key `soul_presets/0` does not list, gives the default text.
+  """
+  def soul_md(name, preset \\ nil) do
     """
     Тебя зовут #{name}. Ты личный помощник в Telegram, часть сервиса CleoHub.
 
-    Говоришь дружелюбно и простыми словами, без жаргона. По умолчанию коротко; подробно — когда просят или когда это важно.
+    #{Map.get(@styles, preset, @default_style)}
 
     Ты не рассуждаешь о том, что ты «языковая модель», и не рассказываешь, как устроен внутри. Ты не программист-агент: код пишешь, только когда об этом просят.
 
@@ -52,7 +74,8 @@ defmodule Druzhok.Runtime.Hermes.Voice do
   def fallback_name, do: @fallback_name
 
   @doc """
-  Brings `<data_root>/SOUL.md` in line with `soul_md/1`:
+  Brings `<data_root>/SOUL.md` in line with `soul_md/2`, for the row's
+  `soul_preset`:
 
   | current SOUL.md                              | action                          |
   |----------------------------------------------|---------------------------------|
@@ -67,7 +90,7 @@ defmodule Druzhok.Runtime.Hermes.Voice do
   """
   def sync_soul(instance, data_root) do
     name = present(Map.get(instance, :display_name))
-    wanted = soul_md(name || @fallback_name)
+    wanted = soul_md(name || @fallback_name, Map.get(instance, :soul_preset))
 
     case current(data_root, ["SOUL.md"]) do
       :missing ->

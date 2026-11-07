@@ -622,7 +622,7 @@ defmodule Druzhok.Runtime.Hermes do
   # (sync_end_user_keys/1);
   # hermes checks the typed name against the policy, so it must be listed.
   @user_commands ~w(start new stop voice)
-  @menu_commands ~w(new stop voice help)
+  @menu_commands ~w(new stop)
   @telegram_extra_keys ~w(allow_admin_from user_allowed_commands group_allow_admin_from group_user_allowed_commands group_toolsets command_menu drop_pending_on_cold_boot gateway_restart_notification)
 
   def user_commands, do: @user_commands

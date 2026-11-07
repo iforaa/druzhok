@@ -42,6 +42,28 @@ defmodule Druzhok.BotManagerLifecycleTest do
       assert String.trim(out) == inst.tenant_key
     end
 
+    test "a new bot runs on Moscow time with pictures on and the character picked", %{name: name} do
+      assert {:ok, _} = BotManager.create(name, %{model: "m", telegram_token: "1A", soul_preset: "brief"})
+      inst = Repo.get_by!(Instance, name: name)
+      assert inst.timezone == "Europe/Moscow"
+      assert inst.image_gen_enabled
+      assert inst.image_gen_model == nil
+      assert inst.soul_preset == "brief"
+
+      # The schema defaults stay, so rows made before keep theirs.
+      old = %Instance{}
+      assert old.timezone == "UTC"
+      refute old.image_gen_enabled
+      assert old.soul_preset == nil
+    end
+
+    test "an unknown character is refused", %{name: name} do
+      assert {:error, %Ecto.Changeset{errors: [soul_preset: _]}} =
+               BotManager.create(name, %{model: "m", telegram_token: "1A", soul_preset: "evil"})
+
+      assert Repo.get_by(Instance, name: name) == nil
+    end
+
     test "a token is required", %{name: name} do
       assert {:error, "telegram token required"} = BotManager.create(name, %{model: "m"})
       assert Repo.get_by(Instance, name: name) == nil

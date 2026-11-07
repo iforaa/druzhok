@@ -4,7 +4,8 @@ defmodule Druzhok.ManagerBot.Provisioner do
 
   Called by ManagerBot GenServer when a `managed_bot` update arrives.
   Handles: token retrieval → instance creation (with the name the owner
-  typed, from which the first start writes SOUL.md) → first start.
+  typed and the character picked, from which the first start writes
+  SOUL.md) → first start.
   """
 
   require Logger
@@ -26,7 +27,8 @@ defmodule Druzhok.ManagerBot.Provisioner do
            owner_id: session[:owner_id],
            language: session[:language] || "ru",
            invite: session[:invite],
-           display_name: session[:name]
+           display_name: session[:name],
+           soul_preset: session[:soul_preset]
          }),
          {:ok, _result} <- BotManager.create(instance_name, opts) do
       # The owner is already in the allowlist via owner_telegram_id (see
@@ -62,7 +64,8 @@ defmodule Druzhok.ManagerBot.Provisioner do
       language: params[:language] || "ru",
       mention_only: true,
       allow_all_telegram_users: false,
-      display_name: params[:display_name]
+      display_name: params[:display_name],
+      soul_preset: params[:soul_preset]
     }
 
     case params[:invite] do

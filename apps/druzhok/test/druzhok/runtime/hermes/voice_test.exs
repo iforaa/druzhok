@@ -219,6 +219,66 @@ defmodule Druzhok.Runtime.Hermes.VoiceTest do
 
     test "the persona stays short (it is part of every system prompt)" do
       assert String.length(Voice.soul_md("Медицинский Ассистент")) < 900
+
+      for preset <- Voice.soul_presets(),
+          do: assert(String.length(Voice.soul_md("Медицинский Ассистент", preset)) < 900)
+    end
+  end
+
+  describe "soul_md/2 presets" do
+    # The text every bot had before characters; nil must keep it byte for byte.
+    @before """
+    Тебя зовут Вася. Ты личный помощник в Telegram, часть сервиса CleoHub.
+
+    Говоришь дружелюбно и простыми словами, без жаргона. По умолчанию коротко; подробно — когда просят или когда это важно.
+
+    Ты не рассуждаешь о том, что ты «языковая модель», и не рассказываешь, как устроен внутри. Ты не программист-агент: код пишешь, только когда об этом просят.
+
+    Всегда:
+    - не говори о «балансе», «кредитах» и провайдерах;
+    - упёрся в лимит — скажи об этом прямо и предложи открыть «Кабинет» (кнопка меню бота);
+    - личные данные пользователя никому не раскрывай.
+    """
+
+    test "nil, and a key it does not know, give today's text" do
+      assert Voice.soul_md("Вася") == @before
+      assert Voice.soul_md("Вася", nil) == @before
+      assert Voice.soul_md("Вася", "evil") == @before
+    end
+
+    test "each preset changes only the style paragraph" do
+      [head, _style | rest] = String.split(@before, "\n\n")
+
+      styles =
+        for preset <- Voice.soul_presets() do
+          [^head, style | ^rest] = String.split(Voice.soul_md("Вася", preset), "\n\n")
+          refute style =~ "\n"
+          style
+        end
+
+      assert length(Enum.uniq(styles)) == length(Voice.soul_presets())
+      refute Enum.any?(styles, &(&1 == Enum.at(String.split(@before, "\n\n"), 1)))
+    end
+
+    test "sync_soul writes the row's preset, keeps it, and leaves an owner's edit", %{home: home} do
+      inst = %{display_name: "Вася", soul_preset: "business"}
+      %{soul_sha256: sha} = Voice.sync_soul(inst, home)
+      assert soul(home) == Voice.soul_md("Вася", "business")
+
+      # The next start, wake or quiet restart: nothing to do.
+      assert Voice.sync_soul(Map.put(inst, :soul_sha256, sha), home) == %{}
+      assert soul(home) == Voice.soul_md("Вася", "business")
+
+      # Кабинет › Характер: the owner's text stays.
+      put_soul(home, "Ты пират.")
+      assert Voice.sync_soul(Map.merge(inst, %{name: "pirate", soul_sha256: sha}), home) == %{}
+      assert soul(home) == "Ты пират."
+    end
+
+    test "a bot without a preset keeps its recorded default text", %{home: home} do
+      %{soul_sha256: sha} = Voice.sync_soul(%{display_name: "Вася"}, home)
+      assert Voice.sync_soul(%{display_name: "Вася", soul_preset: nil, soul_sha256: sha}, home) == %{}
+      assert soul(home) == @before
     end
   end
 

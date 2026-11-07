@@ -10,6 +10,7 @@ defmodule Druzhok.ManagerBot.OnboardingTest do
       assert session.step == :idle
       assert session.name == nil
       assert session.language == nil
+      assert session.soul_preset == nil
       assert session.username == nil
       assert session.message_id == nil
     end
@@ -51,11 +52,57 @@ defmodule Druzhok.ManagerBot.OnboardingTest do
   end
 
   describe "handle_input/2 at :language step" do
-    test "accepts language, returns :edit_confirm" do
+    test "accepts language, asks for the character in the same message" do
       session = %{Onboarding.new_session() | step: :language, name: "Вася", username: "vasya_1234_bot"}
-      {:ok, session, {:edit_confirm, _}} = Onboarding.handle_input(session, %{callback_data: "lang:ru"})
-      assert session.step == :confirm
+      {:ok, session, {:edit, "Какой характер?", rows}} = Onboarding.handle_input(session, %{callback_data: "lang:ru"})
+      assert session.step == :character
       assert session.language == "ru"
+
+      assert Enum.map(List.flatten(rows), & &1.callback_data) ==
+               ~w(soul:friendly soul:business soul:humor soul:brief soul:skip)
+    end
+  end
+
+  describe "handle_input/2 at :character step" do
+    setup do
+      %{session: %{Onboarding.new_session() | step: :character, name: "Вася", language: "ru", username: "vasya_1234_bot"}}
+    end
+
+    test "every preset button moves to :confirm with that preset", %{session: session} do
+      for key <- Druzhok.Runtime.Hermes.Voice.soul_presets() do
+        {:ok, next, {:edit_confirm, next}} = Onboarding.handle_input(session, %{callback_data: "soul:" <> key})
+        assert next.step == :confirm
+        assert next.soul_preset == key
+        assert next.name == "Вася"
+      end
+    end
+
+    test "«Пропустить» moves to :confirm with no preset", %{session: session} do
+      {:ok, next, {:edit_confirm, _}} = Onboarding.handle_input(session, %{callback_data: "soul:skip"})
+      assert next.step == :confirm
+      assert next.soul_preset == nil
+    end
+
+    test "typed text asks again with fresh buttons and keeps the session", %{session: session} do
+      {:retry, ^session, {:keyboard, text, rows}} = Onboarding.handle_input(session, %{text: "весёлый"})
+      assert text =~ "Выбери кнопкой"
+      assert length(List.flatten(rows)) == 5
+    end
+
+    test "an unknown or stale callback re-asks in place", %{session: session} do
+      assert {:retry, ^session, {:edit, "Какой характер?", _}} =
+               Onboarding.handle_input(session, %{callback_data: "soul:evil"})
+
+      assert {:retry, ^session, {:edit, "Какой характер?", _}} =
+               Onboarding.handle_input(session, %{callback_data: "lang:ru"})
+    end
+  end
+
+  describe "intro_message/0" do
+    test "three short lines and no price" do
+      lines = String.split(Onboarding.intro_message(), "\n")
+      assert length(lines) == 3
+      refute Onboarding.intro_message() =~ "₽"
     end
   end
 
@@ -97,6 +144,15 @@ defmodule Druzhok.ManagerBot.OnboardingTest do
       {text, _keyboard, _link} = Onboarding.confirm_message(session, "DruzhokBot")
       assert text =~ "Тест"
       assert text =~ "English"
+      refute text =~ "Характер"
+    end
+
+    test "shows the chosen character under the language" do
+      session = %{Onboarding.new_session() |
+        step: :confirm, name: "Тест", language: "ru",
+        username: "test_1234_bot", soul_preset: "brief"}
+      {text, _keyboard, _link} = Onboarding.confirm_message(session, "DruzhokBot")
+      assert text =~ "Язык: Русский\nХарактер: Коротко и по делу\n"
     end
   end
 

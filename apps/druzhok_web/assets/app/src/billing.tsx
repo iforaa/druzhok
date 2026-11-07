@@ -88,6 +88,14 @@ export default function Billing({ start }: { start?: string }) {
   const [failure, setFailure] = useState<string | null>(null)
   const [screen, setScreen] = useState<Screen>(start === "receipt" || start === "link" ? start : "account")
   const [watching, setWatching] = useState<string | null>(null)
+  // The plan whose «Оплатить» sent the owner to confirm an email first. Named
+  // on the email screen only; it never starts a payment, and any move off that
+  // screen drops it, so «Почта для чеков» and Главная open it with none.
+  const [held, setHeld] = useState<Plan | null>(null)
+  const go = useCallback((s: Screen) => {
+    setHeld(null)
+    setScreen(s)
+  }, [])
 
   const load = useCallback(async (fresh = false) => {
     if (fresh) invalidate("me")
@@ -117,8 +125,8 @@ export default function Billing({ start }: { start?: string }) {
 
   useEffect(() => {
     window.scrollTo(0, 0)
-    return backButton(screen === "account" ? null : () => setScreen("account"))
-  }, [screen])
+    return backButton(screen === "account" ? null : () => go("account"))
+  }, [screen, go])
 
   if (failure) return <ErrorNote error={failure} retry={() => load(true)} />
   if (!me) return <Skeleton hero rows={4} />
@@ -141,7 +149,11 @@ export default function Billing({ start }: { start?: string }) {
       {shown === "account" ? (
         <Account
           me={me}
-          go={setScreen}
+          go={go}
+          needReceipt={(plan) => {
+            setScreen("receipt")
+            setHeld(plan)
+          }}
           onOpened={(id) => {
             invalidate("me")
             setWatching(id)
@@ -149,13 +161,15 @@ export default function Billing({ start }: { start?: string }) {
           onLinkChanged={reloadAccount}
         />
       ) : null}
-      {shown === "receipt" ? <Receipt me={me} onChanged={() => load(true)} done={() => setScreen("account")} /> : null}
+      {shown === "receipt" ? (
+        <Receipt me={me} plan={held} onChanged={() => load(true)} done={() => go("account")} />
+      ) : null}
       {shown === "link" ? (
         <Link
           me={me}
           done={async () => {
             await reloadAccount()
-            setScreen("account")
+            go("account")
           }}
         />
       ) : null}
@@ -166,11 +180,13 @@ export default function Billing({ start }: { start?: string }) {
 function Account({
   me,
   go,
+  needReceipt,
   onOpened,
   onLinkChanged,
 }: {
   me: Me
   go: (s: Screen) => void
+  needReceipt: (plan: Plan) => void
   onOpened: (paymentID: string) => void
   onLinkChanged: () => void
 }) {
@@ -238,7 +254,7 @@ function Account({
         </section>
       )}
 
-      <Plans me={me} needReceipt={() => go("receipt")} onOpened={onOpened} onLinkChanged={onLinkChanged} />
+      <Plans me={me} needReceipt={needReceipt} onOpened={onOpened} onLinkChanged={onLinkChanged} />
 
       {me.linked ? null : (
         <div className="group">
@@ -262,7 +278,7 @@ function Plans({
   onLinkChanged,
 }: {
   me: Me
-  needReceipt: () => void
+  needReceipt: (plan: Plan) => void
   onOpened: (paymentID: string) => void
   onLinkChanged: () => void
 }) {
@@ -298,7 +314,7 @@ function Plans({
   // after the bank's wait, so the button turns into a second tap that does.
   const buy = async (plan: Plan) => {
     if (!me.receipt.verified) {
-      needReceipt()
+      needReceipt(plan)
       return
     }
     setError(null)
@@ -459,7 +475,17 @@ function PaymentWatch({ id, onDone }: { id: string; onDone: () => void }) {
   )
 }
 
-function Receipt({ me, onChanged, done }: { me: Me; onChanged: () => Promise<void> | void; done: () => void }) {
+function Receipt({
+  me,
+  plan,
+  onChanged,
+  done,
+}: {
+  me: Me
+  plan: Plan | null
+  onChanged: () => Promise<void> | void
+  done: () => void
+}) {
   const [email, setEmail] = useState("")
   const [code, setCode] = useState("")
   // At stage "current" the code went to the confirmed address; the pending
@@ -512,6 +538,15 @@ function Receipt({ me, onChanged, done }: { me: Me; onChanged: () => Promise<voi
   return (
     <>
       <h1 className="screen-title">Почта для чеков</h1>
+      {plan ? (
+        <>
+          <p className="price">
+            Тариф «{plan.name}» — {rub(plan.price_nanorub)}{" "}
+            <span className="hint">за {days(plan.period_days)}</span>
+          </p>
+          <p className="hint">После подтверждения нажмите «{plan.current ? "Продлить" : "Оплатить"}» ещё раз.</p>
+        </>
+      ) : null}
       <p className="hint">
         {me.receipt.verified
           ? `Сейчас чеки приходят на ${me.receipt.email}.`

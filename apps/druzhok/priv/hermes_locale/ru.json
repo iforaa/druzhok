@@ -5,9 +5,10 @@
   "slash.help.description": "Что я умею",
   "slash.start.description": "Начать",
   "slash.whoami.description": "Мой доступ",
+  "slash.shared.alias_note": "",
 
-  "gateway.start.greeting": "👋 Привет! Я %{bot_name}. Пишите что угодно — текстом или голосовым. /help — что я умею.",
-  "gateway.help.header": "📖 **Команды**\n",
+  "gateway.start.greeting": "👋 Привет! Я %{bot_name}. Пишите что угодно — текстом или голосовым. Настройки и тариф — в «Кабинете».",
+  "gateway.help.header": "Просто пишите или отправьте голосовое — я отвечу.\nНастройки, тариф и память — в «Кабинете» (кнопка слева от поля ввода).\n\n📖 **Команды**\n",
   "gateway.unknown_command": "Такой команды нет. /help — что я умею.",
 
   "gateway.reset.header_default": "✨ Начинаем новый разговор. Что я о вас помню — осталось.",
@@ -20,7 +21,7 @@
   "gateway.session.auto_reset_notice": "◐ Прошлый разговор пришлось закрыть из-за сбоя. Начинаем новый — что я о вас помню, осталось.\n",
   "gateway.session.auto_reset_context_exhausted": "\n\n🔄 Разговор стал слишком длинным, поэтому следующее сообщение начнёт новый. Что я о вас помню — останется.",
 
-  "gateway.unauthorized.admin_only": "Эта команда недоступна. /help — что я умею.",
+  "gateway.unauthorized.admin_only": "Эта команда недоступна. Настройки бота — в «Кабинете».",
   "gateway.unauthorized.admin_only_can_run": "",
   "gateway.unauthorized.admin_only_whoami_hint": "",
   "gateway.unauthorized.admin_only_none": "",
