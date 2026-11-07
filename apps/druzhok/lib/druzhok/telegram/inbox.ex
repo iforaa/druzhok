@@ -103,6 +103,34 @@ defmodule Druzhok.Telegram.Inbox do
     |> Repo.one()
   end
 
+  @doc """
+  `%{instance_id => received_at}` of every bot's oldest pending row that may
+  wake it, by the rule of `next_waking/2`, in one query: the queue
+  scheduler's line key for `:update`.
+  """
+  def oldest_waking(now \\ DateTime.utc_now()) do
+    backlog_before = DateTime.add(now, -backlog_wake_s())
+
+    from(u in __MODULE__,
+      where: is_nil(u.acked_at) and (u.wakes or u.received_at < ^backlog_before),
+      group_by: u.instance_id,
+      select: {u.instance_id, min(u.received_at)}
+    )
+    |> Repo.all()
+    |> Map.new()
+  end
+
+  @doc "The last row handed to the bot (not dropped), or nil."
+  def last_delivered(instance_id) do
+    from(u in __MODULE__,
+      where:
+        u.instance_id == ^instance_id and not is_nil(u.acked_at) and is_nil(u.dropped_reason),
+      order_by: [desc: u.acked_at],
+      limit: 1
+    )
+    |> Repo.one()
+  end
+
   defp backlog_wake_s,
     do: Application.get_env(:druzhok, :telegram_backlog_wake_s, @backlog_wake_s)
 

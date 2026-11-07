@@ -35,6 +35,38 @@ defmodule Druzhok.Host.SystemdTest do
     end)
   end
 
+  test "parse_units keeps the units that hold memory, by bot name" do
+    out = """
+    hermes@alpha.service   loaded active       running Hermes alpha
+    hermes@beta.service    loaded activating   auto-restart Hermes beta
+    hermes@gamma.service   loaded deactivating stop-sigterm Hermes gamma
+    hermes@delta.service   loaded inactive     dead    Hermes delta
+    ● hermes@eps.service   loaded failed       failed  Hermes eps
+    hermes@zeta.service    loaded reloading    reload  Hermes zeta
+    hermes@Bad!.service    loaded active       running junk
+    """
+
+    assert Systemd.parse_units(out) == %{
+             "alpha" => :active,
+             "beta" => :activating,
+             "gamma" => :deactivating,
+             "zeta" => :reloading
+           }
+  end
+
+  test "holding_units lists through systemctl and is :error when it fails" do
+    prev = Application.get_env(:druzhok, :systemctl_bin)
+    on_exit(fn ->
+      if prev, do: Application.put_env(:druzhok, :systemctl_bin, prev), else: Application.delete_env(:druzhok, :systemctl_bin)
+    end)
+
+    Application.put_env(:druzhok, :systemctl_bin, "/bin/echo")
+    assert {:ok, %{}} = Systemd.holding_units()
+
+    Application.put_env(:druzhok, :systemctl_bin, "/usr/bin/false")
+    assert Systemd.holding_units() == :error
+  end
+
   test "env_file keeps a trailing space inside the quotes" do
     assert Systemd.env_file(%{"MNEMOSYNE_EMBEDDING_QUERY_PREFIX" => "query: "}) == ~s(MNEMOSYNE_EMBEDDING_QUERY_PREFIX="query: "\n)
   end

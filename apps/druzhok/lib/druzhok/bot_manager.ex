@@ -126,16 +126,44 @@ defmodule Druzhok.BotManager do
 
   @doc """
   Ask for a fresh start with what is in the row now (also wakes an asleep
-  bot). Start and restart are the same request: `active = true` and
+  bot; in queue mode, puts it in the line). Start and restart are the same request: `active = true` and
   `start_seq + 1`. The lifecycle controller in druzhok.service carries it out
   (`Druzhok.Lifecycle`). With `wait: true`, returns once it is done:
   `{:ok, name}`, `{:error, reason}` for a failed start of this request, or
   `{:error, :timeout}`.
+
+  In queue mode (`Lifecycle.Queue`) a start of a stopped or new bot also writes
+  `sleeping`, so the bot waits in the line for a slot like any other wake
+  instead of taking one; a restart of an awake bot keeps its slot. With
+  `wait: true` a bot still in the line ends in `{:error, :timeout}` while its
+  request stays queued.
   """
   def start(name, opts \\ []) do
-    case bump(name, [set: [active: true], inc: [start_seq: 1]], :start_seq) do
-      nil -> {:error, :not_found}
-      {id, seq} -> if opts[:wait], do: wait_started(id, name, seq, opts), else: {:ok, name}
+    changes =
+      if Druzhok.Lifecycle.Queue.on?() do
+        # In SQL a SET reads the row as it was: `active` here is before the update.
+        fn q ->
+          from(i in q,
+            update: [
+              set: [
+                active: true,
+                sleeping: fragment("CASE WHEN ? THEN ? ELSE 1 END", i.active, i.sleeping)
+              ],
+              inc: [start_seq: 1]
+            ]
+          )
+        end
+      else
+        [set: [active: true], inc: [start_seq: 1]]
+      end
+
+    case bump(name, changes, :start_seq) do
+      nil ->
+        {:error, :not_found}
+
+      {id, seq} ->
+        Druzhok.Lifecycle.Scheduler.poke()
+        if opts[:wait], do: wait_started(id, name, seq, opts), else: {:ok, name}
     end
   end
 
@@ -154,8 +182,13 @@ defmodule Druzhok.BotManager do
   end
 
   # One update, then a poke. Returns {id, value of `field` after it}.
+  # `changes` is update_all's keyword list, or a function that puts an
+  # `update:` with expressions into the query.
   defp bump(name, changes, field) do
     query = from(i in Instance, where: i.name == ^name, select: {i.id, field(i, ^field)})
+
+    {query, changes} =
+      if is_function(changes, 1), do: {changes.(query), []}, else: {query, changes}
 
     case Repo.update_all(query, changes) do
       {1, [{id, seq}]} ->

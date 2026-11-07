@@ -264,6 +264,12 @@ defmodule Druzhok.Status do
     end)
   end
 
+  @doc "Free MB on the disk that holds `path`, from one `df`; nil when it cannot be read."
+  def free_mb(path) do
+    {_total, free} = df(path)
+    free
+  end
+
   defp df(mount) do
     case System.cmd(opt(:df_bin), ["-Pk", mount], env: [{"LC_ALL", "C"}], stderr_to_stdout: true) do
       {out, 0} -> parse_df(out)

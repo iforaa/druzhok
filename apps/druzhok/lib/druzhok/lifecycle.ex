@@ -11,7 +11,12 @@ defmodule Druzhok.Lifecycle do
   requests from a one-off `ops/druzhok-run.sh` BEAM are seen; `poke/1` is a
   shortcut inside druzhok.service and a no-op elsewhere.
 
-  Options: `scan: false` (tests) starts controllers only on `poke/1`.
+  In queue mode (`bot_slots` set, `Druzhok.Lifecycle.Queue`) one
+  `Druzhok.Lifecycle.Scheduler` decides which asleep bot wakes next and which
+  awake one makes room; it idles while queue mode is off.
+
+  Options: `scan: false` (tests) starts controllers only on `poke/1`, and the
+  scheduler then counts only rows that have a controller.
   """
 
   use Supervisor
@@ -35,7 +40,10 @@ defmodule Druzhok.Lifecycle do
     bots =
       {DynamicSupervisor, name: @sup, strategy: :one_for_one, max_restarts: 50, max_seconds: 60}
 
-    Supervisor.init([bots] ++ scanner,
+    scope = if Keyword.get(opts, :scan, true), do: :all, else: :controlled
+    scheduler = {Druzhok.Lifecycle.Scheduler, scope: scope}
+
+    Supervisor.init([bots, scheduler] ++ scanner,
       strategy: :rest_for_one
     )
   end

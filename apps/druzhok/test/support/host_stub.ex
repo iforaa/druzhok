@@ -13,7 +13,18 @@ defmodule Druzhok.HostStub do
 
     {:ok, _} =
       Agent.start(
-        fn -> %{units: %{}, calls: [], start: :ok, procs: 1, hooks: %{}, pauses: []} end,
+        fn ->
+          %{
+            units: %{},
+            calls: [],
+            start: :ok,
+            start_for: %{},
+            procs: 1,
+            hooks: %{},
+            pauses: [],
+            list: :ok
+          }
+        end,
         name: __MODULE__
       )
 
@@ -34,12 +45,19 @@ defmodule Druzhok.HostStub do
 
   @doc "What the next `start/3` returns and leaves the unit in: `:ok` (active) or `{:error, r}` (failed)."
   def on_start(result), do: Agent.update(__MODULE__, &%{&1 | start: result})
+  @doc "What starts of `name` alone return, until changed again."
+  def on_start(name, result),
+    do: Agent.update(__MODULE__, &put_in(&1, [:start_for, name], result))
+
   def set_procs(n), do: Agent.update(__MODULE__, &%{&1 | procs: n})
+  @doc "Make `holding_units/0` fail (`:error`) or work again (`:ok`)."
+  def set_list(result), do: Agent.update(__MODULE__, &%{&1 | list: result})
   @doc "Run `fun.(name)` inside the next `stop/1` or `start/3` (`op` = :stop | :start), once."
   def hook(op, fun), do: Agent.update(__MODULE__, &put_in(&1, [:hooks, op], fun))
   @doc "The relay pause each `stop/1` found in place, in order."
   def pauses_at_stop, do: Agent.get(__MODULE__, &Enum.reverse(&1.pauses))
   def calls, do: Agent.get(__MODULE__, &Enum.reverse(&1.calls))
+  def units, do: Agent.get(__MODULE__, & &1.units)
   def calls(op), do: for({^op, name} <- calls(), do: name)
 
   defp run_hook(op, name) do
@@ -55,7 +73,7 @@ defmodule Druzhok.HostStub do
   def start(name, _env, _root) do
     record(:start, name)
     run_hook(:start, name)
-    result = Agent.get(__MODULE__, & &1.start)
+    result = Agent.get(__MODULE__, &Map.get(&1.start_for, name, &1.start))
     set_unit(name, if(result == :ok, do: :active, else: :failed))
     result
   end
@@ -113,4 +131,31 @@ defmodule Druzhok.HostStub do
 
   @impl true
   def exec(_name, _args), do: {"", 0}
+
+  # systemd's view of the unit states the test set: a restart loop waits in
+  # activating, a stop drains in deactivating.
+  @impl true
+  def holding_units do
+    Agent.get_and_update(__MODULE__, fn s ->
+      s = %{s | calls: [{:holding_units, nil} | s.calls]}
+
+      if s.list == :ok do
+        units =
+          for {name, unit} <- s.units,
+              state = holding(unit),
+              into: %{},
+              do: {name, state}
+
+        {{:ok, units}, s}
+      else
+        {:error, s}
+      end
+    end)
+  end
+
+  defp holding(:active), do: :active
+  defp holding(:activating), do: :activating
+  defp holding(:restarting), do: :activating
+  defp holding(:stopping), do: :deactivating
+  defp holding(_), do: nil
 end

@@ -118,7 +118,11 @@ defmodule Druzhok.Runtime.Hermes do
       "STT_OPENAI_BASE_URL" => proxy_url,
       # Web search: firecrawl backend → druzhok /v2/search → perplexity/sonar
       "FIRECRAWL_API_URL" => proxy_url |> String.replace_suffix("/v1", ""),
-      "FIRECRAWL_API_KEY" => tenant_key
+      "FIRECRAWL_API_KEY" => tenant_key,
+      # How late a one-shot reminder may still run (hermes patch; absent, 120 s).
+      # In queue mode a bot can wait in the line far longer than that, and its
+      # reminder must run late rather than be retired. Older hermes ignores it.
+      "HERMES_CRON_ONESHOT_LATE_S" => "86400"
     }
     |> Map.merge(mnemosyne_env(instance))
     |> Map.merge(webhook_env(instance))

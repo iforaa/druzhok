@@ -76,6 +76,10 @@ defmodule Druzhok.Runtime.HermesTest do
       end
     end
 
+    test "every bot lets a late one-shot reminder run for 24 h (queue mode's line)" do
+      assert Hermes.env_vars(@instance)["HERMES_CRON_ONESHOT_LATE_S"] == "86400"
+    end
+
     test "a stopping bot lets a running turn finish, within the unit's stop timeout" do
       drain = String.to_integer(Hermes.env_vars(@instance)["HERMES_RESTART_DRAIN_TIMEOUT"])
       assert drain > 0

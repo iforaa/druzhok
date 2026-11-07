@@ -848,6 +848,62 @@ defmodule Druzhok.ManagerBotTest do
     end
   end
 
+  describe "creation full (max_bots, min_free_disk_mb)" do
+    setup do
+      on_exit(fn ->
+        Druzhok.Settings.set("max_bots", "")
+        Druzhok.Settings.set("min_free_disk_mb", "")
+        Druzhok.Settings.set("operator_telegram_id", "")
+      end)
+
+      %{ruoc: Druzhok.RuocStub.start()}
+    end
+
+    @full "Сейчас все места заняты. Попробуйте позже — мы расширяемся."
+
+    defp bots_now do
+      Repo.aggregate(from(i in Instance, where: not i.delete_requested), :count)
+    end
+
+    test "the bot cap refuses create, an invite link and a managed bot", %{stub: stub, ruoc: ruoc} do
+      Druzhok.Settings.set("max_bots", to_string(max(bots_now(), 1)))
+      if bots_now() == 0, do: relay_instance(%{name: "capfill#{System.unique_integer([:positive])}"})
+
+      TelegramStub.push_update(stub, message("🤖 Создать бота"))
+      assert TelegramStub.await_call(stub, "sendMessage", &(&1["text"] == @full and &1["chat_id"] == @owner))
+      refute "Как назовём бота?" in sent_texts(stub)
+
+      TelegramStub.push_update(stub, message("/start ref_ABCD-EFGH", @stranger))
+      assert TelegramStub.await_call(stub, "sendMessage", &(&1["text"] == @full and &1["chat_id"] == @stranger))
+      assert Druzhok.RuocStub.calls(ruoc, "GET /partner/invites/check") == []
+
+      TelegramStub.push_update(stub, managed_bot_update(563, "capped_bot"))
+      assert TelegramStub.await_call(stub, "sendMessage", &(&1["text"] == @full and &1["chat_id"] == @owner))
+      Process.sleep(50)
+      assert TelegramStub.calls(stub, "getManagedBotToken") == []
+    end
+
+    test "low free disk refuses create", %{stub: stub} do
+      Druzhok.Settings.set("min_free_disk_mb", "999999999")
+      TelegramStub.push_update(stub, message("🤖 Создать бота"))
+      assert TelegramStub.await_call(stub, "sendMessage", &(&1["text"] == @full and &1["chat_id"] == @owner))
+    end
+
+    test "unset, nothing is refused", %{stub: stub} do
+      start_create_flow(stub, "roomy")
+      refute @full in sent_texts(stub)
+    end
+
+    test "the operator is spared", %{stub: stub} do
+      Druzhok.Settings.set("max_bots", "1")
+      Druzhok.Settings.set("min_free_disk_mb", "999999999")
+      if bots_now() == 0, do: relay_instance(%{name: "capfill#{System.unique_integer([:positive])}"})
+      Druzhok.Settings.set("operator_telegram_id", "777")
+      TelegramStub.push_update(stub, message("🤖 Создать бота", 777))
+      assert TelegramStub.await_call(stub, "sendMessage", &(&1["text"] == "Как назовём бота?" and &1["chat_id"] == 777))
+    end
+  end
+
   describe "picture menu" do
     setup %{data_root: root} do
       ruoc = Druzhok.RuocStub.start()

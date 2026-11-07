@@ -4,6 +4,19 @@ defmodule DruzhokWebWeb.LlmProxyController do
   alias Druzhok.Usage
   require Logger
 
+  # Every call is counted open until its last byte (`Druzhok.Inflight`): a
+  # streamed reply runs in this process, and its usage row comes only after
+  # the last chunk, so queue mode's drain asks the counter instead.
+  def action(conn, opts) do
+    ref = Druzhok.Inflight.enter(conn.assigns.instance.id)
+
+    try do
+      super(conn, opts)
+    after
+      Druzhok.Inflight.leave(ref)
+    end
+  end
+
   # Chat, search, transcription, image generation and embeddings are served by
   # ruoc-gateway with the bot's own account (`LlmProxy.Ruoc`). LlmAuth
   # guarantees `ruoc_api_key` is set. TTS still goes to OpenAI directly.
