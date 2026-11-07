@@ -25,6 +25,15 @@ Always use `/my-commit` for committing changes.
   unreadable `/proc/meminfo` passes). Busy is not a failure: no backoff, the next tick retries, a sleeping bot stays asleep and
   its updates stay held (they expire at 24 h; a warning is logged after 1 h of waiting for memory). Not gated: restart of a
   running unit, stop, delete, sleep, `druzhok-ctl`, systemd's `Restart=always`.
+- **Queue mode** (Settings `bot_slots`, unset = off and everything above holds as written): at most `bot_slots` bots hold a slot
+  (row active, not deleting, not sleeping, counted together with live `hermes@*` units). One `Lifecycle.Scheduler` keeps a line
+  computed from live data (oldest waking update, due reminder, or first seen) and grants the head one wake, counted again inside the
+  start lock; asleep controllers never wake on their own and stop reading their unit every 30 s (a once-a-minute sweep catches hand
+  starts). `BotManager.start` of a stopped bot writes `sleeping` too, so it waits in the line. When the line waits and slots are full,
+  one awake bot is switched out (`switch_action`): quiet after 60 s, else at the end of its `slice_minutes` (5, +3 while chatting);
+  deliveries held, drained (nothing acked in 10 s, no turn, one process, no proxy call open, `Druzhok.Inflight`), stopped; after
+  30 min of drain it is stopped anyway and the last chat is told. `StartGate`'s memory check is skipped. `max_bots` and
+  `min_free_disk_mb` refuse creation (operator exempt). Every bot gets `HERMES_CRON_ONESHOT_LATE_S=86400`.
 - **Never set HTTP_PROXY/HTTPS_PROXY for bots** — breaks multipart uploads.
 - **Bot users have no internet**: `ops/nftables-druzhok.nft` allows only the proxy, DNS and Telegram's CIDRs. Anything a bot needs from the web goes through the proxy (search, `/v2/scrape`).
 - **One Telegram poller per token.** Stop a bot on the old host before starting it elsewhere.

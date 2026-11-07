@@ -5,6 +5,10 @@ defmodule Druzhok.Lifecycle.StartGate do
   Being refused is not a failure: the controller just tries again on its next
   tick, so there is no queue and no order. The lock goes with its holder when
   that process dies.
+
+  In queue mode (`Lifecycle.Queue`) only the lock is kept: `bot_slots` sized to
+  the slice's `MemoryMax` already guarantees the memory, and the extra veto
+  stalled the line (bot queue spec, "Slots").
   """
 
   @default_min_free_mb 900
@@ -13,7 +17,7 @@ defmodule Druzhok.Lifecycle.StartGate do
   @doc "`fun.()`, or `{:busy, :lock | {:memory, free_mb}}` without running it."
   def with_slot(fun) when is_function(fun, 0) do
     inner = fn ->
-      free = free_mb()
+      free = if Druzhok.Lifecycle.Queue.on?(), do: nil, else: free_mb()
       if free && free < min_free_mb(), do: {:busy, {:memory, free}}, else: fun.()
     end
 

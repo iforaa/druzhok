@@ -20,13 +20,22 @@ defmodule Druzhok.Lifecycle.Bot do
 
   It keeps nothing that matters outside the row and the unit, so a new
   controller after a crash just applies the rules again.
+
+  Queue mode (`Lifecycle.Queue`, bot queue spec) changes four things. An
+  asleep bot wakes only on a grant from `Lifecycle.Scheduler`, and only if,
+  inside the one-start lock, the slots still have room. An awake bot whose
+  unit is down, or whose start failed, goes back to sleep and so into the
+  line. A switch asked by the scheduler holds deliveries, waits for the bot
+  to finish (`switch_action`), at most `max_drain_s`, and stops it. And an
+  asleep or stopped bot whose unit was last seen inactive no longer reads it
+  every 30 s: the scheduler's sweep points it at a unit that runs.
   """
 
   use GenServer, restart: :transient
   require Logger
   alias Druzhok.{BotManager, Host, Instance, Repo}
-  alias Druzhok.Lifecycle.{Idle, StartGate, Typing}
-  alias Druzhok.Telegram.{Addressed, Inbox, Relay, Webhook}
+  alias Druzhok.Lifecycle.{Idle, Queue, Scheduler, StartGate, Typing, Wake}
+  alias Druzhok.Telegram.{Addressed, API, Inbox, Relay, Webhook}
 
   def key(instance_id), do: {:lifecycle, instance_id}
 
@@ -51,7 +60,14 @@ defmodule Druzhok.Lifecycle.Bot do
        waiting_since: nil,
        wait_warned: false,
        lock_refused: false,
-       timer: nil
+       timer: nil,
+       # Queue mode: read once a pass; a grant or a switch request this pass;
+       # the switch in progress; a unit to read whatever the last one said.
+       queue: false,
+       grant: false,
+       switch_req: nil,
+       switch: nil,
+       force_unit: false
      }}
   end
 
@@ -65,6 +81,12 @@ defmodule Druzhok.Lifecycle.Bot do
   end
 
   def handle_info(:tick, state), do: pass(state)
+
+  # Queue mode: the scheduler's one attempt to wake this bot, its request to
+  # make room, and its sweep finding this bot's unit running.
+  def handle_info(:grant, state), do: pass(%{state | grant: true, unit_at: nil})
+  def handle_info({:switch, rule}, state), do: pass(%{state | switch_req: rule})
+  def handle_info(:unit_running, state), do: pass(%{state | force_unit: true, unit_at: nil})
   def handle_info(_, state), do: {:noreply, state}
 
   defp flush(msg) do
@@ -78,16 +100,17 @@ defmodule Druzhok.Lifecycle.Bot do
   defp pass(state) do
     case Repo.get(Instance, state.id) do
       nil ->
-        {:stop, :normal, state}
+        {:stop, :normal, answer_scheduler(state)}
 
       inst ->
-        state = observe(state, inst)
+        state = %{state | queue: Queue.on?()} |> carry_on_switch(inst) |> observe(inst)
 
         case rule(state, inst) do
           {:stop, state} ->
-            {:stop, :normal, state}
+            {:stop, :normal, answer_scheduler(state)}
 
           state ->
+            state = answer_scheduler(state)
             # One tick chain only: a poke's pass replaces the pending tick.
             if state.timer, do: Process.cancel_timer(state.timer)
             {:noreply, %{state | timer: Process.send_after(self(), :tick, opt(:tick_ms))}}
@@ -95,11 +118,22 @@ defmodule Druzhok.Lifecycle.Bot do
     end
   end
 
+  # A grant is one attempt: used or dropped, the scheduler hears at the end
+  # of the pass. A switch request that did not start a switch is dropped too;
+  # one that did is answered when the switch ends.
+  defp answer_scheduler(state) do
+    if state.grant, do: Scheduler.grant_done(state.id, state.grant == :used)
+    if state.switch_req && is_nil(state.switch), do: Scheduler.switch_done(state.id)
+    %{state | grant: false, switch_req: nil, force_unit: false}
+  end
+
   # --- rules ------------------------------------------------------------------
 
   defp rule(%{unit: :stopping} = state, _inst), do: state
 
   defp rule(state, %Instance{delete_requested: true} = inst) do
+    state = abandon_switch(state, inst)
+
     state =
       if down?(state.unit), do: state, else: act(state, fn -> stop_unit(inst, :stopping) end)
 
@@ -124,6 +158,8 @@ defmodule Druzhok.Lifecycle.Bot do
   end
 
   defp rule(state, %Instance{active: false} = inst) do
+    state = abandon_switch(state, inst)
+
     state =
       if down?(state.unit) do
         state
@@ -143,20 +179,22 @@ defmodule Druzhok.Lifecycle.Bot do
   end
 
   defp rule(state, %Instance{sleeping: true} = inst) do
+    # A switch that stopped the bot and was cut off before lifting its hold.
+    if match?({"switching", _}, Webhook.paused(inst)), do: Webhook.resume_if(inst.id, :switching)
+
     cond do
       state.unit in [:active, :activating, :restarting] ->
         # Someone started the unit by hand: it is awake now.
         set(inst, sleeping: false)
         state
 
-      reason = wake_reason(inst) ->
+      state.queue ->
+        # Only the scheduler wakes a bot in queue mode; a relay poke is a no-op.
+        if state.grant, do: granted_wake(state, inst), else: state
+
+      reason = Wake.reason(inst) ->
         # Refused, the row stays asleep: the relay keeps holding updates.
-        through_gate(state, inst, fn ->
-          Logger.info("[life] #{inst.name}: waking (#{describe(reason, inst)})")
-          set(inst, sleeping: false, woke_at: now())
-          if reason == :update, do: Typing.start(inst)
-          start_action(state, inst)
-        end)
+        through_gate(state, inst, fn -> wake(state, inst, reason) end)
 
       true ->
         end_wait(state)
@@ -165,6 +203,24 @@ defmodule Druzhok.Lifecycle.Bot do
 
   defp rule(state, inst) do
     cond do
+      # While a switch runs nothing else does: a restart request or saved
+      # panel settings wait, as they do for an asleep bot, so nothing lifts
+      # the hold mid-drain.
+      state.switch ->
+        switch_step(state, inst)
+
+      state.queue and state.unit in [:inactive, :failed] ->
+        # Crashed, or druzhok restarted during a start: back through the line.
+        Logger.info("[queue] #{inst.name}: unit #{state.unit}, back in the line")
+        set(inst, sleeping: true)
+        state
+
+      state.queue and state.unit == :unknown ->
+        # A failed status read is no news: read again next pass rather than
+        # give up the slot of a bot that may well be running, or start it
+        # past the line.
+        %{state | unit_at: nil}
+
       state.unit == :restarting ->
         loop_failure(state, inst, "restart loop")
 
@@ -181,11 +237,48 @@ defmodule Druzhok.Lifecycle.Bot do
           true -> start_action(state, inst)
         end
 
+      state.unit == :active and not is_nil(state.switch_req) ->
+        switch_action(state, inst, state.switch_req)
+
       state.unit == :active ->
         awake(state, inst)
 
       true ->
         state
+    end
+  end
+
+  defp wake(state, inst, reason) do
+    Logger.info("[life] #{inst.name}: waking (#{describe(reason, inst)})")
+    set(inst, sleeping: false, woke_at: now())
+    if reason == :update, do: Typing.start(inst)
+    start_action(state, inst)
+  end
+
+  # The scheduler's grant is one attempt. The reason is read again (rows
+  # dropped or expired meanwhile end it), and the slots are counted again
+  # inside the one-start lock, so two grants can never both get through.
+  # Refused, nothing changes: the bot stays asleep and in the line.
+  defp granted_wake(state, inst) do
+    reason = Wake.reason(inst, queue: true)
+
+    cond do
+      is_nil(reason) or not backoff_over?(inst) ->
+        state
+
+      true ->
+        start = fn ->
+          if Scheduler.room?(), do: wake(state, inst, reason), else: {:busy, :full}
+        end
+
+        case StartGate.with_slot(start) do
+          {:busy, why} ->
+            Logger.info("[queue] #{inst.name}: grant dropped (#{inspect(why)})")
+            state
+
+          %{} = state ->
+            %{state | grant: :used}
+        end
     end
   end
 
@@ -237,7 +330,7 @@ defmodule Druzhok.Lifecycle.Bot do
   defp sleep_check(state, inst) do
     state = %{state | idle_at: System.monotonic_time(:millisecond)}
 
-    case Idle.check(inst) do
+    case Idle.check(inst, queue: state.queue) do
       :idle ->
         sleep_action(state, inst)
 
@@ -308,27 +401,6 @@ defmodule Druzhok.Lifecycle.Bot do
   end
 
   defp describe(reason, _inst), do: to_string(reason)
-
-  defp wake_reason(inst) do
-    cond do
-      Inbox.next_waking(inst.id) -> :update
-      inst.start_seq > inst.applied_seq -> :requested
-      cron_due?(inst) -> :cron
-      not inst.sleep_enabled -> :sleep_disabled
-      inst.telegram_mode != "webhook" or inst.telegram_mode != inst.started_mode -> :mode
-      true -> nil
-    end
-  end
-
-  # An unreadable jobs file wakes the bot: it cannot be asleep through a run
-  # no one can see.
-  defp cron_due?(inst) do
-    case Idle.cron_wake_at(inst) do
-      {:ok, nil} -> false
-      {:ok, at} -> DateTime.compare(at, DateTime.utc_now()) != :gt
-      :error -> true
-    end
-  end
 
   # --- actions ----------------------------------------------------------------
 
@@ -409,7 +481,7 @@ defmodule Druzhok.Lifecycle.Bot do
   defp failed(state, inst, seq, reason) do
     record_failure(inst, reason, failed_seq: max(seq, inst.failed_seq))
     # Stop what systemd would otherwise cycle every RestartSec behind our backoff.
-    act(state, fn -> stop_unit(inst, :stopping) end)
+    state |> act(fn -> stop_unit(inst, :stopping) end) |> give_slot_back(inst)
   end
 
   # A loop the controller did not start itself (a crash after READY whose
@@ -418,7 +490,17 @@ defmodule Druzhok.Lifecycle.Bot do
   # is already applied.
   defp loop_failure(state, inst, reason) do
     record_failure(inst, reason, failed_seq: max(inst.failed_seq, inst.applied_seq))
-    act(%{state | activating_since: nil}, fn -> stop_unit(inst, :stopping) end)
+
+    %{state | activating_since: nil}
+    |> act(fn -> stop_unit(inst, :stopping) end)
+    |> give_slot_back(inst)
+  end
+
+  # Queue mode: a failed start sleeps once its unit is down, so its slot goes
+  # to the line; it comes back as `:retry` after the backoff.
+  defp give_slot_back(state, inst) do
+    if state.queue and state.unit in [:inactive, :failed], do: set(inst, sleeping: true)
+    state
   end
 
   defp record_failure(inst, reason, extra) do
@@ -466,7 +548,8 @@ defmodule Druzhok.Lifecycle.Bot do
     inst = Repo.get(Instance, inst.id)
     state = refresh(state, inst)
 
-    if inst && state.unit == :active && Idle.check(inst, own_pause: true) == :idle do
+    if inst && state.unit == :active &&
+         Idle.check(inst, own_pause: true, queue: state.queue) == :idle do
       mem = Host.stats(inst.name)
 
       state =
@@ -483,6 +566,7 @@ defmodule Druzhok.Lifecycle.Bot do
         "[life] #{inst.name}: asleep after #{div(Idle.window_s(), 60)} min idle#{rss(mem)}"
       )
 
+      warn_unreadable_jobs(state, inst)
       Webhook.resume_if(inst.id, :sleeping)
       Relay.notify(inst.id)
       state
@@ -491,6 +575,175 @@ defmodule Druzhok.Lifecycle.Bot do
       Relay.notify(inst.id)
       state
     end
+  end
+
+  # --- switch (queue mode) ----------------------------------------------------
+
+  @cap_text "Задача заняла слишком много времени и была остановлена, чтобы ответить другим. " <>
+              "Напишите ещё раз, если она нужна."
+
+  # Bot queue spec, "Switch": hold first, so a quiet moment must come. The
+  # hold outlasts the whole drain and a slow stop; the default 5 min would
+  # lapse mid-drain.
+  defp switch_action(state, inst, rule) do
+    if Scheduler.can_sleep?(inst) do
+      Webhook.pause(inst.id, :switching, Queue.hold_s())
+      Relay.quiesce(inst.id)
+      Logger.info("[queue] #{inst.name}: switching out (#{rule}); deliveries held")
+      %{state | switch: %{since: System.monotonic_time(:millisecond), rule: rule, check_at: nil}}
+    else
+      state
+    end
+  end
+
+  # One check per drain_check_ms on the controller's ticks, so a stop or a
+  # delete that comes meanwhile is applied at once (rules 3 and 4).
+  defp switch_step(state, inst) do
+    now_ms = System.monotonic_time(:millisecond)
+    sw = state.switch
+
+    cond do
+      # A failed status read is not a unit that died: keep draining (the cap
+      # still bounds it) and read again next pass.
+      state.unit == :unknown ->
+        %{state | unit_at: nil}
+
+      state.unit != :active ->
+        finish_switch(state, inst, :down)
+
+      now_ms - sw.since >= Queue.opt(:max_drain_s) * 1000 ->
+        finish_switch(state, inst, :cap)
+
+      sw.check_at && now_ms - sw.check_at < Queue.opt(:drain_check_ms) ->
+        state
+
+      drained?(inst) ->
+        finish_switch(state, inst, :drained)
+
+      true ->
+        %{state | switch: %{sw | check_at: now_ms}}
+    end
+  end
+
+  # Nothing delivered within the settle time (hermes buffers text up to 4 s
+  # before a turn), no turn, hermes alone, no proxy call open.
+  defp drained?(inst) do
+    Idle.check(inst,
+      window_s: Queue.opt(:settle_s),
+      only: [:acked, :inflight, :turns, :processes]
+    ) == :idle
+  end
+
+  defp finish_switch(state, inst, how) do
+    sw = state.switch
+    drained_s = div(System.monotonic_time(:millisecond) - sw.since, 1000)
+    if how == :cap, do: cap_notice(inst)
+    mem = Host.stats(inst.name)
+
+    state =
+      act(state, fn ->
+        Host.stop(inst.name)
+        set(inst, sleeping: true)
+      end)
+
+    Addressed.username(inst)
+    warn_unreadable_jobs(state, inst)
+    # Held rows stay stored and go to the bot on its next wake.
+    Webhook.resume_if(inst.id, :switching)
+    Relay.notify(inst.id)
+
+    Logger.info(
+      "[queue] #{inst.name}: switched out (#{sw.rule}, #{how}) after #{drained_s} s of drain#{rss(mem)}"
+    )
+
+    Scheduler.switch_done(inst.id)
+    %{state | switch: nil}
+  end
+
+  # The one place a switch loses work, on purpose: the chat that spoke last
+  # is told.
+  defp cap_notice(inst) do
+    Logger.warning(
+      "[queue] #{inst.name}: still busy after #{div(Queue.opt(:max_drain_s), 60)} min of drain; stopping it"
+    )
+
+    with %Inbox{payload: payload} <- Inbox.last_delivered(inst.id),
+         chat when not is_nil(chat) <- chat_id(payload),
+         token when is_binary(token) and token != "" <- inst.telegram_token do
+      Task.start(fn -> tell(inst, chat, @cap_text, "cap notice") end)
+    end
+  end
+
+  @doc false
+  # Best effort, logged either way: the person learns their work was dropped
+  # or where they stand only if this lands.
+  def tell(inst, chat, text, what) do
+    case API.send_message(inst.telegram_token, chat, text) do
+      {:ok, _} -> Logger.info("[queue] #{inst.name}: #{what} sent")
+      other -> Logger.warning("[queue] #{inst.name}: #{what} failed: #{inspect(other)}")
+    end
+  rescue
+    e -> Logger.warning("[queue] #{inst.name}: #{what} failed: #{Exception.message(e)}")
+  end
+
+  defp chat_id(payload) do
+    case Jason.decode(payload) do
+      {:ok, %{} = update} ->
+        Enum.find_value(update, fn
+          {_kind, %{"chat" => %{"id" => id}}} -> id
+          {_kind, %{"message" => %{"chat" => %{"id" => id}}}} -> id
+          _ -> nil
+        end)
+
+      _ ->
+        nil
+    end
+  end
+
+  # A stop or a delete ends a switch: its hold is lifted and the stop rule
+  # takes over with its own.
+  defp abandon_switch(%{switch: nil} = state, _inst), do: state
+
+  defp abandon_switch(state, inst) do
+    Webhook.resume_if(inst.id, :switching)
+    Logger.info("[queue] #{inst.name}: switch ended by a stop or delete")
+    Scheduler.switch_done(inst.id)
+    %{state | switch: nil}
+  end
+
+  # A new controller (after a crash or a druzhok restart) finds the hold of a
+  # switch it did not start and carries on with it, its clock read from the
+  # hold's end.
+  defp carry_on_switch(
+         %{switch: nil} = state,
+         %Instance{
+           active: true,
+           sleeping: false,
+           delete_requested: false
+         } = inst
+       ) do
+    case Webhook.paused(inst) do
+      {"switching", until} ->
+        left_ms = DateTime.diff(until, DateTime.utc_now(), :millisecond)
+        since = System.monotonic_time(:millisecond) - (Queue.hold_s() * 1000 - left_ms)
+        Logger.info("[queue] #{inst.name}: carrying on a switch")
+        %{state | switch: %{since: since, rule: :resumed, check_at: nil}}
+
+      _ ->
+        state
+    end
+  end
+
+  defp carry_on_switch(state, _inst), do: state
+
+  # Queue mode, on every sleep (idle or switched out): a job the file hides
+  # runs late on the next wake.
+  defp warn_unreadable_jobs(state, inst) do
+    if state.queue and Idle.cron_wake_at(inst) == :error,
+      do:
+        Logger.warning(
+          "[life] #{inst.name}: asleep with an unreadable jobs file; its jobs run on the next wake"
+        )
   end
 
   defp rss(%{mem_bytes: b}), do: " (rss #{div(b, 1024 * 1024)} MB)"
@@ -507,7 +760,7 @@ defmodule Druzhok.Lifecycle.Bot do
 
   defp hold(id, reason) do
     case Repo.get(Instance, id) |> then(&(&1 && Webhook.paused(&1))) do
-      {held, _} when held not in ["stopping", "sleeping"] -> :ok
+      {held, _} when held not in ["stopping", "sleeping", "switching"] -> :ok
       _ -> Webhook.pause(id, reason)
     end
   end
@@ -534,13 +787,31 @@ defmodule Druzhok.Lifecycle.Bot do
     state = end_wait_if_unwanted(state, inst)
 
     state =
-      if is_nil(state.unit_at) or
-           System.monotonic_time(:millisecond) - state.unit_at >= opt(:unit_poll_ms),
-         do: refresh(state, inst),
-         else: state
+      cond do
+        parked?(state, inst) ->
+          state
+
+        is_nil(state.unit_at) or
+            System.monotonic_time(:millisecond) - state.unit_at >= opt(:unit_poll_ms) ->
+          refresh(state, inst)
+
+        true ->
+          state
+      end
 
     # Up by other means (druzhok-ctl by hand): nothing is waiting any more.
     if down?(state.unit), do: state, else: end_wait(state)
+  end
+
+  # Queue mode: an asleep or stopped (and acknowledged) bot whose unit was
+  # last seen inactive does not read it every 30 s; at 200 rows those reads
+  # are several `sudo` a second on one CPU. It reads again on a grant, a stop,
+  # a delete, and when the scheduler's sweep finds its unit running. The
+  # first read after the controller starts always happens.
+  defp parked?(state, inst) do
+    state.queue and state.unit == :inactive and not state.force_unit and not state.grant and
+      not inst.delete_requested and
+      ((inst.active and inst.sleeping) or (not inst.active and inst.stopped_seq >= inst.stop_seq))
   end
 
   # A stop or delete ends the wait and must see the unit as it is now, not as
@@ -583,9 +854,10 @@ defmodule Druzhok.Lifecycle.Bot do
 
   # 10 s, 1 min, 5 min, then every 15 min; a request made after the failure
   # is tried at once.
-  defp backoff_over?(%Instance{start_failures: n}) when n in [nil, 0], do: true
+  @doc false
+  def backoff_over?(%Instance{start_failures: n}) when n in [nil, 0], do: true
 
-  defp backoff_over?(inst) do
+  def backoff_over?(inst) do
     inst.start_seq > inst.failed_seq or
       is_nil(inst.start_failed_at) or
       DateTime.diff(DateTime.utc_now(), inst.start_failed_at, :millisecond) >=

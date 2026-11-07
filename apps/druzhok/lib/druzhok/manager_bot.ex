@@ -396,6 +396,10 @@ defmodule Druzhok.ManagerBot do
         API.send_message(state.token, chat_id, Onboarding.closed_message())
         state
 
+      input == %{text: "🤖 Создать бота"} and full?(user_id) ->
+        API.send_message(state.token, chat_id, Onboarding.full_message())
+        state
+
       # Check bot limit before starting creation; the operator has no limit.
       input == %{text: "🤖 Создать бота"} and not operator?(user_id) and
           user_bot_count(user_id) >= @max_bots_per_user ->
@@ -477,6 +481,50 @@ defmodule Druzhok.ManagerBot do
     Settings.bot_creation_closed?() and not operator?(user_id)
   end
 
+  # Bot queue spec, "Cap and disk": `max_bots` rows not being deleted, and
+  # `min_free_disk_mb` free on the tenants' disk; each unset is no check. The
+  # operator is never refused. Two creations at once can overshoot the cap by
+  # one or two; bots that exist are untouched.
+  defp full?(user_id), do: not operator?(user_id) and (too_many_bots?() or disk_low?())
+
+  defp too_many_bots? do
+    case setting_int("max_bots") do
+      nil ->
+        false
+
+      max ->
+        import Ecto.Query
+        count = Druzhok.Repo.aggregate(from(i in Druzhok.Instance, where: not i.delete_requested), :count)
+        count >= max
+    end
+  end
+
+  # An unreadable disk does not shut creation: the check is a guard, and
+  # `df` failing for good would close the superbot without a word.
+  defp disk_low? do
+    case setting_int("min_free_disk_mb") do
+      nil ->
+        false
+
+      min ->
+        case Druzhok.Status.free_mb(Druzhok.BotManager.data_root_base()) do
+          nil ->
+            Logger.warning("[manager] cannot read free disk; creation stays open")
+            false
+
+          free ->
+            free < min
+        end
+    end
+  end
+
+  defp setting_int(key) do
+    case Integer.parse(Settings.get(key) || "") do
+      {n, ""} when n > 0 -> n
+      _ -> nil
+    end
+  end
+
   defp operator?(user_id) do
     case Settings.operator_telegram_id() do
       nil -> false
@@ -540,6 +588,10 @@ defmodule Druzhok.ManagerBot do
 
       closed?(user_id) ->
         API.send_message(state.token, chat_id, Onboarding.closed_message())
+        state
+
+      full?(user_id) ->
+        API.send_message(state.token, chat_id, Onboarding.full_message())
         state
 
       true ->
@@ -830,6 +882,10 @@ defmodule Druzhok.ManagerBot do
       # t.me/newbot link, both arrive here.
       closed?(creator_id) ->
         API.send_message(token, creator_id, Onboarding.closed_message())
+        state
+
+      full?(creator_id) ->
+        API.send_message(token, creator_id, Onboarding.full_message())
         state
 
       not operator?(creator_id) and user_bot_count(creator_id) >= @max_bots_per_user ->

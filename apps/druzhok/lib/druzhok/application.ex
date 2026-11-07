@@ -9,6 +9,8 @@ defmodule Druzhok.Application do
       [
         Druzhok.Repo,
         {Registry, keys: :unique, name: Druzhok.Registry},
+        # Proxy calls open per bot, for queue mode's drain (written by druzhok_web).
+        Druzhok.Inflight,
         {DynamicSupervisor, name: Druzhok.Host.ProcessSup, strategy: :one_for_one},
         {Finch, name: Druzhok.Finch},
         {Finch, name: Druzhok.LocalFinch},

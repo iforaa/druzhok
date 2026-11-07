@@ -232,6 +232,8 @@ defmodule Druzhok.ManagerBot.Onboarding do
 
   def closed_message, do: "Создание новых ботов сейчас закрыто. Уже созданные боты работают как обычно."
 
+  def full_message, do: "Сейчас все места заняты. Попробуйте позже — мы расширяемся."
+
   def limit_message, do: "У тебя уже 2 бота. Удали одного, чтобы создать нового."
 
   @doc """

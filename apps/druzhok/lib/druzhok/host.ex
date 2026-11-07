@@ -25,6 +25,16 @@ defmodule Druzhok.Host do
   @callback memory_bytes(name) :: non_neg_integer() | nil
   @callback exec(name, args :: [String.t()]) :: {String.t(), integer()}
 
+  @doc """
+  Every bot unit that holds or may still hold memory, by bot name, from one
+  read: `:active`, `:activating` (a start or systemd's restart wait),
+  `:reloading` or `:deactivating` (still stopping). `:error` when the read
+  failed. Queue mode counts these with the database holders (bot queue spec,
+  "Slots").
+  """
+  @callback holding_units() ::
+              {:ok, %{name => :active | :activating | :reloading | :deactivating}} | :error
+
   @name_re ~r/^[a-z0-9][a-z0-9_-]{0,30}$/
 
   def impl, do: Application.get_env(:druzhok, :host, Druzhok.Host.Process)
@@ -40,4 +50,5 @@ defmodule Druzhok.Host do
   def procs(name), do: impl().procs(name)
   def memory_bytes(name), do: impl().memory_bytes(name)
   def exec(name, args), do: impl().exec(name, args)
+  def holding_units, do: impl().holding_units()
 end

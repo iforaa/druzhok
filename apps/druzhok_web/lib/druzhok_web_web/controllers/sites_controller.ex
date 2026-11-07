@@ -30,6 +30,18 @@ defmodule DruzhokWebWeb.SitesController do
 
   @conn_key {__MODULE__, :conn}
 
+  # An upload runs for minutes in this process; queue mode's drain must not
+  # stop the bot under it (`Druzhok.Inflight`).
+  def action(conn, opts) do
+    ref = Druzhok.Inflight.enter(conn.assigns.instance.id)
+
+    try do
+      super(conn, opts)
+    after
+      Druzhok.Inflight.leave(ref)
+    end
+  end
+
   def publish(conn, %{"site" => site}) do
     inst = conn.assigns.instance
 

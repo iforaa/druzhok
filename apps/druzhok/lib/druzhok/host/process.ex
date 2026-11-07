@@ -89,6 +89,21 @@ defmodule Druzhok.Host.Process do
   end
 
   @impl Druzhok.Host
+  def holding_units do
+    units =
+      Registry.select(Druzhok.Registry, [{{{:"$1", :host_process}, :_, :_}, [], [:"$1"]}])
+      |> Enum.flat_map(fn name ->
+        case status(name) do
+          :active -> [{name, :active}]
+          :activating -> [{name, :activating}]
+          _ -> []
+        end
+      end)
+
+    {:ok, Map.new(units)}
+  end
+
+  @impl Druzhok.Host
   def exec(name, args) do
     case lookup(name) do
       nil ->
