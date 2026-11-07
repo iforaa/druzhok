@@ -2,7 +2,7 @@ defmodule Druzhok.ManagerBot.Onboarding do
   @moduledoc """
   Pure-function state machine for the manager bot's onboarding flow.
 
-  Steps: :idle → :name → :language → :confirm → :done
+  Steps: :idle → :name → :language → :character → :confirm → :done
   Each step returns {:ok, session, reply} or {:retry, session, reply}.
   Reply types: {:text, text}, {:keyboard, text, rows}, {:edit, text, rows},
                {:confirm, session}, {:edit_confirm, session}
@@ -13,6 +13,8 @@ defmodule Druzhok.ManagerBot.Onboarding do
       step: :idle,
       name: nil,
       language: nil,
+      # The character picked (`Voice.soul_presets/0`), nil for «Пропустить».
+      soul_preset: nil,
       username: nil,
       # The code the person came in with, until ruoc has redeemed it.
       invite: nil,
@@ -29,6 +31,16 @@ defmodule Druzhok.ManagerBot.Onboarding do
   @pictures "🎨 Картинки"
   @invite "🎁 Пригласить"
   @delete "🗑 Удалить"
+
+  # The character buttons, in order: key (`soul:<key>`), label. Every key but
+  # "skip" is one of `Voice.soul_presets/0`.
+  @characters [
+    {"friendly", "😊 Дружелюбный"},
+    {"business", "💼 Деловой"},
+    {"humor", "😄 С юмором"},
+    {"brief", "⚡ Коротко и по делу"},
+    {"skip", "Пропустить"}
+  ]
 
   @doc "Every label the reply keyboard can carry; none of them is ever a bot name or a code."
   def menu_texts, do: [@create, @my_bots, @my_bot, @pictures, @invite, @delete]
@@ -82,6 +94,15 @@ defmodule Druzhok.ManagerBot.Onboarding do
     "Привет! Я помогу создать персонального AI-бота."
   end
 
+  @doc "The /start intro for somebody with no bot yet; everyone else gets `welcome_message/0`."
+  def intro_message do
+    """
+    Привет! Здесь за минуту появится ваш личный AI-помощник в Telegram.
+    Он отвечает на вопросы, понимает голосовые и фото, рисует картинки, ищет в интернете и напоминает о делах.
+    Начать можно бесплатно, тарифы — в «Кабинете» бота.\
+    """
+  end
+
   # --- Step handlers ---
 
   # Main menu buttons (text from reply keyboard)
@@ -131,12 +152,35 @@ defmodule Druzhok.ManagerBot.Onboarding do
   # Language step
   def handle_input(%{step: :language} = session, %{callback_data: "lang:" <> lang})
       when lang in ["ru", "en"] do
-    session = %{session | step: :confirm, language: lang, started_at: System.system_time(:second)}
-    {:ok, session, {:edit_confirm, session}}
+    session = %{session | step: :character, language: lang, started_at: System.system_time(:second)}
+    {:ok, session, {:edit, character_prompt(), character_buttons()}}
   end
 
   def handle_input(%{step: :language} = session, _input) do
     {:retry, session, {:edit, "Язык:", language_buttons()}}
+  end
+
+  # Character step: one tap seeds SOUL.md's style sentence at the first start
+  # (`Voice.soul_md/2`); «Пропустить» keeps the default. Typed text asks again
+  # with fresh buttons and keeps the session.
+  def handle_input(%{step: :character} = session, %{callback_data: "soul:" <> key}) do
+    case List.keyfind(@characters, key, 0) do
+      {_key, _label} ->
+        preset = if key == "skip", do: nil, else: key
+        session = Map.merge(session, %{step: :confirm, soul_preset: preset, started_at: System.system_time(:second)})
+        {:ok, session, {:edit_confirm, session}}
+
+      nil ->
+        {:retry, session, {:edit, character_prompt(), character_buttons()}}
+    end
+  end
+
+  def handle_input(%{step: :character} = session, %{text: _}) do
+    {:retry, session, {:keyboard, "Выбери кнопкой. " <> character_prompt(), character_buttons()}}
+  end
+
+  def handle_input(%{step: :character} = session, _input) do
+    {:retry, session, {:edit, character_prompt(), character_buttons()}}
   end
 
   # Confirm step
@@ -195,7 +239,13 @@ defmodule Druzhok.ManagerBot.Onboarding do
 
     lang_label = if session.language == "ru", do: "Русский", else: "English"
 
-    text = "📋 *#{session.name}*\nЯзык: #{lang_label}\n\nНажми кнопку чтобы создать:"
+    character =
+      case character_label(session[:soul_preset]) do
+        nil -> ""
+        label -> "\nХарактер: #{label}"
+      end
+
+    text = "📋 *#{session.name}*\nЯзык: #{lang_label}#{character}\n\nНажми кнопку чтобы создать:"
     keyboard = [[%{text: "🤖 Создать «#{session.name}»", url: link}]]
 
     {text, keyboard, link}
@@ -483,6 +533,23 @@ defmodule Druzhok.ManagerBot.Onboarding do
   end
 
   # --- Private ---
+
+  defp character_prompt, do: "Какой характер?"
+
+  defp character_buttons do
+    [a, b, c, d, skip] = Enum.map(@characters, fn {key, label} -> %{text: label, callback_data: "soul:#{key}"} end)
+    [[a, b], [c, d], [skip]]
+  end
+
+  # The label without its emoji, for the confirm card.
+  defp character_label(nil), do: nil
+
+  defp character_label(key) do
+    case List.keyfind(@characters, key, 0) do
+      {_, label} -> label |> String.split(" ", parts: 2) |> List.last()
+      nil -> nil
+    end
+  end
 
   defp language_buttons do
     [[%{text: "🇷🇺 Русский", callback_data: "lang:ru"}, %{text: "🇬🇧 English", callback_data: "lang:en"}]]

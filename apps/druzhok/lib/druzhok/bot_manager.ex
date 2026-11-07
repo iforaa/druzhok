@@ -100,7 +100,9 @@ defmodule Druzhok.BotManager do
 
   # Seed files (config.yaml, SOUL.md) are written at start
   # (`prepare_start/1`); here the row, stopped until a start is asked for.
-  # `name_free/1` ran first; the unique index answers a race.
+  # `name_free/1` ran first; the unique index answers a race. New bots run on
+  # Moscow time with pictures on (ruoc's default model); the schema defaults
+  # stay, so rows made before keep theirs.
   defp insert(name, opts, workspace) do
     %Instance{}
     |> Instance.changeset(%{
@@ -116,6 +118,9 @@ defmodule Druzhok.BotManager do
       ruoc_account_id: opts[:ruoc_account_id],
       ruoc_api_key: opts[:ruoc_api_key],
       display_name: opts[:display_name],
+      soul_preset: opts[:soul_preset],
+      timezone: "Europe/Moscow",
+      image_gen_enabled: true,
       active: false
     })
     |> Repo.insert()

@@ -560,12 +560,10 @@ defmodule Druzhok.Runtime.HermesTest do
                      - web
                    command_menu:
                      priority_mode: replace
-                     max_commands: 4
+                     max_commands: 2
                      priority:
                        - new
                        - stop
-                       - voice
-                       - help
                    drop_pending_on_cold_boot: false
                    gateway_restart_notification: false
                  enabled: true
@@ -581,7 +579,7 @@ defmodule Druzhok.Runtime.HermesTest do
 
       assert extra["command_menu"] == %{
                "priority_mode" => "replace",
-               "max_commands" => 4,
+               "max_commands" => 2,
                "priority" => Hermes.menu_commands()
              }
 
@@ -613,7 +611,7 @@ defmodule Druzhok.Runtime.HermesTest do
 
       assert extra["allow_admin_from"] == ["4242"]
       assert extra["user_allowed_commands"] == Hermes.user_commands()
-      assert extra["command_menu"]["max_commands"] == 4
+      assert extra["command_menu"]["max_commands"] == 2
 
       assert extra["dm_topics"] == [
                %{"chat_id" => 1, "topics" => [%{"name" => "x", "thread_id" => 7}]}

@@ -88,7 +88,7 @@ language, because hermes's own 402 text tells tenants to add provider credits an
 hermes's auxiliary calls (`LlmProxy.AuxShapes`: no tools, and no system message or a known aux
 prompt) keep the real error. Search, fetch, images and transcription answer that 429 as a 402 with the notice. What a bot is told about itself (SOUL.md, `agent.system_prompt`
 product rules, the Russian Telegram hint) is `Runtime.Hermes.Voice`, spec
-`docs/superpowers/specs/2026-10-25-bot-voice-design.md`. What hermes itself prints (menu `/new /stop /voice /help`, `/start`
+`docs/superpowers/specs/2026-10-25-bot-voice-design.md`. What hermes itself prints (menu `/new /stop`, `/start`
 greeting, failures; locale overlay + fork flag `display.end_user_mode`) is `Runtime.Hermes.Locale`, spec
 `docs/superpowers/specs/2026-10-26-tenant-chat-surface-design.md`.
 Spec: `docs/superpowers/specs/2026-09-05-ruoc-gateway-migration-design.md`.

@@ -62,6 +62,8 @@ like a developer tool:
 ## Goals
 
 1. The menu has only what a person uses in a chat: new conversation, stop, voice replies, help.
+   (2026-11-07, first-run polish: the menu is `/new /stop` only; /voice and /help still run when typed,
+   and /help points to «Кабинет».)
 2. `/start` greets instead of staying silent, and never resets a conversation. `/new` resets without a
    confirmation prompt.
 3. No tenant-visible fixed reply names Hermes, a model, a provider, a URL, a config key, a CLI command, an
@@ -80,7 +82,7 @@ like a developer tool:
   stay allowed by hermes's floor (`gateway/slash_access.py:19`). `/compress` and `/status` become denied.
   Automatic compaction (150K trigger, batch 1) covers what `/compress` did.
 - `@menu_commands ~w(new stop voice help)`, `priority_mode: replace`, `max_commands: 4` (the existing
-  mechanism, `commands_platforms.py:118-143`).
+  mechanism, `commands_platforms.py:118-143`). Since 2026-11-07: `~w(new stop)`, `max_commands: 2`.
 - `/stop` on the gateway interrupts the current answer and keeps the conversation
   (`slash_commands.py:420-482`, replies ru:447-449, already clean). Its menu description is the CLI one
   («Завершить все запущенные фоновые процессы», ru:1530); the overlay below replaces it.
@@ -160,11 +162,13 @@ What the overrides say (ru; en is the same in English):
 |---|---|
 | `slash.new/stop/voice/help.description` | «Новый разговор», «Остановить ответ», «Голосовые ответы», «Что я умею» |
 | `slash.start.description`, `slash.whoami.description` | «Начать», «Мой доступ» (they show in `/help`) |
-| `gateway.help.header` | «📖 Команды» |
+| `gateway.help.header` | «📖 Команды». Since 2026-11-07: «Просто пишите или отправьте голосовое — я отвечу. Настройки, тариф и память — в «Кабинете» (кнопка слева от поля ввода).» above «📖 Команды» |
+| `slash.shared.alias_note` | empty since 2026-11-07 (no «(псевдоним: /reset)» in `/help`) |
+| `gateway.start.greeting` | «👋 Привет! Я %{bot_name}. Пишите что угодно — текстом или голосовым.» then, since 2026-11-07, «Настройки и тариф — в «Кабинете».» (was «/help — что я умею.») |
 | `gateway.reset.header_*` | «✨ Начинаем новый разговор. Что я о вас помню — осталось.» (titled variant keeps `{title}`) |
 | `gateway.reset.tip` | empty (drops the CLI tip line) |
 | `gateway.session.auto_reset_notice` | sent only after a suspension (`run_turn.py:561`; crash/stuck-loop guard, `run_shutdown.py:1326-1345`): «Прошлый разговор пришлось закрыть из-за сбоя. Начинаем новый — что я о вас помню, осталось.» (no `/resume`) |
-| `gateway.unauthorized.admin_only*`, `gateway.unknown_command` | «Эта команда недоступна. /help — что я умею.» / «Такой команды нет. /help — что я умею.» |
+| `gateway.unauthorized.admin_only*`, `gateway.unknown_command` | «Эта команда недоступна. /help — что я умею.» (since 2026-11-07 `admin_only`: «Эта команда недоступна. Настройки бота — в «Кабинете».») / «Такой команды нет. /help — что я умею.» |
 | `gateway.skills.*` (tenant-reachable keys) | «Такой команды нет. /help — что я умею.» (no `hermes skills …`) |
 | `gateway.whoami.header`, `tier_*` | no platform, scope or user id; tiers worded neutrally: admin/unrestricted «Доступны все команды», user «Доступные команды: {commands}». No «владелец»: the hermes admin is the operator, the owner is a hermes user |
 | `gateway.voice.*` | «Буду отвечать голосом» / «Отвечаю текстом» / …; no «TTS» |

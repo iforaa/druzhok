@@ -38,6 +38,11 @@ defmodule Druzhok.ManagerBot.ProvisionerTest do
       assert opts[:model] == "ruoc-flash"
     end
 
+    test "carries the character picked, nil when skipped" do
+      assert Provisioner.build_create_opts(%{token: "1", owner_id: 1, soul_preset: "humor"})[:soul_preset] == "humor"
+      assert Provisioner.build_create_opts(%{token: "1", owner_id: 1})[:soul_preset] == nil
+    end
+
     test "carries the invite code when the session had one" do
       assert Provisioner.build_create_opts(%{token: "1", owner_id: 1, invite: "ABCD-EFGH"})[:invite] == "ABCD-EFGH"
       refute Map.has_key?(Provisioner.build_create_opts(%{token: "1", owner_id: 1}), :invite)

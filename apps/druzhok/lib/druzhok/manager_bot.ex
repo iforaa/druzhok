@@ -106,7 +106,7 @@ defmodule Druzhok.ManagerBot do
         state
 
       text == "/start" ->
-        show_main_menu(state, user_id, chat_id)
+        show_main_menu(state, user_id, chat_id, :start)
 
       String.starts_with?(text, "/start ref_") ->
         handle_start_ref(state, user_id, chat_id, text |> String.trim_leading("/start ref_") |> String.trim())
@@ -118,7 +118,7 @@ defmodule Druzhok.ManagerBot do
         handle_menu(state, user_id, chat_id, text)
 
       Map.has_key?(state.sessions, user_id) and
-          state.sessions[user_id].step in [:name, :language, :confirm, :invite] ->
+          state.sessions[user_id].step in [:name, :language, :character, :confirm, :invite] ->
         # Mid-onboarding: route stray text through the state machine (which
         # re-prompts) instead of resetting the session to the main menu.
         dispatch_input(state, user_id, chat_id, %{text: text})
@@ -247,8 +247,15 @@ defmodule Druzhok.ManagerBot do
 
   # --- Main menu ---
 
-  defp show_main_menu(state, user_id, chat_id) do
-    send_menu(state, chat_id, user_id, Onboarding.welcome_message())
+  # `:start` is a /start (plain or `ref_…`): somebody with no bot yet gets the
+  # intro there. Stray text and stale keyboards keep the one line.
+  defp show_main_menu(state, user_id, chat_id, via \\ :other) do
+    text =
+      if via == :start and user_bot_count(user_id) == 0,
+        do: Onboarding.intro_message(),
+        else: Onboarding.welcome_message()
+
+    send_menu(state, chat_id, user_id, text)
     put_in(state, [:sessions, user_id], Onboarding.new_session())
   end
 
@@ -580,7 +587,7 @@ defmodule Druzhok.ManagerBot do
   # /start ref_<code>: the welcome and keyboard first, as any /start, then —
   # for somebody not yet admitted — the code is checked and naming begins.
   defp handle_start_ref(state, user_id, chat_id, code) do
-    state = show_main_menu(state, user_id, chat_id)
+    state = show_main_menu(state, user_id, chat_id, :start)
 
     cond do
       code == "" or may_create?(user_id) or user_bot_count(user_id) >= @max_bots_per_user ->
