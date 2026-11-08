@@ -27,7 +27,7 @@ defmodule Druzhok.Ruoc do
   alias Druzhok.Settings
 
   @default_url "http://127.0.0.1:8787"
-  @default_model "ruoc-flash"
+  @default_model "ruoc-deepseek-flash"
   @cache_ttl_ms 60_000
   @cache_key {__MODULE__, :models}
   @refresh_key {__MODULE__, :models_refresh}
