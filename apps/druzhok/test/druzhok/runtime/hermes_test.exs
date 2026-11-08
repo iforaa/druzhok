@@ -718,13 +718,13 @@ defmodule Druzhok.Runtime.HermesTest do
       {content, YamlElixir.read_from_string!(content)}
     end
 
-    test "turns on end-user mode, drops the /new confirmation and the busy-input hint", %{
+    test "turns on end-user mode, drops the /new confirmation, approval prompts and the busy-input hint", %{
       tmp_dir: tmp_dir
     } do
       {_, cfg} = sync_cfg!(tmp_dir, "model:\n  default: \"x\"\n")
 
       assert cfg["display"]["end_user_mode"] == true
-      assert cfg["approvals"] == %{"destructive_slash_confirm" => false}
+      assert cfg["approvals"] == %{"mode" => "off", "destructive_slash_confirm" => false}
       assert cfg["onboarding"] == %{"seen" => %{"busy_input_prompt" => true}}
     end
 
@@ -739,7 +739,7 @@ defmodule Druzhok.Runtime.HermesTest do
             tool_progress_prompt: true
         """)
 
-      assert cfg["approvals"] == %{"mode" => "manual", "destructive_slash_confirm" => false}
+      assert cfg["approvals"] == %{"mode" => "off", "destructive_slash_confirm" => false}
 
       assert cfg["onboarding"]["seen"] == %{
                "tool_progress_prompt" => true,

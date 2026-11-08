@@ -331,11 +331,16 @@ defmodule Druzhok.Runtime.Hermes do
   #   shell commands in background-task notices;
   # - no "are you sure?" before /new: its prompt offers «always approve» and a
   #   /approve fallback that tenants may not run;
+  # - no approval prompts for commands, code or file writes (`approvals.mode:
+  #   off`): end users can't judge them and tap «allow always» anyway. The bot's
+  #   unit (own user, own folder, no host access, egress to Telegram and druzhok
+  #   only) is what protects other tenants, and hermes's hardline floor (root
+  #   wipe, block-device writes, shutdown) still blocks under `off`;
   # - hermes's English busy-input hint (`/busy queue|steer`) is never shown.
   defp sync_end_user_keys(content) do
     content
     |> put_block("display", [{"end_user_mode", "true"}])
-    |> put_block("approvals", [{"destructive_slash_confirm", "false"}])
+    |> put_block("approvals", [{"mode", ~s("off")}, {"destructive_slash_confirm", "false"}])
     |> put_block("onboarding", [{"seen", {:merge, [{"busy_input_prompt", "true"}]}}])
   end
 
