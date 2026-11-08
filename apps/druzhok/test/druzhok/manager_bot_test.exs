@@ -247,7 +247,7 @@ defmodule Druzhok.ManagerBotTest do
     assert inst.telegram_token == "555NEWBOT"
     assert inst.owner_telegram_id == @owner
     assert inst.language == "en"
-    assert inst.model == "ruoc-flash"
+    assert inst.model == "ruoc-deepseek-flash"
     assert inst.mention_only
     refute inst.allow_all_telegram_users
     assert inst.display_name == "Кот"

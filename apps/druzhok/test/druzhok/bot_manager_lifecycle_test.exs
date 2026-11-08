@@ -184,7 +184,7 @@ defmodule Druzhok.BotManagerLifecycleTest do
     end
 
     test "create provisions a ruoc account when the gateway is configured", %{name: name, stub: stub} do
-      assert {:ok, %{model: "ruoc-flash"}} = BotManager.create(name, %{telegram_token: "1A"})
+      assert {:ok, %{model: "ruoc-deepseek-flash"}} = BotManager.create(name, %{telegram_token: "1A"})
       assert {:ok, _} = BotManager.start(name, wait: true)
       inst = Repo.get_by!(Instance, name: name)
       assert inst.ruoc_account_id =~ "acct-"
@@ -253,7 +253,7 @@ defmodule Druzhok.BotManagerLifecycleTest do
 
     test "create keeps a legacy model id out of a ruoc bot", %{name: name} do
       assert {:ok, %{model: "ruoc-standard"}} = BotManager.create(name, %{model: "z-ai/glm-5.3", telegram_token: "1A"})
-      assert {:ok, %{model: "ruoc-flash"}} = BotManager.create(name <> "b", %{model: "anthropic/claude-sonnet-4-6", telegram_token: "1B"})
+      assert {:ok, %{model: "ruoc-deepseek-flash"}} = BotManager.create(name <> "b", %{model: "anthropic/claude-sonnet-4-6", telegram_token: "1B"})
       cleanup_instance(name <> "b")
     end
 

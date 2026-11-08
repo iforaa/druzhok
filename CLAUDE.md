@@ -135,7 +135,7 @@ message, since Telegram refuses it before the owner opened the bot. A chat 402, 
 «Открыть кабинет» button, at most every 6 h. `sudo ops/druzhok bind-cabinet [<bot>]` binds now; `--off`
 restores the default button and sets `cabinet_off`, which nothing undoes but a plain `bind-cabinet`. An owner
 or language change rebinds and resets the old owner's button. The model catalog is ruoc's
-`GET /v1/models` (`Druzhok.Ruoc.models/0`, default `ruoc-flash`).
+`GET /v1/models` (`Druzhok.Ruoc.models/0`, default `ruoc-deepseek-flash` for new bots since 2026-11-08; `ruoc-flash` is GLM).
 
 Bot panel (spec `docs/superpowers/specs/2026-10-24-bot-panel-design.md`): with `PHX_HOST` set, «Кабинет» opens
 druzhok's own Mini App, `https://<PHX_HOST>/app/?bot=<bot_id>` (source `apps/druzhok_web/assets/app`, built by

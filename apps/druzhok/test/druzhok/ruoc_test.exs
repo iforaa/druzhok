@@ -350,7 +350,7 @@ defmodule Druzhok.RuocTest do
     end
   end
 
-  test "default_model/0 is ruoc-flash", do: assert(Ruoc.default_model() == "ruoc-flash")
+  test "default_model/0 is ruoc-deepseek-flash", do: assert(Ruoc.default_model() == "ruoc-deepseek-flash")
 
   describe "check_invite/1" do
     test "asks the partner surface and returns the status as an atom", %{stub: stub} do
