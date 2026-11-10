@@ -140,6 +140,7 @@ defmodule Druzhok.Telegram.Addressed do
 
       %{"type" => "bot_command", "offset" => offset, "length" => length} ->
         case {username(instance), String.split(utf16_slice(text, offset, length), "@", parts: 2)} do
+          {nil, [_, target]} -> String.trim(target) != ""
           {name, [_, target]} when is_binary(name) -> String.downcase(String.trim(target)) == name
           _ -> false
         end
@@ -196,8 +197,9 @@ defmodule Druzhok.Telegram.Addressed do
 
   @doc """
   The bot's @username, lowercased, from `getMe`, cached per token for the
-  next hour. Never waits on Telegram: on a miss it starts the lookup
-  and answers `nil`, and every @mention then counts as addressed.
+  next hour. An expired name stays available while it refreshes in the
+  background. Without a cached name it answers `nil`, and every @mention
+  or inline command target then counts as addressed.
   """
   def username(instance) do
     case Map.get(instance, :telegram_token) do
@@ -209,14 +211,21 @@ defmodule Druzhok.Telegram.Addressed do
             if System.monotonic_time(:second) - fetched_at < 3600 do
               name
             else
-              start_lookup(key, token)
-              nil
+              start_lookup(key, token, {name, fetched_at})
+              name
             end
+
+          {name, fetched_at, tried_at} when is_binary(name) ->
+            if System.monotonic_time(:second) - tried_at > 60 do
+              start_lookup(key, token, {name, fetched_at})
+            end
+
+            name
 
           name when is_binary(name) ->
             # Entries written before the TTL was introduced have no timestamp.
-            start_lookup(key, token)
-            nil
+            start_lookup(key, token, {name, System.monotonic_time(:second) - 3600})
+            name
 
           tried_at ->
             if is_nil(tried_at) or System.monotonic_time(:second) - tried_at > 60 do
@@ -231,8 +240,16 @@ defmodule Druzhok.Telegram.Addressed do
     end
   end
 
-  defp start_lookup(key, token) do
-    :persistent_term.put(key, System.monotonic_time(:second))
+  defp start_lookup(key, token, cached \\ nil) do
+    now = System.monotonic_time(:second)
+
+    entry =
+      case cached do
+        {name, fetched_at} -> {name, fetched_at, now}
+        nil -> now
+      end
+
+    :persistent_term.put(key, entry)
     Task.start(fn -> fetch_username(key, token) end)
   end
 

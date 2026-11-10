@@ -260,7 +260,7 @@ defmodule Druzhok.Telegram.AddressedTest do
     :persistent_term.put(key, {"kot_vasabot", System.monotonic_time(:second) - 3599})
     assert Addressed.username(inst) == "kot_vasabot"
     :persistent_term.put(key, {"kot_vasabot", System.monotonic_time(:second) - 3600})
-    assert Addressed.username(inst) == nil
+    assert Addressed.username(inst) == "kot_vasabot"
     wait(fn -> Addressed.username(inst) == "new_bot" end)
 
     assert Addressed.wakes?(
@@ -278,6 +278,92 @@ defmodule Druzhok.Telegram.AddressedTest do
                "entities" => [%{"type" => "mention", "offset" => 0, "length" => 12}]
              })
            )
+  end
+
+  def delayed_username(_token) do
+    send(Application.fetch_env!(:druzhok, :addressed_lookup_owner), {:username_lookup, self()})
+
+    receive do
+      {:release, name} -> name
+    after
+      5_000 -> nil
+    end
+  end
+
+  defp delay_username_lookup do
+    previous = Application.fetch_env!(:druzhok, :telegram_username_fun)
+    Application.put_env(:druzhok, :telegram_username_fun, {__MODULE__, :delayed_username})
+    Application.put_env(:druzhok, :addressed_lookup_owner, self())
+
+    on_exit(fn ->
+      Application.put_env(:druzhok, :telegram_username_fun, previous)
+      Application.delete_env(:druzhok, :addressed_lookup_owner)
+    end)
+  end
+
+  defp inline_command(target) do
+    command = "/help@" <> target
+
+    group(%{
+      "text" => "Объясни " <> command,
+      "entities" => [
+        %{"type" => "bot_command", "offset" => 8, "length" => String.length(command)}
+      ]
+    })
+  end
+
+  test "inline targets wake without a cached username while first lookup runs", %{inst: inst} do
+    delay_username_lookup()
+    key = {Addressed, :crypto.hash(:sha256, inst.telegram_token)}
+    on_exit(fn -> :persistent_term.erase(key) end)
+    assert Addressed.wakes?(inst, inline_command("KOT_VASABOT"))
+    assert_receive {:username_lookup, lookup}
+    assert Addressed.username(inst) == nil
+    assert Addressed.wakes?(inst, inline_command("KOT_VASABOT"))
+
+    refute Addressed.wakes?(
+             inst,
+             group(%{
+               "text" => "Объясни /help",
+               "entities" => [%{"type" => "bot_command", "offset" => 8, "length" => 5}]
+             })
+           )
+
+    refute Addressed.wakes?(inst, group(%{"text" => "/help@KOT_VASABOT"}))
+    send(lookup, {:release, "Kot_VasaBot"})
+    wait(fn -> Addressed.username(inst) == "kot_vasabot" end)
+  end
+
+  test "expired username still addresses inline commands during refresh", %{inst: inst} do
+    learn(inst)
+    delay_username_lookup()
+    key = {Addressed, :crypto.hash(:sha256, inst.telegram_token)}
+    on_exit(fn -> :persistent_term.erase(key) end)
+    :persistent_term.put(key, {"kot_vasabot", System.monotonic_time(:second) - 3600})
+    assert Addressed.wakes?(inst, inline_command("KOT_VASABOT"))
+    assert_receive {:username_lookup, lookup}
+    assert Addressed.username(inst) == "kot_vasabot"
+    assert Addressed.wakes?(inst, inline_command("KOT_VASABOT"))
+    refute Addressed.wakes?(inst, inline_command("OTHER_BOT"))
+    send(lookup, {:release, "New_Bot"})
+    wait(fn -> Addressed.username(inst) == "new_bot" end)
+    assert Addressed.wakes?(inst, inline_command("NEW_BOT"))
+    refute Addressed.wakes?(inst, inline_command("KOT_VASABOT"))
+  end
+
+  test "failed background refresh keeps the cached username", %{inst: inst} do
+    learn(inst)
+    delay_username_lookup()
+    key = {Addressed, :crypto.hash(:sha256, inst.telegram_token)}
+    on_exit(fn -> :persistent_term.erase(key) end)
+    :persistent_term.put(key, {"kot_vasabot", System.monotonic_time(:second) - 3600})
+    assert Addressed.username(inst) == "kot_vasabot"
+    assert_receive {:username_lookup, lookup}
+    monitor = Process.monitor(lookup)
+    send(lookup, {:release, nil})
+    assert_receive {:DOWN, ^monitor, :process, ^lookup, _}
+    assert Addressed.username(inst) == "kot_vasabot"
+    assert Addressed.wakes?(inst, inline_command("KOT_VASABOT"))
   end
 
   test "group rate counting skips foreign-bot mentions and commands", %{inst: inst} do
