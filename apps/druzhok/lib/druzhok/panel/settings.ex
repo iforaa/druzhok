@@ -11,7 +11,7 @@ defmodule Druzhok.Panel.Settings do
 
   alias Druzhok.{BotSettings, Instance, Repo}
 
-  @fields ~w(language timezone mention_only image_gen_enabled image_gen_model website_hosting_enabled)
+  @fields ~w(language timezone mention_only trigger_name image_gen_enabled image_gen_model website_hosting_enabled)
   @languages ~w(ru en)
   @booleans ~w(mention_only image_gen_enabled website_hosting_enabled)
 
@@ -73,10 +73,22 @@ defmodule Druzhok.Panel.Settings do
   defp typed(changes) do
     Enum.reduce_while(changes, {:ok, %{}}, fn {key, value}, {:ok, acc} ->
       case value(key, value) do
-        {:ok, v} -> {:cont, {:ok, Map.put(acc, String.to_existing_atom(key), v)}}
-        :error -> {:halt, invalid("#{key}: #{inspect(value)} is not allowed")}
+        {:ok, v} ->
+          {:cont, {:ok, Map.put(acc, String.to_existing_atom(key), v)}}
+
+        :error ->
+          status = if key == "trigger_name", do: 422, else: 400
+          {:halt, {:error, status, "invalid_setting", "#{key}: #{inspect(value)} is not allowed"}}
       end
     end)
+  end
+
+  defp value("trigger_name", v) when is_binary(v) do
+    trimmed = String.trim(v)
+
+    if String.length(trimmed) <= 32 and not Regex.match?(~r/[\p{Cc}\p{Zl}\p{Zp}]/u, v),
+      do: {:ok, if(trimmed == "", do: nil, else: trimmed)},
+      else: :error
   end
 
   defp value("language", v) when v in @languages, do: {:ok, v}

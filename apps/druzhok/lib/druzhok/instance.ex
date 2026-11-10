@@ -114,6 +114,14 @@ defmodule Druzhok.Instance do
     "dk-#{name}-#{random}"
   end
 
+  @doc "The initial group trigger, when the display name fits the panel limit."
+  def trigger_from_display_name(name) when is_binary(name) do
+    trimmed = String.trim(name)
+    if trimmed != "" and String.length(trimmed) <= 32, do: trimmed
+  end
+
+  def trigger_from_display_name(_), do: nil
+
   def get_allowed_ids(instance) do
     case Map.get(instance, :allowed_telegram_ids) do
       nil -> []

@@ -118,6 +118,7 @@ defmodule Druzhok.BotManager do
       ruoc_account_id: opts[:ruoc_account_id],
       ruoc_api_key: opts[:ruoc_api_key],
       display_name: opts[:display_name],
+      trigger_name: Instance.trigger_from_display_name(opts[:display_name]),
       soul_preset: opts[:soul_preset],
       timezone: "Europe/Moscow",
       image_gen_enabled: true,

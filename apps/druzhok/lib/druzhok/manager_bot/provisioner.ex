@@ -10,7 +10,7 @@ defmodule Druzhok.ManagerBot.Provisioner do
 
   require Logger
 
-  alias Druzhok.{BotManager, Ruoc}
+  alias Druzhok.{BotManager, Instance, Ruoc}
   alias Druzhok.Telegram.API
 
   @doc """
@@ -65,6 +65,7 @@ defmodule Druzhok.ManagerBot.Provisioner do
       mention_only: true,
       allow_all_telegram_users: false,
       display_name: params[:display_name],
+      trigger_name: Instance.trigger_from_display_name(params[:display_name]),
       soul_preset: params[:soul_preset]
     }
 

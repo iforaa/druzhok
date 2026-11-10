@@ -5,7 +5,7 @@ defmodule Druzhok.Telegram.Addressed do
 
   Only a plain group message the bot would skip is not: hermes, with
   `TELEGRAM_REQUIRE_MENTION` on, answers a group message only when it
-  @mentions the bot, replies to it, carries a command, matches the trigger
+  @mentions the bot, replies to it, matches the trigger
   name, or comes from a free-response chat. Everything else (private chats,
   callbacks, membership changes, updates of a kind not listed here) wakes the
   bot. When in doubt this says yes: a needless wake costs a start, a missed
@@ -23,8 +23,12 @@ defmodule Druzhok.Telegram.Addressed do
   @doc "`true` when `update` (a decoded map) should wake `instance`."
   def wakes?(instance, update) do
     case group_message(update) do
-      nil -> true
-      msg -> not Map.get(instance, :mention_only, false) or addressed?(instance, msg)
+      nil ->
+        true
+
+      msg ->
+        not command?(msg) and not mentions_only_other_bots?(instance, msg) and
+          (not Map.get(instance, :mention_only, false) or addressed?(instance, msg))
     end
   end
 
@@ -39,7 +43,7 @@ defmodule Druzhok.Telegram.Addressed do
 
   defp addressed?(instance, msg) do
     free_response?(instance, msg) or reply_to_bot?(instance, msg) or
-      command?(msg) or mentions_bot?(instance, msg) or trigger?(instance, msg)
+      mentions_bot?(instance, msg) or trigger?(instance, msg)
   end
 
   defp free_response?(instance, %{"chat" => %{"id" => id}}),
@@ -59,7 +63,73 @@ defmodule Druzhok.Telegram.Addressed do
     end
   end
 
-  defp command?(msg), do: Enum.any?(entities(msg), &(&1["type"] == "bot_command"))
+  # MessageEvent.get_command(): remove leading attachment refs/whitespace,
+  # take the first slash token, drop @target, and reject file paths.
+  defp command?(msg) do
+    command_text =
+      text(msg)
+      |> String.trim_leading()
+      |> then(&Regex.replace(~r/^(?:@(?:image|file|url):[^\n]+\n?)+/i, &1, ""))
+      |> String.trim_leading()
+
+    case command_text do
+      "/" <> rest ->
+        command =
+          rest |> String.split(~r/\s/u, parts: 2) |> hd() |> String.split("@", parts: 2) |> hd()
+
+        command != "" and not String.contains?(command, "/")
+
+      _ ->
+        false
+    end
+  end
+
+  # Mirror Hermes's exclusive bot-mention veto, including its narrow fallback
+  # only when Telegram supplied no entities. Human handles never veto a name.
+  defp mentions_only_other_bots?(instance, msg) do
+    case username(instance) do
+      nil ->
+        false
+
+      own ->
+        handles =
+          for {source, source_entities} <- entity_sources(msg),
+              handle <- bot_handles(source, source_entities),
+              handle == own or Regex.match?(~r/^[a-z0-9_]{2,29}bot$/i, handle),
+              do: handle
+
+        handles != [] and own not in handles
+    end
+  end
+
+  defp entity_sources(msg),
+    do: [
+      {msg["text"] || "", msg["entities"] || []},
+      {msg["caption"] || "", msg["caption_entities"] || []}
+    ]
+
+  defp bot_handles(source, []) do
+    Regex.scan(~r/(?<![A-Za-z0-9_`\/])@([A-Za-z0-9_]{2,31})\b/iu, source, capture: :all_but_first)
+    |> List.flatten()
+    |> Enum.map(&String.downcase/1)
+  end
+
+  defp bot_handles(source, source_entities) do
+    Enum.flat_map(source_entities, fn
+      %{"type" => type, "offset" => offset, "length" => length}
+      when type in ["mention", "bot_command"] ->
+        span = source |> utf16_slice(offset, length) |> String.trim() |> String.downcase()
+
+        case {type, String.split(span, "@", parts: 2)} do
+          {"mention", _} -> [String.trim_leading(span, "@")]
+          {"bot_command", [_, target]} -> [String.trim(target)]
+          _ -> []
+        end
+
+      _ ->
+        []
+    end)
+  end
 
   defp mentions_bot?(instance, msg) do
     text = text(msg)
@@ -79,7 +149,7 @@ defmodule Druzhok.Telegram.Addressed do
     end)
   end
 
-  # Hermes compiles the same `\bname\b` pattern case-insensitively
+  # Hermes compiles the same Unicode lookaround pattern case-insensitively
   # (Runtime.Hermes.build_mention_patterns/1).
   defp trigger?(instance, msg) do
     case Map.get(instance, :trigger_name) do
@@ -120,7 +190,7 @@ defmodule Druzhok.Telegram.Addressed do
 
   @doc """
   The bot's @username, lowercased, from `getMe`, cached per token for the
-  life of the BEAM. Never waits on Telegram: on a miss it starts the lookup
+  next hour. Never waits on Telegram: on a miss it starts the lookup
   and answers `nil`, and every @mention then counts as addressed.
   """
   def username(instance) do
@@ -129,13 +199,22 @@ defmodule Druzhok.Telegram.Addressed do
         key = {__MODULE__, :crypto.hash(:sha256, token)}
 
         case :persistent_term.get(key, nil) do
+          {name, fetched_at} when is_binary(name) ->
+            if System.monotonic_time(:second) - fetched_at < 3600 do
+              name
+            else
+              start_lookup(key, token)
+              nil
+            end
+
           name when is_binary(name) ->
-            name
+            # Entries written before the TTL was introduced have no timestamp.
+            start_lookup(key, token)
+            nil
 
           tried_at ->
             if is_nil(tried_at) or System.monotonic_time(:second) - tried_at > 60 do
-              :persistent_term.put(key, System.monotonic_time(:second))
-              Task.start(fn -> fetch_username(key, token) end)
+              start_lookup(key, token)
             end
 
             nil
@@ -146,13 +225,21 @@ defmodule Druzhok.Telegram.Addressed do
     end
   end
 
+  defp start_lookup(key, token) do
+    :persistent_term.put(key, System.monotonic_time(:second))
+    Task.start(fn -> fetch_username(key, token) end)
+  end
+
   defp fetch_username(key, token) do
     {mod, fun} =
       Application.get_env(:druzhok, :telegram_username_fun, {__MODULE__, :get_me_username})
 
     case apply(mod, fun, [token]) do
-      name when is_binary(name) and name != "" -> :persistent_term.put(key, String.downcase(name))
-      _ -> :ok
+      name when is_binary(name) and name != "" ->
+        :persistent_term.put(key, {String.downcase(name), System.monotonic_time(:second)})
+
+      _ ->
+        :ok
     end
   end
 

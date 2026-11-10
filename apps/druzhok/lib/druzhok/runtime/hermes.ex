@@ -1138,9 +1138,8 @@ defmodule Druzhok.Runtime.Hermes do
         ""
 
       name ->
-        # One regex per name; word-boundary + case-insensitive (the re.IGNORECASE
-        # flag is applied by hermes when it compiles the pattern list).
-        Jason.encode!(["\\b#{Regex.escape(name)}\\b"])
+        # Hermes applies re.IGNORECASE; match the Unicode lookarounds in Addressed.
+        Jason.encode!(["(?<!\\w)#{Regex.escape(name)}(?!\\w)"])
     end
   end
 

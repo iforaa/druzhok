@@ -185,6 +185,7 @@ export interface SettingChanges {
   language?: string
   timezone?: string
   mention_only?: boolean
+  trigger_name?: string
   image_gen_enabled?: boolean
   image_gen_model?: string | null
   website_hosting_enabled?: boolean

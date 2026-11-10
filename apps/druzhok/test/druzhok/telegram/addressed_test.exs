@@ -53,13 +53,13 @@ defmodule Druzhok.Telegram.AddressedTest do
     assert Addressed.wakes?(%{inst | mention_only: false}, group(%{"text" => "привет"}))
   end
 
-  test "reply to the bot, command, trigger name and free-response chat wake", %{inst: inst} do
+  test "reply to the bot, trigger name and free-response chat wake", %{inst: inst} do
     [id, _] = String.split(inst.telegram_token, ":")
     bot = String.to_integer(id)
 
     assert Addressed.wakes?(inst, group(%{"reply_to_message" => %{"from" => %{"id" => bot}}}))
 
-    assert Addressed.wakes?(
+    refute Addressed.wakes?(
              inst,
              group(%{
                "text" => "/new",
@@ -111,5 +111,153 @@ defmodule Druzhok.Telegram.AddressedTest do
 
     assert Addressed.username(inst) == nil
     refute Addressed.wakes?(inst, group(%{"text" => "hi"}))
+  end
+
+  test "group command parsing matches Hermes, independent of mention mode", %{inst: inst} do
+    for bot <- [
+          inst,
+          %{inst | mention_only: false},
+          %{inst | allowed_telegram_chats: ~s(["-100"])}
+        ] do
+      for text <- [
+            "/help Вася",
+            "  /help Вася",
+            "/help@otherbot Вася",
+            "@image:/tmp/x.png\n\n/help Вася"
+          ] do
+        refute Addressed.wakes?(bot, group(%{"text" => text}))
+        refute Addressed.wakes?(bot, group(%{"caption" => text}))
+      end
+
+      for text <- ["/tmp/file Вася", " /tmp/file Вася", "/ Вася", "/@someone Вася"] do
+        assert Addressed.wakes?(bot, group(%{"text" => text}))
+      end
+    end
+
+    assert Addressed.wakes?(
+             inst,
+             group(%{
+               "text" => "Вася, объясни /help",
+               "entities" => [%{"type" => "bot_command", "offset" => 14, "length" => 5}]
+             })
+           )
+
+    assert Addressed.wakes?(inst, %{
+             "message" => %{"chat" => %{"type" => "private"}, "text" => "/help"}
+           })
+  end
+
+  test "exclusive foreign bot mentions veto names, replies and free-response", %{inst: inst} do
+    learn(inst)
+    [id, _] = String.split(inst.telegram_token, ":")
+    reply = %{"from" => %{"id" => String.to_integer(id)}}
+
+    foreign = %{
+      "text" => "Вася @otherbot",
+      "entities" => [%{"type" => "mention", "offset" => 5, "length" => 9}],
+      "reply_to_message" => reply
+    }
+
+    for bot <- [
+          inst,
+          %{inst | mention_only: false},
+          %{inst | allowed_telegram_chats: ~s(["-100"])}
+        ] do
+      refute Addressed.wakes?(bot, group(foreign))
+
+      refute Addressed.wakes?(
+               bot,
+               group(%{"caption" => foreign["text"], "caption_entities" => foreign["entities"]})
+             )
+
+      refute Addressed.wakes?(bot, group(%{"text" => "Вася @otherbot"}))
+    end
+
+    # Own mention opts in even when another bot was named.
+    assert Addressed.wakes?(
+             inst,
+             group(%{
+               "text" => "Вася @otherbot @KOT_VASABOT",
+               "entities" =>
+                 foreign["entities"] ++ [%{"type" => "mention", "offset" => 15, "length" => 12}]
+             })
+           )
+
+    # Human handles and code/URL entities are not foreign bot addresses.
+    assert Addressed.wakes?(inst, group(%{"text" => "Вася @someone"}))
+
+    assert Addressed.wakes?(
+             inst,
+             group(%{
+               "text" => "Вася @otherbot",
+               "entities" => [%{"type" => "code", "offset" => 5, "length" => 9}]
+             })
+           )
+
+    assert Addressed.wakes?(inst, group(%{"text" => "Вася /@otherbot"}))
+
+    refute Addressed.wakes?(
+             inst,
+             group(%{
+               "text" => "Вася /help@otherbot",
+               "entities" => [%{"type" => "bot_command", "offset" => 5, "length" => 14}]
+             })
+           )
+  end
+
+  test "successful username cache expires after one hour", %{inst: inst} do
+    learn(inst)
+    key = {Addressed, :crypto.hash(:sha256, inst.telegram_token)}
+    on_exit(fn -> :persistent_term.erase(key) end)
+    Application.put_env(:druzhok, :test_usernames, %{inst.telegram_token => "New_Bot"})
+    :persistent_term.put(key, {"kot_vasabot", System.monotonic_time(:second) - 3599})
+    assert Addressed.username(inst) == "kot_vasabot"
+    :persistent_term.put(key, {"kot_vasabot", System.monotonic_time(:second) - 3600})
+    assert Addressed.username(inst) == nil
+    wait(fn -> Addressed.username(inst) == "new_bot" end)
+
+    assert Addressed.wakes?(
+             inst,
+             group(%{
+               "text" => "@New_Bot",
+               "entities" => [%{"type" => "mention", "offset" => 0, "length" => 8}]
+             })
+           )
+
+    refute Addressed.wakes?(
+             inst,
+             group(%{
+               "text" => "@kot_vasabot",
+               "entities" => [%{"type" => "mention", "offset" => 0, "length" => 12}]
+             })
+           )
+  end
+
+  test "group rate counting skips foreign-bot mentions and commands", %{inst: inst} do
+    learn(inst)
+
+    row =
+      Druzhok.BotFixtures.relay_instance(
+        Map.take(inst, [:telegram_token, :trigger_name, :mention_only])
+      )
+
+    Druzhok.Repo.insert!(%Druzhok.GroupChats{
+      instance_id: row.id,
+      chat_id: -100,
+      status: "approved"
+    })
+
+    for {text, id} <-
+          Enum.with_index(["Вася @otherbot", " /help Вася", "/help@otherbot", "Вася, привет"], 1) do
+      assert :pass =
+               Druzhok.GroupChats.gate(row, id, group(%{"text" => text, "from" => %{"id" => 42}}))
+    end
+
+    assert %{rows: [[4]]} =
+             Ecto.Adapters.SQL.query!(
+               Druzhok.Repo,
+               "SELECT update_id FROM group_rate_events WHERE instance_id = ?",
+               [row.id]
+             )
   end
 end

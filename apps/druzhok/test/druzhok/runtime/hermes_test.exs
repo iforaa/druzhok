@@ -148,9 +148,37 @@ defmodule Druzhok.Runtime.HermesTest do
                "false"
     end
 
-    test "TELEGRAM_MENTION_PATTERNS wraps trigger_name in a word-bounded regex" do
-      env = Hermes.env_vars(Map.put(@instance, :trigger_name, "Вася"))
-      assert env["TELEGRAM_MENTION_PATTERNS"] == Jason.encode!(["\\bВася\\b"])
+    test "exported mention patterns agree with wake matching and Python re" do
+      for name <- ["Друг!", "C++", "Друг"] do
+        env = Hermes.env_vars(Map.put(@instance, :trigger_name, name))
+        assert [pattern] = Jason.decode!(env["TELEGRAM_MENTION_PATTERNS"])
+        assert pattern == "(?<!\\w)#{Regex.escape(name)}(?!\\w)"
+
+        for {text, expected} <- [
+              {"#{String.downcase(name)}, привет", true},
+              {"под#{name}", false},
+              {"#{name}у", false}
+            ] do
+          inst = Map.merge(@instance, %{mention_only: true, trigger_name: name})
+
+          update = %{
+            "message" => %{"chat" => %{"type" => "supergroup", "id" => -100}, "text" => text}
+          }
+
+          assert Druzhok.Telegram.Addressed.wakes?(inst, update) == expected
+          assert Regex.match?(Regex.compile!(pattern, "iu"), text) == expected
+
+          {result, 0} =
+            System.cmd("python3", [
+              "-c",
+              "import re,sys; print(bool(re.search(sys.argv[1], sys.argv[2], re.I)))",
+              pattern,
+              text
+            ])
+
+          assert String.trim(result) == if(expected, do: "True", else: "False")
+        end
+      end
     end
 
     test "TELEGRAM_MENTION_PATTERNS is empty when trigger_name is nil or blank" do

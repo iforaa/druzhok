@@ -4,6 +4,34 @@ defmodule Druzhok.BotManagerTest do
 
   alias Druzhok.BotManager
 
+  test "create persists a trimmed display name as the group trigger" do
+    Druzhok.BotFixtures.with_tmp_data_root()
+
+    for {display, expected} <- [
+          {" Друг! ", "Друг!"},
+          {String.duplicate("Я", 32), String.duplicate("Я", 32)},
+          {String.duplicate("Я", 33), nil},
+          {" ", nil},
+          {nil, nil}
+        ] do
+      name = "trigger#{System.unique_integer([:positive])}"
+      Druzhok.BotFixtures.cleanup_instance(name)
+
+      assert {:ok, _} =
+               BotManager.create(name, %{
+                 telegram_token: "1:test",
+                 ruoc_api_key: "test",
+                 display_name: display
+               })
+
+      row = Druzhok.Repo.get_by!(Druzhok.Instance, name: name)
+      expected_display = if is_binary(display) and String.trim(display) == "", do: nil, else: display
+      assert row.display_name == expected_display
+      assert row.trigger_name == expected
+      refute row.active
+    end
+  end
+
   describe "safe_to_wipe?/1" do
     setup do
       prev = System.get_env("DRUZHOK_DATA_ROOT")
