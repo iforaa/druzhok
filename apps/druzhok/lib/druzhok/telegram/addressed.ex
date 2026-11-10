@@ -138,6 +138,12 @@ defmodule Druzhok.Telegram.Addressed do
       %{"type" => "text_mention", "user" => %{"id" => id}} ->
         id == bot_id(instance)
 
+      %{"type" => "bot_command", "offset" => offset, "length" => length} ->
+        case {username(instance), String.split(utf16_slice(text, offset, length), "@", parts: 2)} do
+          {name, [_, target]} when is_binary(name) -> String.downcase(String.trim(target)) == name
+          _ -> false
+        end
+
       %{"type" => "mention", "offset" => offset, "length" => length} ->
         case username(instance) do
           nil -> true

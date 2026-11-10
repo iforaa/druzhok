@@ -41,13 +41,13 @@ passes nothing else to `BotSettings`.
 | `language` | `ru`, `en` (the create flow's set, `onboarding.ex:103-104`) | restart |
 | `timezone` | an IANA name that `Tz` (`config.exs:25`) knows, e.g. `Asia/Almaty`; `UTC` | restart |
 | `mention_only` | boolean: true «отвечает, когда зовут», false «отвечает на всё» | restart |
+| `trigger_name` | one string, trimmed, at most 32 graphemes, no newlines/control characters; empty string clears it to `null`; invalid values return `422 invalid_setting` | restart |
 | `image_gen_enabled` | boolean | restart |
 | `image_gen_model` | an `id` from `Ruoc.image_models/0`, or `null` for ruoc's default | live |
 | `website_hosting_enabled` | boolean | restart |
 
-Not writable: `model`, `sleep_enabled`, `memory_provider`, `group_shared_memory`, `trigger_name` (shown
-read-only as today), and `image_model`, the operator's **vision** model (`instance.ex:21`, a different field
-from `image_gen_model`), which the panel does not show and does not start showing. The allowlist is the six names above; a test sends every other
+Not writable: `model`, `sleep_enabled`, `memory_provider`, `group_shared_memory`, and `image_model`, the operator's **vision** model (`instance.ex:21`, a different field
+from `image_gen_model`), which the panel does not show and does not start showing. The allowlist is the seven names above; a test sends every other
 `BotSettings.fields/0` name and expects `400 unknown_setting`.
 
 The UI for timezone is a short list (Asia/Almaty, Europe/Moscow, Asia/Tashkent, Europe/Istanbul, Asia/Tbilisi,
@@ -202,7 +202,7 @@ applies only to panel-ready bots; the others keep today's superbot exactly.
 
 - Chat-model picker (needs a curated list with prices; later spec).
 - Memory: viewing is in the panel; correcting and forgetting facts is a later spec.
-- Sleep, memory engine, trigger name, allowed chats, vision model: operator-only.
+- Sleep, memory engine, allowed chats, vision model: operator-only.
 - A panel entry point from the superbot (needs a separate auth path).
 
 ## Tests

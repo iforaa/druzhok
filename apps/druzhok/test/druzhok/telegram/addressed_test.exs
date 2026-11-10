@@ -92,8 +92,13 @@ defmodule Druzhok.Telegram.AddressedTest do
       })
     end
 
-    # Name not known yet: any @mention counts.
+    # Pin the cache in its unknown/in-flight state so the asynchronous lookup
+    # cannot finish between the foreign-bot veto and the own-mention check.
+    key = {Addressed, :crypto.hash(:sha256, inst.telegram_token)}
+    on_exit(fn -> :persistent_term.erase(key) end)
+    :persistent_term.put(key, System.monotonic_time(:second))
     assert Addressed.wakes?(inst, msg.("@someone hi", 0, 8))
+    :persistent_term.erase(key)
 
     learn(inst)
     refute Addressed.wakes?(inst, msg.("@someone hi", 0, 8))
@@ -145,6 +150,48 @@ defmodule Druzhok.Telegram.AddressedTest do
     assert Addressed.wakes?(inst, %{
              "message" => %{"chat" => %{"type" => "private"}, "text" => "/help"}
            })
+  end
+
+  test "an inline command targeting this bot wakes and consumes group rate quota", %{inst: inst} do
+    learn(inst)
+    own = %{"type" => "bot_command", "offset" => 8, "length" => 17}
+    update = group(%{"text" => "Объясни /help@KOT_VASABOT", "entities" => [own]})
+    assert Addressed.wakes?(inst, update)
+
+    assert Addressed.wakes?(
+             inst,
+             group(%{"caption" => "Объясни /help@KOT_VASABOT", "caption_entities" => [own]})
+           )
+
+    refute Addressed.wakes?(
+             inst,
+             group(%{"text" => "/help@KOT_VASABOT", "entities" => [%{own | "offset" => 0}]})
+           )
+
+    refute Addressed.wakes?(
+             inst,
+             group(%{
+               "text" => "Объясни /help@OTHER_BOT",
+               "entities" => [%{own | "length" => 15}]
+             })
+           )
+
+    row = Druzhok.BotFixtures.relay_instance(Map.take(inst, [:telegram_token, :mention_only]))
+
+    Druzhok.Repo.insert!(%Druzhok.GroupChats{
+      instance_id: row.id,
+      chat_id: -100,
+      status: "approved"
+    })
+
+    assert :pass = Druzhok.GroupChats.gate(row, 1, update)
+
+    assert %{rows: [[1]]} =
+             Ecto.Adapters.SQL.query!(
+               Druzhok.Repo,
+               "SELECT update_id FROM group_rate_events WHERE instance_id = ?",
+               [row.id]
+             )
   end
 
   test "exclusive foreign bot mentions veto names, replies and free-response", %{inst: inst} do
