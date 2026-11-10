@@ -8,10 +8,10 @@ import type { Go } from "./nav"
 // Настройки: the bot's settings, who may talk to it, and deleting the bot.
 // Language, time zone, groups, pictures and the site are the owner's to change
 // (panel controls spec); a choice saves at once, and the bot picks it up when
-// it is not answering. Only the two longer lists have a screen of their own. A
+// it is not answering. Lists and the group name have a screen of their own. A
 // delete asks once in a Telegram dialog and then deletes.
 
-type Screen = "main" | "timezone" | "images" | "deleted"
+type Screen = "main" | "trigger" | "timezone" | "images" | "deleted"
 
 const languages: [string, string][] = [
   ["ru", "русский"],
@@ -118,6 +118,8 @@ export default function Settings({ bot, onBot, go }: { bot: Bot; onBot: (b: Bot)
   }, [screen])
 
   switch (screen) {
+    case "trigger":
+      return <TriggerScreen bot={bot} settings={settings} go={go} />
     case "timezone":
       return <TimezoneScreen bot={bot} settings={settings} go={go} />
     case "images":
@@ -192,6 +194,7 @@ export default function Settings({ bot, onBot, go }: { bot: Bot; onBot: (b: Bot)
           busy={settings.busy}
           onPick={(v) => settings.save({ mention_only: v === "mention" })}
         />
+        <Row icon="group" tone="purple" title="Имя в группах" sub={name || "не задано"} onClick={() => open("trigger")} />
         <Row icon="clock" tone="teal" title="Часовой пояс" sub={zoneName(s.timezone)} onClick={() => open("timezone")} />
         <Row icon="image" tone="orange" title="Картинки" sub={s.image_gen_enabled ? "рисует" : "выключены"} onClick={() => open("images")} />
         <Toggle
@@ -374,6 +377,32 @@ function TimezoneScreen({ bot, settings, go }: { bot: Bot; settings: Settings; g
             spellCheck={false}
           />
           <button className="secondary secondary--small" disabled={settings.busy || !other.trim()} onClick={() => pick(other.trim())}>
+            Сохранить
+          </button>
+        </div>
+      </label>
+      <ApplyNote bot={bot} settings={settings} go={go} />
+    </>
+  )
+}
+
+function TriggerScreen({ bot, settings, go }: { bot: Bot; settings: Settings; go: Go }) {
+  const [name, setName] = useState(bot.settings.trigger_name ?? "")
+  const changed = name.trim() !== (bot.settings.trigger_name ?? "")
+  return (
+    <>
+      <h1 className="screen-title">Имя в группах</h1>
+      <label className="field">
+        Имя
+        <div className="field-row">
+          <input
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            placeholder="Бот ответит, если в сообщении есть это имя"
+            maxLength={32}
+            autoComplete="off"
+          />
+          <button className="secondary secondary--small" disabled={settings.busy || !changed} onClick={() => settings.save({ trigger_name: name })}>
             Сохранить
           </button>
         </div>

@@ -37,6 +37,46 @@ defmodule Druzhok.Panel.SettingsTest do
              })
   end
 
+  test "group trigger is trimmed, bounded, clearable and saved for a quiet restart" do
+    inst = relay_instance(%{active: true, trigger_name: "Вася"})
+
+    assert {:ok, %{trigger_name: "Друг!"}} =
+             Settings.validate(inst, %{"trigger_name" => " Друг! "})
+
+    assert {:ok, %{trigger_name: nil}} = Settings.validate(inst, %{"trigger_name" => "  "})
+    assert {:ok, %{}} = Settings.validate(inst, %{"trigger_name" => " Вася "})
+    assert {:ok, _} = Settings.validate(inst, %{"trigger_name" => String.duplicate("Я", 32)})
+
+    for value <- [
+          nil,
+          12,
+          false,
+          [],
+          String.duplicate("Я", 33),
+          "Друг\n",
+          "\tДруг",
+          "Дру\0г",
+          "Дру\u007fг",
+          "Дру\u2028г"
+        ] do
+      assert {:error, 422, "invalid_setting", _} =
+               Settings.save(inst, %{"trigger_name" => value, "language" => "en"})
+
+      assert reload(inst).language == inst.language
+      assert reload(inst).settings_seq == 0
+    end
+
+    assert {:ok, updated} = Settings.save(inst, %{"trigger_name" => " Друг! "})
+    assert updated.trigger_name == "Друг!"
+    assert updated.settings_seq == 1
+    assert updated.settings_saved_at
+    assert updated.start_seq == inst.start_seq
+    assert Settings.apply_state(updated) == "waiting"
+    assert {:ok, cleared} = Settings.save(updated, %{"trigger_name" => ""})
+    assert cleared.trigger_name == nil
+    assert cleared.settings_seq == 2
+  end
+
   test "refused values" do
     inst = relay_instance()
 

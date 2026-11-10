@@ -38,6 +38,20 @@ defmodule Druzhok.ManagerBot.ProvisionerTest do
       assert opts[:model] == "ruoc-deepseek-flash"
     end
 
+    test "seeds one trimmed group trigger within the panel limit" do
+      for {display, expected} <- [
+            {" Друг! ", "Друг!"},
+            {String.duplicate("Я", 32), String.duplicate("Я", 32)},
+            {String.duplicate("Я", 33), nil},
+            {"  ", nil},
+            {nil, nil}
+          ] do
+        opts = Provisioner.build_create_opts(%{display_name: display})
+        assert opts.display_name == display
+        assert opts.trigger_name == expected
+      end
+    end
+
     test "carries the character picked, nil when skipped" do
       assert Provisioner.build_create_opts(%{token: "1", owner_id: 1, soul_preset: "humor"})[:soul_preset] == "humor"
       assert Provisioner.build_create_opts(%{token: "1", owner_id: 1})[:soul_preset] == nil
