@@ -443,18 +443,13 @@ defmodule Druzhok.ManagerBot do
             put_in(state, [:sessions, user_id], session)
 
           {_status, session, {:keyboard, text, rows}} ->
-            result =
-              if session.step == :language do
-                # A reply keyboard is removed by a new message; adding inline
-                # buttons to that same message keeps the language prompt single.
-                with {:ok, %{"message_id" => mid} = message} <-
-                       API.send_message(state.token, chat_id, text, %{reply_markup: %{remove_keyboard: true}}) do
-                  edit_inline(state.token, chat_id, mid, text, rows)
-                  {:ok, message}
-                end
-              else
-                send_inline(state.token, chat_id, text, rows)
-              end
+            if session.step == :language do
+              # Telegram cannot edit a ReplyKeyboardRemove message. Acknowledge
+              # the chosen name separately, then send new inline language buttons.
+              API.send_message(state.token, chat_id, session.name,
+                %{reply_markup: %{remove_keyboard: true}})
+            end
+            result = send_inline(state.token, chat_id, text, rows)
             case result do
               {:ok, %{"message_id" => mid}} ->
                 session = %{session | message_id: mid}
@@ -464,16 +459,24 @@ defmodule Druzhok.ManagerBot do
             end
 
           {_status, session, {:edit, text, rows}} ->
-            # Edit existing inline message, or send a fresh one if we lost it
-            session =
+            result =
               if session.message_id do
-                edit_inline(state.token, chat_id, session.message_id, text, rows)
-                session
-              else
-                case send_inline(state.token, chat_id, text, rows) do
-                  {:ok, %{"message_id" => mid}} -> %{session | message_id: mid}
-                  _ -> session
+                case edit_inline(state.token, chat_id, session.message_id, text, rows) do
+                  {:ok, _} -> {:ok, %{"message_id" => session.message_id}}
+                  {:error, _} ->
+                    Logger.warning("ManagerBot: inline edit failed; sending fresh buttons")
+                    send_inline(state.token, chat_id, text, rows)
                 end
+              else
+                send_inline(state.token, chat_id, text, rows)
+              end
+
+            session =
+              case result do
+                {:ok, %{"message_id" => mid}} -> %{session | message_id: mid}
+                _ ->
+                  Logger.warning("ManagerBot: inline buttons not sent")
+                  %{session | message_id: nil}
               end
 
             put_in(state, [:sessions, user_id], session)

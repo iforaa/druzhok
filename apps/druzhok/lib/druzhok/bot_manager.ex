@@ -367,7 +367,7 @@ defmodule Druzhok.BotManager do
   defp use_webhook(instance) do
     if Druzhok.Telegram.Webhook.public_host?() do
       case Druzhok.Telegram.Webhook.set_mode(instance.name, "webhook") do
-        {:ok, _, _} -> :ok
+        {:ok, inst, _} -> Druzhok.Telegram.Webhook.register_created(inst)
         error -> Logger.warning("#{instance.name} stays on polling: #{inspect(error)}")
       end
     end

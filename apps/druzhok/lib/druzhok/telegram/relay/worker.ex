@@ -84,6 +84,7 @@ defmodule Druzhok.Telegram.Relay.Worker do
 
   def handle_info({:notice_sent, sender, chat, ref, result}, state) do
     state = refresh_notices(state)
+
     case {state.notices[chat], result} do
       {%{ref: ^ref} = notice, {:ok, %{"message_id" => mid}}} ->
         send(sender, {:notice_kept, ref})
@@ -108,14 +109,22 @@ defmodule Druzhok.Telegram.Relay.Worker do
     waiting =
       if inst && inst.active && !inst.delete_requested && inst.telegram_mode == "webhook" do
         rows
-        |> Enum.filter(& &1.wakes)
         |> Enum.reduce(%{}, fn row, chats ->
           case Druzhok.Lifecycle.Typing.chat_id(row.payload) do
             nil ->
               chats
 
             chat ->
-              Map.update(chats, chat, row.received_at, &Enum.min([&1, row.received_at], DateTime))
+              Map.update(chats, chat, %{at: row.received_at, wakes: row.wakes}, fn previous ->
+                at =
+                  cond do
+                    previous.wakes and not row.wakes -> previous.at
+                    row.wakes and not previous.wakes -> row.received_at
+                    true -> Enum.min([previous.at, row.received_at], DateTime)
+                  end
+
+                %{at: at, wakes: previous.wakes or row.wakes}
+              end)
           end
         end)
       else
@@ -125,13 +134,13 @@ defmodule Druzhok.Telegram.Relay.Worker do
     state =
       Enum.reduce(Map.keys(state.notices) -- Map.keys(waiting), state, &clear_notice(&2, &1))
 
-    Enum.reduce(waiting, state, fn {chat, at}, state ->
+    Enum.reduce(waiting, state, fn {chat, %{at: at, wakes: wakes}}, state ->
       age = DateTime.diff(DateTime.utc_now(), at, :millisecond)
       after_ms = opt(:notice_after_ms)
       edit_ms = opt(:notice_edit_after_ms)
 
       case state.notices[chat] do
-        nil when age >= after_ms ->
+        nil when wakes and age >= after_ms ->
           ref = make_ref()
           worker = self()
           token = inst.telegram_token
@@ -181,6 +190,20 @@ defmodule Druzhok.Telegram.Relay.Worker do
   defp preparing("ru", true), do: "⏳ Ещё немного…"
   defp preparing(_, false), do: "⏳ Getting ready, please wait…"
   defp preparing(_, true), do: "⏳ Almost there…"
+
+  defp clear_notice_if_drained(state, nil), do: state
+
+  defp clear_notice_if_drained(state, chat) do
+    pending =
+      from(u in Inbox,
+        where: u.instance_id == ^state.id and is_nil(u.acked_at),
+        select: u.payload
+      )
+
+    if Repo.all(pending) |> Enum.any?(&(Druzhok.Lifecycle.Typing.chat_id(&1) == chat)),
+      do: state,
+      else: clear_notice(state, chat)
+  end
 
   defp clear_notice(state, nil), do: state
 
@@ -303,7 +326,7 @@ defmodule Druzhok.Telegram.Relay.Worker do
        when status in 200..299 do
     Inbox.ack(row)
     Druzhok.Cabinet.delivered(instance.id, row.payload)
-    state = clear_notice(state, Druzhok.Lifecycle.Typing.chat_id(row.payload))
+    state = clear_notice_if_drained(state, Druzhok.Lifecycle.Typing.chat_id(row.payload))
     if state.failing, do: Logger.info("[relay] #{instance.name}: delivering again")
     schedule(%{state | failing: false, backoff: opt(:backoff_min_ms)}, 0)
   end
@@ -327,7 +350,7 @@ defmodule Druzhok.Telegram.Relay.Worker do
     )
 
     Inbox.reject(row, "HTTP #{status}")
-    state = clear_notice(state, Druzhok.Lifecycle.Typing.chat_id(row.payload))
+    state = clear_notice_if_drained(state, Druzhok.Lifecycle.Typing.chat_id(row.payload))
     schedule(state, 0)
   end
 

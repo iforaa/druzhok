@@ -250,7 +250,7 @@ defmodule Druzhok.ManagerBot.Onboarding do
         label -> "\nХарактер: #{label}"
       end
 
-    text = "📋 *#{escape_markdown(session.name)}*\nЯзык: #{lang_label}#{character}\n\nTelegram откроет окно — нажмите там «Создать», имя можно не менять.\nНажми кнопку чтобы создать:"
+    text = "📋 #{escape_markdown(session.name)}\nЯзык: #{lang_label}#{character}\n\nTelegram откроет окно — нажмите там «Создать», имя можно не менять.\nНажми кнопку чтобы создать:"
     keyboard = [[%{text: "🤖 Создать «#{session.name}»", url: link}]]
 
     {text, keyboard, link}

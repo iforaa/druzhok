@@ -12,6 +12,13 @@ defmodule Druzhok.ManagerBot.OnboardingTest do
     assert button.text == "🤖 Создать «A_*[x]`»"
   end
 
+  test "A_B is escaped outside a bold entity in legacy Markdown" do
+    session = %{Onboarding.new_session() | name: "A_B", language: "ru", username: "test_bot"}
+    {text, _, _} = Onboarding.confirm_message(session, "manager")
+    assert String.starts_with?(text, ~S(📋 A\_B) <> "\n")
+    refute text =~ "*A"
+  end
+
   describe "new_session/0" do
     test "starts at :idle step" do
       session = Onboarding.new_session()

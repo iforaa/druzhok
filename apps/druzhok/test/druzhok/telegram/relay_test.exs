@@ -80,10 +80,47 @@ defmodule Druzhok.Telegram.RelayTest do
     assert eventually(fn -> Enum.any?(Agent.get(calls, & &1), &match?({"deleteMessage", %{"message_id" => 99}}, &1)) end)
   end
 
+  defp assert_partial_drain_keeps_notice(inst, bypass, seen, first_status) do
+    {_tg, calls} = notice_stub(inst)
+    ready = start_supervised!({Agent, fn -> false end}, id: :second_ready)
+    ptb(bypass, inst, seen, fn id ->
+      if id == 1, do: first_status, else: if(Agent.get(ready, & &1), do: 200, else: 503)
+    end)
+    Webhook.pause(inst.id, :stopping)
+    private_update(inst, 1, 123)
+    private_update(inst, 2, 123)
+    Relay.notify(inst.id)
+    assert eventually(fn -> Enum.count(Agent.get(calls, & &1), &(elem(&1, 0) == "sendMessage")) == 1 end)
+    Webhook.resume(inst.id)
+    assert eventually(fn ->
+      not is_nil(Repo.get_by!(Inbox, instance_id: inst.id, update_id: 1).acked_at) and
+        Repo.get_by!(Inbox, instance_id: inst.id, update_id: 2).attempts >= 2
+    end)
+    # Keep update 2 held across many notice polls after update 1 was handled.
+    Process.sleep(150)
+    assert Enum.count(Agent.get(calls, & &1), &(elem(&1, 0) == "sendMessage")) == 1
+    refute Enum.any?(Agent.get(calls, & &1), &(elem(&1, 0) == "deleteMessage"))
+    Agent.update(ready, fn _ -> true end)
+    assert eventually(fn -> Inbox.pending_count(inst.id) == 0 end)
+    assert eventually(fn -> Enum.count(Agent.get(calls, & &1), &(elem(&1, 0) == "deleteMessage")) == 1 end)
+  end
+
+  test "one notice survives a 2xx while the next chat update keeps returning 503", %{inst: inst, bypass: bypass, seen: seen} do
+    assert_partial_drain_keeps_notice(inst, bypass, seen, 200)
+  end
+
+  test "one notice survives a rejected row while the next chat update keeps returning 503", %{inst: inst, bypass: bypass, seen: seen} do
+    assert_partial_drain_keeps_notice(inst, bypass, seen, 400)
+  end
+
   test "waits three seconds from storage and falls back to English", %{inst: inst} do
     {_tg, calls} = notice_stub(inst)
     inst |> Repo.reload!() |> Instance.changeset(%{language: "unknown"}) |> Repo.update!()
     Webhook.pause(inst.id, :stopping)
+    # An older non-waking row keeps an existing notice alive, but cannot
+    # make a fresh waking update bypass the three-second delay.
+    older = private_update(inst, 2, 123)
+    older |> Ecto.Changeset.change(wakes: false) |> Repo.update!()
     row = private_update(inst, 1, 123)
     row |> Ecto.Changeset.change(received_at: DateTime.utc_now()) |> Repo.update!()
     Relay.notify(inst.id)

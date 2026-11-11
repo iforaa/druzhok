@@ -191,14 +191,14 @@ defmodule Druzhok.ManagerBotTest do
     refute Map.has_key?(params, "reply_markup")
   end
 
-  test "create flow: name → language → character → confirm with a t.me/newbot link", %{stub: stub} do
+  test "create flow: name → language → character → confirm with a t.me/newbot link", %{stub: stub, pid: pid} do
     TelegramStub.push_update(stub, message("🤖 Создать бота"))
     await_name_prompt(stub)
 
     TelegramStub.push_update(stub, message("Вася"))
-    prompt = TelegramStub.await_call(stub, "sendMessage", &(&1["text"] == "Язык:"))
-    assert prompt["reply_markup"] == %{"remove_keyboard" => true}
-    lang = TelegramStub.await_call(stub, "editMessageText", &(&1["text"] == "Язык:"))
+    removal = TelegramStub.await_call(stub, "sendMessage", &(&1["text"] == "Вася"))
+    assert removal["reply_markup"] == %{"remove_keyboard" => true}
+    lang = TelegramStub.await_call(stub, "sendMessage", &(&1["text"] == "Язык:"))
 
     assert Jason.decode!(lang["reply_markup"])["inline_keyboard"] == [
              [
@@ -207,10 +207,12 @@ defmodule Druzhok.ManagerBotTest do
              ]
            ]
 
-    TelegramStub.push_update(stub, callback("lang:ru"))
+    assert eventually(fn -> :sys.get_state(pid).sessions[@owner].message_id != nil end)
+    mid = :sys.get_state(pid).sessions[@owner].message_id
+    TelegramStub.push_update(stub, callback("lang:ru", @owner, mid))
     TelegramStub.await_call(stub, "answerCallbackQuery", fn _ -> true end)
     character = TelegramStub.await_call(stub, "editMessageText", &(&1["text"] == "Какой характер?"))
-    assert character["message_id"] == 55
+    assert character["message_id"] == mid
 
     assert Jason.decode!(character["reply_markup"])["inline_keyboard"] == [
              [
@@ -235,6 +237,16 @@ defmodule Druzhok.ManagerBotTest do
     # Stray text at the confirm step re-sends the confirm card.
     TelegramStub.push_update(stub, message("hm?"))
     assert eventually(fn -> Enum.count(TelegramStub.calls(stub, "editMessageText"), &(&1["text"] =~ "Вася")) == 2 end)
+  end
+
+  test "an inline edit rejection sends fresh buttons instead of losing the next step", %{stub: stub} do
+    start_create_flow(stub, "Ася")
+    Bypass.stub(stub.bypass, "POST", "/bot#{@token}/editMessageText", fn conn ->
+      Plug.Conn.resp(conn, 400, ~s({"ok":false,"description":"message can't be edited"}))
+    end)
+    TelegramStub.push_update(stub, callback("lang:ru"))
+    params = TelegramStub.await_call(stub, "sendMessage", &(&1["text"] == "Какой характер?"))
+    assert Jason.decode!(params["reply_markup"])["inline_keyboard"] != []
   end
 
   test "empty name re-prompts; stray text at the language step re-shows the keyboard", %{stub: stub} do
@@ -753,7 +765,7 @@ defmodule Druzhok.ManagerBotTest do
       %{ruoc: Druzhok.RuocStub.start()}
     end
 
-    test "a stranger pressing create is asked for a code, and a good code starts naming", %{stub: stub, ruoc: ruoc} do
+    test "a stranger pressing create is asked for a code, and a good code starts naming", %{stub: stub, ruoc: ruoc, pid: pid} do
       TelegramStub.push_update(stub, message("🤖 Создать бота", @stranger))
       assert TelegramStub.await_call(stub, "sendMessage", &(&1["text"] == "Создание по приглашению. Введи код или открой ссылку от друга."))
 
@@ -761,6 +773,15 @@ defmodule Druzhok.ManagerBotTest do
       assert await_name_prompt(stub, @stranger)
       [call] = Druzhok.RuocStub.calls(ruoc, "GET /partner/invites/check")
       assert call.path == "/partner/invites/check"
+      TelegramStub.push_update(stub, message("Ася", @stranger))
+      removal = TelegramStub.await_call(stub, "sendMessage", &(&1["text"] == "Ася"))
+      assert removal["reply_markup"] == %{"remove_keyboard" => true}
+      lang = TelegramStub.await_call(stub, "sendMessage", &(&1["text"] == "Язык:"))
+      assert Jason.decode!(lang["reply_markup"])["inline_keyboard"] != []
+      assert eventually(fn -> :sys.get_state(pid).sessions[@stranger].message_id != nil end)
+      mid = :sys.get_state(pid).sessions[@stranger].message_id
+      TelegramStub.push_update(stub, callback("lang:ru", @stranger, mid))
+      TelegramStub.await_call(stub, "editMessageText", &(&1["text"] == "Какой характер?" and &1["message_id"] == mid))
     end
 
     test "pressing create again mid-naming asks for the code, never drops it", %{stub: stub, ruoc: ruoc} do

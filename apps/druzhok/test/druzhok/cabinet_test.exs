@@ -44,7 +44,7 @@ defmodule Druzhok.CabinetTest do
         language: "ru"
       })
 
-    %{stub: stub, seen: seen, menu_ok: menu_ok, inst: inst}
+    %{stub: stub, seen: seen, menu_ok: menu_ok, inst: inst, tg: tg}
   end
 
   defp telegram(seen, method),
@@ -70,6 +70,21 @@ defmodule Druzhok.CabinetTest do
     Cabinet.delivered(inst.id, payload.(456, 456, "private", "/start"))
     :sys.get_state(Cabinet)
     assert length(telegram(seen, "sendMessage")) == 2
+  end
+
+  test "a rejected owner start notice is logged", %{inst: inst, tg: tg} do
+    start_supervised!(Cabinet)
+    inst |> Ecto.Changeset.change(%{cabinet_url: @url}) |> Repo.update!()
+    Bypass.stub(tg, "POST", "/:bot/:method", fn conn ->
+      Plug.Conn.resp(conn, 400, ~s({"ok":false,"description":"chat not found"}))
+    end)
+    log = ExUnit.CaptureLog.capture_log(fn ->
+      Cabinet.delivered(inst.id, Jason.encode!(%{message: %{from: %{id: 456},
+        chat: %{id: 456, type: "private"}, text: "/start"}}))
+      :sys.get_state(Cabinet)
+    end)
+    assert log =~ "start notice not sent"
+    assert log =~ "chat not found"
   end
 
   describe "group notes" do

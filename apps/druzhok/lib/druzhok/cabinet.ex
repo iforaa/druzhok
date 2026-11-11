@@ -187,8 +187,12 @@ defmodule Druzhok.Cabinet do
           "ru" => {"Настройки, тариф и память бота — в Кабинете.", "Открыть кабинет"},
           "en" => {"Settings, plan and memory — in the Cabinet.", "Open Cabinet"}
         }, inst)
-        API.send_message(inst.telegram_token, owner, line,
-          %{reply_markup: %{inline_keyboard: [[%{text: label, web_app: %{url: url}}]]}})
+        case API.send_message(inst.telegram_token, owner, line,
+               %{reply_markup: %{inline_keyboard: [[%{text: label, web_app: %{url: url}}]]}}) do
+          {:ok, _} -> :ok
+          {:error, reason} ->
+            Logger.warning("[cabinet] #{inst.name}: start notice not sent (#{short(reason)})")
+        end
       end
     end)
     {:noreply, state}

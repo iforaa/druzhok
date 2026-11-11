@@ -26,14 +26,27 @@ defmodule Druzhok.Telegram.WebhookTest do
       refute Map.has_key?(params, "drop_pending_updates")
       Plug.Conn.resp(conn, 200, ~s({"ok":true,"result":true}))
     end)
-    assert {:ok, _, 0} = Webhook.set_mode(inst.name, "webhook")
+    assert {:ok, inst, 0} = Webhook.set_mode(inst.name, "webhook")
+    assert :ok = Webhook.register_created(inst)
   end
 
   test "Telegram registration failure keeps the created mode and secret", %{tg: tg} do
     inst = relay_instance(%{telegram_token: "TOK"})
     Bypass.expect_once(tg, "POST", "/:bot/setWebhook", fn conn -> Plug.Conn.resp(conn, 500, "down") end)
     assert {:ok, %{telegram_mode: "webhook", telegram_webhook_secret: secret}, 0} = Webhook.set_mode(inst.name, "webhook")
+    assert :ok = Webhook.register_created(Repo.get!(Instance, inst.id))
     assert is_binary(secret)
+  end
+
+  test "set_mode on an existing polling bot does not register before restart", %{tg: tg} do
+    parent = self()
+    Bypass.stub(tg, "POST", "/:bot/setWebhook", fn conn ->
+      send(parent, :registered)
+      Plug.Conn.resp(conn, 200, ~s({"ok":true,"result":true}))
+    end)
+    inst = relay_instance(%{telegram_token: "TOK", telegram_mode: "polling"})
+    assert {:ok, %{telegram_mode: "webhook"}, 0} = Webhook.set_mode(inst.name, "webhook")
+    refute_received :registered
   end
 
   test "port is 20000 + id inside the isolated range, nil outside it" do

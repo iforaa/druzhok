@@ -24,7 +24,7 @@ defmodule Druzhok.TelegramStub do
     # own verification (registered inside Bypass.open/0) and after the test
     # has stopped the bot it started.
     {:ok, calls} = Agent.start(fn -> [] end)
-    {:ok, updates} = Agent.start(fn -> %{queue: [], managed_token: "999MANAGED"} end)
+    {:ok, updates} = Agent.start(fn -> %{queue: [], managed_token: "999MANAGED", noneditable: MapSet.new()} end)
 
     prev = Application.get_env(:druzhok, :telegram_api_base)
     Application.put_env(:druzhok, :telegram_api_base, base)
@@ -52,12 +52,29 @@ defmodule Druzhok.TelegramStub do
       reply(conn, batch)
     end)
 
-    for method <- ["sendMessage", "editMessageText"] do
-      Bypass.stub(bypass, "POST", "/bot#{token}/#{method}", fn conn ->
-        record(stub, method, conn)
-        |> reply(%{"message_id" => System.unique_integer([:positive]), "chat" => %{"id" => 1}})
-      end)
-    end
+    Bypass.stub(bypass, "POST", "/bot#{token}/sendMessage", fn conn ->
+      {:ok, raw, conn} = Plug.Conn.read_body(conn)
+      params = Jason.decode!(raw)
+      Agent.update(calls, &[%{method: "sendMessage", params: params} | &1])
+      mid = System.unique_integer([:positive])
+      markup = params["reply_markup"]
+      markup = if is_binary(markup), do: Jason.decode!(markup), else: markup
+      if is_map(markup) and (markup["remove_keyboard"] || markup["keyboard"]) do
+        Agent.update(updates, &%{&1 | noneditable: MapSet.put(&1.noneditable, mid)})
+      end
+      reply(conn, %{"message_id" => mid, "chat" => %{"id" => 1}})
+    end)
+
+    Bypass.stub(bypass, "POST", "/bot#{token}/editMessageText", fn conn ->
+      {:ok, raw, conn} = Plug.Conn.read_body(conn)
+      params = Jason.decode!(raw)
+      Agent.update(calls, &[%{method: "editMessageText", params: params} | &1])
+      if Agent.get(updates, &MapSet.member?(&1.noneditable, params["message_id"])) do
+        Plug.Conn.resp(conn, 400, ~s({"ok":false,"description":"message can't be edited"}))
+      else
+        reply(conn, %{"message_id" => params["message_id"], "chat" => %{"id" => 1}})
+      end
+    end)
 
     Bypass.stub(bypass, "POST", "/bot#{token}/answerCallbackQuery", fn conn ->
       record(stub, "answerCallbackQuery", conn) |> reply(true)
