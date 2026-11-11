@@ -27,10 +27,11 @@ defmodule Druzhok.Telegram.Relay.Worker do
   flight.
   """
 
+  import Ecto.Query
   use GenServer, restart: :transient
   require Logger
   alias Druzhok.{Instance, Repo}
-  alias Druzhok.Telegram.{Inbox, ListenerOwner, Webhook}
+  alias Druzhok.Telegram.{API, Inbox, ListenerOwner, Webhook}
 
   def key(instance_id), do: {:telegram_relay, instance_id}
 
@@ -43,13 +44,26 @@ defmodule Druzhok.Telegram.Relay.Worker do
   @impl true
   def init(instance_id) do
     send(self(), :work)
+    Process.send_after(self(), :notices, opt(:notice_poll_ms))
 
-    {:ok, %{id: instance_id, failing: false, backoff: opt(:backoff_min_ms), timer: nil}}
+    {:ok,
+     %{
+       id: instance_id,
+       failing: false,
+       backoff: opt(:backoff_min_ms),
+       timer: nil,
+       notices: %{},
+       inflight: nil,
+       quiescers: []
+     }}
   end
 
   @impl true
   # Answered only between steps: the caller knows no POST is in flight, and
   # the next step reads the pause it has written.
+  def handle_call(:quiesce, from, %{inflight: flight} = state) when not is_nil(flight),
+    do: {:noreply, %{state | quiescers: [from | state.quiescers]}}
+
   def handle_call(:quiesce, _from, state), do: {:reply, :ok, state}
 
   @impl true
@@ -58,12 +72,152 @@ defmodule Druzhok.Telegram.Relay.Worker do
   def handle_info(:notify, state), do: step(state)
   def handle_info(:work, state), do: step(%{state | timer: nil})
 
+  def handle_info({:delivered, instance, row, result}, state) do
+    Enum.each(state.quiescers, &GenServer.reply(&1, :ok))
+    handle_response(%{state | inflight: nil, quiescers: []}, instance, row, result)
+  end
+
+  def handle_info(:notices, state) do
+    Process.send_after(self(), :notices, opt(:notice_poll_ms))
+    {:noreply, refresh_notices(state)}
+  end
+
+  def handle_info({:notice_sent, sender, chat, ref, result}, state) do
+    state = refresh_notices(state)
+    case {state.notices[chat], result} do
+      {%{ref: ^ref} = notice, {:ok, %{"message_id" => mid}}} ->
+        send(sender, {:notice_kept, ref})
+        {:noreply, put_in(state.notices[chat], %{notice | message_id: mid})}
+
+      {_, {:ok, %{"message_id" => _mid}}} ->
+        send(sender, {:notice_discarded, ref})
+        {:noreply, state}
+
+      _ ->
+        Logger.warning("[relay] preparing notice failed")
+        {:noreply, state}
+    end
+  end
+
+  defp refresh_notices(state) do
+    inst = Repo.get(Instance, state.id)
+
+    rows =
+      from(u in Inbox, where: u.instance_id == ^state.id and is_nil(u.acked_at)) |> Repo.all()
+
+    waiting =
+      if inst && inst.active && !inst.delete_requested && inst.telegram_mode == "webhook" do
+        rows
+        |> Enum.filter(& &1.wakes)
+        |> Enum.reduce(%{}, fn row, chats ->
+          case Druzhok.Lifecycle.Typing.chat_id(row.payload) do
+            nil ->
+              chats
+
+            chat ->
+              Map.update(chats, chat, row.received_at, &Enum.min([&1, row.received_at], DateTime))
+          end
+        end)
+      else
+        %{}
+      end
+
+    state =
+      Enum.reduce(Map.keys(state.notices) -- Map.keys(waiting), state, &clear_notice(&2, &1))
+
+    Enum.reduce(waiting, state, fn {chat, at}, state ->
+      age = DateTime.diff(DateTime.utc_now(), at, :millisecond)
+      after_ms = opt(:notice_after_ms)
+      edit_ms = opt(:notice_edit_after_ms)
+
+      case state.notices[chat] do
+        nil when age >= after_ms ->
+          ref = make_ref()
+          worker = self()
+          token = inst.telegram_token
+
+          notice_task(fn ->
+            monitor = Process.monitor(worker)
+            result = API.send_message(token, chat, preparing(inst.language, false))
+            send(worker, {:notice_sent, self(), chat, ref, result})
+
+            case result do
+              {:ok, %{"message_id" => mid}} ->
+                receive do
+                  {:notice_kept, ^ref} -> :ok
+                  {:notice_discarded, ^ref} -> API.delete_message(token, chat, mid)
+                  {:DOWN, ^monitor, :process, ^worker, _} -> API.delete_message(token, chat, mid)
+                end
+
+              _ ->
+                :ok
+            end
+
+            Process.demonitor(monitor, [:flush])
+            result
+          end)
+
+          put_in(state.notices[chat], %{
+            ref: ref,
+            token: token,
+            message_id: :sending,
+            edited: false
+          })
+
+        %{message_id: mid, edited: false} = notice when is_integer(mid) and age >= edit_ms ->
+          notice_task(fn ->
+            API.edit_message_text(notice.token, chat, mid, preparing(inst.language, true))
+          end)
+
+          put_in(state.notices[chat].edited, true)
+
+        _ ->
+          state
+      end
+    end)
+  end
+
+  defp preparing("ru", false), do: "⏳ Готовлюсь, немного подождите…"
+  defp preparing("ru", true), do: "⏳ Ещё немного…"
+  defp preparing(_, false), do: "⏳ Getting ready, please wait…"
+  defp preparing(_, true), do: "⏳ Almost there…"
+
+  defp clear_notice(state, nil), do: state
+
+  defp clear_notice(state, chat) do
+    case state.notices[chat] do
+      %{message_id: mid, token: token} when is_integer(mid) ->
+        notice_task(fn -> API.delete_message(token, chat, mid) end)
+
+      _ ->
+        :ok
+    end
+
+    %{state | notices: Map.delete(state.notices, chat)}
+  end
+
+  defp notice_task(fun) do
+    Task.start(fn ->
+      try do
+        case fun.() do
+          {:error, _} -> Logger.warning("[relay] preparing notice API call failed")
+          _ -> :ok
+        end
+      rescue
+        _ -> Logger.warning("[relay] preparing notice API call failed")
+      end
+    end)
+  end
+
+  defp step(%{inflight: flight} = state) when not is_nil(flight), do: {:noreply, state}
+
   defp step(state) do
     case Repo.get(Instance, state.id) do
       %Instance{telegram_mode: "webhook"} = instance ->
         deliver(state, instance)
 
       _ ->
+        state = Enum.reduce(Map.keys(state.notices), state, &clear_notice(&2, &1))
         {:stop, :normal, state}
     end
   end
@@ -100,7 +254,22 @@ defmodule Druzhok.Telegram.Relay.Worker do
 
     case owner_check().check(instance.name, port) do
       :ok ->
-        handle_response(state, instance, row, post(instance, port, row))
+        worker = self()
+
+        Task.start(fn ->
+          result =
+            try do
+              post(instance, port, row)
+            rescue
+              error -> {:error, error}
+            catch
+              :exit, _ -> {:error, RuntimeError.exception("delivery task exited")}
+            end
+
+          send(worker, {:delivered, instance, row, result})
+        end)
+
+        {:noreply, %{state | inflight: row.id}}
 
       {:error, {:wrong_owner, uids}} ->
         Logger.error(
@@ -133,6 +302,8 @@ defmodule Druzhok.Telegram.Relay.Worker do
   defp handle_response(state, instance, row, {:ok, %Finch.Response{status: status}})
        when status in 200..299 do
     Inbox.ack(row)
+    Druzhok.Cabinet.delivered(instance.id, row.payload)
+    state = clear_notice(state, Druzhok.Lifecycle.Typing.chat_id(row.payload))
     if state.failing, do: Logger.info("[relay] #{instance.name}: delivering again")
     schedule(%{state | failing: false, backoff: opt(:backoff_min_ms)}, 0)
   end
@@ -156,6 +327,7 @@ defmodule Druzhok.Telegram.Relay.Worker do
     )
 
     Inbox.reject(row, "HTTP #{status}")
+    state = clear_notice(state, Druzhok.Lifecycle.Typing.chat_id(row.payload))
     schedule(state, 0)
   end
 
@@ -190,6 +362,9 @@ defmodule Druzhok.Telegram.Relay.Worker do
   end
 
   @defaults [
+    notice_poll_ms: 250,
+    notice_after_ms: 3_000,
+    notice_edit_after_ms: 60_000,
     backoff_min_ms: 1_000,
     backoff_max_ms: 30_000,
     waking_backoff_ms: 1_000,

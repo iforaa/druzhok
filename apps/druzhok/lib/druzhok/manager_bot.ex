@@ -255,7 +255,14 @@ defmodule Druzhok.ManagerBot do
         do: Onboarding.intro_message(),
         else: Onboarding.welcome_message()
 
-    send_menu(state, chat_id, user_id, text)
+    if via == :start and user_bot_count(user_id) == 0 do
+      case Druzhok.ManagerBot.Intro.send(state.token, chat_id, text, menu_for(user_id)) do
+        {:ok, _} -> :ok
+        _ -> send_menu(state, chat_id, user_id, text)
+      end
+    else
+      send_menu(state, chat_id, user_id, text)
+    end
     put_in(state, [:sessions, user_id], Onboarding.new_session())
   end
 
@@ -427,13 +434,28 @@ defmodule Druzhok.ManagerBot do
             send_my_bots(state, user_id, chat_id)
             put_in(state, [:sessions, user_id], session)
 
+          {_status, session, {:reply_keyboard, text, keyboard}} ->
+            API.send_message(state.token, chat_id, text, %{reply_markup: keyboard})
+            put_in(state, [:sessions, user_id], session)
+
           {_status, session, {:text, text}} ->
             API.send_message(state.token, chat_id, text)
             put_in(state, [:sessions, user_id], session)
 
           {_status, session, {:keyboard, text, rows}} ->
-            # First inline keyboard — send new message, store its ID
-            case send_inline(state.token, chat_id, text, rows) do
+            result =
+              if session.step == :language do
+                # A reply keyboard is removed by a new message; adding inline
+                # buttons to that same message keeps the language prompt single.
+                with {:ok, %{"message_id" => mid} = message} <-
+                       API.send_message(state.token, chat_id, text, %{reply_markup: %{remove_keyboard: true}}) do
+                  edit_inline(state.token, chat_id, mid, text, rows)
+                  {:ok, message}
+                end
+              else
+                send_inline(state.token, chat_id, text, rows)
+              end
+            case result do
               {:ok, %{"message_id" => mid}} ->
                 session = %{session | message_id: mid}
                 put_in(state, [:sessions, user_id], session)
@@ -570,7 +592,7 @@ defmodule Druzhok.ManagerBot do
     case result do
       {:ok, :available} ->
         {session, text} = Onboarding.begin_create(session, code)
-        API.send_message(state.token, chat_id, text)
+        API.send_message(state.token, chat_id, text, %{reply_markup: Onboarding.name_keyboard()})
         put_in(state, [:sessions, user_id], session)
 
       {:ok, status} ->

@@ -17,6 +17,7 @@ defmodule Druzhok.Telegram.Webhook do
   druzhok.service.
   """
 
+  require Logger
   import Ecto.Query
   alias Druzhok.{Instance, Repo}
   alias Druzhok.Telegram.Inbox
@@ -78,7 +79,7 @@ defmodule Druzhok.Telegram.Webhook do
 
       with {:ok, inst} <-
              save(instance, %{telegram_mode: "webhook", telegram_webhook_secret: secret}),
-           do: {:ok, inst, 0}
+           do: register_created(inst)
     else
       {:error, {:id_out_of_range, instance.id}}
     end
@@ -93,6 +94,25 @@ defmodule Druzhok.Telegram.Webhook do
   # A row stored between the drop and the switch makes the switch a no-op;
   # drop again. Inbox.enqueue/3 stores nothing once the mode is polling.
   defp do_set_mode(instance, "polling", true), do: force_polling(instance.id, 0, 3)
+
+  # Matches python-telegram-bot 22.8 Update.ALL_TYPES, used by Hermes.
+  @allowed_updates ~w(message edited_message channel_post edited_channel_post inline_query chosen_inline_result callback_query shipping_query pre_checkout_query poll poll_answer my_chat_member chat_member chat_join_request chat_boost removed_chat_boost message_reaction message_reaction_count business_connection business_message edited_business_message deleted_business_messages purchased_paid_media managed_bot guest_message)
+  defp register_created(inst) do
+    try do
+      case Druzhok.Telegram.API.set_webhook(inst.telegram_token, %{
+             url: public_url(inst),
+             secret_token: inst.telegram_webhook_secret,
+             allowed_updates: @allowed_updates
+           }) do
+        {:ok, _} -> :ok
+        _ -> Logger.warning("[webhook] #{inst.name}: registration failed")
+      end
+    rescue
+      _ -> Logger.warning("[webhook] #{inst.name}: registration failed")
+    end
+
+    {:ok, inst, 0}
+  end
 
   defp force_polling(_id, _dropped, 0), do: {:error, :busy}
 

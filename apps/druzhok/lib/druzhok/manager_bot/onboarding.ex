@@ -109,7 +109,7 @@ defmodule Druzhok.ManagerBot.Onboarding do
   def handle_input(%{step: step} = session, %{text: @create})
       when step in [:idle, :done] do
     {session, text} = begin_create(session, session.invite)
-    {:ok, session, {:text, text}}
+    {:ok, session, {:reply_keyboard, text, name_keyboard()}}
   end
 
   def handle_input(_session, %{text: @my_bots}) do
@@ -216,7 +216,12 @@ defmodule Druzhok.ManagerBot.Onboarding do
 
   @doc "Start naming the bot, carrying the (checked) code to provisioning."
   def begin_create(session, invite \\ nil) do
-    {%{session | step: :name, invite: invite, started_at: System.system_time(:second)}, "Как назовём бота?"}
+    {%{session | step: :name, invite: invite, started_at: System.system_time(:second)}, "Как назовём бота?\nИли напишите своё имя."}
+  end
+
+  def name_keyboard do
+    %{keyboard: [[%{text: "Дружок"}, %{text: "Ася"}], [%{text: "Макс"}, %{text: "Кеша"}]],
+      resize_keyboard: true, one_time_keyboard: true}
   end
 
   def create_race_message, do: "Код успели использовать. Попроси новый и создай бота заново."
@@ -245,11 +250,13 @@ defmodule Druzhok.ManagerBot.Onboarding do
         label -> "\nХарактер: #{label}"
       end
 
-    text = "📋 *#{session.name}*\nЯзык: #{lang_label}#{character}\n\nНажми кнопку чтобы создать:"
+    text = "📋 *#{escape_markdown(session.name)}*\nЯзык: #{lang_label}#{character}\n\nTelegram откроет окно — нажмите там «Создать», имя можно не менять.\nНажми кнопку чтобы создать:"
     keyboard = [[%{text: "🤖 Создать «#{session.name}»", url: link}]]
 
     {text, keyboard, link}
   end
+
+  defp escape_markdown(text), do: String.replace(text, ~r/([\\_*`\[])/u, "\\\\\\1")
 
   @provision_steps [
     "Выращиваю нейроны",

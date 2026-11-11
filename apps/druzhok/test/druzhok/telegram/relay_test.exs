@@ -15,6 +15,7 @@ defmodule Druzhok.Telegram.RelayTest do
     Application.put_env(:druzhok, :telegram_relay_base_url, "http://localhost:#{bypass.port}")
 
     Application.put_env(:druzhok, :telegram_relay,
+      notice_poll_ms: 20,
       backoff_min_ms: 10,
       backoff_max_ms: 40,
       paused_poll_ms: 20,
@@ -33,6 +34,133 @@ defmodule Druzhok.Telegram.RelayTest do
     inst = relay_instance(%{telegram_mode: "webhook", telegram_webhook_secret: "sekret"})
     start_supervised!(Relay)
     %{bypass: bypass, inst: inst, seen: start_supervised!({Agent, fn -> [] end})}
+  end
+
+  defp notice_stub(inst) do
+    tg = Bypass.open()
+    Application.put_env(:druzhok, :telegram_api_base, "http://localhost:#{tg.port}")
+    on_exit(fn -> Application.delete_env(:druzhok, :telegram_api_base) end)
+    {:ok, calls} = Agent.start_link(fn -> [] end)
+    for method <- ["sendMessage", "editMessageText", "deleteMessage"] do
+    Bypass.stub(tg, "POST", "/botTOK/#{method}", fn conn ->
+      {:ok, raw, conn} = Plug.Conn.read_body(conn)
+      params = Jason.decode!(raw)
+      Agent.update(calls, &[{List.last(conn.path_info), params} | &1])
+      Plug.Conn.resp(conn, 200, ~s({"ok":true,"result":{"message_id":99}}))
+    end)
+    end
+    inst |> Instance.changeset(%{active: true, telegram_token: "TOK"}) |> Repo.update!()
+    {tg, calls}
+  end
+
+  defp private_update(inst, id, chat, type \\ "private") do
+    Inbox.enqueue(inst.id, id, Jason.encode!(%{update_id: id, message: %{
+      chat: %{id: chat, type: type}, from: %{id: chat}, text: "/start"}}))
+    row = Repo.get_by!(Inbox, instance_id: inst.id, update_id: id)
+    row |> Ecto.Changeset.change(received_at: DateTime.add(DateTime.utc_now(), -4)) |> Repo.update!()
+  end
+
+  test "held private updates get one notice, one edit at 60 seconds, and deletion on 2xx", %{inst: inst, bypass: bypass, seen: seen} do
+    {_tg, calls} = notice_stub(inst)
+    Webhook.pause(inst.id, :stopping)
+    private_update(inst, 1, 123)
+    private_update(inst, 2, 123)
+    Relay.notify(inst.id)
+    assert eventually(fn -> length(Agent.get(calls, & &1)) == 1 end)
+    Process.sleep(350)
+    assert [{"sendMessage", %{"text" => "⏳ Готовлюсь, немного подождите…"}}] = Agent.get(calls, & &1)
+    row = Repo.get_by!(Inbox, instance_id: inst.id, update_id: 1)
+    row |> Ecto.Changeset.change(received_at: DateTime.add(DateTime.utc_now(), -61)) |> Repo.update!()
+    assert eventually(fn -> Enum.count(Agent.get(calls, & &1), &(elem(&1, 0) == "editMessageText")) == 1 end)
+    Process.sleep(350)
+    assert Enum.count(Agent.get(calls, & &1), &(elem(&1, 0) == "editMessageText")) == 1
+    ptb(bypass, inst, seen)
+    Webhook.resume(inst.id)
+    assert eventually(fn -> seen(seen) == [1, 2] end)
+    assert eventually(fn -> Enum.any?(Agent.get(calls, & &1), &match?({"deleteMessage", %{"message_id" => 99}}, &1)) end)
+  end
+
+  test "waits three seconds from storage and falls back to English", %{inst: inst} do
+    {_tg, calls} = notice_stub(inst)
+    inst |> Repo.reload!() |> Instance.changeset(%{language: "unknown"}) |> Repo.update!()
+    Webhook.pause(inst.id, :stopping)
+    row = private_update(inst, 1, 123)
+    row |> Ecto.Changeset.change(received_at: DateTime.utc_now()) |> Repo.update!()
+    Relay.notify(inst.id)
+    Process.sleep(100)
+    assert Agent.get(calls, & &1) == []
+    row |> Ecto.Changeset.change(received_at: DateTime.add(DateTime.utc_now(), -4)) |> Repo.update!()
+    assert eventually(fn -> Enum.any?(Agent.get(calls, & &1), &match?({"sendMessage", %{"text" => "⏳ Getting ready, please wait…"}}, &1)) end)
+    row |> Ecto.Changeset.change(received_at: DateTime.add(DateTime.utc_now(), -61)) |> Repo.update!()
+    assert eventually(fn -> Enum.any?(Agent.get(calls, & &1), &match?({"editMessageText", %{"text" => "⏳ Almost there…"}}, &1)) end)
+  end
+
+  test "a slow relay POST does not delay the preparing notice", %{inst: inst, bypass: bypass, seen: seen} do
+    {_tg, calls} = notice_stub(inst)
+    parent = self()
+    ptb(bypass, inst, seen, fn _ ->
+      send(parent, {:posting_slowly, self()})
+      receive do :finish -> 200 after 900 -> 200 end
+    end)
+    private_update(inst, 1, 123)
+    Relay.notify(inst.id)
+    assert_receive {:posting_slowly, sender}, 1_000
+    assert eventually(fn -> Enum.any?(Agent.get(calls, & &1), &match?({"sendMessage", _}, &1)) end, 10)
+    assert Inbox.pending_count(inst.id) == 1
+    send(sender, :finish)
+    assert eventually(fn -> Inbox.pending_count(inst.id) == 0 end)
+  end
+
+  test "a notice finishing after delivery is deleted without blocking delivery", %{inst: inst, bypass: bypass, seen: seen} do
+    {tg, calls} = notice_stub(inst)
+    parent = self()
+    Bypass.stub(tg, "POST", "/botTOK/sendMessage", fn conn ->
+      send(parent, {:sending_notice, self()})
+      receive do :finish -> :ok after 3_000 -> flunk("send not released") end
+      Plug.Conn.resp(conn, 200, ~s({"ok":true,"result":{"message_id":99}}))
+    end)
+    Webhook.pause(inst.id, :stopping)
+    private_update(inst, 1, 123)
+    Relay.notify(inst.id)
+    assert_receive {:sending_notice, sender}, 2_000
+    ptb(bypass, inst, seen)
+    Webhook.resume(inst.id)
+    assert eventually(fn -> seen(seen) == [1] end)
+    send(sender, :finish)
+    assert eventually(fn -> Enum.any?(Agent.get(calls, & &1), &match?({"deleteMessage", _}, &1)) end)
+  end
+
+  test "groups, non-waking updates and deliberately stopped bots get no notices", %{inst: inst} do
+    {_tg, calls} = notice_stub(inst)
+    Webhook.pause(inst.id, :stopping)
+    private_update(inst, 1, -1, "group")
+    private_update(inst, 2, 123)
+    Repo.get_by!(Inbox, instance_id: inst.id, update_id: 2) |> Ecto.Changeset.change(wakes: false) |> Repo.update!()
+    Relay.notify(inst.id)
+    Process.sleep(350)
+    assert Agent.get(calls, & &1) == []
+    inst |> Repo.reload!() |> Instance.changeset(%{active: false}) |> Repo.update!()
+    private_update(inst, 3, 456)
+    Process.sleep(350)
+    assert Agent.get(calls, & &1) == []
+    inst |> Repo.reload!() |> Ecto.Changeset.change(%{active: true, delete_requested: true}) |> Repo.update!()
+    Process.sleep(350)
+    assert Agent.get(calls, & &1) == []
+  end
+
+  test "expired and dropped waiting updates remove their notice", %{inst: inst} do
+    {_tg, calls} = notice_stub(inst)
+    Webhook.pause(inst.id, :stopping)
+    private_update(inst, 1, 123)
+    Relay.notify(inst.id)
+    assert eventually(fn -> length(Agent.get(calls, & &1)) == 1 end)
+    Inbox.housekeep(inst.id, DateTime.add(DateTime.utc_now(), 86_400))
+    assert eventually(fn -> Enum.count(Agent.get(calls, & &1), &(elem(&1, 0) == "deleteMessage")) == 1 end)
+    private_update(inst, 2, 123)
+    Relay.notify(inst.id)
+    assert eventually(fn -> Enum.count(Agent.get(calls, & &1), &(elem(&1, 0) == "sendMessage")) == 2 end)
+    Inbox.drop_pending(inst.id, "mode_switch")
+    assert eventually(fn -> Enum.count(Agent.get(calls, & &1), &(elem(&1, 0) == "deleteMessage")) == 2 end)
   end
 
   # PTB's TelegramHandler: 403 unless the content type is exactly
@@ -153,6 +281,8 @@ defmodule Druzhok.Telegram.RelayTest do
     enqueue(inst, [1])
     Relay.notify(inst.id)
     assert eventually(fn -> seen(seen) == [1] end)
+
+    assert eventually(fn -> Inbox.pending_count(inst.id) == 0 end)
 
     stop_supervised!(Relay)
     start_supervised!(Relay)
@@ -286,9 +416,8 @@ defmodule Druzhok.Telegram.RelayTest do
       |> Repo.update!()
 
       Relay.notify(inst.id)
-      Process.sleep(400)
-      # 200 ms then 400 ms backoff would allow 2 attempts; capped at 10 ms, many.
-      assert Inbox.next_pending(inst.id).attempts >= 5
+      # The waking cap allows repeated attempts without the normal backoff.
+      assert eventually(fn -> Inbox.next_pending(inst.id).attempts >= 5 end)
     end
   end
 end

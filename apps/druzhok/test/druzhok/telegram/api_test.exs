@@ -62,6 +62,15 @@ defmodule Druzhok.Telegram.APITest do
     assert {:error, %Finch.TransportError{}} = API.get_me("TOK")
   end
 
+  test "delete_message posts the chat and message ids", %{bypass: bypass} do
+    Bypass.expect_once(bypass, "POST", "/botTOK/deleteMessage", fn conn ->
+      {:ok, body, conn} = Plug.Conn.read_body(conn)
+      assert Jason.decode!(body) == %{"chat_id" => 5, "message_id" => 9}
+      Plug.Conn.resp(conn, 200, ~s({"ok":true,"result":true}))
+    end)
+    assert {:ok, true} = API.delete_message("TOK", 5, 9)
+  end
+
   test "get_managed_bot_token sends user_id", %{bypass: bypass} do
     Bypass.expect_once(bypass, "POST", "/botTOK/getManagedBotToken", fn conn ->
       {:ok, raw, conn} = Plug.Conn.read_body(conn)
