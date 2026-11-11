@@ -17,6 +17,7 @@ defmodule Druzhok.Telegram.Webhook do
   druzhok.service.
   """
 
+  require Logger
   import Ecto.Query
   alias Druzhok.{Instance, Repo}
   alias Druzhok.Telegram.Inbox
@@ -58,7 +59,8 @@ defmodule Druzhok.Telegram.Webhook do
   def generate_secret, do: Base.encode16(:crypto.strong_rand_bytes(32), case: :lower)
 
   @doc """
-  Switch a bot's mode. Takes effect on its next `BotManager.restart/1`.
+  Switch a bot's mode. Telegram registration changes on its next `BotManager.restart/1`.
+  Newly created bots are registered separately by `BotManager.create/2`, before their first start.
   Returns `{:ok, instance, dropped_count}`.
 
   Leaving webhook mode while updates are still queued would strand them (a
@@ -93,6 +95,26 @@ defmodule Druzhok.Telegram.Webhook do
   # A row stored between the drop and the switch makes the switch a no-op;
   # drop again. Inbox.enqueue/3 stores nothing once the mode is polling.
   defp do_set_mode(instance, "polling", true), do: force_polling(instance.id, 0, 3)
+
+  # Matches python-telegram-bot 22.8 Update.ALL_TYPES, used by Hermes.
+  @allowed_updates ~w(message edited_message channel_post edited_channel_post inline_query chosen_inline_result callback_query shipping_query pre_checkout_query poll poll_answer my_chat_member chat_member chat_join_request chat_boost removed_chat_boost message_reaction message_reaction_count business_connection business_message edited_business_message deleted_business_messages purchased_paid_media managed_bot guest_message)
+  @doc "Best-effort registration of a newly created webhook bot before its first start."
+  def register_created(inst) do
+    try do
+      case Druzhok.Telegram.API.set_webhook(inst.telegram_token, %{
+             url: public_url(inst),
+             secret_token: inst.telegram_webhook_secret,
+             allowed_updates: @allowed_updates
+           }) do
+        {:ok, _} -> :ok
+        _ -> Logger.warning("[webhook] #{inst.name}: registration failed")
+      end
+    rescue
+      _ -> Logger.warning("[webhook] #{inst.name}: registration failed")
+    end
+
+    :ok
+  end
 
   defp force_polling(_id, _dropped, 0), do: {:error, :busy}
 

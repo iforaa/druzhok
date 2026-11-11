@@ -5,6 +5,50 @@ defmodule Druzhok.Telegram.WebhookTest do
   alias Druzhok.{Instance, Repo}
   alias Druzhok.Telegram.{Inbox, Webhook}
 
+  setup do
+    tg = Bypass.open()
+    Application.put_env(:druzhok, :telegram_api_base, "http://localhost:#{tg.port}")
+    on_exit(fn -> Application.delete_env(:druzhok, :telegram_api_base) end)
+    Bypass.stub(tg, "POST", "/:bot/setWebhook", fn conn ->
+      Plug.Conn.resp(conn, 200, ~s({"ok":true,"result":true}))
+    end)
+    %{tg: tg}
+  end
+
+  test "registers the same URL, secret and all update types as Hermes", %{tg: tg} do
+    inst = relay_instance(%{telegram_token: "TOK"})
+    Bypass.expect_once(tg, "POST", "/:bot/setWebhook", fn conn ->
+      {:ok, raw, conn} = Plug.Conn.read_body(conn)
+      params = Jason.decode!(raw)
+      assert params["url"] == Webhook.public_url(inst)
+      assert params["secret_token"] == Repo.get!(Instance, inst.id).telegram_webhook_secret
+      assert Enum.sort(params["allowed_updates"]) == Enum.sort(~w(message edited_message channel_post edited_channel_post inline_query chosen_inline_result callback_query shipping_query pre_checkout_query poll poll_answer my_chat_member chat_member chat_join_request chat_boost removed_chat_boost message_reaction message_reaction_count business_connection business_message edited_business_message deleted_business_messages purchased_paid_media managed_bot guest_message))
+      refute Map.has_key?(params, "drop_pending_updates")
+      Plug.Conn.resp(conn, 200, ~s({"ok":true,"result":true}))
+    end)
+    assert {:ok, inst, 0} = Webhook.set_mode(inst.name, "webhook")
+    assert :ok = Webhook.register_created(inst)
+  end
+
+  test "Telegram registration failure keeps the created mode and secret", %{tg: tg} do
+    inst = relay_instance(%{telegram_token: "TOK"})
+    Bypass.expect_once(tg, "POST", "/:bot/setWebhook", fn conn -> Plug.Conn.resp(conn, 500, "down") end)
+    assert {:ok, %{telegram_mode: "webhook", telegram_webhook_secret: secret}, 0} = Webhook.set_mode(inst.name, "webhook")
+    assert :ok = Webhook.register_created(Repo.get!(Instance, inst.id))
+    assert is_binary(secret)
+  end
+
+  test "set_mode on an existing polling bot does not register before restart", %{tg: tg} do
+    parent = self()
+    Bypass.stub(tg, "POST", "/:bot/setWebhook", fn conn ->
+      send(parent, :registered)
+      Plug.Conn.resp(conn, 200, ~s({"ok":true,"result":true}))
+    end)
+    inst = relay_instance(%{telegram_token: "TOK", telegram_mode: "polling"})
+    assert {:ok, %{telegram_mode: "webhook"}, 0} = Webhook.set_mode(inst.name, "webhook")
+    refute_received :registered
+  end
+
   test "port is 20000 + id inside the isolated range, nil outside it" do
     assert Webhook.port(%{id: 9}) == 20_009
     assert Webhook.port(%{id: 999}) == 20_999
@@ -41,6 +85,7 @@ defmodule Druzhok.Telegram.WebhookTest do
     test "refuses an id outside the port range" do
       inst =
         Repo.insert!(%Instance{
+          id: 1_000_000 + System.unique_integer([:positive]),
           name: "relaybig#{System.unique_integer([:positive])}",
           model: "m",
           workspace: "/tmp/x/workspace"

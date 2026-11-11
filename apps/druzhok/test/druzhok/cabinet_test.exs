@@ -44,13 +44,48 @@ defmodule Druzhok.CabinetTest do
         language: "ru"
       })
 
-    %{stub: stub, seen: seen, menu_ok: menu_ok, inst: inst}
+    %{stub: stub, seen: seen, menu_ok: menu_ok, inst: inst, tg: tg}
   end
 
   defp telegram(seen, method),
     do: seen |> Agent.get(& &1) |> Enum.reverse() |> Enum.filter(&(elem(&1, 0) == method))
 
   defp reload(inst), do: Repo.get(Instance, inst.id)
+
+  test "each delivered owner /start offers the fresh cabinet, and other updates do not", %{inst: inst, seen: seen} do
+    start_supervised!(Cabinet)
+    inst |> Ecto.Changeset.change(%{cabinet_url: @url}) |> Repo.update!()
+    payload = fn uid, chat, type, text -> Jason.encode!(%{message: %{from: %{id: uid}, chat: %{id: chat, type: type}, text: text}}) end
+    for {uid, chat, type, command} <- [{456, 456, "private", "hi"}, {123, 123, "private", "/start"}, {456, -1, "group", "/start"}] do
+      Cabinet.delivered(inst.id, payload.(uid, chat, type, command))
+    end
+    :sys.get_state(Cabinet)
+    assert telegram(seen, "sendMessage") == []
+    for _ <- 1..2, do: Cabinet.delivered(inst.id, payload.(456, 456, "private", "/start invite"))
+    :sys.get_state(Cabinet)
+    assert [{_, msg}, {_, _}] = telegram(seen, "sendMessage")
+    assert msg["text"] == "Настройки, тариф и память бота — в Кабинете."
+    assert msg["reply_markup"] == %{"inline_keyboard" => [[%{"text" => "Открыть кабинет", "web_app" => %{"url" => @url}}]]}
+    reload(inst) |> Ecto.Changeset.change(%{cabinet_off: true}) |> Repo.update!()
+    Cabinet.delivered(inst.id, payload.(456, 456, "private", "/start"))
+    :sys.get_state(Cabinet)
+    assert length(telegram(seen, "sendMessage")) == 2
+  end
+
+  test "a rejected owner start notice is logged", %{inst: inst, tg: tg} do
+    start_supervised!(Cabinet)
+    inst |> Ecto.Changeset.change(%{cabinet_url: @url}) |> Repo.update!()
+    Bypass.stub(tg, "POST", "/:bot/:method", fn conn ->
+      Plug.Conn.resp(conn, 400, ~s({"ok":false,"description":"chat not found"}))
+    end)
+    log = ExUnit.CaptureLog.capture_log(fn ->
+      Cabinet.delivered(inst.id, Jason.encode!(%{message: %{from: %{id: 456},
+        chat: %{id: 456, type: "private"}, text: "/start"}}))
+      :sys.get_state(Cabinet)
+    end)
+    assert log =~ "start notice not sent"
+    assert log =~ "chat not found"
+  end
 
   describe "group notes" do
     defp pending(inst) do

@@ -4,6 +4,21 @@ defmodule Druzhok.ManagerBot.OnboardingTest do
 
   alias Druzhok.ManagerBot.Onboarding
 
+  test "confirmation explains the popup and escapes Markdown only in its text" do
+    session = %{Onboarding.new_session() | name: "A_*[x]`", language: "ru", username: "test_bot"}
+    {text, [[button]], _} = Onboarding.confirm_message(session, "manager")
+    assert text =~ ~S(A\_\*\[x]\`)
+    assert text =~ "Telegram откроет окно — нажмите там «Создать», имя можно не менять.\nНажми кнопку чтобы создать:"
+    assert button.text == "🤖 Создать «A_*[x]`»"
+  end
+
+  test "A_B is escaped outside a bold entity in legacy Markdown" do
+    session = %{Onboarding.new_session() | name: "A_B", language: "ru", username: "test_bot"}
+    {text, _, _} = Onboarding.confirm_message(session, "manager")
+    assert String.starts_with?(text, ~S(📋 A\_B) <> "\n")
+    refute text =~ "*A"
+  end
+
   describe "new_session/0" do
     test "starts at :idle step" do
       session = Onboarding.new_session()
@@ -19,7 +34,10 @@ defmodule Druzhok.ManagerBot.OnboardingTest do
   describe "handle_input/2 — menu buttons" do
     test "create bot button moves to :name step" do
       session = Onboarding.new_session()
-      {:ok, session, {:text, _}} = Onboarding.handle_input(session, %{text: "🤖 Создать бота"})
+      {:ok, session, {:reply_keyboard, prompt, keyboard}} = Onboarding.handle_input(session, %{text: "🤖 Создать бота"})
+      assert prompt == "Как назовём бота?\nИли напишите своё имя."
+      assert keyboard.one_time_keyboard
+      assert Enum.map(List.flatten(keyboard.keyboard), & &1.text) == ["Дружок", "Ася", "Макс", "Кеша"]
       assert session.step == :name
     end
 
@@ -45,7 +63,7 @@ defmodule Druzhok.ManagerBot.OnboardingTest do
 
     test "menu buttons restart from a fresh session instead of looping" do
       session = %{Onboarding.new_session() | step: :name}
-      assert {:ok, %{step: :name}, {:text, "Как назовём бота?"}} =
+      assert {:ok, %{step: :name}, {:reply_keyboard, "Как назовём бота?\nИли напишите своё имя.", _}} =
                Onboarding.handle_input(session, %{text: "🤖 Создать бота"})
       assert {:ok, %{step: :idle}, {:my_bots}} = Onboarding.handle_input(session, %{text: "📋 Мои боты"})
     end
@@ -413,7 +431,7 @@ defmodule Druzhok.ManagerBot.OnboardingTest do
       {session, text} = Onboarding.begin_create(Onboarding.new_session(), "ABCD-EFGH")
       assert session.step == :name
       assert session.invite == "ABCD-EFGH"
-      assert text == "Как назовём бота?"
+      assert text == "Как назовём бота?\nИли напишите своё имя."
       assert {%{invite: nil}, _} = Onboarding.begin_create(Onboarding.new_session())
     end
 

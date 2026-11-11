@@ -90,6 +90,9 @@ defmodule Druzhok.Cabinet do
   @doc "The bot's plan refused a request (402 or 429 `usage_limit_reached`): tell the owner, at most every 6 h. A cast."
   def out_of_money(instance_id), do: GenServer.cast(__MODULE__, {:out_of_money, instance_id})
 
+  @doc "The relay accepted an update: offer the cabinet on each owner's private /start."
+  def delivered(instance_id, payload), do: GenServer.cast(__MODULE__, {:delivered, instance_id, payload})
+
   @doc "A group waits for the owner's decision: tell them once. A cast."
   def group_seen(instance_id, chat_id),
     do: GenServer.cast(__MODULE__, {:group_seen, instance_id, chat_id})
@@ -171,6 +174,28 @@ defmodule Druzhok.Cabinet do
         noticed = if sent == :sent, do: Map.put(state.noticed, id, now), else: state.noticed
         {:noreply, %{state | noticed: noticed}}
     end
+  end
+
+  def handle_cast({:delivered, id, payload}, state) do
+    guarded(id, fn ->
+      with %Instance{cabinet_off: false, cabinet_url: url, owner_telegram_id: owner} = inst
+             when is_binary(url) and url != "" and is_integer(owner) <- Repo.get(Instance, id),
+           {:ok, %{"message" => %{"from" => %{"id" => ^owner},
+             "chat" => %{"id" => ^owner, "type" => "private"}, "text" => command}}} <- Jason.decode(payload),
+           ["/start" | _] <- String.split(command) do
+        {line, label} = text(%{
+          "ru" => {"Настройки, тариф и память бота — в Кабинете.", "Открыть кабинет"},
+          "en" => {"Settings, plan and memory — in the Cabinet.", "Open Cabinet"}
+        }, inst)
+        case API.send_message(inst.telegram_token, owner, line,
+               %{reply_markup: %{inline_keyboard: [[%{text: label, web_app: %{url: url}}]]}}) do
+          {:ok, _} -> :ok
+          {:error, reason} ->
+            Logger.warning("[cabinet] #{inst.name}: start notice not sent (#{short(reason)})")
+        end
+      end
+    end)
+    {:noreply, state}
   end
 
   def handle_cast({:group_seen, id, chat_id}, state) do
