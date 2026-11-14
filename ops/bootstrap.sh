@@ -33,7 +33,7 @@ export DEBIAN_FRONTEND=noninteractive
 apt-get update -q
 apt-get install -y -q --no-install-recommends git curl build-essential nftables unzip acl sqlite3 \
   libssl-dev libncurses-dev autoconf m4 \
-  python3 python3-venv ffmpeg unattended-upgrades debian-keyring debian-archive-keyring apt-transport-https
+  python3 python3-venv ffmpeg ghostscript poppler-utils unattended-upgrades debian-keyring debian-archive-keyring apt-transport-https
 apt-get clean
 command -v uv >/dev/null || { curl -LsSf https://astral.sh/uv/install.sh | env UV_INSTALL_DIR=/usr/local/bin sh; }
 
@@ -56,7 +56,7 @@ step "hermes → /opt/hermes"
 if [ ! -f "$HERMES_DIR/pyproject.toml" ]; then git clone -q --depth 1 "$HERMES_REPO" "$HERMES_DIR"; fi
 # hermes >= 0.22 runs on Python 3.14 (its uv.lock resolves only for 3.14), which
 # uv installs under /data/opt/uv-python; Ubuntu's python3 is too old.
-( cd "$HERMES_DIR" && UV_CACHE_DIR=/data/opt/uv-cache UV_PYTHON_INSTALL_DIR=/data/opt/uv-python uv sync --frozen --python 3.14 --extra all --extra messaging --extra firecrawl --extra mnemosyne 2>&1 | tail -2 )
+( cd "$HERMES_DIR" && UV_CACHE_DIR=/data/opt/uv-cache UV_PYTHON_INSTALL_DIR=/data/opt/uv-python uv sync --frozen --python 3.14 --extra all --extra messaging --extra firecrawl --extra mnemosyne --extra documents --extra documents-pdf --extra druzhok-docs 2>&1 | tail -2 )
 "$HERMES_DIR/.venv/bin/python" "$(dirname "$0")/patch-mnemosyne.py" "$HERMES_DIR"
 # Bots run under ProtectSystem=strict and cannot write __pycache__: precompile.
 "$HERMES_DIR/.venv/bin/python" -m compileall -q -j0 -x '/(tests?|node_modules)/' "$HERMES_DIR" >/dev/null || true

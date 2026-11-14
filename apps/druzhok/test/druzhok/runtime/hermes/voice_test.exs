@@ -314,6 +314,21 @@ defmodule Druzhok.Runtime.Hermes.VoiceTest do
       assert full =~ "устарели"
     end
 
+    test "the documents rule sends scanned pages to vision_analyze and forbids installs" do
+      rules = Voice.product_rules(%{name: "b"})
+      assert rules =~ "[NEEDS OCR"
+      assert rules =~ "EXTRACTION COVERAGE WARNING"
+      assert rules =~ "pdftoppm -r 150 -png"
+      assert rules =~ "файл.pdf /tmp/page`"
+      refute rules =~ "$TMPDIR/page"
+      assert rules =~ "vision_analyze"
+      assert rules =~ "pip install"
+      assert rules =~ "pymupdf"
+      assert rules =~ "marker"
+      assert rules =~ "-dPDFSETTINGS=/ebook"
+      assert Voice.product_rules(%{name: "b", memory_provider: "mnemosyne"}) =~ "PDF и документы:"
+    end
+
     test "the memory rule follows the provider" do
       plain = Voice.product_rules(%{name: "b"})
       assert plain =~ "сохраняй инструментом memory"
