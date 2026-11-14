@@ -7,6 +7,7 @@ import Home from "./home"
 import Billing from "./billing"
 import Settings from "./settings"
 import Support from "./support"
+import cleoBot from "./cleo-bot.png"
 
 // The bot panel: what a bot's owner sees inside Telegram (druzhok spec
 // docs/superpowers/specs/2026-10-24-bot-panel-design.md). Four tabs: Бот (its
@@ -82,6 +83,10 @@ export default function App() {
             {nav.tab === "billing" && <Billing start={nav.screen} />}
             {nav.tab === "settings" && <Settings bot={bot} onBot={setBot} go={go} />}
             {nav.tab === "support" && <Support onUnread={setUnread} />}
+            <footer className="made-by">
+              <img src={cleoBot} alt="" width={24} height={24} />
+              <span>Сделано в Cleo</span>
+            </footer>
           </div>
         )}
       </main>
