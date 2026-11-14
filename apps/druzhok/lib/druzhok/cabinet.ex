@@ -37,6 +37,9 @@ defmodule Druzhok.Cabinet do
   It also sends what `Druzhok.GroupChats` has to say from the webhook, which must
   not wait on Telegram: the owner's note about a new group, and a group's notice
   that it is over its rate limit. Neither wakes the bot.
+
+  On the owner's private /start (`delivered/2`) it also sends a keyboard of
+  first things to try (`first_tasks_message/1`), cabinet or not.
   """
 
   use GenServer
@@ -92,7 +95,10 @@ defmodule Druzhok.Cabinet do
   @doc "The bot's plan refused a request (402 or 429 `usage_limit_reached`): tell the owner, at most every 6 h. A cast."
   def out_of_money(instance_id), do: GenServer.cast(__MODULE__, {:out_of_money, instance_id})
 
-  @doc "The relay accepted an update: offer the cabinet on each owner's private /start."
+  @doc """
+  The relay accepted an update. On the owner's private /start: offer the
+  cabinet (when there is one) and send the first-tasks keyboard. A cast.
+  """
   def delivered(instance_id, payload),
     do: GenServer.cast(__MODULE__, {:delivered, instance_id, payload})
 
@@ -180,8 +186,17 @@ defmodule Druzhok.Cabinet do
   end
 
   def handle_cast({:delivered, id, payload}, state) do
-    guarded(id, fn -> start_notice(id, payload) end)
-    guarded(id, fn -> first_tasks(id, payload) end)
+    # One read of the update and the row for both messages; each is sent on
+    # its own, so a failed cabinet notice still lets the tasks go out.
+    case guarded(id, fn -> owner_start(id, payload) end) do
+      %Instance{} = inst ->
+        guarded(id, fn -> start_notice(inst) end)
+        guarded(id, fn -> first_tasks(inst) end)
+
+      _ ->
+        :ok
+    end
+
     {:noreply, state}
   end
 
@@ -195,66 +210,70 @@ defmodule Druzhok.Cabinet do
     {:noreply, state}
   end
 
-  defp start_notice(id, payload) do
-    with %Instance{cabinet_off: false, cabinet_url: url, owner_telegram_id: owner} = inst
-         when is_binary(url) and url != "" and is_integer(owner) <- Repo.get(Instance, id),
-         {:ok,
+  # The bot's row when `payload` is its owner's /start in the private chat;
+  # anything else is nil. The update is decoded before the row is read, so
+  # ordinary traffic costs no database read.
+  defp owner_start(id, payload) do
+    with {:ok,
           %{
             "message" => %{
-              "from" => %{"id" => ^owner},
-              "chat" => %{"id" => ^owner, "type" => "private"},
+              "from" => %{"id" => from},
+              "chat" => %{"id" => from, "type" => "private"},
               "text" => command
             }
           }} <- Jason.decode(payload),
-         ["/start" | _] <- String.split(command) do
-      {line, label} =
-        text(
-          %{
-            "ru" => {"Настройки, тариф и память бота — в Кабинете.", "Открыть кабинет"},
-            "en" => {"Settings, plan and memory — in the Cabinet.", "Open Cabinet"}
-          },
-          inst
-        )
-
-      case API.send_message(inst.telegram_token, owner, line, %{
-             reply_markup: %{inline_keyboard: [[%{text: label, web_app: %{url: url}}]]}
-           }) do
-        {:ok, _} ->
-          :ok
-
-        {:error, reason} ->
-          Logger.warning("[cabinet] #{inst.name}: start notice not sent (#{short(reason)})")
-      end
+         ["/start" | _] <- String.split(command),
+         %Instance{owner_telegram_id: ^from} = inst <- Repo.get(Instance, id) do
+      inst
+    else
+      _ -> nil
     end
   end
+
+  defp start_notice(
+         %Instance{cabinet_off: false, cabinet_url: url, owner_telegram_id: owner} = inst
+       )
+       when is_binary(url) and url != "" do
+    {line, label} =
+      text(
+        %{
+          "ru" => {"Настройки, тариф и память бота — в Кабинете.", "Открыть кабинет"},
+          "en" => {"Settings, plan and memory — in the Cabinet.", "Open Cabinet"}
+        },
+        inst
+      )
+
+    case API.send_message(inst.telegram_token, owner, line, %{
+           reply_markup: %{inline_keyboard: [[%{text: label, web_app: %{url: url}}]]}
+         }) do
+      {:ok, _} ->
+        :ok
+
+      {:error, reason} ->
+        Logger.warning("[cabinet] #{inst.name}: start notice not sent (#{short(reason)})")
+    end
+  end
+
+  defp start_notice(_inst), do: :ok
 
   # The owner's private /start: a keyboard of first things to try, each button
   # a ready request the bot answers like any message (KeyboardButton text), so
   # the first minute shows what the bot does instead of an empty chat. Only
   # the bot's owner, only a private /start; pictures only when they are on.
-  defp first_tasks(id, payload) do
-    with %Instance{owner_telegram_id: owner, telegram_token: token} = inst
-         when is_integer(owner) and is_binary(token) <- Repo.get(Instance, id),
-         {:ok,
-          %{
-            "message" => %{
-              "from" => %{"id" => ^owner},
-              "chat" => %{"id" => ^owner, "type" => "private"},
-              "text" => command
-            }
-          }} <- Jason.decode(payload),
-         ["/start" | _] <- String.split(command) do
-      {line, keyboard} = first_tasks_message(inst)
+  defp first_tasks(%Instance{owner_telegram_id: owner, telegram_token: token} = inst)
+       when is_binary(token) do
+    {line, keyboard} = first_tasks_message(inst)
 
-      case API.send_message(token, owner, line, %{reply_markup: keyboard}) do
-        {:ok, _} ->
-          :ok
+    case API.send_message(token, owner, line, %{reply_markup: keyboard}) do
+      {:ok, _} ->
+        :ok
 
-        {:error, reason} ->
-          Logger.warning("[cabinet] #{inst.name}: first tasks not sent (#{short(reason)})")
-      end
+      {:error, reason} ->
+        Logger.warning("[cabinet] #{inst.name}: first tasks not sent (#{short(reason)})")
     end
   end
+
+  defp first_tasks(_inst), do: :ok
 
   @doc "The first-tasks line and its reply keyboard for a bot, in its language."
   def first_tasks_message(%Instance{} = inst) do
