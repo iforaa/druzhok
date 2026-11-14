@@ -69,18 +69,6 @@ function steps(bot: Bot, files: Files | null, me: Me | null, go: Go): Step[] {
   return list
 }
 
-/** What to try: one line, naming only what this bot has switched on. */
-function tryLine(bot: Bot): string {
-  const s = bot.settings
-  const asks = [
-    "отправить голосовое",
-    s.image_gen_enabled ? "попросить «нарисуй кота-космонавта»" : null,
-    s.website_hosting_enabled ? "попросить сделать страницу, бот её опубликует" : null,
-  ].filter((a): a is string => a !== null)
-  const last = asks.pop()!
-  return `Можно ${asks.length ? `${asks.join(", ")} или ${last}` : last}.`
-}
-
 type Screen = { kind: "main" } | { kind: "invites" } | MemoryScreen
 
 export default function Home({ bot, go }: { bot: Bot; go: Go }) {
@@ -196,7 +184,6 @@ export default function Home({ bot, go }: { bot: Bot; go: Go }) {
         mnemosyne={bot.settings.memory_provider === "mnemosyne"}
         open={open}
       />
-      <p className="hint">{tryLine(bot)}</p>
 
     </>
   )
