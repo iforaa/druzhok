@@ -391,17 +391,16 @@ defmodule DruzhokWebWeb.LlmProxy.Ruoc do
   OpenAI `images/generations` in, `{data: [{b64_json}]}` out, over ruoc
   `POST /v1/images`. The client's `model` is ignored (hermes sends OpenAI
   ids); the bot's `image_gen_model` names a ruoc catalogue entry, nil meaning
-  ruoc's default.
+  ruoc's default. The requested `size` is passed on.
   """
   def generate_image(conn, instance) do
     started_at = System.monotonic_time(:millisecond)
     prompt = conn.body_params["prompt"] || ""
 
     payload =
-      case instance.image_gen_model do
-        nil -> %{"prompt" => prompt}
-        model -> %{"prompt" => prompt, "model" => model}
-      end
+      %{"prompt" => prompt}
+      |> put_present("model", instance.image_gen_model)
+      |> put_present("size", conn.body_params["size"])
 
     render_image(conn, instance, payload, prompt, started_at)
   end
@@ -409,8 +408,8 @@ defmodule DruzhokWebWeb.LlmProxy.Ruoc do
   @doc """
   OpenAI `images/edits` in (multipart `image` / `image[]` files, as the
   OpenAI SDK sends them), `{data: [{b64_json}]}` out, over ruoc
-  `POST /v1/images` with the pictures as data URIs. This is how a bot draws
-  from the user's own photo ("me with this haircut").
+  `POST /v1/images` with the pictures as data URIs and the requested `size`.
+  This is how a bot draws from the user's own photo ("me with this haircut").
 
   Only some ruoc models take reference pictures, and ruoc refuses the rest,
   so the model is the bot's `image_gen_model` when its catalogue entry says
@@ -425,8 +424,11 @@ defmodule DruzhokWebWeb.LlmProxy.Ruoc do
     with :ok <- no_mask(params),
          {:ok, [_ | _] = images} <- reference_images(params),
          {:ok, model} <- edit_model(instance) do
-      payload = %{"prompt" => prompt, "images" => images}
-      payload = if model, do: Map.put(payload, "model", model), else: payload
+      payload =
+        %{"prompt" => prompt, "images" => images}
+        |> put_present("model", model)
+        |> put_present("size", params["size"])
+
       render_image(conn, instance, payload, prompt, started_at)
     else
       {:ok, []} ->
@@ -437,6 +439,9 @@ defmodule DruzhokWebWeb.LlmProxy.Ruoc do
     end
   end
 
+  defp put_present(map, _key, value) when value in [nil, ""], do: map
+  defp put_present(map, key, value), do: Map.put(map, key, value)
+
   # A mask is refused rather than ignored: an edit that ignores it is not
   # the edit that was asked for.
   defp no_mask(%{"mask" => mask}) when mask not in [nil, ""],
@@ -444,10 +449,11 @@ defmodule DruzhokWebWeb.LlmProxy.Ruoc do
 
   defp no_mask(_params), do: :ok
 
-  # The pictures of an edit as data URIs. Plug puts a single `image` file in
-  # as an upload and `image[]` files in as a list under "image".
+  # The pictures of an edit as data URIs, in the order sent (hermes puts the
+  # user's photo first). Plug puts a single `image` file in as an upload and
+  # `image[]` files in as a list, both under "image".
   defp reference_images(params) do
-    uploads = List.wrap(params["image"]) ++ List.wrap(params["image[]"])
+    uploads = List.wrap(params["image"])
 
     Enum.reduce_while(uploads, {:ok, []}, fn
       %Plug.Upload{path: path, content_type: type}, {:ok, acc} ->

@@ -37,6 +37,16 @@ defmodule DruzhokWebWeb.LlmProxy.Ruoc.ImageTest do
     assert post(conn, "/v1/images/generations", %{"prompt" => "x"}).status == 200
   end
 
+  test "passes the requested size on", %{conn: conn, bypass: bypass} do
+    Bypass.expect_once(bypass, "POST", "/v1/images", fn req ->
+      {:ok, raw, req} = Plug.Conn.read_body(req)
+      assert Jason.decode!(raw) == %{"prompt" => "x", "size" => "1536x1024"}
+      gateway_reply(req, 200, image_reply("ruoc-flux-klein"))
+    end)
+
+    assert post(conn, "/v1/images/generations", %{"prompt" => "x", "size" => "1536x1024"}).status == 200
+  end
+
   test "meters as image_gen with provider ruoc, the model ruoc used and no cost",
        %{conn: conn, bypass: bypass, instance: instance} do
     Bypass.expect_once(bypass, "POST", "/v1/images", fn req -> gateway_reply(req, 200, image_reply("ruoc-flux-klein")) end)
@@ -164,20 +174,43 @@ defmodule DruzhokWebWeb.LlmProxy.Ruoc.ImageTest do
       assert [%{request_type: "image_gen", model: "ruoc-seedream-flash"}] = usage_logs(instance)
     end
 
-    test "keeps the bot's own model when it edits, and sends every picture", %{bypass: bypass} do
+    test "keeps the bot's own model when it edits, and sends every picture in order", %{bypass: bypass} do
       instance = create_instance(%{image_gen_model: "ruoc-nano-banana"})
       conn = authed(Phoenix.ConnTest.build_conn(), instance)
       catalogue(bypass, @models, instance.ruoc_api_key)
+      png = <<0x89, "PNG", "fake-png">>
 
       Bypass.expect_once(bypass, "POST", "/v1/images", fn req ->
         {:ok, raw, req} = Plug.Conn.read_body(req)
         sent = Jason.decode!(raw)
         assert sent["model"] == "ruoc-nano-banana"
-        assert length(sent["images"]) == 2
+
+        assert sent["images"] == [
+                 "data:image/jpeg;base64," <> Base.encode64(@jpeg),
+                 "data:image/png;base64," <> Base.encode64(png)
+               ]
+
         gateway_reply(req, 200, image_reply("ruoc-nano-banana"))
       end)
 
-      assert post(conn, "/v1/images/edits", %{"prompt" => "x", "image" => [upload(@jpeg), upload(@jpeg)]}).status == 200
+      assert post(conn, "/v1/images/edits", %{"prompt" => "x", "image" => [upload(@jpeg), upload(png)]}).status == 200
+    end
+
+    test "passes the requested size on, and leaves it out when none is sent", %{conn: conn, bypass: bypass} do
+      catalogue(bypass, @models)
+      parent = self()
+
+      Bypass.expect(bypass, "POST", "/v1/images", fn req ->
+        {:ok, raw, req} = Plug.Conn.read_body(req)
+        send(parent, {:size, Map.fetch(Jason.decode!(raw), "size")})
+        gateway_reply(req, 200, image_reply("ruoc-seedream-flash"))
+      end)
+
+      assert post(conn, "/v1/images/edits", %{"prompt" => "x", "size" => "1024x1536", "image" => upload(@jpeg)}).status == 200
+      assert_received {:size, {:ok, "1024x1536"}}
+
+      assert post(conn, "/v1/images/edits", %{"prompt" => "x", "image" => upload(@jpeg)}).status == 200
+      assert_received {:size, :error}
     end
 
     test "a bot model that cannot edit is swapped for one that can", %{bypass: bypass} do
