@@ -5,6 +5,7 @@ defmodule DruzhokWebWeb.RouterAuthTest do
     "/v1/chat/completions",
     "/v1/embeddings",
     "/v1/images/generations",
+    "/v1/images/edits",
     "/v1/audio/transcriptions",
     "/v1/audio/speech",
     "/v2/search"
