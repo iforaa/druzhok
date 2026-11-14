@@ -44,3 +44,7 @@ config :druzhok, :bot_avatars, false
 # priv/onboarding/intro.jpg ships with the app; tests send the /start intro as
 # plain text unless a test points this at its own picture.
 config :druzhok, :onboarding_intro_path, "/nonexistent/druzhok-test-intro.jpg"
+
+# POST /v2/docs/convert names its bot by header under Host.Process (never in
+# prod: Plugs.DocsAuth ignores it on the systemd host). Tests pick the runner.
+config :druzhok_web, :docs_dev_bot_header, true

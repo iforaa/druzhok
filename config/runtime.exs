@@ -123,6 +123,15 @@ config :druzhok,
        do: Druzhok.Host.Systemd,
        else: Druzhok.Host.Process)
 
+# Shared LibreOffice conversion (POST /v2/docs/convert): in prod each job runs
+# in a sandboxed unit through the root-owned wrapper (ops/docs-convert); dev
+# uses a local soffice in a temp dir, tests a fake runner.
+if System.get_env("DRUZHOK_HOST") == "systemd" do
+  config :druzhok, :docs,
+    runner: Druzhok.Docs.Runner.Systemd,
+    jobs_root: "/var/lib/cleo-docs/jobs"
+end
+
 # Dev: point at a local hermes venv. Tests keep the fake from config/test.exs.
 if bin = System.get_env("HERMES_BIN"), do: config(:druzhok, hermes_bin: bin)
 if bin = System.get_env("FETCH_WORKER_BIN"), do: config(:druzhok, fetch_worker_bin: bin)

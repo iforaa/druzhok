@@ -47,3 +47,7 @@ config :phoenix, :stacktrace_depth, 20
 
 # Initialize plugs at runtime for faster development compilation
 config :phoenix, :plug_init_mode, :runtime
+
+# POST /v2/docs/convert: name the bot with `x-druzhok-docs-bot: <name>` (no bot
+# users in dev); Plugs.DocsAuth ignores it on the systemd host.
+config :druzhok_web, :docs_dev_bot_header, true

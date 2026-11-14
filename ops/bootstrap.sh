@@ -33,7 +33,9 @@ export DEBIAN_FRONTEND=noninteractive
 apt-get update -q
 apt-get install -y -q --no-install-recommends git curl build-essential nftables unzip acl sqlite3 \
   libssl-dev libncurses-dev autoconf m4 \
-  python3 python3-venv ffmpeg ghostscript poppler-utils unattended-upgrades debian-keyring debian-archive-keyring apt-transport-https
+  python3 python3-venv ffmpeg ghostscript poppler-utils unattended-upgrades debian-keyring debian-archive-keyring apt-transport-https \
+  libreoffice-core-nogui libreoffice-writer-nogui libreoffice-calc-nogui libreoffice-impress-nogui \
+  fonts-liberation fonts-crosextra-carlito fonts-crosextra-caladea
 apt-get clean
 command -v uv >/dev/null || { curl -LsSf https://astral.sh/uv/install.sh | env UV_INSTALL_DIR=/usr/local/bin sh; }
 
@@ -104,6 +106,18 @@ step "panel save script"
 # The deploy recipe in CLAUDE.md repeats this; ops/smoke.sh fails on a stale copy.
 install -d -m 0755 -o root -g root /usr/local/lib/druzhok
 install -m 0644 -o root -g root "$OPS/../apps/druzhok/priv/panel-save/save.py" /usr/local/lib/druzhok/panel-save.py
+
+step "document converter (POST /v2/docs/convert)"
+# One soffice per job, as cleo-docs, in a sandboxed transient unit started by the
+# root-owned wrapper (Druzhok.Docs). Bots get the shim as soffice/libreoffice,
+# ahead of /usr/bin on their PATH; it sends files to druzhok. The jobs dir is
+# druzhok's (group ubuntu); others may only pass through, to their own job dir.
+id -u cleo-docs >/dev/null 2>&1 || useradd --system --no-create-home --home-dir /nonexistent --shell /usr/sbin/nologin cleo-docs
+install -d -m 0711 -o root -g root /var/lib/cleo-docs
+install -d -m 0771 -o root -g ubuntu /var/lib/cleo-docs/jobs
+install -m 0755 -o root -g root "$OPS/docs-convert" /usr/local/lib/druzhok/docs-convert
+install -m 0755 -o root -g root "$OPS/soffice-shim" /usr/local/bin/soffice
+ln -sfn soffice /usr/local/bin/libreoffice
 
 step "druzhok env"
 # Single source of prod env for druzhok.service, druzhok-run.sh and smoke.sh.

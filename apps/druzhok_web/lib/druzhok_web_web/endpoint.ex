@@ -10,10 +10,18 @@ defmodule DruzhokWebWeb.Endpoint do
   plug Plug.RequestId
   plug Plug.Telemetry, event_prefix: [:phoenix, :endpoint]
 
-  plug Plug.Parsers,
-    parsers: [:urlencoded, :multipart, :json],
-    pass: ["*/*"],
-    json_decoder: Phoenix.json_library()
+  # POST /v2/docs/convert reads its own body (up to 20 MiB) after the caller
+  # is known: DocsController.
+  @parsers Plug.Parsers.init(
+             parsers: [:urlencoded, :multipart, :json],
+             pass: ["*/*"],
+             json_decoder: Phoenix.json_library()
+           )
+
+  plug :parse_body
+
+  defp parse_body(%Plug.Conn{path_info: ["v2", "docs", "convert"]} = conn, _), do: conn
+  defp parse_body(conn, _), do: Plug.Parsers.call(conn, @parsers)
 
   plug Plug.Head
 

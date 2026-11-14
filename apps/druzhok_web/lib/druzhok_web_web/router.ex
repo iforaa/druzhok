@@ -34,6 +34,20 @@ defmodule DruzhokWebWeb.Router do
     delete "/sites/:site", SitesController, :unpublish
   end
 
+  # Shared LibreOffice conversion (Druzhok.Docs). No key needed: a bot's
+  # terminal has none, so the caller is known by the uid owning its socket
+  # (Plugs.DocsAuth); a tenant key works too. The body is read by the
+  # controller, after the caller is known (Endpoint skips this path).
+  pipeline :docs_api do
+    plug DruzhokWebWeb.Plugs.DocsAuth
+  end
+
+  scope "/v2/docs", DruzhokWebWeb do
+    pipe_through :docs_api
+
+    post "/convert", DocsController, :convert
+  end
+
   # What ruoc-gateway calls back into, under one shared secret: the page fetcher
   # it routes POST /v1/fetch to (localhost in practice; see
   # docs/superpowers/specs/2026-09-05-web-fetch-service-design.md), and the

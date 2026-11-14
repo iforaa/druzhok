@@ -104,6 +104,25 @@ Spec: `docs/superpowers/specs/2026-09-05-ruoc-gateway-migration-design.md`.
 | `POST /v1/embeddings` | ruoc-gateway `/v1/embeddings` (kind `embedding`, per 1M input tokens, free at launch), computed upstream by ruoc. Bots send entry `ruoc-embed-gemini` (`Runtime.Hermes` `@embedding_model`/`@embedding_dim`, google/gemini-embedding-001 3072-d via OpenRouter, since 2026-10-22; `ruoc-embed-e5-large` before, whose one provider hung). ruoc hedges batches of ≤8 texts (`EMBED_HEDGE_AFTER` 2.5 s, `EMBED_ATTEMPT_TIMEOUT` 5 s). Changing the model = new ruoc entry + `@embedding_model`/`@embedding_dim` + `druzhok-ctl exec <bot> mnemosyne reindex --yes` per bot; a dimension mismatch makes Mnemosyne fall back to keyword recall, never corrupts. `MNEMOSYNE_DATA_DIR` must be `<tenant>/mnemosyne/data` (the plugin hardcodes that path, the CLI follows the variable). Used by the Mnemosyne memory provider (`instances.memory_provider`); spec `docs/superpowers/specs/2026-09-06-mnemosyne-memory-design.md`, eval `ops/embed-eval`. Mnemosyne 4 refuses a credentialed embedding call that is not https, so run `ops/patch-mnemosyne.py <install>` after every `uv sync` of a hermes install (`ops/smoke.sh` checks it). A `mnemosyne/data/config.yaml` now outranks these env vars: a bot must not have one. `MNEMOSYNE_LEXICAL_GATE_MIN=0` lets `mnemosyne_recall` find Russian paraphrases by meaning; automatic context still needs shared words, so `Voice.product_rules/1` tells a Mnemosyne bot to call the tool |
 | `PUT`, `DELETE /v2/sites/:site` | ruoc-gateway `/v1/sites/:site` under the bot's `ruoc_api_key` (`SitesController`). Body is a gzip tar, read a chunk at a time and cut at 60 MiB, the gateway's limit; the gateway's status and JSON pass through, plus 403 `sites_off` and 502 `gateway_unavailable`. Own Finch pool of 8 (`Druzhok.UploadFinch`). A gateway refusal sent before it read a body over about 256 KB can surface as 502, since Mint cannot read a reply mid-upload |
 | `POST /v1/audio/speech` | OpenAI TTS (unmetered for money) |
+| `POST /v2/docs/convert` | none: druzhok's own LibreOffice (`Druzhok.Docs`, below). **No key needed**: the bot is the uid owning the client socket |
+
+Document conversion (`Druzhok.Docs`, `DocsController`, step 2 of the office documents work): bots run `soffice`/`libreoffice`, which is
+`ops/soffice-shim` (Python stdlib, `/usr/local/bin`, ahead of `/usr/bin` on a bot's PATH); it posts each file to `POST /v2/docs/convert`
+(multipart `file`, `to` ∈ pdf docx xlsx pptx odt ods odp csv, optional `filter` from `Docs.filters/0`, filter options dropped) and writes `<outdir>/<name>.<to>`.
+File ≤ 20 MiB (body read by the controller after auth: the endpoint's parser skips this path), extensions doc docx odt rtf txt html xls xlsx
+ods csv ppt pptx odp, never PDF. Errors `{"error","message"}` (Russian): 400 `bad_request`, 401/403 (`Plugs.DocsAuth`), 413 `too_large`,
+415 `unsupported_type`, 422 `convert_failed`, 429 `busy`, 503 `low_memory`/`unavailable`, 504 `timeout`. Auth: `Druzhok.PeerUid` finds
+the ESTABLISHED `/proc/net/tcp{,6}` row from the peer's address:port to druzhok's, its uid's name must be `bot-<name>` of a row not being
+deleted (Caddy, druzhok, root: 403); a tenant key works too; under `Host.Process` the header `x-druzhok-docs-bot` (config
+`:docs_dev_bot_header`, dev/test only). `Docs.Queue`: one job for the box, 4 waiting, one per bot (else 429; a bot's new request replaces its own waiting one), then `MemAvailable` ≥
+Settings `docs_min_free_mb` (900). The request counts in `Druzhok.Inflight`. A job is `/var/lib/cleo-docs/jobs/<32 random>/{in/input.<ext>,out/}`;
+`sudo -n /usr/local/lib/druzhok/docs-convert <job> <to> [filter]` (`ops/docs-convert`, root's, the same allowlists, checked by `docs_test`)
+chowns it to `cleo-docs` and runs `/usr/lib/libreoffice/program/soffice` in a transient unit in `system-hermes.slice`: `PrivateNetwork`, `ProtectSystem=strict`,
+only the job dir writable, `/data` and `/etc/druzhok` inaccessible, `MemoryMax=700M`, no swap, `TasksMax=64`, `LimitFSIZE=200M`, 80 s
+(`RuntimeMaxSec=90`), fresh profile in the job dir. Druzhok reads only a plain `out/input.<to>` (never a link) and always deletes the job
+dir; a request that dies mid-job has its unit stopped (`docs-convert --stop`, unit `cleo-docs-<id>`) before the next starts;
+leftovers are swept once per boot of druzhok.service (not in one-off BEAMs). Logged per job: bot, input ext, target, bytes, ms, result (no names, no content).
+Dev: `Docs.Runner.Local` uses the developer's soffice. `ops/smoke.sh` converts a Cyrillic .docx from the bot's uid.
 
 Sites (`Druzhok.Sites`, CleoHub release spec PR G): ruoc-gateway stores and serves `<slug>.oldey.dev`; hermes's `site_publish` and `site_delete` call
 `/v2/sites/:site` and are on only with env `DRUZHOK_SITES_ENABLED=1`, written when `website_hosting_enabled` is on. Clients use the `url` the API returns and never
@@ -183,6 +202,7 @@ mix test --cover        # enforces per-app thresholds set in each mix.exs; raise
 # the panel's save script, against a hermes venv (its Elixir end-to-end tests use the same variable):
 HERMES_PYTHON=$PWD/hermes-agent/.venv/bin/python python3 -m unittest discover -s apps/druzhok/test/panel_save
 python3 -m unittest discover -s apps/druzhok/test/publish_existing_sites
+python3 -m unittest discover -s apps/druzhok/test/soffice_shim   # ops/soffice-shim; mix test runs one real conversion when soffice exists (:soffice)
 MIX_ENV=test mix ecto.migrate   # after pulling new migrations (test DB is data/druzhok_test.db)
 # run with a real local hermes venv for Host.Process:
 HERMES_BIN=$PWD/hermes-agent/.venv/bin/hermes DATABASE_PATH=data/druzhok.db mix phx.server
@@ -199,6 +219,14 @@ ssh ubuntu@94.247.135.159
 cd ~/druzhok && MIX_ENV=prod mix compile
 MIX_ENV=prod mix ecto.migrate          # DATABASE_PATH comes from druzhok.env
 sudo install -D -m 0644 -o root -g root apps/druzhok/priv/panel-save/save.py /usr/local/lib/druzhok/panel-save.py   # every deploy
+sudo install -m 0755 -o root -g root ops/docs-convert /usr/local/lib/druzhok/docs-convert                       # every deploy
+sudo install -m 0755 -o root -g root ops/soffice-shim /usr/local/bin/soffice && sudo ln -sfn soffice /usr/local/bin/libreoffice
+# once, before the first deploy with the document converter (bootstrap.sh does the same on a new box):
+#   sudo apt-get install -y --no-install-recommends libreoffice-core-nogui libreoffice-writer-nogui libreoffice-calc-nogui \
+#     libreoffice-impress-nogui fonts-liberation fonts-crosextra-carlito fonts-crosextra-caladea
+#   sudo useradd --system --no-create-home --home-dir /nonexistent --shell /usr/sbin/nologin cleo-docs
+#   sudo install -d -m 0711 -o root -g root /var/lib/cleo-docs && sudo install -d -m 0771 -o root -g ubuntu /var/lib/cleo-docs/jobs
+#   sudo install -m 0440 ops/sudoers-druzhok /etc/sudoers.d/druzhok && sudo visudo -cf /etc/sudoers.d/druzhok
 sudo systemctl restart druzhok
 ```
 

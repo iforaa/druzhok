@@ -16,6 +16,9 @@ gnu_find? =
 exclude = if gnu_find?, do: exclude, else: [:gnu_find | exclude]
 if not gnu_find?, do: IO.puts("GNU find not found at #{inspect(find_bin)}; skipping :gnu_find tests")
 
+# One real conversion runs when the dev machine has LibreOffice.
+exclude = if Druzhok.Docs.Runner.Local.soffice(), do: exclude, else: [:soffice | exclude]
+
 if :fetch_worker in exclude, do: IO.puts("fetch worker venv not found at #{inspect(worker_bin)}; skipping :fetch_worker tests")
 ExUnit.start(exclude: exclude)
 {:ok, _} = Application.ensure_all_started(:bypass)

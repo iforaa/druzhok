@@ -12,7 +12,6 @@ defmodule Druzhok.Lifecycle.StartGate do
   """
 
   @default_min_free_mb 900
-  @meminfo "/proc/meminfo"
 
   @doc "`fun.()`, or `{:busy, :lock | {:memory, free_mb}}` without running it."
   def with_slot(fun) when is_function(fun, 0) do
@@ -28,27 +27,13 @@ defmodule Druzhok.Lifecycle.StartGate do
   end
 
   # nil when there is no reading (macOS dev): the memory check passes.
-  defp free_mb do
-    with {:ok, text} <- File.read(opt(:meminfo_path) || @meminfo),
-         [_, kb] <- Regex.run(~r/^MemAvailable:\s+(\d+)\s+kB/m, text) do
-      div(String.to_integer(kb), 1024)
-    else
-      _ -> nil
-    end
-  end
+  defp free_mb, do: Druzhok.MemInfo.available_mb(opt(:meminfo_path))
 
   @doc "The `MemAvailable` a start needs, in MB."
   def min_free_mb do
     case opt(:start_min_free_mb) do
       mb when is_integer(mb) -> mb
-      _ -> min_free_from_settings()
-    end
-  end
-
-  defp min_free_from_settings do
-    case Integer.parse(to_string(Druzhok.Settings.get("start_min_free_mb") || "")) do
-      {mb, ""} when mb > 0 -> mb
-      _ -> @default_min_free_mb
+      _ -> Druzhok.Settings.positive_int("start_min_free_mb", @default_min_free_mb)
     end
   end
 

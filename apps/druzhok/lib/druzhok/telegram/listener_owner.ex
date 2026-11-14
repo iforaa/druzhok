@@ -9,7 +9,7 @@ defmodule Druzhok.Telegram.ListenerOwner do
   developer's own user and there is nothing to check.
   """
 
-  @listen "0A"
+  @listen 0x0A
 
   @doc "`:ok`, `{:error, :no_listener}` or `{:error, {:wrong_owner, uids}}`."
   def check(name, port) do
@@ -44,22 +44,7 @@ defmodule Druzhok.Telegram.ListenerOwner do
   0.0.0.0 or [::] would take loopback connections as well.
   """
   def parse(text, port) do
-    hex_port = port |> Integer.to_string(16) |> String.pad_leading(4, "0")
-
-    text
-    |> String.split("\n", trim: true)
-    |> Enum.drop(1)
-    |> Enum.flat_map(fn line ->
-      case String.split(line) do
-        [_sl, local, _remote, @listen, _queues, _timer, _retr, uid | _] ->
-          if local |> String.split(":") |> List.last() |> String.upcase() == hex_port,
-            do: [String.to_integer(uid)],
-            else: []
-
-        _ ->
-          []
-      end
-    end)
+    for %{state: @listen, local: {_ip, ^port}, uid: uid} <- Druzhok.PeerUid.parse(text), do: uid
   end
 
   defp bot_uid(name) do
