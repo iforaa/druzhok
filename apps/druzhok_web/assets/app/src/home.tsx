@@ -2,7 +2,7 @@ import { useEffect, useLayoutEffect, useRef, useState } from "react"
 import { api, cached, invalidate, panelApi, type Bot, type Files, type Me } from "./api"
 import { backButton, closePanel } from "./telegram"
 import { initials, plural } from "./format"
-import { Row, useLoad } from "./ui"
+import { Icon, Row, useLoad } from "./ui"
 import { planLine } from "./billing"
 import { MemoryList, MemoryView, type MemoryScreen } from "./memory"
 import Invites from "./invites"
@@ -67,18 +67,6 @@ function steps(bot: Bot, files: Files | null, me: Me | null, go: Go): Step[] {
       action: chat,
     })
   return list
-}
-
-/** What to try: one line, naming only what this bot has switched on. */
-function tryLine(bot: Bot): string {
-  const s = bot.settings
-  const asks = [
-    "отправить голосовое",
-    s.image_gen_enabled ? "попросить «нарисуй кота-космонавта»" : null,
-    s.website_hosting_enabled ? "попросить сделать страницу, бот её опубликует" : null,
-  ].filter((a): a is string => a !== null)
-  const last = asks.pop()!
-  return `Можно ${asks.length ? `${asks.join(", ")} или ${last}` : last}.`
 }
 
 type Screen = { kind: "main" } | { kind: "invites" } | MemoryScreen
@@ -159,6 +147,17 @@ export default function Home({ bot, go }: { bot: Bot; go: Go }) {
         )}
       </div>
 
+      <button className="invite-card" onClick={() => open({ kind: "invites" })}>
+        <span className="invite-card__icon" aria-hidden="true">
+          <Icon name="gift" size={22} />
+        </span>
+        <span className="invite-card__text">
+          <span className="invite-card__title">Пригласить друга</span>
+          <span className="invite-card__sub">Друг сможет создать своего бота</span>
+        </span>
+        <Icon name="chevron" size={18} />
+      </button>
+
       {known && left.length > 0 ? (
         <>
           <span className="label">
@@ -185,11 +184,7 @@ export default function Home({ bot, go }: { bot: Bot; go: Go }) {
         mnemosyne={bot.settings.memory_provider === "mnemosyne"}
         open={open}
       />
-      <p className="hint">{tryLine(bot)}</p>
 
-      <div className="group">
-        <Row icon="gift" tone="pink" title="Пригласить друга" sub="Друг сможет создать своего бота" onClick={() => open({ kind: "invites" })} />
-      </div>
     </>
   )
 }
