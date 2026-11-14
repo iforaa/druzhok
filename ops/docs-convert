@@ -1,0 +1,127 @@
+#!/usr/bin/env bash
+# docs-convert <job dir> <to> [filter]: one LibreOffice conversion for druzhok
+# (Druzhok.Docs.Runner.Systemd), installed root-owned at
+# /usr/local/lib/druzhok/docs-convert and run through sudo (ops/sudoers-druzhok).
+#
+# The job dir is druzhok's: /var/lib/cleo-docs/jobs/<random>/ with one file
+# in/input.<ext> and an empty out/. It is handed to cleo-docs, and soffice runs
+# in a transient unit that has no network, sees nothing it may write but the
+# job dir, and is gone when the job ends. It runs in system-hermes.slice, so the
+# bots' memory ceiling (and queue mode's bot_slots sized to it) covers it too. Prints the output path and exits 0;
+# exits 3 when the conversion failed, 4 when it ran out of time, 5 when the
+# converter is not installed or the unit could not run it, 2 on bad arguments.
+# Druzhok deletes the job dir afterwards, whatever happened.
+#
+# docs-convert --stop <job dir>: stop that job's unit (its request is gone).
+set -euo pipefail
+
+SOFFICE=/usr/lib/libreoffice/program/soffice
+USER_NAME=cleo-docs
+# soffice's own limit inside the unit; RuntimeMaxSec is the backstop.
+TIMEOUT_S=80
+
+die() { echo "docs-convert: $1" >&2; exit "${2:-2}"; }
+
+[ "$(id -u)" -eq 0 ] || die "must run as root"
+
+job_re='^/var/lib/cleo-docs/jobs/([A-Za-z0-9_-]{16,})$'
+
+if [ "${1:-}" = --stop ]; then
+  [ $# -eq 2 ] || die "usage: docs-convert --stop <job dir>"
+  [[ "$2" =~ $job_re ]] || die "bad job dir"
+  systemctl stop "cleo-docs-${BASH_REMATCH[1]}.service" 2>/dev/null || true
+  exit 0
+fi
+
+[ $# -eq 2 ] || [ $# -eq 3 ] || die "usage: docs-convert <job dir> <to> [filter]"
+
+job=$1; to=$2; filter=${3:-}
+
+[[ "$job" =~ $job_re ]] || die "bad job dir"
+id=${BASH_REMATCH[1]}
+[ -d "$job" ] && [ ! -L "$job" ] || die "no job dir"
+[ -x "$SOFFICE" ] || die "LibreOffice is not installed ($SOFFICE)" 5
+
+# The same lists as Druzhok.Docs (@targets, @filters).
+case "$to" in
+  pdf)  filters='writer_pdf_Export|calc_pdf_Export|impress_pdf_Export|writer_web_pdf_Export';;
+  docx) filters='MS Word 2007 XML|Office Open XML Text';;
+  xlsx) filters='Calc MS Excel 2007 XML|Calc Office Open XML';;
+  pptx) filters='Impress MS PowerPoint 2007 XML|Impress Office Open XML';;
+  odt)  filters='writer8';;
+  ods)  filters='calc8';;
+  odp)  filters='impress8';;
+  csv)  filters='Text - txt - csv (StarCalc)';;
+  *) die "bad target";;
+esac
+if [ -n "$filter" ]; then
+  ok=0
+  IFS='|' read -r -a allowed <<< "$filters"
+  for f in "${allowed[@]}"; do [ "$filter" = "$f" ] && ok=1; done
+  [ "$ok" = 1 ] || die "bad filter"
+  spec="$to:$filter"
+else
+  spec=$to
+fi
+
+# Exactly one plain input file, named by druzhok; nothing else in the dir.
+[ -d "$job/in" ] && [ ! -L "$job/in" ] || die "no input dir"
+[ -d "$job/out" ] && [ ! -L "$job/out" ] || die "no output dir"
+mapfile -t inputs < <(find "$job/in" -mindepth 1 -maxdepth 1)
+[ "${#inputs[@]}" -eq 1 ] || die "need exactly one input file"
+in=${inputs[0]}
+[[ "$(basename "$in")" =~ ^input\.(doc|docx|odt|rtf|txt|html|xls|xlsx|ods|csv|ppt|pptx|odp)$ ]] || die "bad input name"
+[ -f "$in" ] && [ ! -L "$in" ] || die "input is not a plain file"
+[ -z "$(find "$job" -mindepth 1 -type l -print -quit)" ] || die "links in the job dir"
+[ -z "$(find "$job/out" -mindepth 1 -print -quit)" ] || die "output dir not empty"
+
+chown -R -P "$USER_NAME:$USER_NAME" -- "$job"
+chmod 0700 "$job"
+
+status=0
+# OOMScoreAdjust=1000: on a system-hermes.slice OOM the kernel kills soffice, not a bot mid-turn.
+systemd-run --quiet --wait --collect --service-type=exec --unit="cleo-docs-$id" \
+  --slice=system-hermes.slice \
+  --uid="$USER_NAME" --gid="$USER_NAME" \
+  -p WorkingDirectory="$job" \
+  -E HOME="$job" -E TMPDIR=/tmp -E LANG=C.UTF-8 \
+  -p PrivateNetwork=yes \
+  -p ProtectSystem=strict -p ProtectHome=yes -p PrivateTmp=yes -p PrivateDevices=yes \
+  -p NoNewPrivileges=yes \
+  -p ReadWritePaths="$job" \
+  -p InaccessiblePaths=-/data -p InaccessiblePaths=-/etc/druzhok \
+  -p ProtectKernelTunables=yes -p ProtectKernelModules=yes -p ProtectKernelLogs=yes \
+  -p ProtectControlGroups=yes -p ProtectClock=yes -p ProtectHostname=yes \
+  -p ProtectProc=invisible -p PrivateIPC=yes \
+  -p RestrictSUIDSGID=yes -p RestrictRealtime=yes -p RestrictNamespaces=yes -p LockPersonality=yes \
+  -p CapabilityBoundingSet= \
+  -p SystemCallFilter=@system-service -p SystemCallErrorNumber=EPERM \
+  -p RestrictAddressFamilies="AF_UNIX AF_INET AF_INET6" \
+  -p UMask=0077 \
+  -p MemoryMax=700M -p MemorySwapMax=0 -p OOMScoreAdjust=1000 \
+  -p CPUWeight=20 -p Nice=10 -p TasksMax=64 \
+  -p RuntimeMaxSec=90 -p TimeoutStopSec=5 \
+  -p LimitFSIZE=200M -p LimitCORE=0 \
+  -- /usr/bin/timeout -k 5 "$TIMEOUT_S" "$SOFFICE" \
+    --headless --norestore --nologo --nolockcheck --nodefault \
+    "-env:UserInstallation=file://$job/profile" \
+    --convert-to "$spec" --outdir "$job/out" "$in" \
+  || status=$?
+
+# timeout(1) exits 124, or 137 when soffice ignored SIGTERM and was killed,
+# 126/127 when it cannot run soffice; systemd-run passes the unit's exit status
+# on. Any other failure (soffice's own, or systemd refusing the unit, which
+# systemd-run reports on stderr) counts as the conversion failing.
+case "$status" in
+  124|137) exit 4;;
+  126|127) echo "docs-convert: soffice could not be run (exit $status)" >&2; exit 5;;
+esac
+[ "$status" -eq 0 ] || echo "docs-convert: conversion exited $status" >&2
+[ "$status" -eq 0 ] || exit 3
+
+# Nothing of the unit runs any more: what is here now stays. Only the one
+# expected plain file counts.
+out="$job/out/input.$to"
+[ ! -L "$job/out" ] && [ -d "$job/out" ] || exit 3
+[ ! -L "$out" ] && [ -f "$out" ] && [ -s "$out" ] || exit 3
+echo "$out"

@@ -1,2 +1,3 @@
-ubuntu ALL=(root) NOPASSWD: /usr/local/sbin/druzhok-ctl
+ubuntu ALL=(root) NOPASSWD: /usr/local/sbin/druzhok-ctl, /usr/local/lib/druzhok/docs-convert
 Defaults!/usr/local/sbin/druzhok-ctl !requiretty
+Defaults!/usr/local/lib/druzhok/docs-convert !requiretty

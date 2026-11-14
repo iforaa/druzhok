@@ -108,6 +108,32 @@ for bin in gs pdftoppm pdftotext; do
   command -v "$bin" >/dev/null || { echo "$bin missing: apt-get install ghostscript poppler-utils"; exit 1; }
 done
 
+# The shared converter, from the bot's own uid: the shim on its PATH sends a
+# generated .docx to druzhok (known by its socket's uid), the wrapper converts it
+# in the sandbox, and the PDF's text must come back, Cyrillic included.
+echo "== document conversion"
+cmp -s "$ops/soffice-shim" /usr/local/bin/soffice || { echo "/usr/local/bin/soffice is missing or stale: install ops/soffice-shim (CLAUDE.md, deploy recipe)"; exit 1; }
+[ "$(readlink /usr/local/bin/libreoffice)" = soffice ] || { echo "/usr/local/bin/libreoffice is not a link to the shim"; exit 1; }
+cmp -s "$ops/docs-convert" /usr/local/lib/druzhok/docs-convert || { echo "/usr/local/lib/druzhok/docs-convert is missing or stale"; exit 1; }
+[ "$(stat -c %U /usr/local/lib/druzhok/docs-convert)" = root ] || { echo "the docs-convert wrapper is not root's"; exit 1; }
+[ -x /usr/lib/libreoffice/program/soffice ] || { echo "LibreOffice missing: apt-get install libreoffice-core-nogui libreoffice-writer-nogui libreoffice-calc-nogui libreoffice-impress-nogui"; exit 1; }
+id -u cleo-docs >/dev/null 2>&1 || { echo "no cleo-docs user"; exit 1; }
+conv=$(druzhok-ctl exec "$name" "$venv_bin/python" -I -c '
+import docx, os, shutil, subprocess, tempfile
+d = tempfile.mkdtemp(dir="/tmp")
+try:
+    src = os.path.join(d, "smoke.docx")
+    doc = docx.Document(); doc.add_paragraph("Проверка конвертера Дружок"); doc.save(src)
+    r = subprocess.run(["soffice", "--headless", "--convert-to", "pdf", "--outdir", d, src], capture_output=True, text=True, timeout=300)
+    print(r.stdout.strip(), r.stderr.strip())
+    t = subprocess.run(["pdftotext", os.path.join(d, "smoke.pdf"), "-"], capture_output=True, text=True).stdout
+    print("TEXT:" + " ".join(t.split()))
+finally:
+    shutil.rmtree(d)
+' || true)
+echo "$conv"
+echo "$conv" | grep -q "TEXT:Проверка конвертера Дружок" || { echo "document conversion failed"; exit 1; }
+
 # Without ops/patch-mnemosyne.py recall silently drops to keyword-only.
 echo "== mnemosyne embeddings allowed on loopback"
 /opt/hermes/.venv/bin/python "$ops/patch-mnemosyne.py" --verify /opt/hermes || exit 1

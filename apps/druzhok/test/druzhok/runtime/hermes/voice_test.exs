@@ -329,6 +329,15 @@ defmodule Druzhok.Runtime.Hermes.VoiceTest do
       assert Voice.product_rules(%{name: "b", memory_provider: "mnemosyne"}) =~ "PDF и документы:"
     end
 
+    test "the documents rule sends office files to the shared soffice, one at a time" do
+      rules = Voice.product_rules(%{name: "b"})
+      assert rules =~ "`soffice --headless --convert-to pdf файл`"
+      assert rules =~ ".doc/.xls/.ppt → docx/xlsx/pptx"
+      assert rules =~ "пересчёт формул в xlsx"
+      assert rules =~ "по одному файлу, до 20 МБ"
+      assert rules =~ "Ответ «занят» — подожди минуту и повтори один раз."
+    end
+
     test "the memory rule follows the provider" do
       plain = Voice.product_rules(%{name: "b"})
       assert plain =~ "сохраняй инструментом memory"

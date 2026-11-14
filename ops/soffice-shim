@@ -1,0 +1,179 @@
+#!/usr/bin/python3
+"""soffice / libreoffice for Druzhok bots: the shared converter behind druzhok.
+
+Installed as /usr/local/bin/soffice (and the libreoffice symlink), ahead of
+/usr/bin on a bot's PATH. Bots run no LibreOffice of their own: each file is
+sent to druzhok's POST /v2/docs/convert (127.0.0.1:4000, or DRUZHOK_PROXY_URL),
+which runs one soffice per job in a sandbox and sends the result back. No key:
+druzhok knows the bot by the uid owning the socket.
+
+Takes what the bundled docx/xlsx/powerpoint skills run:
+
+    soffice --headless [--calc|--writer|--impress|--norestore|--invisible|...]
+            --convert-to <ext>[:<filter>] [--outdir <dir>] <file>...
+
+and writes <outdir, else the current dir>/<file's name>.<ext>, printing
+"convert <in> -> <out>" like LibreOffice. On an error it prints druzhok's
+Russian message and exits 1. Python 3 standard library only; needs no
+environment (xlsx_recalc.py runs it with HOME and PATH alone).
+"""
+
+import json
+import os
+import sys
+import tempfile
+import urllib.error
+import urllib.request
+import uuid
+
+MAX_BYTES = 20 * 1024 * 1024
+DEFAULT_URL = "http://127.0.0.1:4000"
+TIMEOUT_S = 600
+
+# Everything else LibreOffice takes (--headless, --calc, --norestore, -env:...)
+# changes nothing for a conversion here and is skipped.
+UNSUPPORTED = {"cat", "print-to-file", "printer-name", "pt", "p", "o", "n", "show", "view"}
+
+
+class ShimError(Exception):
+    pass
+
+
+def parse(argv):
+    """argv (without the program) -> {to, filter, outdir, files}."""
+    to = None
+    filt = None
+    outdir = None
+    files = []
+    i = 0
+    while i < len(argv):
+        arg = argv[i]
+        if arg.startswith("-") and arg != "-":
+            name, eq, value = arg.lstrip("-").partition("=")
+            if name in ("convert-to", "outdir"):
+                if not eq:
+                    i += 1
+                    if i >= len(argv):
+                        raise ShimError(f"после --{name} нужно значение")
+                    value = argv[i]
+                if name == "outdir":
+                    outdir = value
+                else:
+                    # <ext>[:<filter>[:<options>]]: the converter takes no filter
+                    # options, so they are dropped (LibreOffice's defaults apply).
+                    ext, _, rest = value.partition(":")
+                    to = ext.strip().lower()
+                    filt, _, options = rest.partition(":")
+                    filt = filt or None
+                    if options:
+                        print(f"soffice: параметры фильтра «{options}» не поддерживаются и пропущены", file=sys.stderr)
+            elif name in ("version", "help", "h"):
+                return {"info": name}
+            elif name in UNSUPPORTED:
+                raise ShimError(f"--{name} не поддерживается: здесь работает только --convert-to")
+            i += 1
+            continue
+        files.append(arg)
+        i += 1
+    if not to:
+        raise ShimError("нужен --convert-to <формат>: этот soffice только конвертирует файлы")
+    if not files:
+        raise ShimError("не указан файл для конвертации")
+    return {"to": to, "filter": filt, "outdir": outdir, "files": files}
+
+
+def multipart(fields, filename, data):
+    boundary = "----druzhok" + uuid.uuid4().hex
+    parts = []
+    for key, value in fields.items():
+        parts.append(
+            f'--{boundary}\r\nContent-Disposition: form-data; name="{key}"\r\n\r\n{value}\r\n'.encode()
+        )
+    safe = filename.replace('"', "").replace("\r", "").replace("\n", "")
+    parts.append(
+        f'--{boundary}\r\nContent-Disposition: form-data; name="file"; filename="{safe}"\r\n'
+        f"Content-Type: application/octet-stream\r\n\r\n".encode()
+    )
+    parts.append(data)
+    parts.append(f"\r\n--{boundary}--\r\n".encode())
+    return boundary, b"".join(parts)
+
+
+def error_message(body, status):
+    try:
+        message = json.loads(body.decode("utf-8")).get("message")
+        if message:
+            return message
+    except (ValueError, AttributeError):
+        pass
+    return f"конвертер ответил {status}"
+
+
+def convert_one(url, path, to, filt, outdir):
+    """Convert one file; returns the output path or raises ShimError."""
+    if not os.path.isfile(path):
+        raise ShimError(f"нет такого файла: {path}")
+    if os.path.getsize(path) > MAX_BYTES:
+        raise ShimError("файл больше 20 МБ: такой конвертер не примет")
+    with open(path, "rb") as f:
+        data = f.read()
+
+    fields = {"to": to}
+    if filt:
+        fields["filter"] = filt
+    name = os.path.basename(path)
+    boundary, body = multipart(fields, name, data)
+    req = urllib.request.Request(
+        url.rstrip("/") + "/v2/docs/convert",
+        data=body,
+        method="POST",
+        headers={"Content-Type": f"multipart/form-data; boundary={boundary}"},
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=TIMEOUT_S) as resp:
+            result = resp.read()
+    except urllib.error.HTTPError as e:
+        raise ShimError(error_message(e.read(), e.code))
+    except (urllib.error.URLError, OSError) as e:
+        raise ShimError(f"конвертер документов недоступен ({e})")
+
+    out_dir = outdir or os.getcwd()
+    os.makedirs(out_dir, exist_ok=True)
+    out = os.path.join(out_dir, os.path.splitext(name)[0] + "." + to)
+    fd, tmp = tempfile.mkstemp(dir=out_dir, prefix=".soffice-")
+    try:
+        with os.fdopen(fd, "wb") as f:
+            f.write(result)
+        os.replace(tmp, out)
+    except BaseException:
+        if os.path.exists(tmp):
+            os.unlink(tmp)
+        raise
+    return out
+
+
+def main(argv=None):
+    argv = sys.argv[1:] if argv is None else argv
+    try:
+        opts = parse(argv)
+    except ShimError as e:
+        print(f"soffice: {e}", file=sys.stderr)
+        return 1
+    if "info" in opts:
+        print("LibreOffice (общий конвертер Druzhok): soffice --headless --convert-to <формат> [--outdir <папка>] <файл>")
+        return 0
+
+    url = os.environ.get("DRUZHOK_PROXY_URL") or DEFAULT_URL
+    failed = False
+    for path in opts["files"]:
+        try:
+            out = convert_one(url, path, opts["to"], opts["filter"], opts["outdir"])
+            print(f"convert {os.path.abspath(path)} -> {os.path.abspath(out)}", flush=True)
+        except ShimError as e:
+            print(f"soffice: {path}: {e}", file=sys.stderr, flush=True)
+            failed = True
+    return 1 if failed else 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

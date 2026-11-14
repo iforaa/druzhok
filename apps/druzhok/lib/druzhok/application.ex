@@ -17,6 +17,8 @@ defmodule Druzhok.Application do
         # Site uploads (Ruoc.Client.put_stream), each holding one for minutes.
         {Finch, name: Druzhok.UploadFinch, pools: %{default: [size: 8, count: 1]}},
         Druzhok.Fetch.Worker,
+        # One document conversion at a time (POST /v2/docs/convert).
+        Druzhok.Docs.Queue,
         Druzhok.Status,
         # Warm ruoc's model catalogue: a bot start reads it from the cache
         # without waiting (Runtime.Hermes sync_image_input_mode).
@@ -33,10 +35,16 @@ defmodule Druzhok.Application do
   # an empty profile cache and would ask Telegram for every bot again.
   defp manager_bot do
     if Application.get_env(:druzhok, :manager_bot, true) do
-      [Druzhok.ManagerBot, sweep_panel_saves()] ++ backfill()
+      [Druzhok.ManagerBot, sweep_panel_saves(), sweep_docs_jobs()] ++ backfill()
     else
       []
     end
+  end
+
+  # Job dirs a crash left (Druzhok.Docs). Only in druzhok.service: a one-off
+  # BEAM would delete the dir of a job the service is converting.
+  defp sweep_docs_jobs do
+    Supervisor.child_spec({Task, &Druzhok.Docs.sweep/0}, id: :docs_sweep)
   end
 
   # Hand-over files left by a save that a crash cut short; a stale save script.
