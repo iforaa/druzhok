@@ -437,8 +437,6 @@ defmodule Druzhok.Runtime.Hermes do
   # name (hermes `skills.disabled`), never deleted, on every bot (operator,
   # 2026-10-25): a manifest check missed skills an older hermes left behind,
   # and a skill the bot made with one of these exact names is hidden too.
-  # docx, xlsx and powerpoint: hermes 0.23 merged them into `microsoft-office`,
-  # and skills_sync leaves the old copies on a bot made before it.
   @disabled_skills ~w(
     claude-code codex opencode computer-use merge-reconciler
     apple-notes apple-reminders findmy imessage
@@ -447,7 +445,6 @@ defmodule Druzhok.Runtime.Hermes do
     huggingface-hub serving-llms-vllm llama-cpp weights-and-biases evaluating-llms-harness
     sdlc-review openhue xurl himalaya comfyui touchdesigner-mcp
     airtable box google-workspace notion teams-meeting-pipeline
-    docx xlsx powerpoint
   )
 
   defp sync_skills_block(content),

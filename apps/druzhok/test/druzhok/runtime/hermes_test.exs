@@ -1136,9 +1136,7 @@ defmodule Druzhok.Runtime.HermesTest do
       assert "github-auth" in cfg["skills"]["disabled"]
       assert "google-workspace" in cfg["skills"]["disabled"]
       refute "codebase-inspection" in cfg["skills"]["disabled"]
-      assert Enum.all?(~w(docx xlsx powerpoint), &(&1 in cfg["skills"]["disabled"]))
-      refute "microsoft-office" in cfg["skills"]["disabled"]
-      refute "pdf" in cfg["skills"]["disabled"]
+      refute "xlsx" in cfg["skills"]["disabled"]
       assert cfg["skills"]["external_dirs"] == ["/x"]
     end
 
