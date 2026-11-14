@@ -7,7 +7,8 @@ sent to druzhok's POST /v2/docs/convert (127.0.0.1:4000, or DRUZHOK_PROXY_URL),
 which runs one soffice per job in a sandbox and sends the result back. No key:
 druzhok knows the bot by the uid owning the socket.
 
-Takes what the bundled docx/xlsx/powerpoint skills run:
+Takes what the bundled microsoft-office skill (docx/xlsx/powerpoint before
+hermes 0.23) runs:
 
     soffice --headless [--calc|--writer|--impress|--norestore|--invisible|...]
             --convert-to <ext>[:<filter>] [--outdir <dir>] <file>...

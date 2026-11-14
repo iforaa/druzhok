@@ -18,7 +18,8 @@ defmodule Druzhok.Docs do
 
   require Logger
 
-  # csv beyond the spec's seven: the xlsx skill runs `--convert-to csv` (first sheet).
+  # csv beyond the spec's seven: the microsoft-office skill (xlsx before hermes 0.23)
+  # runs `--convert-to csv` (first sheet).
   @targets ~w(pdf docx xlsx pptx odt ods odp csv)
   @inputs ~w(doc docx odt rtf txt html xls xlsx ods csv ppt pptx odp)
 

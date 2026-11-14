@@ -84,6 +84,14 @@ else
   [ -z "$hook_url" ] || { echo "polling bot still has a webhook registered"; exit 1; }
 fi
 
+# The hermes install the unit runs (its ExecStart, so a canary drop-in on a new
+# install is the one tested, not /opt/hermes before the flip). druzhok-ctl exec's
+# own PATH is /opt/hermes's, so every check below names this python itself.
+venv_bin=$(systemctl show -p ExecStart --value "hermes@$name.service" | sed -n 's|.*path=\([^ ;]*\)/hermes .*|\1|p' | head -1 || true)
+venv_bin=${venv_bin:-/opt/hermes/.venv/bin}
+hermes_tree=${venv_bin%/.venv/bin}
+echo "== hermes install: $hermes_tree (python: $venv_bin/python)"
+
 # Run through the bot's uid, asleep or not: exec neither starts nor wakes it.
 # --check imports every private hermes name the script uses, so a hermes update
 # that renames one fails here instead of in an owner's save.
@@ -91,17 +99,13 @@ echo "== panel save script"
 script=/usr/local/lib/druzhok/panel-save.py
 cmp -s "$ops/../apps/druzhok/priv/panel-save/save.py" "$script" || { echo "$script is missing or stale: install it (CLAUDE.md, deploy recipe)"; exit 1; }
 [ "$(stat -c %U "$script")" = root ] || { echo "$script is not root's"; exit 1; }
-check=$(druzhok-ctl exec "$name" /opt/hermes/.venv/bin/python -I "$script" --check || true)
+check=$(druzhok-ctl exec "$name" "$venv_bin/python" -I "$script" --check || true)
 echo "$check"
 [ "$check" = '{"ok": true}' ] || { echo "the save script cannot import what it needs from hermes"; exit 1; }
 
-# The bundled docx/xlsx/powerpoint/pdf skills need hermes's documents extras, and
-# read_file's scan hints and PDF compression need poppler and ghostscript. Imports
-# run in the venv the unit runs, so a canary drop-in on a new install is the one
-# tested (druzhok-ctl exec's own PATH is /opt/hermes's).
+# The bundled microsoft-office and pdf skills need hermes's documents extras, and
+# read_file's scan hints and PDF compression need poppler and ghostscript.
 echo "== document libraries"
-venv_bin=$(systemctl show -p ExecStart --value "hermes@$name.service" | sed -n 's|.*path=\([^ ;]*\)/hermes .*|\1|p' | head -1 || true)
-venv_bin=${venv_bin:-/opt/hermes/.venv/bin}; echo "python: $venv_bin/python"
 druzhok-ctl exec "$name" "$venv_bin/python" -I -c 'import docx, openpyxl, pptx, pypdf, pdfplumber, pypdfium2, reportlab, matplotlib, segno' \
   || { echo "document libraries missing: install hermes with --extra documents --extra documents-pdf --extra druzhok-docs"; exit 1; }
 for bin in gs pdftoppm pdftotext; do
@@ -142,7 +146,7 @@ echo "$conv" | grep -q "TEXT:Проверка конвертера Дружок"
 
 # Without ops/patch-mnemosyne.py recall silently drops to keyword-only.
 echo "== mnemosyne embeddings allowed on loopback"
-/opt/hermes/.venv/bin/python "$ops/patch-mnemosyne.py" --verify /opt/hermes || exit 1
+"$venv_bin/python" "$ops/patch-mnemosyne.py" --verify "$hermes_tree" || exit 1
 
 echo "== page fetch (/v2/scrape via ruoc)"
 key=$(run "IO.puts(Druzhok.Repo.get_by!(Druzhok.Instance, name: \"$name\").tenant_key)" | tail -1)
