@@ -103,7 +103,9 @@ gateway.credits.*	unreachable: Nous Portal credits, not used
 gateway.debug.*	unreachable: /debug and its replies are admin-only for tenants
 gateway.deny.*	unreachable: /deny and its replies are admin-only for tenants
 gateway.diff.*	unreachable: /diff and its replies are admin-only for tenants
+gateway.discard.*	unreachable: /discard and its replies are admin-only for tenants
 gateway.draining	unreachable: sent to the admin who asked for a restart
+gateway.errors.cron_session_read_only	unreachable: only a cron job's own session refuses input, and no chat writes into one
 gateway.errors.empty_response_model_label	clean
 gateway.errors.hint_rate_limited	clean
 gateway.errors.hint_rejected	clean
@@ -117,6 +119,8 @@ gateway.exec_approval.action_once	clean
 gateway.exec_approval.action_session	clean
 gateway.exec_approval.deadline	clean
 gateway.exec_approval.default_reason	clean
+gateway.exec_approval.not_requester	clean
+gateway.exec_approval.not_requester_admins_only	clean
 gateway.exec_approval.reason_label	clean
 gateway.exec_approval.smart_deny_heading	clean
 gateway.exec_approval.smart_deny_line	clean
@@ -127,7 +131,9 @@ gateway.exec_approval.text_choice_joiner	unreachable: Telegram shows approval bu
 gateway.exec_approval.text_choice_last	unreachable: Telegram shows approval buttons, not the text fallback
 gateway.exec_approval.text_choice_once	unreachable: Telegram shows approval buttons, not the text fallback
 gateway.exec_approval.text_choice_session	unreachable: Telegram shows approval buttons, not the text fallback
+gateway.exec_approval.text_prompt_deny_only	unreachable: Telegram shows approval buttons, not the text fallback
 gateway.exec_approval.timed_out_card_body	clean
+gateway.exec_approval.truncated_full_above	clean
 gateway.fast.*	unreachable: /fast and its replies are admin-only for tenants
 gateway.footer.*	unreachable: /footer and its replies are admin-only for tenants
 gateway.goal.*	unreachable: /goal and its replies are admin-only for tenants
@@ -136,6 +142,9 @@ gateway.heartbeat.*	unreachable: /heartbeat and its replies are admin-only for t
 gateway.help.more_use_commands	unreachable: listed only for ungated users
 gateway.help.skill_header	unreachable: skill commands are listed only for ungated users
 gateway.hooks.*	unreachable: /hooks and its replies are admin-only for tenants
+gateway.ingress.busy	clean
+gateway.ingress.lost_turn	hidden: display.end_user_mode sends gateway.ingress.lost_turn_end_user instead
+gateway.ingress.queue_full	clean
 gateway.init.*	unreachable: /init and its replies are admin-only for tenants
 gateway.insights.*	unreachable: /insights and its replies are admin-only for tenants
 gateway.kanban.*	unreachable: /kanban and its replies are admin-only for tenants
@@ -225,6 +234,7 @@ gateway.unauthorized.owner_notice	unreachable: owner notice for dropped stranger
 gateway.undo.*	unreachable: /undo and its replies are admin-only for tenants
 gateway.update.*	unreachable: /update and its replies are admin-only for tenants
 gateway.usage.*	unreachable: /usage and its replies are admin-only for tenants
+gateway.usage_limit.*	unreachable: the proxy answers a plan limit with its own notice, and /model is admin-only
 gateway.verbose.*	unreachable: /verbose and its replies are admin-only for tenants
 gateway.voice.channel_deps_missing	unreachable: Discord voice channels
 gateway.voice.channel_guild_only	unreachable: Discord voice channels

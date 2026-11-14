@@ -54,8 +54,17 @@ systemctl disable --now caddy >/dev/null 2>&1 || true   # enabled later, once th
 
 step "hermes → /opt/hermes"
 # The tree is normally rsynced from the operator's machine (update-hermes skill);
-# fall back to a clone only when nothing is there yet.
-if [ ! -f "$HERMES_DIR/pyproject.toml" ]; then git clone -q --depth 1 "$HERMES_REPO" "$HERMES_DIR"; fi
+# fall back to a clone only when nothing is there yet. From hermes 0.23.1 that
+# rsync leaves out these top-level dirs with anchored excludes (keep the two lists
+# the same): the desktop app, web dashboard, docs site, TUI and test suites, which
+# no gateway imports. Top-level only: plugins/web (web search backends) and
+# skills/web stay.
+HERMES_SKIP_DIRS=(apps web website ui-tui tests-js tests)
+if [ ! -f "$HERMES_DIR/pyproject.toml" ]; then
+  git clone -q --depth 1 "$HERMES_REPO" "$HERMES_DIR"
+  for d in "${HERMES_SKIP_DIRS[@]}"; do rm -rf "${HERMES_DIR:?}/$d"; done
+  [ -d "$HERMES_DIR/plugins/web/firecrawl" ] || { echo "!! $HERMES_DIR/plugins/web/firecrawl missing: web search would be gone"; exit 1; }
+fi
 # hermes >= 0.22 runs on Python 3.14 (its uv.lock resolves only for 3.14), which
 # uv installs under /data/opt/uv-python; Ubuntu's python3 is too old.
 ( cd "$HERMES_DIR" && UV_CACHE_DIR=/data/opt/uv-cache UV_PYTHON_INSTALL_DIR=/data/opt/uv-python uv sync --frozen --python 3.14 --extra all --extra messaging --extra firecrawl --extra mnemosyne --extra documents --extra documents-pdf --extra druzhok-docs 2>&1 | tail -2 )
