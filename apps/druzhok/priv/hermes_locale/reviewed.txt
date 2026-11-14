@@ -142,6 +142,9 @@ gateway.heartbeat.*	unreachable: /heartbeat and its replies are admin-only for t
 gateway.help.more_use_commands	unreachable: listed only for ungated users
 gateway.help.skill_header	unreachable: skill commands are listed only for ungated users
 gateway.hooks.*	unreachable: /hooks and its replies are admin-only for tenants
+gateway.ingress.busy	clean
+gateway.ingress.lost_turn	hidden: display.end_user_mode sends gateway.ingress.lost_turn_end_user instead
+gateway.ingress.queue_full	clean
 gateway.init.*	unreachable: /init and its replies are admin-only for tenants
 gateway.insights.*	unreachable: /insights and its replies are admin-only for tenants
 gateway.kanban.*	unreachable: /kanban and its replies are admin-only for tenants
