@@ -13,9 +13,11 @@
   --line: rgba(255, 255, 255, 0.07);
   --text: #f2f5f8;
   --hint: #8b98a7;
-  --accent: #4c9dff;
+  --brand-pink: #f5089e;
+  --brand-violet: #3a22d8;
+  --accent: #7b61ff;
   --accent-text: #ffffff;
-  --accent-soft: rgba(76, 157, 255, 0.16);
+  --accent-soft: rgba(123, 97, 255, 0.18);
   --ok: #3cc483;
   --ok-soft: rgba(60, 196, 131, 0.16);
   --warn: #f2b84b;
@@ -23,8 +25,6 @@
   --danger-soft: rgba(255, 107, 107, 0.15);
   --grey-soft: rgba(139, 152, 167, 0.16);
   --tabbar: rgba(22, 30, 40, 0.86);
-  --tip-from: #3a78f2;
-  --tip-to: #6cb4ff;
   --skeleton: rgba(255, 255, 255, 0.06);
   --skeleton-hi: rgba(255, 255, 255, 0.12);
   --shadow: 0 10px 30px rgba(0, 0, 0, 0.35);
@@ -38,8 +38,8 @@
   --line: rgba(15, 20, 27, 0.07);
   --text: #111821;
   --hint: #6b7787;
-  --accent: #2f7bf0;
-  --accent-soft: rgba(47, 123, 240, 0.12);
+  --accent: #3a22d8;
+  --accent-soft: rgba(58, 34, 216, 0.1);
   --ok: #24a466;
   --ok-soft: rgba(36, 164, 102, 0.13);
   --danger: #e04848;
@@ -205,6 +205,42 @@ body.editing .app--tabs {
 
 /* --- Бот ---------------------------------------------------------------- */
 
+/* «Пригласить друга»: the Cleo pink-to-violet card, first thing under the plan. */
+.invite-card {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  padding: 14px 16px;
+  border-radius: 18px;
+  color: #fff;
+  text-align: left;
+  background: linear-gradient(120deg, var(--brand-pink), var(--brand-violet));
+  box-shadow: var(--shadow);
+}
+.invite-card__icon {
+  flex: none;
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  background: rgba(255, 255, 255, 0.2);
+}
+.invite-card__text {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+.invite-card__title {
+  font-weight: 700;
+}
+.invite-card__sub {
+  font-size: 0.85rem;
+  opacity: 0.85;
+}
+
 .bot-head {
   display: flex;
   align-items: center;
@@ -228,7 +264,8 @@ body.editing .app--tabs {
   font-weight: 700;
   font-size: 1.05rem;
   color: #fff;
-  background: linear-gradient(145deg, #5aa9ff, #2f6fe0);
+  /* The Cleo icon's split: pink over violet. */
+  background: linear-gradient(180deg, var(--brand-pink) 50%, var(--brand-violet) 50%);
   box-shadow: 0 0 0 3px var(--surface);
 }
 .hero {
