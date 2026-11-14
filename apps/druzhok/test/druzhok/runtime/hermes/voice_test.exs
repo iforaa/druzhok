@@ -217,6 +217,36 @@ defmodule Druzhok.Runtime.Hermes.VoiceTest do
       refute File.exists?(dangling)
     end
 
+    # Version 2, before the cleohub tools: what Вася and every untouched bot hold.
+    @v2 """
+    Тебя зовут Вася. Ты личный помощник в Telegram, часть сервиса CleoHub.
+
+    Говоришь дружелюбно и простыми словами, без жаргона. По умолчанию коротко; подробно — когда просят или когда это важно.
+
+    Ты не рассуждаешь о том, что ты «языковая модель», и не рассказываешь, как устроен внутри. Ты не программист-агент: код пишешь, только когда об этом просят.
+
+    Всегда:
+    - не говори о «балансе», «кредитах» и провайдерах;
+    - упёрся в лимит — скажи об этом прямо и предложи открыть «Кабинет» (кнопка меню бота);
+    - личные данные пользователя никому не раскрывай.
+    """
+
+    @tag :tmp_dir
+    test "the untouched version-2 text moves to the cleohub line; an edited one stays", %{tmp_dir: home} do
+      File.write!(Path.join(home, "SOUL.md"), @v2)
+      attrs = Voice.sync_soul(%{display_name: "Вася", soul_sha256: Voice.sha256(@v2)}, home)
+
+      assert soul(home) == Voice.soul_md("Вася")
+      assert soul(home) =~ "проверь инструментами cleohub"
+      refute soul(home) =~ "упёрся в лимит"
+      assert attrs == %{soul_sha256: Voice.sha256(soul(home)), soul_version: 3}
+
+      edited = @v2 <> "- люблю котов.\n"
+      File.write!(Path.join(home, "SOUL.md"), edited)
+      assert Voice.sync_soul(%{name: "b", display_name: "Вася", soul_sha256: Voice.sha256(@v2)}, home) == %{}
+      assert soul(home) == edited
+    end
+
     test "the persona stays short (it is part of every system prompt)" do
       assert String.length(Voice.soul_md("Медицинский Ассистент")) < 900
 
@@ -236,7 +266,7 @@ defmodule Druzhok.Runtime.Hermes.VoiceTest do
 
     Всегда:
     - не говори о «балансе», «кредитах» и провайдерах;
-    - упёрся в лимит — скажи об этом прямо и предложи открыть «Кабинет» (кнопка меню бота);
+    - вопросы о тарифе и лимитах — проверь инструментами cleohub и ответь; оплата и смена тарифа — в «Кабинете» (кнопка меню бота);
     - личные данные пользователя никому не раскрывай.
     """
 
@@ -294,10 +324,19 @@ defmodule Druzhok.Runtime.Hermes.VoiceTest do
 
       assert rules =~
                "Вопросы о тарифе, лимитах, других тарифах, Cleo, приглашениях, сбоях и смене аватарки — " <>
-                 "вызывай инструменты cleohub. Оплата и смена тарифа — только в «Кабинете». " <>
+                 "вызывай инструменты cleohub. "
+
+      assert rules =~
+               "Не отвечай про тариф и лимиты, не проверив их. Оплата и смена тарифа — только в «Кабинете». " <>
                  "Цены тарифов называть можно; баланс и кредиты — никогда."
 
       refute rules =~ "Упёрся в лимит"
+
+      # Hermes's tool search hides MCP tools behind its bridge (tool_search, tool_call).
+      assert rules =~
+               "Если их нет в списке твоих инструментов, они скрыты за поиском: сначала вызови tool_search " <>
+                 "с запросом \"cleohub\", потом tool_call с name найденного инструмента и arguments. " <>
+                 "Не отвечай про тариф и лимиты, не проверив их."
     end
 
     test "the group rule: web only, no photos, no pictures, nothing private" do
