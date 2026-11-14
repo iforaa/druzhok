@@ -1096,3 +1096,20 @@ label.secondary--small {
   font-weight: 600;
   overflow-wrap: anywhere;
 }
+
+/* «Сделано в Cleo»: the one place the cabinet names us, small and last, so the
+   top stays the owner's bot. */
+.made-by {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  margin: 24px 0 4px;
+  color: var(--hint);
+  font-size: 0.75rem;
+  opacity: 0.8;
+}
+.made-by img {
+  /* The whole superbot icon, rounded like an app icon, not cut to a circle. */
+  border-radius: 6px;
+}
