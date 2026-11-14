@@ -277,6 +277,27 @@ defmodule Druzhok.Runtime.HermesTest do
     end
   end
 
+  describe "streaming" do
+    test "new bots stream with native drafts" do
+      assert Hermes.build_config_yaml(@instance) =~ "streaming:\n  enabled: true\n  transport: auto\n"
+    end
+
+    @tag :tmp_dir
+    test "sync_config/2 moves druzhok's old edit block to auto and keeps a block written by hand", %{tmp_dir: tmp_dir} do
+      path = Path.join(tmp_dir, "config.yaml")
+      old = "model: x\n\nstreaming:\n  enabled: true\n  transport: edit\n  edit_interval: 0.6\n  buffer_threshold: 60\n"
+      File.write!(path, old)
+      assert :ok = Hermes.sync_config(%{name: "b", model: "x", tenant_key: "k"}, tmp_dir)
+      yaml = File.read!(path)
+      assert yaml =~ "streaming:\n  enabled: true\n  transport: auto\n  edit_interval: 0.6\n"
+      refute yaml =~ "transport: edit"
+
+      File.write!(path, "model: x\n\nstreaming:\n  enabled: true\n  transport: edit\n  edit_interval: 1.5\n")
+      assert :ok = Hermes.sync_config(%{name: "b", model: "x", tenant_key: "k"}, tmp_dir)
+      assert File.read!(path) =~ "transport: edit\n  edit_interval: 1.5"
+    end
+  end
+
   describe "compression reasoning" do
     @compression "  compression:\n    reasoning_effort: \"low\""
 

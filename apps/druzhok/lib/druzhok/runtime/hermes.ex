@@ -801,15 +801,19 @@ defmodule Druzhok.Runtime.Hermes do
   defp indent_of(line), do: byte_size(line) - byte_size(String.trim_leading(line, " "))
   defp pad(n), do: String.duplicate(" ", n)
 
-  # Enable gateway streaming (progressive Telegram message edits). Existing bots
-  # were seeded before the streaming block existed, so append it when absent.
-  # New bots already get enabled: true from build_config_yaml/1.
+  # Enable gateway streaming. `transport: auto` streams private chats with
+  # Telegram's native drafts (sendMessageDraft, smooth) and groups with message
+  # edits. Existing bots were seeded before the streaming block existed, so it
+  # is appended when absent, and the block druzhok seeded earlier with
+  # `transport: edit` moves to auto; a block anyone wrote differently is kept.
+  # New bots get the same from build_config_yaml/1.
+  @old_streaming "\nstreaming:\n  enabled: true\n  transport: edit\n  edit_interval: 0.6\n  buffer_threshold: 60\n"
+  @streaming "\nstreaming:\n  enabled: true\n  transport: auto\n  edit_interval: 0.6\n  buffer_threshold: 60\n"
   defp sync_streaming_block(content) do
-    if Regex.match?(~r/^streaming:/m, content) do
-      content
-    else
-      content <>
-        "\nstreaming:\n  enabled: true\n  transport: edit\n  edit_interval: 0.6\n  buffer_threshold: 60\n"
+    cond do
+      String.contains?(content, @old_streaming) -> String.replace(content, @old_streaming, @streaming)
+      Regex.match?(~r/^streaming:/m, content) -> content
+      true -> content <> @streaming
     end
   end
 
@@ -1190,7 +1194,7 @@ defmodule Druzhok.Runtime.Hermes do
 
     streaming:
       enabled: true
-      transport: edit
+      transport: auto
       edit_interval: 0.6
       buffer_threshold: 60
 

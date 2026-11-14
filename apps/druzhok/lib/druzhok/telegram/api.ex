@@ -64,6 +64,37 @@ defmodule Druzhok.Telegram.API do
   def send_photo(token, chat_id, photo, opts),
     do: call(token, "sendPhoto", Map.merge(%{chat_id: chat_id, photo: photo}, opts))
 
+  @doc """
+  Set the bot's own profile photo (Bot API 9.4 `setMyProfilePhoto`) from JPEG
+  bytes: an `InputProfilePhotoStatic` whose file goes up as a new upload.
+  """
+  def set_my_profile_photo(token, jpeg) when is_binary(jpeg) do
+    boundary = "druzhok-" <> Base.encode16(:crypto.strong_rand_bytes(16))
+    photo = Jason.encode!(%{type: "static", photo: "attach://avatar"})
+
+    body = [
+      "--",
+      boundary,
+      "\r\nContent-Disposition: form-data; name=\"photo\"\r\n\r\n",
+      photo,
+      "\r\n",
+      "--",
+      boundary,
+      "\r\nContent-Disposition: form-data; name=\"avatar\"; filename=\"avatar.jpg\"\r\nContent-Type: image/jpeg\r\n\r\n",
+      jpeg,
+      "\r\n--",
+      boundary,
+      "--\r\n"
+    ]
+
+    request(
+      token,
+      "setMyProfilePhoto",
+      [{"content-type", "multipart/form-data; boundary=" <> boundary}],
+      body
+    )
+  end
+
   def edit_message_text(token, chat_id, message_id, text, opts \\ %{}) do
     call(
       token,

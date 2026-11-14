@@ -63,13 +63,55 @@ defmodule Druzhok.CabinetTest do
     assert telegram(seen, "sendMessage") == []
     for _ <- 1..2, do: Cabinet.delivered(inst.id, payload.(456, 456, "private", "/start invite"))
     :sys.get_state(Cabinet)
-    assert [{_, msg}, {_, _}] = telegram(seen, "sendMessage")
+    assert [{_, msg}, {_, _}] = cabinet_notices(seen)
     assert msg["text"] == "Настройки, тариф и память бота — в Кабинете."
     assert msg["reply_markup"] == %{"inline_keyboard" => [[%{"text" => "Открыть кабинет", "web_app" => %{"url" => @url}}]]}
     reload(inst) |> Ecto.Changeset.change(%{cabinet_off: true}) |> Repo.update!()
     Cabinet.delivered(inst.id, payload.(456, 456, "private", "/start"))
     :sys.get_state(Cabinet)
-    assert length(telegram(seen, "sendMessage")) == 2
+    assert length(cabinet_notices(seen)) == 2
+  end
+
+  defp cabinet_notices(seen),
+    do: Enum.filter(telegram(seen, "sendMessage"), fn {_, m} -> Map.has_key?(m["reply_markup"] || %{}, "inline_keyboard") end)
+
+  defp first_task_messages(seen),
+    do: Enum.filter(telegram(seen, "sendMessage"), fn {_, m} -> Map.has_key?(m["reply_markup"] || %{}, "keyboard") end)
+
+  test "an owner's private /start gets first tasks as tappable buttons, nobody else does", %{inst: inst, seen: seen} do
+    start_supervised!(Cabinet)
+    inst |> Ecto.Changeset.change(%{image_gen_enabled: true}) |> Repo.update!()
+    payload = fn uid, chat, type, text -> Jason.encode!(%{message: %{from: %{id: uid}, chat: %{id: chat, type: type}, text: text}}) end
+
+    for {uid, chat, type, command} <- [{456, 456, "private", "hi"}, {123, 123, "private", "/start"}, {456, -1, "group", "/start"}] do
+      Cabinet.delivered(inst.id, payload.(uid, chat, type, command))
+    end
+
+    :sys.get_state(Cabinet)
+    assert first_task_messages(seen) == []
+
+    # No cabinet address yet: the tasks do not wait for the cabinet.
+    Cabinet.delivered(inst.id, payload.(456, 456, "private", "/start"))
+    :sys.get_state(Cabinet)
+    assert [{_, msg}] = first_task_messages(seen)
+    assert msg["chat_id"] == 456
+    assert msg["text"] == "Попробуйте — нажмите кнопку внизу:"
+    rows = msg["reply_markup"]["keyboard"]
+    assert hd(hd(rows)) == %{"text" => "🎨 Нарисуй кота-космонавта", "style" => "primary"}
+    assert Enum.all?(rows, &match?([%{"style" => "primary"}], &1))
+    assert msg["reply_markup"]["one_time_keyboard"] == true
+  end
+
+  test "first tasks leave out drawing when pictures are off, and follow the bot's language" do
+    ru = %Instance{language: "ru", image_gen_enabled: false}
+    {_, %{keyboard: rows}} = Cabinet.first_tasks_message(ru)
+    texts = Enum.map(rows, fn [b] -> b.text end)
+    refute Enum.any?(texts, &String.contains?(&1, "Нарисуй"))
+    assert "⏰ Напомни мне завтра в 9 утра выпить воды" in texts
+
+    {line, %{keyboard: [[first] | _]}} = Cabinet.first_tasks_message(%Instance{language: "en", image_gen_enabled: true})
+    assert line == "Try it — tap a button below:"
+    assert first.text == "🎨 Draw a cat astronaut"
   end
 
   test "a rejected owner start notice is logged", %{inst: inst, tg: tg} do
