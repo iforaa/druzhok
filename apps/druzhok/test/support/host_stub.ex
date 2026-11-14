@@ -129,6 +129,17 @@ defmodule Druzhok.HostStub do
       do: stats(name).mem_bytes
   end
 
+  @doc "What `memory_max_bytes/1` answers for a running unit (default 800 MiB; nil = `max`)."
+  def set_memory_max(bytes), do: Agent.update(__MODULE__, &Map.put(&1, :memory_max, bytes))
+
+  @impl true
+  def memory_max_bytes(name) do
+    Agent.get(__MODULE__, fn s ->
+      if Map.get(s.units, name, :inactive) == :active,
+        do: Map.get(s, :memory_max, 800 * 1024 * 1024)
+    end)
+  end
+
   @impl true
   def exec(_name, _args), do: {"", 0}
 

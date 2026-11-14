@@ -56,8 +56,11 @@ defmodule Druzhok.Host.SystemdTest do
 
   test "holding_units lists through systemctl and is :error when it fails" do
     prev = Application.get_env(:druzhok, :systemctl_bin)
+
     on_exit(fn ->
-      if prev, do: Application.put_env(:druzhok, :systemctl_bin, prev), else: Application.delete_env(:druzhok, :systemctl_bin)
+      if prev,
+        do: Application.put_env(:druzhok, :systemctl_bin, prev),
+        else: Application.delete_env(:druzhok, :systemctl_bin)
     end)
 
     Application.put_env(:druzhok, :systemctl_bin, "/bin/echo")
@@ -68,7 +71,8 @@ defmodule Druzhok.Host.SystemdTest do
   end
 
   test "env_file keeps a trailing space inside the quotes" do
-    assert Systemd.env_file(%{"MNEMOSYNE_EMBEDDING_QUERY_PREFIX" => "query: "}) == ~s(MNEMOSYNE_EMBEDDING_QUERY_PREFIX="query: "\n)
+    assert Systemd.env_file(%{"MNEMOSYNE_EMBEDDING_QUERY_PREFIX" => "query: "}) ==
+             ~s(MNEMOSYNE_EMBEDDING_QUERY_PREFIX="query: "\n)
   end
 
   test "env_file serialises sorted, quoted, escaped" do
@@ -104,6 +108,8 @@ defmodule Druzhok.Host.SystemdTest do
       File.write!(Path.join([dir, "hermes@up.service", "memory.current"]), "314572800\n")
       File.mkdir_p!(Path.join(dir, "hermes@odd.service"))
       File.write!(Path.join([dir, "hermes@odd.service", "memory.current"]), "max\n")
+      File.write!(Path.join([dir, "hermes@up.service", "memory.max"]), "1073741824\n")
+      File.write!(Path.join([dir, "hermes@odd.service", "memory.max"]), "max\n")
       Application.put_env(:druzhok, :hermes_cgroup_dir, dir)
 
       on_exit(fn ->
@@ -121,6 +127,14 @@ defmodule Druzhok.Host.SystemdTest do
       assert Systemd.memory_bytes("asleep") == nil
       assert Systemd.memory_bytes("odd") == nil
       assert Systemd.memory_bytes("../up") == nil
+    end
+
+    test "memory_max_bytes reads the limit, nil for max, no unit or a bad name", %{log: log} do
+      assert Systemd.memory_max_bytes("up") == 1_073_741_824
+      assert Systemd.memory_max_bytes("odd") == nil
+      assert Systemd.memory_max_bytes("asleep") == nil
+      assert Systemd.memory_max_bytes("../up") == nil
+      refute File.exists?(log)
     end
   end
 

@@ -2,13 +2,19 @@ defmodule Druzhok.Status do
   @moduledoc """
   What the operator's CleoHub console shows about this machine and its bots
   (`GET /internal/status`, release spec PR J). Read only: it takes nothing but
-  the row, `/proc`, `df` and the bot's cgroup, so it never wakes or starts a bot
-  and runs no `sudo`.
+  the rows, Settings, `/proc`, `df`, the bot's cgroup (`memory.current`,
+  `memory.max`) and, in queue mode, the scheduler's line, so it never wakes or
+  starts a bot and runs no `sudo`.
 
   One read every `ttl_ms` (10 s), however many callers: this process is the
   queue. A reading that fails becomes `nil` for that field alone, except a bot's
   memory: that reads 0, and its `state` takes the unit as down, the same as when
   no unit runs. A failed read of the database fails the call, and is not cached.
+
+  `queue` is nil outside queue mode, else `slots`, `holding` (the scheduler's
+  count: rows active, not being deleted, not sleeping, together by name with
+  the bots whose unit holds memory) and `waiting` (the line's length, nil when
+  the scheduler does not answer within 500 ms).
 
   Nothing here may carry an owner id, a token or message text: each bot's map is
   written out field by field, and `last_error` is scrubbed.
@@ -18,7 +24,7 @@ defmodule Druzhok.Status do
   import Ecto.Query
   require Logger
   alias Druzhok.{BotManager, Host, Instance, Repo}
-  alias Druzhok.Lifecycle.StartGate
+  alias Druzhok.Lifecycle.{Queue, Scheduler, StartGate}
   alias Druzhok.Telegram.Inbox
 
   @defaults [
@@ -32,6 +38,8 @@ defmodule Druzhok.Status do
 
   # Under the console's 5 s, so it gets an answer rather than its own timeout.
   @call_timeout_ms 4_000
+  # Next to df's 2 s, so the whole read stays under @call_timeout_ms.
+  @line_timeout_ms 500
   @mb 1024 * 1024
   @error_limit 300
   # A Telegram bot token, whichever bot's it is, also inside a `/bot<token>/` URL.
@@ -75,23 +83,54 @@ defmodule Druzhok.Status do
     now = DateTime.utc_now() |> DateTime.truncate(:second)
     pending = Inbox.pending_by_instance()
 
+    readings =
+      from(i in Instance, order_by: i.name)
+      |> Repo.all()
+      |> Enum.map(&{&1, memory_bytes(&1.name)})
+
     %{
       generated_at: now,
       host: host(),
       hermes_version: hermes_version(),
       gate: %{start_min_free_mb: StartGate.min_free_mb()},
+      queue: queue(readings),
       telegram: telegram(pending, now),
-      bots:
-        from(i in Instance, order_by: i.name)
-        |> Repo.all()
-        |> Enum.map(&bot(&1, pending))
+      bots: Enum.map(readings, fn {inst, memory} -> bot(inst, memory, pending) end)
     }
+  end
+
+  # --- queue mode -------------------------------------------------------------
+
+  # The same count as `Scheduler.room?/0`, but from the cgroups read for the bots
+  # below rather than a second unit listing.
+  defp queue(readings) do
+    case Queue.slots() do
+      nil ->
+        nil
+
+      slots ->
+        holding =
+          for {inst, memory} <- readings,
+              is_integer(memory) or
+                (inst.active and not inst.delete_requested and not inst.sleeping),
+              uniq: true,
+              do: inst.name
+
+        %{slots: slots, holding: length(holding), waiting: waiting()}
+    end
+  end
+
+  # A busy scheduler costs this one figure.
+  defp waiting do
+    length(Scheduler.line(@line_timeout_ms))
+  catch
+    :exit, _ -> nil
   end
 
   # --- bots -------------------------------------------------------------------
 
-  defp bot(inst, pending) do
-    memory = memory_bytes(inst.name)
+  defp bot(inst, memory, pending) do
+    {error, error_at} = last_error(inst)
 
     %{
       name: inst.name,
@@ -100,22 +139,34 @@ defmodule Druzhok.Status do
       active: inst.active,
       state: state(inst, memory),
       memory_mb: if(memory, do: div(memory, @mb), else: 0),
+      memory_max_mb: memory && memory_max_mb(inst.name),
       last_started_at: inst.started_at,
-      last_error: last_error(inst),
-      queued_updates: pending |> Map.get(inst.id, {0, nil}) |> elem(0)
+      last_error: error,
+      last_error_at: error_at,
+      queued_updates: pending |> Map.get(inst.id, {0, nil}) |> elem(0),
+      created_at: DateTime.from_naive!(inst.inserted_at, "Etc/UTC")
     }
   end
 
   # nil is "no unit running": one bad row must not cost the response.
-  defp memory_bytes(name) do
-    Host.memory_bytes(name)
+  defp memory_bytes(name), do: host_read(name, "memory", &Host.memory_bytes/1)
+
+  defp memory_max_mb(name) do
+    case host_read(name, "memory limit", &Host.memory_max_bytes/1) do
+      bytes when is_integer(bytes) -> div(bytes, @mb)
+      _ -> nil
+    end
+  end
+
+  defp host_read(name, what, read) do
+    read.(name)
   rescue
     e ->
-      Logger.warning("[status] #{name}: memory read failed: #{Exception.message(e)}")
+      Logger.warning("[status] #{name}: #{what} read failed: #{Exception.message(e)}")
       nil
   catch
     :exit, reason ->
-      Logger.warning("[status] #{name}: memory read failed: #{inspect(reason)}")
+      Logger.warning("[status] #{name}: #{what} read failed: #{inspect(reason)}")
       nil
   end
 
@@ -132,10 +183,24 @@ defmodule Druzhok.Status do
     end
   end
 
+  # `{text, when}`, both nil or neither. The lifecycle controller writes each
+  # error with its time; only a row edited by hand lacks one, and then gets its
+  # last update, so the contract's "null exactly with last_error" holds.
   defp last_error(inst) do
-    text = if inst.delete_requested, do: inst.delete_error || inst.start_error, else: inst.start_error
-    if is_binary(text), do: scrub(text, inst)
+    {text, at} =
+      if inst.delete_requested and is_binary(inst.delete_error),
+        do: {inst.delete_error, inst.delete_failed_at},
+        else: {inst.start_error, inst.start_failed_at}
+
+    if is_binary(text),
+      do: {scrub(text, inst), utc_second(at || inst.updated_at)},
+      else: {nil, nil}
   end
+
+  defp utc_second(%NaiveDateTime{} = at),
+    do: at |> DateTime.from_naive!("Etc/UTC") |> utc_second()
+
+  defp utc_second(%DateTime{} = at), do: DateTime.truncate(at, :second)
 
   # These strings hold whatever a failed command or a gateway said.
   defp scrub(text, inst) do

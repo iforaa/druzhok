@@ -45,8 +45,11 @@ defmodule Druzhok.Lifecycle.Scheduler do
   @doc "Look at the line now. No-op where the scheduler does not run."
   def poke, do: tell_self(:poke)
 
-  @doc "The line as last computed: `[{bot name, wake reason}]`, head first."
-  def line, do: GenServer.call(__MODULE__, :line)
+  @doc """
+  The line as last computed: `[{bot name, wake reason}]`, head first. Exits
+  when the scheduler does not answer within `timeout` ms.
+  """
+  def line(timeout \\ 5_000), do: GenServer.call(__MODULE__, :line, timeout)
 
   @doc false
   # `used?`: the bot woke. A dropped grant is tried again on the next tick,
