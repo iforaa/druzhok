@@ -388,6 +388,14 @@ defmodule Druzhok.Runtime.Hermes.VoiceTest do
       assert rules =~ "Ответ «занят» — подожди минуту и повтори один раз."
     end
 
+    test "the documents rule recalculates .xlsx with formulas before sending" do
+      rules = Voice.product_rules(%{name: "b"})
+      assert rules =~ ".xlsx с формулами перед отправкой всегда пересчитай"
+      assert rules =~ "`soffice --headless --convert-to xlsx --outdir <папка>/recalc файл.xlsx`"
+      assert rules =~ "отправь пересчитанный файл"
+      assert rules =~ "data_only=True"
+    end
+
     test "the memory rule follows the provider" do
       plain = Voice.product_rules(%{name: "b"})
       assert plain =~ "сохраняй инструментом memory"

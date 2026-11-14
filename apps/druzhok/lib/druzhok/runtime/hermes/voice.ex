@@ -295,13 +295,16 @@ defmodule Druzhok.Runtime.Hermes.Voice do
   # hint means `/page`: the rule names /tmp, which is private per unit.
   # Says "PNG", not «картинки»: a bot with pictures off hears nothing about pictures.
   # soffice is ops/soffice-shim: it sends the file to druzhok's shared converter
-  # (POST /v2/docs/convert), one job at a time for the whole box.
+  # (POST /v2/docs/convert), one job at a time for the whole box. openpyxl writes
+  # formulas without cached values, so a phone preview shows empty totals until
+  # LibreOffice recalculates the file.
   @documents_rule """
   PDF и документы:
   - read_file пишет [NEEDS OCR или EXTRACTION COVERAGE WARNING — значит, эти страницы отсканированы и их текста нет. Переведи нужные страницы в PNG (`pdftoppm -r 150 -png -f <первая> -l <последняя> файл.pdf /tmp/page`; $TMPDIR у тебя пуст, бери /tmp) и прочитай их через vision_analyze, по несколько страниц за раз.
   - Никогда не делай pip install и не используй pymupdf или marker: их нет, даже если навык их советует.
   - Сжать PDF: `gs -sDEVICE=pdfwrite -dPDFSETTINGS=/ebook -o меньше.pdf файл.pdf`.
-  - Word, Excel, PowerPoint → PDF: `soffice --headless --convert-to pdf файл` (так же старые .doc/.xls/.ppt → docx/xlsx/pptx и пересчёт формул в xlsx). soffice работает на общем сервере: по одному файлу, до 20 МБ. Ответ «занят» — подожди минуту и повтори один раз.\
+  - Word, Excel, PowerPoint → PDF: `soffice --headless --convert-to pdf файл` (так же старые .doc/.xls/.ppt → docx/xlsx/pptx и пересчёт формул в xlsx). soffice работает на общем сервере: по одному файлу, до 20 МБ. Ответ «занят» — подожди минуту и повтори один раз.
+  - .xlsx с формулами перед отправкой всегда пересчитай: `soffice --headless --convert-to xlsx --outdir <папка>/recalc файл.xlsx` — и отправь пересчитанный файл. Без этого итоги в превью на телефоне пустые: openpyxl формулы не считает. Проверь один итог через openpyxl с data_only=True.\
   """
 
   @doc """
