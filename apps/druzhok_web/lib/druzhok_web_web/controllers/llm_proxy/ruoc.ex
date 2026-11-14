@@ -1,7 +1,7 @@
 defmodule DruzhokWebWeb.LlmProxy.Ruoc do
   @moduledoc """
   The ruoc-gateway path of the LLM proxy: chat, web search, page fetch,
-  embeddings, transcription and image generation for a bot that has a
+  embeddings, transcription and image generation and edits for a bot that has a
   `ruoc_api_key`.
 
   Money lives in ruoc-gateway. Nothing here checks a budget or computes a
@@ -391,20 +391,131 @@ defmodule DruzhokWebWeb.LlmProxy.Ruoc do
   OpenAI `images/generations` in, `{data: [{b64_json}]}` out, over ruoc
   `POST /v1/images`. The client's `model` is ignored (hermes sends OpenAI
   ids); the bot's `image_gen_model` names a ruoc catalogue entry, nil meaning
-  ruoc's default. A plan's refusal is a 402 carrying the localized balance
-  notice, so hermes's tool error reaches the tenant in the bot's language.
+  ruoc's default. The requested `size` is passed on.
   """
   def generate_image(conn, instance) do
     started_at = System.monotonic_time(:millisecond)
     prompt = conn.body_params["prompt"] || ""
 
     payload =
-      case instance.image_gen_model do
-        nil -> %{"prompt" => prompt}
-        model -> %{"prompt" => prompt, "model" => model}
-      end
+      %{"prompt" => prompt}
+      |> put_present("model", instance.image_gen_model)
+      |> put_present("size", conn.body_params["size"])
 
-    case plan_refusal(Client.post("/v1/images", instance.ruoc_api_key, Jason.encode!(payload), receive_timeout: @image_timeout)) do
+    render_image(conn, instance, payload, prompt, started_at)
+  end
+
+  @doc """
+  OpenAI `images/edits` in (multipart `image` / `image[]` files, as the
+  OpenAI SDK sends them), `{data: [{b64_json}]}` out, over ruoc
+  `POST /v1/images` with the pictures as data URIs and the requested `size`.
+  This is how a bot draws from the user's own photo ("me with this haircut").
+
+  Only some ruoc models take reference pictures, and ruoc refuses the rest,
+  so the model is the bot's `image_gen_model` when its catalogue entry says
+  `edits`, else the first model that does. If the catalogue cannot be read,
+  the bot's model is sent as is and ruoc decides.
+  """
+  def edit_image(conn, instance) do
+    started_at = System.monotonic_time(:millisecond)
+    params = conn.body_params
+    prompt = params["prompt"] || ""
+
+    with :ok <- no_mask(params),
+         {:ok, [_ | _] = images} <- reference_images(params),
+         {:ok, model} <- edit_model(instance) do
+      payload =
+        %{"prompt" => prompt, "images" => images}
+        |> put_present("model", model)
+        |> put_present("size", params["size"])
+
+      render_image(conn, instance, payload, prompt, started_at)
+    else
+      {:ok, []} ->
+        json_error(conn, 400, "an edit needs at least one image", "invalid_request_error")
+
+      {:error, message} ->
+        json_error(conn, 400, message, "invalid_request_error")
+    end
+  end
+
+  defp put_present(map, _key, value) when value in [nil, ""], do: map
+  defp put_present(map, key, value), do: Map.put(map, key, value)
+
+  # A mask is refused rather than ignored: an edit that ignores it is not
+  # the edit that was asked for.
+  defp no_mask(%{"mask" => mask}) when mask not in [nil, ""],
+    do: {:error, "masks are not supported"}
+
+  defp no_mask(_params), do: :ok
+
+  # The pictures of an edit as data URIs, in the order sent (hermes puts the
+  # user's photo first). Plug puts a single `image` file in as an upload and
+  # `image[]` files in as a list, both under "image".
+  defp reference_images(params) do
+    uploads = List.wrap(params["image"])
+
+    Enum.reduce_while(uploads, {:ok, []}, fn
+      %Plug.Upload{path: path, content_type: type}, {:ok, acc} ->
+        case File.read(path) do
+          {:ok, data} -> {:cont, {:ok, [data_uri(data, type) | acc]}}
+          {:error, _} -> {:halt, {:error, "unreadable image"}}
+        end
+
+      _other, _acc ->
+        {:halt, {:error, "image must be a file"}}
+    end)
+    |> case do
+      {:ok, uris} -> {:ok, Enum.reverse(uris)}
+      error -> error
+    end
+  end
+
+  defp data_uri(data, declared_type) do
+    "data:" <> image_mime(data, declared_type) <> ";base64," <> Base.encode64(data)
+  end
+
+  # The bytes decide; the SDK often labels a file application/octet-stream.
+  defp image_mime(<<0x89, "PNG", _::binary>>, _), do: "image/png"
+  defp image_mime(<<0xFF, 0xD8, 0xFF, _::binary>>, _), do: "image/jpeg"
+  defp image_mime(<<"RIFF", _::binary-size(4), "WEBP", _::binary>>, _), do: "image/webp"
+  defp image_mime(<<"GIF8", _::binary>>, _), do: "image/gif"
+  defp image_mime(_, "image/" <> _ = type), do: type
+  defp image_mime(_, _), do: "image/png"
+
+  # `{:ok, model_or_nil}`, or an error when the catalogue has no model that
+  # takes pictures. Read with the bot's own key, so it is the list this
+  # account is offered.
+  defp edit_model(instance) do
+    with {:ok, 200, _headers, body} <- Client.get("/v1/images/models", instance.ruoc_api_key),
+         {:ok, %{"models" => models}} when is_list(models) <- Jason.decode(body) do
+      editors = for %{"id" => id, "edits" => true} <- models, do: id
+
+      cond do
+        instance.image_gen_model in editors ->
+          {:ok, instance.image_gen_model}
+
+        editors == [] ->
+          {:error,
+           "no image model can edit pictures right now; draw from a text description instead"}
+
+        true ->
+          {:ok, hd(editors)}
+      end
+    else
+      _ -> {:ok, instance.image_gen_model}
+    end
+  end
+
+  # One picture from ruoc's `POST /v1/images`, written back in OpenAI's shape.
+  # A plan's refusal is a 402 carrying the localized balance notice, so
+  # hermes's tool error reaches the tenant in the bot's language.
+  defp render_image(conn, instance, payload, prompt, started_at) do
+    case plan_refusal(
+           Client.post("/v1/images", instance.ruoc_api_key, Jason.encode!(payload),
+             receive_timeout: @image_timeout
+           )
+         ) do
       {:ok, 200, headers, resp_body} ->
         request_id = request_id(headers)
         %{"model" => model, "image" => %{"b64" => b64}} = Jason.decode!(resp_body)
@@ -412,7 +523,10 @@ defmodule DruzhokWebWeb.LlmProxy.Ruoc do
 
         conn
         |> relay_headers(headers, request_id)
-        |> send_resp(200, Jason.encode!(%{"created" => System.os_time(:second), "data" => [%{"b64_json" => b64}]}))
+        |> send_resp(
+          200,
+          Jason.encode!(%{"created" => System.os_time(:second), "data" => [%{"b64_json" => b64}]})
+        )
 
       {:plan_refused, status, headers, _resp_body} ->
         request_id = request_id(headers)
@@ -421,7 +535,12 @@ defmodule DruzhokWebWeb.LlmProxy.Ruoc do
 
         conn
         |> relay_headers(headers, request_id)
-        |> send_resp(402, Jason.encode!(%{error: %{message: BalanceNotice.text(instance), type: "insufficient_quota"}}))
+        |> send_resp(
+          402,
+          Jason.encode!(%{
+            error: %{message: BalanceNotice.text(instance), type: "insufficient_quota"}
+          })
+        )
 
       {:ok, status, headers, resp_body} ->
         request_id = request_id(headers)
