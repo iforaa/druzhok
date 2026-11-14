@@ -637,6 +637,26 @@ defmodule Druzhok.Runtime.HermesTest do
     end
 
     @tag :tmp_dir
+    test "comments between the other servers survive every start", %{tmp_dir: tmp_dir} do
+      content =
+        sync_mcp!(tmp_dir, """
+        mcp_servers:
+          # work
+          github:
+            url: https://example.com/gh
+          # home
+          notes:
+            url: https://example.com/notes
+        model:
+          default: "x"
+        """)
+
+      assert content =~ "  # work\n  github:"
+      assert content =~ "  # home\n  notes:"
+      assert YamlElixir.read_from_string!(content)["mcp_servers"]["cleohub"] == @cleohub
+    end
+
+    @tag :tmp_dir
     test "an empty inline mcp_servers becomes a block, not a second key", %{tmp_dir: tmp_dir} do
       content = sync_mcp!(tmp_dir, "mcp_servers: {}\nmodel:\n  default: \"x\"\n")
 

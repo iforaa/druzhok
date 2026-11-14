@@ -388,9 +388,15 @@ defmodule Druzhok.Ruoc do
           {:error, reason} ->
             Logger.warning("ruoc plans fetch failed: #{reason}")
 
+            # Served again until the TTL, as models/0 does: a site that hangs
+            # must not cost every call its timeout.
             case stale do
-              {_, list} -> {:ok, list}
-              nil -> {:error, reason}
+              {_, list} ->
+                :persistent_term.put(key, {now, list})
+                {:ok, list}
+
+              nil ->
+                {:error, reason}
             end
         end
     end
@@ -435,10 +441,10 @@ defmodule Druzhok.Ruoc do
   The referral codes on a bot's account, oldest first:
   `%{code, status, redeemed_at, friend_rub, you_rub}`. `code` is nil when the
   gateway reports it underivable (its secret changed). `status` is one of
-  available | redeemed | revoked | expired | underivable.
+  available | redeemed | revoked | expired | underivable. `opts`: `receive_timeout`.
   """
-  def referrals(api_key) do
-    case Client.get("/v1/referrals", api_key) do
+  def referrals(api_key, opts \\ []) do
+    case Client.get("/v1/referrals", api_key, opts) do
       {:ok, 200, _headers, body} ->
         case Jason.decode(body) do
           {:ok, %{"codes" => codes}} when is_list(codes) -> {:ok, Enum.map(codes, &to_referral/1)}

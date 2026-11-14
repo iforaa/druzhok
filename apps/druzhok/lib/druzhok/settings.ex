@@ -17,7 +17,8 @@ defmodule Druzhok.Settings do
   end
 
   # cleohub_notice is what bots answer to «что-то сломалось?» (`cleohub_notices`),
-  # set with `ops/druzhok settings set cleohub_notice=-` (stdin), cleared with an empty value.
+  # one line, set with `ops/druzhok settings set cleohub_notice=-` (stdin reads the first line
+  # only), cleared with `cleohub_notice=`.
   # ruoc_admin_host / ruoc_admin_token are read by nothing since partner
   # access (RUOC_PARTNER_TOKEN); they stay listed for a rollback to the
   # previous druzhok and go in a later release.

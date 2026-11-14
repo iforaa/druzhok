@@ -376,6 +376,15 @@ defmodule DruzhokWebWeb.CleohubMcpControllerTest do
       refute_receive :image_request, 300
     end
 
+    test "the day's count is per bot and per UTC day; a new day is not wiped by a late old one" do
+      assert AvatarLimit.take(1, ~D[2026-11-14]) == :ok
+      for _ <- 1..3, do: assert(AvatarLimit.take(2, ~D[2026-11-15]) == :ok)
+      assert AvatarLimit.take(2, ~D[2026-11-15]) == :limit
+      # A call still carrying yesterday's date keeps today's counts.
+      assert AvatarLimit.take(1, ~D[2026-11-14]) == :ok
+      assert AvatarLimit.take(2, ~D[2026-11-15]) == :limit
+    end
+
     test "an empty or too long description is a tool error that costs nothing", %{conn: conn, stub: stub} do
       count_images(stub)
 

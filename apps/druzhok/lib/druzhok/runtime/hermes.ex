@@ -740,7 +740,10 @@ defmodule Druzhok.Runtime.Hermes do
         step = child_indent(body, 2)
         {_old, kept} = take_child(body, step, "cleohub")
         rendered = String.split(render_yaml([{"cleohub", cleohub_mcp()}], step, step), "\n")
-        splice(lines, idx + 1, last, rendered ++ kept)
+        # Last in the block: take_child/3 counts the comments and blank lines after
+        # an entry as its own, so cleohub placed first would eat the next server's
+        # comment on the following start.
+        splice(lines, idx + 1, last, kept ++ rendered)
     end
   end
 

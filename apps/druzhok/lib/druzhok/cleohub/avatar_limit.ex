@@ -16,14 +16,15 @@ defmodule Druzhok.Cleohub.AvatarLimit do
 
   @doc "Count one attempt for bot `id` today: `:ok`, or `:limit` when the day's are used up."
   def take(id, today \\ Date.utc_today()) do
-    key = {id, today}
+    day = Date.to_gregorian_days(today)
+    key = {id, day}
 
     if :ets.update_counter(@table, key, {2, 1}, {key, 0}) > @per_day do
       # Taken back, so a refused call does not count.
       :ets.update_counter(@table, key, {2, -1})
       :limit
     else
-      forget_before(today)
+      forget_before(day)
       :ok
     end
   end
@@ -31,9 +32,10 @@ defmodule Druzhok.Cleohub.AvatarLimit do
   @doc false
   def reset, do: :ets.delete_all_objects(@table)
 
-  # Yesterday's counts are no use to anyone.
-  defp forget_before(today) do
-    :ets.select_delete(@table, [{{{:_, :"$1"}, :_}, [{:"=/=", :"$1", {:const, today}}], [true]}])
+  # Earlier days' counts are no use to anyone. Only earlier: a call that read the
+  # date just before midnight must not wipe the new day's counts.
+  defp forget_before(day) do
+    :ets.select_delete(@table, [{{{:_, :"$1"}, :_}, [{:<, :"$1", day}], [true]}])
   end
 
   @impl true

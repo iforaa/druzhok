@@ -24,8 +24,6 @@ defmodule DruzhokWebWeb.CleohubMcpController do
   @latest "2025-11-25"
   @supported ~w(2025-11-25 2025-06-18 2025-03-26 2024-11-05)
 
-  def supported_versions, do: @supported
-
   # A tool call reads ruoc, Telegram and the database; queue mode's drain must
   # not stop the bot under one (`Druzhok.Inflight`).
   def action(conn, opts) do

@@ -285,7 +285,7 @@ defmodule Druzhok.Cleohub do
   # --- cleohub_invite --------------------------------------------------------
 
   defp invite(inst) do
-    case Panel.invites(inst) do
+    case Panel.invites(inst, receive_timeout: @ruoc_timeout_ms) do
       {:ok, %{links: [first | _]}} ->
         reward = reward_line(first)
 
