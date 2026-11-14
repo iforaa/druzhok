@@ -95,6 +95,19 @@ check=$(druzhok-ctl exec "$name" /opt/hermes/.venv/bin/python -I "$script" --che
 echo "$check"
 [ "$check" = '{"ok": true}' ] || { echo "the save script cannot import what it needs from hermes"; exit 1; }
 
+# The bundled docx/xlsx/powerpoint/pdf skills need hermes's documents extras, and
+# read_file's scan hints and PDF compression need poppler and ghostscript. Imports
+# run in the venv the unit runs, so a canary drop-in on a new install is the one
+# tested (druzhok-ctl exec's own PATH is /opt/hermes's).
+echo "== document libraries"
+venv_bin=$(systemctl show -p ExecStart --value "hermes@$name.service" | sed -n 's|.*path=\([^ ;]*\)/hermes .*|\1|p' | head -1 || true)
+venv_bin=${venv_bin:-/opt/hermes/.venv/bin}; echo "python: $venv_bin/python"
+druzhok-ctl exec "$name" "$venv_bin/python" -I -c 'import docx, openpyxl, pptx, pypdf, pdfplumber, pypdfium2, reportlab, matplotlib, segno' \
+  || { echo "document libraries missing: install hermes with --extra documents --extra documents-pdf --extra druzhok-docs"; exit 1; }
+for bin in gs pdftoppm pdftotext; do
+  command -v "$bin" >/dev/null || { echo "$bin missing: apt-get install ghostscript poppler-utils"; exit 1; }
+done
+
 # Without ops/patch-mnemosyne.py recall silently drops to keyword-only.
 echo "== mnemosyne embeddings allowed on loopback"
 /opt/hermes/.venv/bin/python "$ops/patch-mnemosyne.py" --verify /opt/hermes || exit 1

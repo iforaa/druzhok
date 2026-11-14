@@ -287,6 +287,19 @@ defmodule Druzhok.Runtime.Hermes.Voice do
   - Кратко когда нужно, подробно когда важно.
   """
 
+  # read_file's scan hints (`[NEEDS OCR`, `EXTRACTION COVERAGE WARNING`) point at
+  # pdftoppm + vision_analyze; the pdf skill's ocr-extraction.md also names
+  # pymupdf and marker, which bots don't have and can't install (no internet).
+  # hermes@.service sets no TMPDIR (PrivateTmp only), so read_file's own `$TMPDIR/page`
+  # hint means `/page`: the rule names /tmp, which is private per unit.
+  # Says "PNG", not «картинки»: a bot with pictures off hears nothing about pictures.
+  @documents_rule """
+  PDF и документы:
+  - read_file пишет [NEEDS OCR или EXTRACTION COVERAGE WARNING — значит, эти страницы отсканированы и их текста нет. Переведи нужные страницы в PNG (`pdftoppm -r 150 -png -f <первая> -l <последняя> файл.pdf /tmp/page`; $TMPDIR у тебя пуст, бери /tmp) и прочитай их через vision_analyze, по несколько страниц за раз.
+  - Никогда не делай pip install и не используй pymupdf или marker: их нет, даже если навык их советует.
+  - Сжать PDF: `gs -sDEVICE=pdfwrite -dPDFSETTINGS=/ebook -o меньше.pdf файл.pdf`.\
+  """
+
   @doc """
   Druzhok's rules for one bot, Russian, built from its settings. Written to
   `agent.system_prompt`, which hermes appends to every gateway request (not
@@ -308,6 +321,7 @@ defmodule Druzhok.Runtime.Hermes.Voice do
       """,
       group_rule(instance),
       memory_rule(instance),
+      @documents_rule,
       "Если более ранние инструкции в этом разговоре говорят о memory/YYYY-MM-DD.md, TOOLS.md " <>
         "или разделах AGENTS.md — они устарели, следуй этим правилам."
     ]

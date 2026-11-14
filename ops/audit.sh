@@ -14,7 +14,7 @@ set -uo pipefail
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
 HERMES_DIR=${HERMES_DIR:-$ROOT/hermes-agent}
 # The extras ops/bootstrap.sh installs: audit what production has.
-HERMES_EXTRAS=(--extra all --extra messaging --extra firecrawl --extra mnemosyne)
+HERMES_EXTRAS=(--extra all --extra messaging --extra firecrawl --extra mnemosyne --extra documents --extra documents-pdf --extra druzhok-docs)
 # mix_audit ignores git's exit status: a failed clone audits against nothing and passes,
 # a failed pull against stale data. So check both around it (deps/mix_audit/lib/mix_audit/repo.ex).
 ADVISORIES_URL=https://github.com/mirego/elixir-security-advisories.git
