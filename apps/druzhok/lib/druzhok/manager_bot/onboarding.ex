@@ -144,12 +144,17 @@ defmodule Druzhok.ManagerBot.Onboarding do
         username = generate_bot_username(name)
         # Every transition restamps the clock, so the TTL measures idleness and
         # not the whole flow: naming a bot in Telegram takes minutes.
-        session = %{session | step: :language, name: name, username: username, started_at: System.system_time(:second)}
-        {:ok, session, {:keyboard, "Язык:", language_buttons()}}
+        # No language step: CleoHub's people write Russian, and the cabinet's
+        # Настройки switches it later. The name is acknowledged on its own line
+        # (`name_ack/1`), which also takes the name keyboard away.
+        session = %{session | step: :character, name: name, username: username, language: "ru",
+                              started_at: System.system_time(:second)}
+        {:ok, session, {:named_keyboard, character_prompt(), character_buttons()}}
     end
   end
 
-  # Language step
+  # Language step: no longer offered (a name goes straight to the character);
+  # kept for a session that reached it before that change.
   def handle_input(%{step: :language} = session, %{callback_data: "lang:" <> lang})
       when lang in ["ru", "en"] do
     session = %{session | step: :character, language: lang, started_at: System.system_time(:second)}
@@ -176,7 +181,7 @@ defmodule Druzhok.ManagerBot.Onboarding do
   end
 
   def handle_input(%{step: :character} = session, %{text: _}) do
-    {:retry, session, {:keyboard, "Выбери кнопкой. " <> character_prompt(), character_buttons()}}
+    {:retry, session, {:keyboard, "Выберите кнопкой. " <> character_prompt(), character_buttons()}}
   end
 
   def handle_input(%{step: :character} = session, _input) do
@@ -190,17 +195,17 @@ defmodule Druzhok.ManagerBot.Onboarding do
 
   # Done / idle
   def handle_input(%{step: :done}, _input) do
-    {:ok, new_session(), {:text, "Бот уже создан! Используй меню внизу."}}
+    {:ok, new_session(), {:text, "Бот уже создан! Используйте меню внизу."}}
   end
 
   def handle_input(session, _input) do
-    {:retry, session, {:text, "Используй кнопки меню внизу."}}
+    {:retry, session, {:text, "Используйте кнопки меню внизу."}}
   end
 
   @doc "Put the session at the invite step; ManagerBot sends the prompt."
   def ask_invite(session), do: {%{session | step: :invite, started_at: System.system_time(:second)}, invite_prompt()}
 
-  def invite_prompt, do: "Создание по приглашению. Введи код или открой ссылку от друга."
+  def invite_prompt, do: "Создание по приглашению. Введите код или откройте ссылку от друга."
 
   @doc """
   Park the session while ruoc is asked about `code`. Nothing the person sends
@@ -211,22 +216,25 @@ defmodule Druzhok.ManagerBot.Onboarding do
 
   def invite_status_message(:spent), do: "Этот код уже использован."
   def invite_status_message(:expired), do: "Срок этого кода истёк."
-  def invite_status_message(:invalid), do: "Код не найден. Проверь ссылку или попроси новый."
-  def invite_status_message(_), do: "Не получилось проверить код, попробуй позже."
+  def invite_status_message(:invalid), do: "Код не найден. Проверьте ссылку или попросите новый."
+  def invite_status_message(_), do: "Не получилось проверить код, попробуйте позже."
 
   @doc "Start naming the bot, carrying the (checked) code to provisioning."
   def begin_create(session, invite \\ nil) do
     {%{session | step: :name, invite: invite, started_at: System.system_time(:second)}, "Как назовём бота?\nИли напишите своё имя."}
   end
 
+  @doc "The line that takes the chosen name, and the name keyboard with it."
+  def name_ack(name), do: "Отлично, #{name}!"
+
   def name_keyboard do
     %{keyboard: [[%{text: "Дружок"}, %{text: "Ася"}], [%{text: "Макс"}, %{text: "Кеша"}]],
       resize_keyboard: true, one_time_keyboard: true}
   end
 
-  def create_race_message, do: "Код успели использовать. Попроси новый и создай бота заново."
-  def name_taken_message, do: "Бот с похожим именем уже есть. Создай бота с другим username."
-  def ruoc_quota_message, do: "Сейчас создаётся слишком много ботов, попробуй позже"
+  def create_race_message, do: "Код успели использовать. Попросите новый и создайте бота заново."
+  def name_taken_message, do: "Бот с похожим именем уже есть. Создайте бота с другим username."
+  def ruoc_quota_message, do: "Сейчас создаётся слишком много ботов, попробуйте позже"
   def after_create_message(panel? \\ false)
 
   def after_create_message(true),
@@ -242,15 +250,13 @@ defmodule Druzhok.ManagerBot.Onboarding do
     encoded_name = URI.encode(session.name)
     link = "https://t.me/newbot/#{manager_username}/#{username}?name=#{encoded_name}"
 
-    lang_label = if session.language == "ru", do: "Русский", else: "English"
-
     character =
       case character_label(session[:soul_preset]) do
         nil -> ""
         label -> "\nХарактер: #{label}"
       end
 
-    text = "📋 #{escape_markdown(session.name)}\nЯзык: #{lang_label}#{character}\n\nTelegram откроет окно — нажмите там «Создать», имя можно не менять.\nНажми кнопку чтобы создать:"
+    text = "📋 #{escape_markdown(session.name)}#{character}\n\nTelegram откроет окно — нажмите там «Создать», имя можно не менять.\nНажмите кнопку, чтобы создать:"
     keyboard = [[%{text: "🤖 Создать «#{session.name}»", url: link}]]
 
     {text, keyboard, link}
@@ -291,7 +297,7 @@ defmodule Druzhok.ManagerBot.Onboarding do
 
   def full_message, do: "Сейчас все места заняты. Попробуйте позже — мы расширяемся."
 
-  def limit_message, do: "У тебя уже 2 бота. Удали одного, чтобы создать нового."
+  def limit_message, do: "У вас уже 2 бота. Удалите одного, чтобы создать нового."
 
   @doc """
   The one-bot card: the bot line and a button into its chat. A web_app
@@ -341,7 +347,7 @@ defmodule Druzhok.ManagerBot.Onboarding do
         {i.link, [[%{text: "Поделиться", url: i.share_url}]]}
       end)
 
-    intro = if shares == [], do: [], else: [{"Пригласи друга — по этой ссылке он сможет создать своего бота:", []}]
+    intro = if shares == [], do: [], else: [{"Пригласите друга — по этой ссылке он сможет создать своего бота:", []}]
 
     used =
       case redeemed do
@@ -356,17 +362,17 @@ defmodule Druzhok.ManagerBot.Onboarding do
       end
 
     case intro ++ shares ++ used do
-      [] -> [{"У тебя пока нет приглашений.", []}]
+      [] -> [{"У вас пока нет приглашений.", []}]
       messages -> messages
     end
   end
 
   def my_bots_message(bots) do
     if bots == [] do
-      {"У тебя пока нет ботов. Нажми «🤖 Создать бота» чтобы начать!", []}
+      {"У вас пока нет ботов. Нажмите «🤖 Создать бота», чтобы начать!", []}
     else
       lines = Enum.map(bots, &bot_line/1)
-      text = "Твои боты:\n\n" <> Enum.join(lines, "\n")
+      text = "Ваши боты:\n\n" <> Enum.join(lines, "\n")
 
       buttons = Enum.map(bots, fn bot ->
         handle = bot_handle(bot)
@@ -389,7 +395,7 @@ defmodule Druzhok.ManagerBot.Onboarding do
   `Druzhok.Ruoc.image_models/0`'s result; a failed list leaves only «Назад».
   """
   def image_menu(bot, {:error, _}) do
-    text = "🎨 Картинки для @#{bot_handle(bot)}\n\nСписок моделей сейчас недоступен, попробуй позже"
+    text = "🎨 Картинки для @#{bot_handle(bot)}\n\nСписок моделей сейчас недоступен, попробуйте позже"
     {text, [back_row()]}
   end
 
@@ -430,7 +436,7 @@ defmodule Druzhok.ManagerBot.Onboarding do
 
   def image_result(:enabled, _handle, model), do: "✅ Картинки включены: #{model_label(model)} за картинку"
   def image_result(:disabled, handle, _model), do: "✅ Картинки выключены для @#{handle}"
-  def image_failed(handle), do: "Не получилось перезапустить @#{handle}, попробуй ещё раз."
+  def image_failed(handle), do: "Не получилось перезапустить @#{handle}, попробуйте ещё раз."
 
   defp model_label(%{name: name, rub_per_image: rub}), do: "#{name} · #{rub} ₽"
   defp tick(true), do: "✅ "
@@ -475,9 +481,9 @@ defmodule Druzhok.ManagerBot.Onboarding do
 
   @doc "A delete that failed: the reason the controller recorded, or the generic text."
   def delete_failed_message(reason) when is_binary(reason) and reason != "",
-    do: "Ошибка удаления: #{reason}\nПопробуй ещё раз."
+    do: "Ошибка удаления: #{reason}\nПопробуйте ещё раз."
 
-  def delete_failed_message(_reason), do: "Ошибка удаления, попробуй ещё раз."
+  def delete_failed_message(_reason), do: "Ошибка удаления, попробуйте ещё раз."
 
   defp bot_line(bot) do
     status =
