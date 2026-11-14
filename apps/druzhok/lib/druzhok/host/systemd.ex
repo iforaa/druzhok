@@ -83,19 +83,28 @@ defmodule Druzhok.Host.Systemd do
   # The cgroup is world-readable, and it exists only while the unit does: a
   # sleeping or stopped bot, or a row with no unit, has none.
   @impl true
-  def memory_bytes(name) do
+  def memory_bytes(name), do: read_cgroup(name, "memory.current")
+
+  # "max" is no ceiling at all.
+  @impl true
+  def memory_max_bytes(name), do: read_cgroup(name, "memory.max")
+
+  defp read_cgroup(name, file) do
     dir = Application.get_env(:druzhok, :hermes_cgroup_dir, @cgroup_dir)
 
     with :ok <- check_name(name),
-         {:ok, text} <- File.read(Path.join([dir, "hermes@#{name}.service", "memory.current"])),
+         {:ok, text} <- File.read(Path.join([dir, "hermes@#{name}.service", file])),
          {bytes, ""} <- Integer.parse(String.trim(text)) do
       bytes
     else
       {:error, reason} when reason in [:enoent, :invalid_name] ->
         nil
 
+      :error when file == "memory.max" ->
+        nil
+
       other ->
-        Logger.warning("[host] #{name}: cannot read memory.current: #{inspect(other)}")
+        Logger.warning("[host] #{name}: cannot read #{file}: #{inspect(other)}")
         nil
     end
   end

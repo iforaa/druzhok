@@ -23,6 +23,8 @@ defmodule Druzhok.Host do
   @callback procs(name) :: non_neg_integer() | nil
   @doc "Memory the bot's unit uses now; nil when no unit runs or the read failed. Cheap: no `sudo`, safe per bot per read."
   @callback memory_bytes(name) :: non_neg_integer() | nil
+  @doc "The unit's memory ceiling (cgroup `memory.max`); nil when no unit runs, there is none (`max`) or the read failed. Cheap, as `memory_bytes/1`."
+  @callback memory_max_bytes(name) :: non_neg_integer() | nil
   @callback exec(name, args :: [String.t()]) :: {String.t(), integer()}
 
   @doc """
@@ -49,6 +51,7 @@ defmodule Druzhok.Host do
   def stats(name), do: impl().stats(name)
   def procs(name), do: impl().procs(name)
   def memory_bytes(name), do: impl().memory_bytes(name)
+  def memory_max_bytes(name), do: impl().memory_max_bytes(name)
   def exec(name, args), do: impl().exec(name, args)
   def holding_units, do: impl().holding_units()
 end

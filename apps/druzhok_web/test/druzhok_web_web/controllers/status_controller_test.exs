@@ -53,13 +53,21 @@ defmodule DruzhokWebWeb.StatusControllerTest do
   defp status(conn), do: conn |> get_status() |> json_response(200)
 
   defp bot!(name, attrs \\ %{}) do
-    {sets, cast} = Map.split(attrs, [:sleeping, :start_error, :delete_requested, :delete_error, :started_at])
+    {sets, cast} =
+      Map.split(attrs, [
+        :sleeping,
+        :start_error,
+        :start_failed_at,
+        :delete_requested,
+        :delete_error,
+        :delete_failed_at,
+        :started_at,
+        :inserted_at
+      ])
 
     inst =
       %Instance{}
-      |> Instance.changeset(
-        Map.merge(%{name: name, model: "m", workspace: "/tmp/#{name}"}, cast)
-      )
+      |> Instance.changeset(Map.merge(%{name: name, model: "m", workspace: "/tmp/#{name}"}, cast))
       |> Repo.insert!()
 
     inst |> Ecto.Changeset.change(sets) |> Repo.update!()
@@ -83,6 +91,7 @@ defmodule DruzhokWebWeb.StatusControllerTest do
     assert body["hermes_version"] == "cve1"
     assert body["gate"] == %{"start_min_free_mb" => 1400}
     assert body["telegram"] == %{"queued" => 0, "oldest_age_s" => 0}
+    assert Map.has_key?(body, "queue") and body["queue"] == nil
     assert body["bots"] == []
 
     host = body["host"]
@@ -102,7 +111,11 @@ defmodule DruzhokWebWeb.StatusControllerTest do
     assert ok["total_mb"] > 0
     assert is_integer(ok["free_mb"])
 
-    assert bad == %{"mount" => Path.join(root, "no-such-disk"), "total_mb" => nil, "free_mb" => nil}
+    assert bad == %{
+             "mount" => Path.join(root, "no-such-disk"),
+             "total_mb" => nil,
+             "free_mb" => nil
+           }
   end
 
   # The 2.5 s deadline is shared: waited on one after the other, the two hung
@@ -199,20 +212,160 @@ defmodule DruzhokWebWeb.StatusControllerTest do
 
   defmodule RaisingHost do
     def memory_bytes(_), do: raise("cgroup gone")
+    def memory_max_bytes(_), do: raise("cgroup gone")
+  end
+
+  # Runs, but has no memory_max_bytes/1: an older host costs the limit only.
+  defmodule LimitlessHost do
+    def memory_bytes(_), do: 100 * 1024 * 1024
+  end
+
+  defp with_host(host) do
+    prev = Application.get_env(:druzhok, :host)
+    Application.put_env(:druzhok, :host, host)
+    on_exit(fn -> restore(:host, prev) end)
   end
 
   test "a host that raises on a read costs that bot's memory, not the response", %{conn: conn} do
     bot!("kot_4dae")
-    prev = Application.get_env(:druzhok, :host)
-    Application.put_env(:druzhok, :host, RaisingHost)
-    on_exit(fn -> restore(:host, prev) end)
+    with_host(RaisingHost)
 
-    assert %{"state" => "stopped", "memory_mb" => 0} = bot_named(status(conn), "kot_4dae")
+    assert %{"state" => "stopped", "memory_mb" => 0, "memory_max_mb" => nil} =
+             bot_named(status(conn), "kot_4dae")
   end
 
-  test "lists the contract's fields, with the display name falling back to the name", %{conn: conn} do
+  test "a limit that cannot be read costs the limit, not the memory", %{conn: conn} do
+    bot!("kot_4dae")
+    with_host(LimitlessHost)
+
+    assert %{"state" => "running", "memory_mb" => 100, "memory_max_mb" => nil} =
+             bot_named(status(conn), "kot_4dae")
+  end
+
+  test "memory_max_mb is the running unit's limit, nil for none or no unit", %{conn: conn} do
+    bot!("up")
+    bot!("down")
+    HostStub.set_unit("up", :active)
+
+    body = status(conn)
+    assert bot_named(body, "up")["memory_max_mb"] == 800
+    assert bot_named(body, "down")["memory_max_mb"] == nil
+
+    HostStub.set_memory_max(nil)
+    assert bot_named(status(conn), "up")["memory_max_mb"] == nil
+  end
+
+  test "created_at is the row's creation in UTC with a Z", %{conn: conn} do
+    bot!("old", %{inserted_at: ~N[2026-11-10 08:12:00]})
+    bot!("new")
+
+    body = status(conn)
+    assert bot_named(body, "old")["created_at"] == "2026-11-10T08:12:00Z"
+    assert String.ends_with?(bot_named(body, "new")["created_at"], "Z")
+    assert {:ok, _, 0} = DateTime.from_iso8601(bot_named(body, "new")["created_at"])
+  end
+
+  test "last_error_at is when the reported error happened, null exactly with last_error", %{
+    conn: conn
+  } do
+    started = ~U[2026-11-14 08:00:00.123456Z]
+    deleted = ~U[2026-11-14 09:30:00.000000Z]
+
+    bot!("fine")
+    bot!("broken", %{start_error: "unit failed", start_failed_at: started})
+
+    bot!("leaving", %{
+      start_error: "unit failed",
+      start_failed_at: started,
+      delete_requested: true,
+      delete_error: "ruoc suspend: 502",
+      delete_failed_at: deleted
+    })
+
+    bot!("leaving_clean", %{
+      start_error: "unit failed",
+      start_failed_at: started,
+      delete_requested: true
+    })
+
+    bot!("legacy", %{start_error: "from before the failure times"})
+
+    body = status(conn)
+
+    assert %{"last_error" => nil, "last_error_at" => nil} = bot_named(body, "fine")
+
+    assert %{"last_error" => "unit failed", "last_error_at" => "2026-11-14T08:00:00Z"} =
+             bot_named(body, "broken")
+
+    assert %{"last_error" => "ruoc suspend: 502", "last_error_at" => "2026-11-14T09:30:00Z"} =
+             bot_named(body, "leaving")
+
+    assert %{"last_error" => "unit failed", "last_error_at" => "2026-11-14T08:00:00Z"} =
+             bot_named(body, "leaving_clean")
+
+    legacy = bot_named(body, "legacy")
+    assert legacy["last_error"] == "from before the failure times"
+    assert {:ok, _, 0} = DateTime.from_iso8601(legacy["last_error_at"])
+
+    for bot <- body["bots"],
+        do: assert(is_nil(bot["last_error"]) == is_nil(bot["last_error_at"]), bot["name"])
+  end
+
+  describe "queue mode" do
+    setup do
+      Druzhok.Settings.set("bot_slots", "3")
+      :ok
+    end
+
+    # Stands in for Lifecycle.Scheduler, which the web tests do not run.
+    defp fake_scheduler(answer) do
+      pid =
+        spawn_link(fn ->
+          receive do
+            {:"$gen_call", from, :line} -> if answer != :hang, do: GenServer.reply(from, answer)
+          end
+
+          Process.sleep(:infinity)
+        end)
+
+      Process.register(pid, Druzhok.Lifecycle.Scheduler)
+      on_exit(fn -> Process.exit(pid, :kill) end)
+    end
+
+    test "counts slots, holders and the line", %{conn: conn} do
+      fake_scheduler([{"asleep", :update}, {"other", :reminder}])
+
+      bot!("awake")
+      bot!("asleep", %{sleeping: true})
+      bot!("woken", %{sleeping: true})
+      HostStub.set_unit("woken", :active)
+      bot!("draining", %{active: false})
+      HostStub.set_unit("draining", :active)
+      bot!("off", %{active: false})
+      bot!("leaving", %{delete_requested: true})
+      bot!("both")
+      HostStub.set_unit("both", :active)
+
+      assert status(conn)["queue"] == %{"slots" => 3, "holding" => 4, "waiting" => 2}
+    end
+
+    test "waiting is null when the scheduler does not answer", %{conn: conn} do
+      fake_scheduler(:hang)
+      bot!("awake")
+
+      assert status(conn)["queue"] == %{"slots" => 3, "holding" => 1, "waiting" => nil}
+    end
+
+    test "waiting is null when no scheduler runs", %{conn: conn} do
+      assert status(conn)["queue"] == %{"slots" => 3, "holding" => 0, "waiting" => nil}
+    end
+  end
+
+  test "lists the contract's fields, with the display name falling back to the name", %{
+    conn: conn
+  } do
     at = ~U[2026-11-01 10:00:00Z]
-    bot!("plain", %{started_at: at})
+    bot!("plain", %{started_at: at, inserted_at: ~N[2026-11-01 09:00:00]})
     bot!("named", %{display_name: "Кот", ruoc_account_id: "acc_1"})
 
     body = status(conn)
@@ -224,9 +377,12 @@ defmodule DruzhokWebWeb.StatusControllerTest do
              "active" => true,
              "state" => "stopped",
              "memory_mb" => 0,
+             "memory_max_mb" => nil,
              "last_started_at" => "2026-11-01T10:00:00Z",
              "last_error" => nil,
-             "queued_updates" => 0
+             "last_error_at" => nil,
+             "queued_updates" => 0,
+             "created_at" => "2026-11-01T09:00:00Z"
            }
 
     assert %{"display_name" => "Кот", "ruoc_account_id" => "acc_1"} = bot_named(body, "named")
@@ -333,7 +489,10 @@ defmodule DruzhokWebWeb.StatusControllerTest do
     assert [%{"name" => "later"}] = status(conn)["bots"]
   end
 
-  test "a failed read answers 503, is not cached and keeps the server up", %{conn: conn, root: root} do
+  test "a failed read answers 503, is not cached and keeps the server up", %{
+    conn: conn,
+    root: root
+  } do
     pid = Process.whereis(Druzhok.Status)
 
     Application.put_env(:druzhok, :status,

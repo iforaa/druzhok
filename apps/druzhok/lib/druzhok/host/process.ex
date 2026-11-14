@@ -88,6 +88,10 @@ defmodule Druzhok.Host.Process do
     end
   end
 
+  # A plain OS process has no ceiling.
+  @impl Druzhok.Host
+  def memory_max_bytes(_name), do: nil
+
   @impl Druzhok.Host
   def holding_units do
     units =
