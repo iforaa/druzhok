@@ -351,7 +351,7 @@ defmodule Druzhok.ManagerBot do
           end
 
         _ ->
-          API.send_message(token, chat_id, "Не получилось загрузить приглашения, попробуй позже.")
+          API.send_message(token, chat_id, "Не получилось загрузить приглашения, попробуйте позже.")
       end
     end)
 
@@ -442,21 +442,17 @@ defmodule Druzhok.ManagerBot do
             API.send_message(state.token, chat_id, text)
             put_in(state, [:sessions, user_id], session)
 
+          {_status, session, {:named_keyboard, text, rows}} ->
+            # Telegram cannot edit a ReplyKeyboardRemove message, and one message
+            # cannot both remove the name keyboard and carry inline buttons: the
+            # name is acknowledged on its own line first.
+            API.send_message(state.token, chat_id, Onboarding.name_ack(session.name),
+              %{reply_markup: %{remove_keyboard: true}})
+
+            send_keyboard_step(state, user_id, chat_id, session, text, rows)
+
           {_status, session, {:keyboard, text, rows}} ->
-            if session.step == :language do
-              # Telegram cannot edit a ReplyKeyboardRemove message. Acknowledge
-              # the chosen name separately, then send new inline language buttons.
-              API.send_message(state.token, chat_id, session.name,
-                %{reply_markup: %{remove_keyboard: true}})
-            end
-            result = send_inline(state.token, chat_id, text, rows)
-            case result do
-              {:ok, %{"message_id" => mid}} ->
-                session = %{session | message_id: mid}
-                put_in(state, [:sessions, user_id], session)
-              _ ->
-                put_in(state, [:sessions, user_id], session)
-            end
+            send_keyboard_step(state, user_id, chat_id, session, text, rows)
 
           {_status, session, {:edit, text, rows}} ->
             result =
@@ -751,7 +747,7 @@ defmodule Druzhok.ManagerBot do
   defp with_owned(state, user_id, chat_id, message_id, id_str, fun) do
     case owned_instance(user_id, id_str) do
       {:ok, instance} -> fun.(instance)
-      {:error, :not_owner} -> API.send_message(state.token, chat_id, "Это не твой бот.")
+      {:error, :not_owner} -> API.send_message(state.token, chat_id, "Это не ваш бот.")
       {:error, :not_found} -> edit_plain(state.token, chat_id, message_id, "Бот не найден.")
     end
 
@@ -767,7 +763,7 @@ defmodule Druzhok.ManagerBot do
         edit_inline(state.token, chat_id, message_id, text, rows)
 
       {:error, :not_owner} ->
-        API.send_message(state.token, chat_id, "Это не твой бот.")
+        API.send_message(state.token, chat_id, "Это не ваш бот.")
 
       {:error, :not_found} ->
         API.send_message(state.token, chat_id, "Бот не найден.")
@@ -803,12 +799,12 @@ defmodule Druzhok.ManagerBot do
           rescue
             e ->
               Logger.error("Delete crashed for #{name}: #{Exception.message(e)}")
-              edit_plain(token, chat_id, message_id, "Ошибка удаления, попробуй ещё раз.")
+              edit_plain(token, chat_id, message_id, "Ошибка удаления, попробуйте ещё раз.")
           end
         end)
 
       {:error, :not_owner} ->
-        API.send_message(state.token, chat_id, "Это не твой бот.")
+        API.send_message(state.token, chat_id, "Это не ваш бот.")
 
       {:error, :not_found} ->
         edit_plain(state.token, chat_id, message_id, "Бот не найден.")
@@ -953,12 +949,12 @@ defmodule Druzhok.ManagerBot do
       text =
         case result do
           {:ok, _name, username} -> Onboarding.completion_message(username)
-          {:error, :crashed} -> "Ошибка создания бота. Попробуй ещё раз."
+          {:error, :crashed} -> "Ошибка создания бота. Попробуйте ещё раз."
           {:error, {:invite, _}} -> Onboarding.create_race_message()
           {:error, :name_taken} -> Onboarding.name_taken_message()
           # Druzhok.Ruoc logged "ruoc partner quota reached" for the operator.
           {:error, :ruoc_quota} -> Onboarding.ruoc_quota_message()
-          {:error, reason} -> "Ошибка создания бота: #{inspect(reason)}\nПопробуй ещё раз."
+          {:error, reason} -> "Ошибка создания бота: #{inspect(reason)}\nПопробуйте ещё раз."
         end
 
       # The result lands in the progress message first; the keyboard follows it.
@@ -983,6 +979,18 @@ defmodule Druzhok.ManagerBot do
     end)
 
     update_in(state, [:sessions], &Map.delete(&1, creator_id))
+  end
+
+  # Inline buttons for a step, remembering their message so the next step can
+  # edit it in place.
+  defp send_keyboard_step(state, user_id, chat_id, session, text, rows) do
+    session =
+      case send_inline(state.token, chat_id, text, rows) do
+        {:ok, %{"message_id" => mid}} -> %{session | message_id: mid}
+        _ -> session
+      end
+
+    put_in(state, [:sessions, user_id], session)
   end
 
   # Provisioning takes tens of seconds (ruoc account, linux user, unit start),

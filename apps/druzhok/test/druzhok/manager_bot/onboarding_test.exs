@@ -8,7 +8,7 @@ defmodule Druzhok.ManagerBot.OnboardingTest do
     session = %{Onboarding.new_session() | name: "A_*[x]`", language: "ru", username: "test_bot"}
     {text, [[button]], _} = Onboarding.confirm_message(session, "manager")
     assert text =~ ~S(A\_\*\[x]\`)
-    assert text =~ "Telegram откроет окно — нажмите там «Создать», имя можно не менять.\nНажми кнопку чтобы создать:"
+    assert text =~ "Telegram откроет окно — нажмите там «Создать», имя можно не менять.\nНажмите кнопку, чтобы создать:"
     assert button.text == "🤖 Создать «A_*[x]`»"
   end
 
@@ -48,10 +48,13 @@ defmodule Druzhok.ManagerBot.OnboardingTest do
   end
 
   describe "handle_input/2 at :name step" do
-    test "accepts a name, generates username, moves to :language" do
+    test "accepts a name, generates username, goes straight to the character in Russian" do
       session = %{Onboarding.new_session() | step: :name}
-      {:ok, session, {:keyboard, _, _}} = Onboarding.handle_input(session, %{text: "Вася"})
-      assert session.step == :language
+      {:ok, session, {:named_keyboard, "Какой характер?", rows}} = Onboarding.handle_input(session, %{text: "Вася"})
+      assert session.step == :character
+      assert session.language == "ru"
+      assert length(List.flatten(rows)) == 5
+      assert Onboarding.name_ack(session.name) == "Отлично, Вася!"
       assert session.name == "Вася"
       assert session.username =~ ~r/^vasya_[a-f0-9]{4}_bot$/
     end
@@ -69,7 +72,7 @@ defmodule Druzhok.ManagerBot.OnboardingTest do
     end
   end
 
-  describe "handle_input/2 at :language step" do
+  describe "handle_input/2 at :language step (sessions from before the step was dropped)" do
     test "accepts language, asks for the character in the same message" do
       session = %{Onboarding.new_session() | step: :language, name: "Вася", username: "vasya_1234_bot"}
       {:ok, session, {:edit, "Какой характер?", rows}} = Onboarding.handle_input(session, %{callback_data: "lang:ru"})
@@ -103,7 +106,7 @@ defmodule Druzhok.ManagerBot.OnboardingTest do
 
     test "typed text asks again with fresh buttons and keeps the session", %{session: session} do
       {:retry, ^session, {:keyboard, text, rows}} = Onboarding.handle_input(session, %{text: "весёлый"})
-      assert text =~ "Выбери кнопкой"
+      assert text =~ "Выберите кнопкой"
       assert length(List.flatten(rows)) == 5
     end
 
@@ -155,22 +158,22 @@ defmodule Druzhok.ManagerBot.OnboardingTest do
       assert link =~ "vasya_abcd_bot"
     end
 
-    test "includes name and language in text" do
+    test "names the bot and no longer shows a language" do
       session = %{Onboarding.new_session() |
         step: :confirm, name: "Тест",
-        language: "en", username: "test_1234_bot"}
+        language: "ru", username: "test_1234_bot"}
       {text, _keyboard, _link} = Onboarding.confirm_message(session, "DruzhokBot")
       assert text =~ "Тест"
-      assert text =~ "English"
+      refute text =~ "Язык"
       refute text =~ "Характер"
     end
 
-    test "shows the chosen character under the language" do
+    test "shows the chosen character under the name" do
       session = %{Onboarding.new_session() |
         step: :confirm, name: "Тест", language: "ru",
         username: "test_1234_bot", soul_preset: "brief"}
       {text, _keyboard, _link} = Onboarding.confirm_message(session, "DruzhokBot")
-      assert text =~ "Язык: Русский\nХарактер: Коротко и по делу\n"
+      assert text =~ "📋 Тест\nХарактер: Коротко и по делу\n"
     end
   end
 
@@ -234,7 +237,7 @@ defmodule Druzhok.ManagerBot.OnboardingTest do
     test "when the list is unavailable only Назад remains" do
       bot = %{id: 7, name: "fedya", trigger_name: nil, image_gen_enabled: false, image_gen_model: nil}
       {text, rows} = Onboarding.image_menu(bot, {:error, "down"})
-      assert text =~ "Список моделей сейчас недоступен, попробуй позже"
+      assert text =~ "Список моделей сейчас недоступен, попробуйте позже"
       assert rows == [[%{text: "« Назад", callback_data: "imgback"}]]
     end
   end
@@ -414,7 +417,7 @@ defmodule Druzhok.ManagerBot.OnboardingTest do
     test "ask_invite moves to :invite with the prompt" do
       {session, text} = Onboarding.ask_invite(Onboarding.new_session())
       assert session.step == :invite
-      assert text == "Создание по приглашению. Введи код или открой ссылку от друга."
+      assert text == "Создание по приглашению. Введите код или откройте ссылку от друга."
     end
 
     test "a typed code is handed back for checking" do
@@ -438,10 +441,10 @@ defmodule Druzhok.ManagerBot.OnboardingTest do
     test "status messages" do
       assert Onboarding.invite_status_message(:spent) == "Этот код уже использован."
       assert Onboarding.invite_status_message(:expired) == "Срок этого кода истёк."
-      assert Onboarding.invite_status_message(:invalid) == "Код не найден. Проверь ссылку или попроси новый."
-      assert Onboarding.invite_status_message(:error) == "Не получилось проверить код, попробуй позже."
-      assert Onboarding.create_race_message() == "Код успели использовать. Попроси новый и создай бота заново."
-      assert Onboarding.limit_message() == "У тебя уже 2 бота. Удали одного, чтобы создать нового."
+      assert Onboarding.invite_status_message(:invalid) == "Код не найден. Проверьте ссылку или попросите новый."
+      assert Onboarding.invite_status_message(:error) == "Не получилось проверить код, попробуйте позже."
+      assert Onboarding.create_race_message() == "Код успели использовать. Попросите новый и создайте бота заново."
+      assert Onboarding.limit_message() == "У вас уже 2 бота. Удалите одного, чтобы создать нового."
     end
   end
 
@@ -462,7 +465,7 @@ defmodule Druzhok.ManagerBot.OnboardingTest do
       ]
 
       [{intro, []}, {share, [[button]]}, {used, []}] = Onboarding.referrals_messages(codes, "druzhoksuperbot")
-      assert intro == "Пригласи друга — по этой ссылке он сможет создать своего бота:"
+      assert intro == "Пригласите друга — по этой ссылке он сможет создать своего бота:"
       assert share == "https://t.me/druzhoksuperbot?start=ref_AAAA-BBBB"
       assert button.text == "Поделиться"
       assert button.url =~ "https://t.me/share/url?url=https%3A%2F%2Ft.me%2Fdruzhoksuperbot%3Fstart%3Dref_AAAA-BBBB&text="
@@ -476,7 +479,7 @@ defmodule Druzhok.ManagerBot.OnboardingTest do
     end
 
     test "no codes" do
-      assert [{"У тебя пока нет приглашений.", []}] = Onboarding.referrals_messages([], "b")
+      assert [{"У вас пока нет приглашений.", []}] = Onboarding.referrals_messages([], "b")
     end
 
     test "only redeemed codes: no intro, just the list" do

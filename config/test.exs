@@ -40,3 +40,7 @@ config :druzhok, :telegram_username_fun, {Druzhok.TestUsernames, :lookup}
 config :druzhok, :panel_get_me, {Druzhok.TestUsernames, :get_me}
 config :druzhok, :display_name_backfill, false
 config :druzhok, :bot_avatars, false
+
+# priv/onboarding/intro.jpg ships with the app; tests send the /start intro as
+# plain text unless a test points this at its own picture.
+config :druzhok, :onboarding_intro_path, "/nonexistent/druzhok-test-intro.jpg"
