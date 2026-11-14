@@ -39,3 +39,4 @@ config :druzhok,
 config :druzhok, :telegram_username_fun, {Druzhok.TestUsernames, :lookup}
 config :druzhok, :panel_get_me, {Druzhok.TestUsernames, :get_me}
 config :druzhok, :display_name_backfill, false
+config :druzhok, :bot_avatars, false

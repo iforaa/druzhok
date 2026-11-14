@@ -965,7 +965,10 @@ defmodule Druzhok.ManagerBot do
       finish_progress(progress, token, creator_id, text)
 
       case result do
-        {:ok, _name, _username} ->
+        {:ok, name, _username} ->
+          # Its own face, drawn in the background; never holds up the menu.
+          Druzhok.Avatar.start(name)
+
           # A new bot is panel-ready only once its «Кабинет» button is set,
           # so text and keyboard both follow the same check.
           menu = menu_for(creator_id)

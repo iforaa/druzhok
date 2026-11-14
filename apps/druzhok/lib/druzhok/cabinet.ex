@@ -78,8 +78,10 @@ defmodule Druzhok.Cabinet do
   }
   @group_no_title %{"ru" => "без названия", "en" => "untitled"}
   @group_limit_note %{
-    "ru" => "В этой группе сейчас слишком много сообщений боту. Пока он на них не отвечает, попробуйте позже.",
-    "en" => "Too many messages to the bot in this group right now. It is not answering them for now, please try later."
+    "ru" =>
+      "В этой группе сейчас слишком много сообщений боту. Пока он на них не отвечает, попробуйте позже.",
+    "en" =>
+      "Too many messages to the bot in this group right now. It is not answering them for now, please try later."
   }
 
   def start_link(opts \\ []), do: GenServer.start_link(__MODULE__, opts, name: __MODULE__)
@@ -91,7 +93,8 @@ defmodule Druzhok.Cabinet do
   def out_of_money(instance_id), do: GenServer.cast(__MODULE__, {:out_of_money, instance_id})
 
   @doc "The relay accepted an update: offer the cabinet on each owner's private /start."
-  def delivered(instance_id, payload), do: GenServer.cast(__MODULE__, {:delivered, instance_id, payload})
+  def delivered(instance_id, payload),
+    do: GenServer.cast(__MODULE__, {:delivered, instance_id, payload})
 
   @doc "A group waits for the owner's decision: tell them once. A cast."
   def group_seen(instance_id, chat_id),
@@ -177,24 +180,8 @@ defmodule Druzhok.Cabinet do
   end
 
   def handle_cast({:delivered, id, payload}, state) do
-    guarded(id, fn ->
-      with %Instance{cabinet_off: false, cabinet_url: url, owner_telegram_id: owner} = inst
-             when is_binary(url) and url != "" and is_integer(owner) <- Repo.get(Instance, id),
-           {:ok, %{"message" => %{"from" => %{"id" => ^owner},
-             "chat" => %{"id" => ^owner, "type" => "private"}, "text" => command}}} <- Jason.decode(payload),
-           ["/start" | _] <- String.split(command) do
-        {line, label} = text(%{
-          "ru" => {"Настройки, тариф и память бота — в Кабинете.", "Открыть кабинет"},
-          "en" => {"Settings, plan and memory — in the Cabinet.", "Open Cabinet"}
-        }, inst)
-        case API.send_message(inst.telegram_token, owner, line,
-               %{reply_markup: %{inline_keyboard: [[%{text: label, web_app: %{url: url}}]]}}) do
-          {:ok, _} -> :ok
-          {:error, reason} ->
-            Logger.warning("[cabinet] #{inst.name}: start notice not sent (#{short(reason)})")
-        end
-      end
-    end)
+    guarded(id, fn -> start_notice(id, payload) end)
+    guarded(id, fn -> first_tasks(id, payload) end)
     {:noreply, state}
   end
 
@@ -206,6 +193,95 @@ defmodule Druzhok.Cabinet do
   def handle_cast({:group_over_limit, id, chat_id}, state) do
     guarded(id, fn -> tell_group_limit(id, chat_id) end)
     {:noreply, state}
+  end
+
+  defp start_notice(id, payload) do
+    with %Instance{cabinet_off: false, cabinet_url: url, owner_telegram_id: owner} = inst
+         when is_binary(url) and url != "" and is_integer(owner) <- Repo.get(Instance, id),
+         {:ok,
+          %{
+            "message" => %{
+              "from" => %{"id" => ^owner},
+              "chat" => %{"id" => ^owner, "type" => "private"},
+              "text" => command
+            }
+          }} <- Jason.decode(payload),
+         ["/start" | _] <- String.split(command) do
+      {line, label} =
+        text(
+          %{
+            "ru" => {"Настройки, тариф и память бота — в Кабинете.", "Открыть кабинет"},
+            "en" => {"Settings, plan and memory — in the Cabinet.", "Open Cabinet"}
+          },
+          inst
+        )
+
+      case API.send_message(inst.telegram_token, owner, line, %{
+             reply_markup: %{inline_keyboard: [[%{text: label, web_app: %{url: url}}]]}
+           }) do
+        {:ok, _} ->
+          :ok
+
+        {:error, reason} ->
+          Logger.warning("[cabinet] #{inst.name}: start notice not sent (#{short(reason)})")
+      end
+    end
+  end
+
+  # The owner's private /start: a keyboard of first things to try, each button
+  # a ready request the bot answers like any message (KeyboardButton text), so
+  # the first minute shows what the bot does instead of an empty chat. Only
+  # the bot's owner, only a private /start; pictures only when they are on.
+  defp first_tasks(id, payload) do
+    with %Instance{owner_telegram_id: owner, telegram_token: token} = inst
+         when is_integer(owner) and is_binary(token) <- Repo.get(Instance, id),
+         {:ok,
+          %{
+            "message" => %{
+              "from" => %{"id" => ^owner},
+              "chat" => %{"id" => ^owner, "type" => "private"},
+              "text" => command
+            }
+          }} <- Jason.decode(payload),
+         ["/start" | _] <- String.split(command) do
+      {line, keyboard} = first_tasks_message(inst)
+
+      case API.send_message(token, owner, line, %{reply_markup: keyboard}) do
+        {:ok, _} ->
+          :ok
+
+        {:error, reason} ->
+          Logger.warning("[cabinet] #{inst.name}: first tasks not sent (#{short(reason)})")
+      end
+    end
+  end
+
+  @doc "The first-tasks line and its reply keyboard for a bot, in its language."
+  def first_tasks_message(%Instance{} = inst) do
+    {line, draw, tasks} =
+      text(
+        %{
+          "ru" =>
+            {"Попробуйте — нажмите кнопку внизу:", "🎨 Нарисуй кота-космонавта",
+             [
+               "⏰ Напомни мне завтра в 9 утра выпить воды",
+               "🔎 Найди главные новости дня",
+               "💡 Что ты умеешь?"
+             ]},
+          "en" =>
+            {"Try it — tap a button below:", "🎨 Draw a cat astronaut",
+             [
+               "⏰ Remind me tomorrow at 9 am to drink water",
+               "🔎 Find today's top news",
+               "💡 What can you do?"
+             ]}
+        },
+        inst
+      )
+
+    tasks = if inst.image_gen_enabled, do: [draw | tasks], else: tasks
+    rows = Enum.map(tasks, &[%{text: &1, style: "primary"}])
+    {line, %{keyboard: rows, resize_keyboard: true, one_time_keyboard: true}}
   end
 
   # Nothing here may take the process down with it: a raise or an exit from
@@ -520,7 +596,8 @@ defmodule Druzhok.Cabinet do
           {:error, reason} ->
             if undeliverable?(reason),
               do: mark_group_told(row),
-              else: Logger.warning("[cabinet] #{inst.name}: group note not sent (#{short(reason)})")
+              else:
+                Logger.warning("[cabinet] #{inst.name}: group note not sent (#{short(reason)})")
         end
 
       _ ->
