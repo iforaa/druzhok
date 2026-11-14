@@ -102,6 +102,49 @@ defmodule Druzhok.CabinetTest do
     assert msg["reply_markup"]["one_time_keyboard"] == true
   end
 
+  test "first tasks go out once per bot; the cabinet notice still comes on every /start", %{inst: inst, seen: seen} do
+    start_supervised!(Cabinet)
+    inst |> Ecto.Changeset.change(%{cabinet_url: @url}) |> Repo.update!()
+    start = Jason.encode!(%{message: %{from: %{id: 456}, chat: %{id: 456, type: "private"}, text: "/start"}})
+
+    Cabinet.delivered(inst.id, start)
+    :sys.get_state(Cabinet)
+    assert [_] = first_task_messages(seen)
+    assert %DateTime{} = reload(inst).first_tasks_sent_at
+
+    Cabinet.delivered(inst.id, start)
+    :sys.get_state(Cabinet)
+    assert [_] = first_task_messages(seen)
+    assert length(cabinet_notices(seen)) == 2
+  end
+
+  test "a bot already marked gets no first tasks", %{inst: inst, seen: seen} do
+    start_supervised!(Cabinet)
+    inst |> Ecto.Changeset.change(%{first_tasks_sent_at: DateTime.utc_now()}) |> Repo.update!()
+    Cabinet.delivered(inst.id, Jason.encode!(%{message: %{from: %{id: 456}, chat: %{id: 456, type: "private"}, text: "/start"}}))
+    :sys.get_state(Cabinet)
+    assert first_task_messages(seen) == []
+  end
+
+  test "a failed first-tasks send stays claimed", %{inst: inst, tg: tg} do
+    start_supervised!(Cabinet)
+    Bypass.stub(tg, "POST", "/:bot/:method", fn conn ->
+      Plug.Conn.resp(conn, 400, ~s({"ok":false,"description":"chat not found"}))
+    end)
+    log = ExUnit.CaptureLog.capture_log(fn ->
+      Cabinet.delivered(inst.id, Jason.encode!(%{message: %{from: %{id: 456},
+        chat: %{id: 456, type: "private"}, text: "/start"}}))
+      :sys.get_state(Cabinet)
+    end)
+    assert log =~ "first tasks not sent"
+    assert reload(inst).first_tasks_sent_at
+  end
+
+  test "first_tasks_sent_at is not castable" do
+    cs = Instance.changeset(%Instance{}, %{first_tasks_sent_at: DateTime.utc_now()})
+    refute Map.has_key?(cs.changes, :first_tasks_sent_at)
+  end
+
   test "first tasks leave out drawing when pictures are off, and follow the bot's language" do
     ru = %Instance{language: "ru", image_gen_enabled: false}
     {_, %{keyboard: rows}} = Cabinet.first_tasks_message(ru)

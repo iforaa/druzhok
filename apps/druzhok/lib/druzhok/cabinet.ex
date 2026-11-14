@@ -39,7 +39,8 @@ defmodule Druzhok.Cabinet do
   that it is over its rate limit. Neither wakes the bot.
 
   On the owner's private /start (`delivered/2`) it also sends a keyboard of
-  first things to try (`first_tasks_message/1`), cabinet or not.
+  first things to try (`first_tasks_message/1`), cabinet or not, once per bot
+  (`instances.first_tasks_sent_at`).
   """
 
   use GenServer
@@ -260,20 +261,39 @@ defmodule Druzhok.Cabinet do
   # a ready request the bot answers like any message (KeyboardButton text), so
   # the first minute shows what the bot does instead of an empty chat. Only
   # the bot's owner, only a private /start; pictures only when they are on.
-  defp first_tasks(%Instance{owner_telegram_id: owner, telegram_token: token} = inst)
+  # Once per bot: the row is claimed before the send, and only the caller
+  # that claimed it sends. A failed send stays claimed; once means once.
+  defp first_tasks(
+         %Instance{owner_telegram_id: owner, telegram_token: token, first_tasks_sent_at: nil} =
+           inst
+       )
        when is_binary(token) do
-    {line, keyboard} = first_tasks_message(inst)
+    if claim_first_tasks(inst.id) do
+      {line, keyboard} = first_tasks_message(inst)
 
-    case API.send_message(token, owner, line, %{reply_markup: keyboard}) do
-      {:ok, _} ->
-        :ok
+      case API.send_message(token, owner, line, %{reply_markup: keyboard}) do
+        {:ok, _} ->
+          :ok
 
-      {:error, reason} ->
-        Logger.warning("[cabinet] #{inst.name}: first tasks not sent (#{short(reason)})")
+        {:error, reason} ->
+          Logger.warning("[cabinet] #{inst.name}: first tasks not sent (#{short(reason)})")
+      end
+    else
+      :ok
     end
   end
 
   defp first_tasks(_inst), do: :ok
+
+  defp claim_first_tasks(id) do
+    {n, _} =
+      Repo.update_all(
+        from(i in Instance, where: i.id == ^id and is_nil(i.first_tasks_sent_at)),
+        set: [first_tasks_sent_at: DateTime.utc_now()]
+      )
+
+    n == 1
+  end
 
   @doc "The first-tasks line and its reply keyboard for a bot, in its language."
   def first_tasks_message(%Instance{} = inst) do
