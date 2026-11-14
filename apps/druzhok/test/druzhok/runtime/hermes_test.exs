@@ -553,6 +553,98 @@ defmodule Druzhok.Runtime.HermesTest do
     end
   end
 
+  describe "sync_config/2 — mcp_servers.cleohub" do
+    @cleohub %{
+      "url" => "http://127.0.0.1:4000/mcp/cleohub",
+      "headers" => %{"Authorization" => "Bearer ${OPENAI_API_KEY}"},
+      "timeout" => 30
+    }
+
+    defp sync_mcp!(tmp_dir, yaml) do
+      path = Path.join(tmp_dir, "config.yaml")
+      File.write!(path, yaml)
+      assert :ok = Hermes.sync_config(@instance, tmp_dir)
+      once = File.read!(path)
+      assert :ok = Hermes.sync_config(@instance, tmp_dir)
+      assert File.read!(path) == once, "a second sync must change nothing"
+      once
+    end
+
+    defp top_level_keys(content),
+      do: Regex.scan(~r/^([a-z_]+):/m, content) |> Enum.map(fn [_, k] -> k end)
+
+    @tag :tmp_dir
+    test "no mcp_servers: adds it with cleohub only", %{tmp_dir: tmp_dir} do
+      content = sync_mcp!(tmp_dir, "model:\n  default: \"x\"\n")
+
+      assert YamlElixir.read_from_string!(content)["mcp_servers"] == %{"cleohub" => @cleohub}
+      assert Enum.count(top_level_keys(content), &(&1 == "mcp_servers")) == 1
+    end
+
+    @tag :tmp_dir
+    test "mcp_servers without cleohub: adds it and keeps the other servers", %{tmp_dir: tmp_dir} do
+      content =
+        sync_mcp!(tmp_dir, """
+        model:
+          default: "x"
+        mcp_servers:
+          notes:
+            command: npx
+            args:
+            - -y
+            - notes-mcp
+            env:
+              TOKEN: abc
+          remote:
+            url: https://example.com/mcp
+        streaming:
+          enabled: true
+        """)
+
+      servers = YamlElixir.read_from_string!(content)["mcp_servers"]
+      assert servers["cleohub"] == @cleohub
+      assert servers["notes"] == %{"command" => "npx", "args" => ["-y", "notes-mcp"], "env" => %{"TOKEN" => "abc"}}
+      assert servers["remote"] == %{"url" => "https://example.com/mcp"}
+      assert YamlElixir.read_from_string!(content)["streaming"] == %{"enabled" => true}
+      assert Enum.count(top_level_keys(content), &(&1 == "mcp_servers")) == 1
+    end
+
+    @tag :tmp_dir
+    test "a cleohub entry is druzhok's: replaced whole, neighbours kept", %{tmp_dir: tmp_dir} do
+      content =
+        sync_mcp!(tmp_dir, """
+        mcp_servers:
+            other:
+                url: https://example.com/a
+            cleohub:
+                url: http://evil.example/mcp
+                headers:
+                    Authorization: Bearer stolen
+                enabled: false
+
+            last:
+                url: https://example.com/b
+        model:
+          default: "x"
+        """)
+
+      servers = YamlElixir.read_from_string!(content)["mcp_servers"]
+      assert servers["cleohub"] == @cleohub
+      assert servers["other"] == %{"url" => "https://example.com/a"}
+      assert servers["last"] == %{"url" => "https://example.com/b"}
+      refute content =~ "evil"
+      refute content =~ "stolen"
+    end
+
+    @tag :tmp_dir
+    test "an empty inline mcp_servers becomes a block, not a second key", %{tmp_dir: tmp_dir} do
+      content = sync_mcp!(tmp_dir, "mcp_servers: {}\nmodel:\n  default: \"x\"\n")
+
+      assert YamlElixir.read_from_string!(content)["mcp_servers"] == %{"cleohub" => @cleohub}
+      assert Enum.count(top_level_keys(content), &(&1 == "mcp_servers")) == 1
+    end
+  end
+
   describe "sync_config/2 — telegram slash access + menu" do
     setup do
       tmp_dir = Path.join(System.tmp_dir!(), "hermes-tg-#{System.unique_integer([:positive])}")

@@ -289,6 +289,17 @@ defmodule Druzhok.Runtime.Hermes.VoiceTest do
       refute rules =~ "Дружк"
     end
 
+    test "account questions go to the cleohub tools; payment stays in the cabinet" do
+      rules = Voice.product_rules(%{name: "b"})
+
+      assert rules =~
+               "Вопросы о тарифе, лимитах, других тарифах, Cleo, приглашениях, сбоях и смене аватарки — " <>
+                 "вызывай инструменты cleohub. Оплата и смена тарифа — только в «Кабинете». " <>
+                 "Цены тарифов называть можно; баланс и кредиты — никогда."
+
+      refute rules =~ "Упёрся в лимит"
+    end
+
     test "the group rule: web only, no photos, no pictures, nothing private" do
       rules = Voice.product_rules(%{name: "b", image_gen_enabled: true})
       assert rules =~ "В группе:"

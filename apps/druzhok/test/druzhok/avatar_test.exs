@@ -62,6 +62,48 @@ defmodule Druzhok.AvatarTest do
     assert log =~ "402"
   end
 
+  test "redraw/2 draws the owner's description and returns the JPEG it set", %{stub: stub, tg: tg, inst: inst} do
+    parent = self()
+
+    Bypass.expect_once(stub.bypass, "POST", "/v1/images", fn conn ->
+      {:ok, body, conn} = Plug.Conn.read_body(conn)
+      send(parent, {:prompt, Jason.decode!(body)["prompt"]})
+      RuocStub.reply(conn, 200, %{"image" => %{"b64" => Base.encode64(@png)}})
+    end)
+
+    Bypass.expect_once(tg, "POST", "/bot123:secret/setMyProfilePhoto", fn conn ->
+      Plug.Conn.resp(conn, 200, ~s({"ok":true,"result":true}))
+    end)
+
+    assert {:ok, <<0xFF, 0xD8, 0xFF, _::binary>>} = Avatar.redraw(inst, "рыжий кот в очках")
+    assert_received {:prompt, prompt}
+    assert prompt =~ "рыжий кот в очках"
+    assert prompt =~ "Кеша"
+    refute prompt =~ "winking"
+  end
+
+  test "redraw/2 reports where it failed", %{stub: stub, tg: tg, inst: inst} do
+    Bypass.expect_once(stub.bypass, "POST", "/v1/images", fn conn ->
+      RuocStub.reply(conn, 402, %{"error" => %{"type" => "insufficient_quota"}})
+    end)
+
+    assert {:error, {:ruoc, 402, _} = reason} = Avatar.redraw(inst, "кот")
+    assert Avatar.reason(reason) == "лимит тарифа исчерпан, подробности в «Кабинете»"
+    assert Avatar.reason(reason, "en") =~ "limit"
+
+    Bypass.expect_once(stub.bypass, "POST", "/v1/images", fn conn ->
+      RuocStub.reply(conn, 200, %{"image" => %{"b64" => Base.encode64(@png)}})
+    end)
+
+    Bypass.expect_once(tg, "POST", "/bot123:secret/setMyProfilePhoto", fn conn ->
+      Plug.Conn.resp(conn, 400, ~s({"ok":false,"description":"Bad Request"}))
+    end)
+
+    assert {:error, {:telegram, _} = reason} = Avatar.redraw(inst, "кот")
+    assert Avatar.reason(reason) == "Telegram не принял картинку"
+    assert {:error, :no_keys} = Avatar.redraw(%{inst | ruoc_api_key: nil}, "кот")
+  end
+
   test "the prompt falls back to a friendly look without a character" do
     prompt = Avatar.prompt(%Instance{name: "max_1a2b", display_name: nil, soul_preset: nil})
     assert prompt =~ "max_1a2b"

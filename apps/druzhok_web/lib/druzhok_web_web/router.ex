@@ -48,6 +48,15 @@ defmodule DruzhokWebWeb.Router do
     post "/convert", DocsController, :convert
   end
 
+  # CleoHub's tools for the bot (hermes's `mcp_servers.cleohub`), under its tenant key.
+  scope "/mcp", DruzhokWebWeb do
+    pipe_through :llm_api
+
+    post "/cleohub", CleohubMcpController, :rpc
+    get "/cleohub", CleohubMcpController, :not_allowed
+    delete "/cleohub", CleohubMcpController, :not_allowed
+  end
+
   # What ruoc-gateway calls back into, under one shared secret: the page fetcher
   # it routes POST /v1/fetch to (localhost in practice; see
   # docs/superpowers/specs/2026-09-05-web-fetch-service-design.md), and the

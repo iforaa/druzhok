@@ -285,6 +285,72 @@ defmodule Druzhok.RuocTest do
                     period_end: ~U[2026-10-05 07:00:00Z]}
   end
 
+  test "balance/1 carries a windowed plan's limits and the trial", %{stub: stub} do
+    assert {:ok, %{limits: nil, trial: nil}} = Ruoc.balance("ruoc_bot")
+
+    Bypass.expect_once(stub.bypass, "GET", "/v1/balance", fn conn ->
+      RuocStub.reply(conn, 200, %{
+        "balance_nanorub" => 0,
+        "limits" => %{
+          "plan_name" => "Лайт",
+          "session" => %{"used_percent" => 40, "resets_at" => "2026-11-14T18:00:00Z"},
+          "weekly" => %{"used_percent" => 7, "resets_at" => nil},
+          "overflow" => false,
+          "overflow_rate_bp" => 10_000,
+          "spent" => nil
+        },
+        "trial" => %{"state" => "open", "ends_at" => "2026-11-15T00:00:00Z", "remaining_nanorub" => 5}
+      })
+    end)
+
+    assert {:ok, %{limits: limits, trial: trial}} = Ruoc.balance("ruoc_bot")
+
+    assert limits == %{
+             plan_name: "Лайт",
+             session: %{used_percent: 40, resets_at: ~U[2026-11-14 18:00:00Z]},
+             weekly: %{used_percent: 7, resets_at: nil},
+             pool: nil,
+             overflow: false,
+             spent: nil
+           }
+
+    assert trial == %{state: "open", ends_at: ~U[2026-11-15 00:00:00Z]}
+  end
+
+  describe "plans/1" do
+    setup do
+      site = Bypass.open()
+      origin = "http://localhost:#{site.port}"
+      Ruoc.reset_plans_cache(origin)
+      on_exit(fn -> Ruoc.reset_plans_cache(origin) end)
+      %{site: site, origin: origin}
+    end
+
+    test "reads the public plans.json and keeps it for 10 minutes", %{site: site, origin: origin} do
+      Bypass.expect_once(site, "GET", "/plans.json", fn conn ->
+        RuocStub.reply(conn, 200, [
+          %{"name" => "Лайт", "description" => "для начала", "price_nanorub" => 290_000_000_000,
+            "period_days" => 30, "is_default" => true, "session_allowance_nanorub" => 1},
+          %{"name" => "Про", "description" => nil, "price_nanorub" => 990_500_000_000, "period_days" => 30}
+        ])
+      end)
+
+      expected = [
+        %{name: "Лайт", description: "для начала", price_nanorub: 290_000_000_000, period_days: 30, default: true},
+        %{name: "Про", description: "", price_nanorub: 990_500_000_000, period_days: 30, default: false}
+      ]
+
+      assert {:ok, ^expected} = Ruoc.plans(origin)
+      # Served from the cache: Bypass would fail a second request.
+      assert {:ok, ^expected} = Ruoc.plans(origin)
+    end
+
+    test "a site that does not answer is an error when nothing was cached", %{site: site, origin: origin} do
+      Bypass.down(site)
+      assert {:error, _} = Ruoc.plans(origin)
+    end
+  end
+
   describe "image_models/0" do
     test "lists the image catalogue in ruoc's order with prices, uncached", %{stub: stub} do
       assert {:ok,

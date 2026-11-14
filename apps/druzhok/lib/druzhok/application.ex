@@ -20,6 +20,8 @@ defmodule Druzhok.Application do
         # One document conversion at a time (POST /v2/docs/convert).
         Druzhok.Docs.Queue,
         Druzhok.Status,
+        # cleohub_set_avatar's 3 a day per bot.
+        Druzhok.Cleohub.AvatarLimit,
         # Warm ruoc's model catalogue: a bot start reads it from the cache
         # without waiting (Runtime.Hermes sync_image_input_mode).
         {Task, &Druzhok.Ruoc.models/0}

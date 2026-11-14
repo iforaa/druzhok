@@ -274,13 +274,15 @@ defmodule Druzhok.Ruoc do
   # --- Bot-facing API --------------------------------------------------------
 
   @doc """
-  Balance for a bot key. `{:ok, %{balance_rub: "12.50", balance_nanorub: int, subscription: sub | nil}}` —
-  `balance_rub` is a plain two-decimal string (the gateway sends "12.5 RUB"), and
-  `subscription` is `%{plan_name, credit_rub, period_days, status, period_end}` when
-  the account is on a plan.
+  Balance for a bot key. `{:ok, %{balance_rub: "12.50", balance_nanorub: int, subscription: sub | nil,
+  limits: limits | nil, trial: trial | nil}}` — `balance_rub` is a plain two-decimal string (the
+  gateway sends "12.5 RUB"), and `subscription` is `%{plan_name, credit_rub, period_days, status,
+  period_end}` when the account is on a plan. `limits` is a windowed plan's state, `%{plan_name,
+  session: window, weekly: window, pool: window | nil, overflow, spent}` with each window
+  `%{used_percent, resets_at}`; `trial` is `%{state, ends_at}`. `opts`: `receive_timeout`.
   """
-  def balance(api_key) do
-    case Client.get("/v1/balance", api_key) do
+  def balance(api_key, opts \\ []) do
+    case Client.get("/v1/balance", api_key, opts) do
       {:ok, 200, _headers, body} ->
         case Jason.decode(body) do
           {:ok, %{"balance_nanorub" => nano} = payload} when is_integer(nano) ->
@@ -288,7 +290,9 @@ defmodule Druzhok.Ruoc do
              %{
                balance_rub: format_rub(nano),
                balance_nanorub: nano,
-               subscription: subscription(payload["subscription"])
+               subscription: subscription(payload["subscription"]),
+               limits: limits(payload["limits"]),
+               trial: trial(payload["trial"])
              }}
 
           _ ->
@@ -320,6 +324,112 @@ defmodule Druzhok.Ruoc do
   end
 
   defp subscription(_), do: nil
+
+  defp limits(%{} = l) do
+    %{
+      plan_name: l["plan_name"],
+      session: window(l["session"]),
+      weekly: window(l["weekly"]),
+      pool: if(is_map(l["pool"]), do: window(l["pool"])),
+      overflow: l["overflow"] == true,
+      spent: l["spent"]
+    }
+  end
+
+  defp limits(_), do: nil
+
+  defp window(%{} = w) do
+    %{
+      used_percent: if(is_integer(w["used_percent"]), do: w["used_percent"], else: 0),
+      resets_at: parse_time(w["resets_at"])
+    }
+  end
+
+  defp window(_), do: %{used_percent: 0, resets_at: nil}
+
+  defp trial(%{"state" => state} = t) when is_binary(state),
+    do: %{state: state, ends_at: parse_time(t["ends_at"])}
+
+  defp trial(_), do: nil
+
+  defp parse_time(value) when is_binary(value) do
+    case DateTime.from_iso8601(value) do
+      {:ok, dt, _} -> DateTime.truncate(dt, :second)
+      _ -> nil
+    end
+  end
+
+  defp parse_time(_), do: nil
+
+  @plans_ttl_ms 10 * 60_000
+  @plans_timeout_ms 10_000
+
+  @doc """
+  The plans on offer, from the public `GET <origin>/plans.json` the site and the
+  cabinet price from (listed or default, not archived, no partner plans):
+  `{:ok, [%{name, description, price_nanorub, period_days, default}]}`. `origin`
+  is the site's (`Druzhok.Panel.billing_url/0`). A good answer is kept 10 min per
+  origin; when the site does not answer, the last good list is served if there is one.
+  """
+  def plans(origin) when is_binary(origin) do
+    key = {__MODULE__, :plans, origin}
+    now = System.monotonic_time(:millisecond)
+
+    case :persistent_term.get(key, nil) do
+      {at, list} when now - at < @plans_ttl_ms ->
+        {:ok, list}
+
+      stale ->
+        case fetch_plans(origin) do
+          {:ok, list} ->
+            :persistent_term.put(key, {now, list})
+            {:ok, list}
+
+          {:error, reason} ->
+            Logger.warning("ruoc plans fetch failed: #{reason}")
+
+            case stale do
+              {_, list} -> {:ok, list}
+              nil -> {:error, reason}
+            end
+        end
+    end
+  end
+
+  @doc false
+  def reset_plans_cache(origin), do: :persistent_term.erase({__MODULE__, :plans, origin})
+
+  defp fetch_plans(origin) do
+    request = Finch.build(:get, origin <> "/plans.json", [{"accept", "application/json"}])
+
+    case Finch.request(request, Druzhok.Finch, receive_timeout: @plans_timeout_ms) do
+      {:ok, %Finch.Response{status: 200, body: body}} ->
+        case Jason.decode(body) do
+          {:ok, list} when is_list(list) -> {:ok, for(%{"name" => n} = p <- list, is_binary(n), do: to_plan(p))}
+          _ -> {:error, "unexpected plans payload"}
+        end
+
+      {:ok, %Finch.Response{status: status}} ->
+        {:error, "HTTP #{status}"}
+
+      {:error, reason} ->
+        {:error, inspect(reason)}
+    end
+  rescue
+    e -> {:error, Exception.message(e)}
+  catch
+    :exit, reason -> {:error, inspect(reason)}
+  end
+
+  defp to_plan(p) do
+    %{
+      name: p["name"],
+      description: if(is_binary(p["description"]), do: p["description"], else: ""),
+      price_nanorub: if(is_integer(p["price_nanorub"]), do: p["price_nanorub"], else: 0),
+      period_days: if(is_integer(p["period_days"]), do: p["period_days"]),
+      default: p["is_default"] == true
+    }
+  end
 
   @doc """
   The referral codes on a bot's account, oldest first:

@@ -16,6 +16,8 @@ defmodule Druzhok.Settings do
     |> unique_constraint(:key)
   end
 
+  # cleohub_notice is what bots answer to «что-то сломалось?» (`cleohub_notices`),
+  # set with `ops/druzhok settings set cleohub_notice=-` (stdin), cleared with an empty value.
   # ruoc_admin_host / ruoc_admin_token are read by nothing since partner
   # access (RUOC_PARTNER_TOKEN); they stay listed for a rollback to the
   # previous druzhok and go in a later release.
@@ -23,7 +25,7 @@ defmodule Druzhok.Settings do
            ruoc_url ruoc_admin_host ruoc_admin_token ruoc_catalog_key fetch_secret bot_creation
            sleep_idle_minutes start_min_free_mb docs_min_free_mb ruoc_site_url
            group_rate_user_per_min group_rate_chat_per_hour
-           bot_slots slice_minutes max_bots min_free_disk_mb)
+           bot_slots slice_minutes max_bots min_free_disk_mb cleohub_notice)
   @secret ~w(openai_api_key manager_bot_token ruoc_admin_token ruoc_catalog_key
              fetch_secret)
 
