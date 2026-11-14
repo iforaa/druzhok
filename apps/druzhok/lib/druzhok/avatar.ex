@@ -6,6 +6,9 @@ defmodule Druzhok.Avatar do
   ffmpeg and set with the bot's token (`setMyProfilePhoto`). It never blocks
   or fails creation: any step that fails is logged and the bot keeps
   Telegram's letter avatar. Off in tests (`config :druzhok, :bot_avatars`).
+
+  `redraw/2` is the same drawing from the owner's own description (CleoHub's
+  `cleohub_set_avatar`), and it reports what went wrong, for the owner's message.
   """
 
   require Logger
@@ -38,31 +41,110 @@ defmodule Druzhok.Avatar do
   def run(name) do
     with %Instance{telegram_token: token, ruoc_api_key: key} = inst
          when is_binary(token) and is_binary(key) <- Repo.get_by(Instance, name: name),
-         {:ok, image} <- draw(key, prompt(inst)),
-         {:ok, jpeg} <- to_jpeg(image),
-         {:ok, true} <- API.set_my_profile_photo(token, jpeg) do
+         {:ok, _jpeg} <- draw_and_set(inst, prompt(inst)) do
       Logger.info("[avatar] #{name}: set")
       :ok
     else
       nil -> Logger.warning("[avatar] #{name}: no bot or no keys")
       %Instance{} -> Logger.warning("[avatar] #{name}: no bot or no keys")
       {:error, reason} -> Logger.warning("[avatar] #{name}: #{short(reason)}")
-      other -> Logger.warning("[avatar] #{name}: #{short(other)}")
     end
   rescue
     e -> Logger.warning("[avatar] #{name}: crashed (#{Exception.message(e)})")
   end
 
-  @doc "The image prompt for a bot: its name and character, in Cleo colours."
-  def prompt(%Instance{} = inst) do
-    name = inst.display_name || inst.name
-    look = Map.get(@looks, inst.soul_preset || "", "friendly and kind")
+  @doc """
+  Draw the bot's avatar from `description` (the owner's words, the look in
+  `prompt/2`) and set it. `{:ok, jpeg}` with what was set, or `{:error, reason}`;
+  `reason/1` puts a reason in the owner's words. Never raises.
+  """
+  def redraw(%Instance{telegram_token: token, ruoc_api_key: key} = inst, description)
+      when is_binary(token) and is_binary(key) and is_binary(description) do
+    case draw_and_set(inst, prompt(inst, description)) do
+      {:ok, jpeg} ->
+        Logger.info("[avatar] #{inst.name}: redrawn")
+        {:ok, jpeg}
 
-    "Flat vector app-icon style avatar of a cute cartoon character who is a personal AI helper named " <>
-      "\"#{name}\": #{look}. If the name suggests an animal or a creature, draw that; otherwise a small friendly robot. " <>
-      "One character, centred, head and shoulders, filling the middle of the frame, simple bold shapes, white outline. " <>
-      "Background split horizontally: hot pink #{@pink} top half, deep violet #{@violet} bottom half. " <>
-      "No text, no letters, no words, no watermark. Keep everything important inside the central circle."
+      {:error, reason} = error ->
+        Logger.warning("[avatar] #{inst.name}: redraw failed: #{short(reason)}")
+        error
+    end
+  rescue
+    e ->
+      Logger.warning("[avatar] #{inst.name}: redraw crashed (#{Exception.message(e)})")
+      {:error, :crashed}
+  end
+
+  def redraw(%Instance{}, _description), do: {:error, :no_keys}
+
+  # Every step's failure comes back tagged with where it happened.
+  defp draw_and_set(%Instance{telegram_token: token, ruoc_api_key: key}, prompt) do
+    with {:ok, image} <- draw(key, prompt),
+         {:ok, jpeg} <- to_jpeg(image),
+         :ok <- set_photo(token, jpeg) do
+      {:ok, jpeg}
+    end
+  end
+
+  defp set_photo(token, jpeg) do
+    case API.set_my_profile_photo(token, jpeg) do
+      {:ok, true} -> :ok
+      other -> {:error, {:telegram, other}}
+    end
+  end
+
+  @doc """
+  Why a redraw failed, short and in `lang` ("ru" or "en"), for the owner. Never
+  the balance: an empty account is «the plan's limit», as the cabinet shows it.
+  """
+  def reason(reason, lang \\ "ru")
+
+  def reason({:ruoc, status, _}, lang) when status in [402, 429], do: say(lang, :limit)
+  def reason({:ruoc, status, _}, lang) when status in [400, 422], do: say(lang, :refused)
+  def reason({:ruoc, _, _}, lang), do: say(lang, :service)
+  def reason(:bad_image_reply, lang), do: say(lang, :service)
+  def reason({:ffmpeg, _, _}, lang), do: say(lang, :convert)
+  def reason({:telegram, _}, lang), do: say(lang, :telegram)
+  def reason(:no_keys, lang), do: say(lang, :no_keys)
+  def reason(_, lang), do: say(lang, :service)
+
+  @reasons %{
+    limit: {"лимит тарифа исчерпан, подробности в «Кабинете»", "the plan's limit is used up, see «Cabinet»"},
+    refused: {"сервис картинок отказался рисовать по этому описанию", "the picture service refused this description"},
+    service: {"сервис картинок не ответил, попробуйте позже", "the picture service did not answer, try again later"},
+    convert: {"не удалось обработать картинку", "the picture could not be processed"},
+    telegram: {"Telegram не принял картинку", "Telegram did not accept the picture"},
+    no_keys: {"бот ещё не настроен", "the bot is not set up yet"}
+  }
+
+  defp say("en", key), do: elem(@reasons[key], 1)
+  defp say(_, key), do: elem(@reasons[key], 0)
+
+  @doc """
+  The image prompt for a bot: its name and character, in Cleo colours. With
+  `description` (the owner's words, at most 300 characters) that is the look,
+  and it wins over the house style wherever they differ.
+  """
+  def prompt(%Instance{} = inst, description \\ nil) do
+    name = inst.display_name || inst.name
+
+    case description do
+      nil ->
+        look = Map.get(@looks, inst.soul_preset || "", "friendly and kind")
+
+        "Flat vector app-icon style avatar of a cute cartoon character who is a personal AI helper named " <>
+          "\"#{name}\": #{look}. If the name suggests an animal or a creature, draw that; otherwise a small friendly robot. " <>
+          "One character, centred, head and shoulders, filling the middle of the frame, simple bold shapes, white outline. " <>
+          "Background split horizontally: hot pink #{@pink} top half, deep violet #{@violet} bottom half. " <>
+          "No text, no letters, no words, no watermark. Keep everything important inside the central circle."
+
+      description ->
+        "Avatar of a personal AI helper named \"#{name}\". The owner describes it: \"#{description}\". " <>
+          "Draw what the description asks for; where it says nothing, use a flat vector app-icon style, " <>
+          "one character, centred, head and shoulders, simple bold shapes, white outline, and a background split " <>
+          "horizontally: hot pink #{@pink} top half, deep violet #{@violet} bottom half. " <>
+          "No text, no letters, no words, no watermark. Keep everything important inside the central circle."
+    end
   end
 
   defp draw(key, prompt) do

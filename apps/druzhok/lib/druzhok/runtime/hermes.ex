@@ -243,6 +243,7 @@ defmodule Druzhok.Runtime.Hermes do
           |> sync_plugins_enabled()
           |> sync_gateway_block()
           |> sync_telegram_extra(instance)
+          |> sync_mcp_servers()
           |> sync_cron_block()
           |> sync_display_block()
           |> sync_voice_keys(instance)
@@ -392,7 +393,8 @@ defmodule Druzhok.Runtime.Hermes do
 
   # Toolsets a bot can never use: no internet and no browser binary
   # (browser), no display (computer_use), no route to Nous's connector
-  # gateway or an MCP server (connections). Hermes's global suppression list,
+  # gateway (connections: hermes's `manage_connections` only; MCP servers are
+  # their own `mcp-<name>` toolsets and stay on, see sync_mcp_servers/1). Hermes's global suppression list,
   # applied last (hermes_cli/tools_config.py:626): a block list, so toolsets
   # a later hermes adds are not lost silently. Delegation stays (operator).
   @disabled_toolsets ~w(browser computer_use connections)
@@ -691,6 +693,57 @@ defmodule Druzhok.Runtime.Hermes do
                 splice(lines, e_idx + 1, e_end, rendered ++ kept)
             end
         end
+    end
+  end
+
+  # CleoHub's tools (plan, plans, help, notices, invite, avatar), served by
+  # druzhok's own `POST /mcp/cleohub` under the bot's tenant key, which hermes
+  # puts into the header from the unit's env (`${VAR}` fails closed if unset).
+  # `timeout` is hermes's per-call limit; every tool answers in seconds (the
+  # avatar is drawn in the background). Druzhok owns `mcp_servers.cleohub`
+  # outright: whatever stands there is replaced, every other server is kept,
+  # and a missing `mcp_servers:` is added with cleohub alone. A hand-written
+  # flow mapping (`mcp_servers: {a: …}`) is left as it is rather than given a
+  # second key. Hermes gives MCP tools to private chats only, never to a group
+  # turn (`group_toolsets` above).
+  defp cleohub_mcp do
+    [
+      {"url", ~s("#{String.replace_suffix(proxy_url(), "/v1", "")}/mcp/cleohub")},
+      {"headers", [{"Authorization", ~s("Bearer ${OPENAI_API_KEY}")}]},
+      {"timeout", "30"}
+    ]
+  end
+
+  defp sync_mcp_servers(content) do
+    case inline_block(content, "mcp_servers") do
+      :flow ->
+        content
+
+      {:empty, header} ->
+        content |> String.replace(header, "mcp_servers:", global: false) |> put_cleohub()
+
+      :none ->
+        put_cleohub(content)
+    end
+  end
+
+  defp put_cleohub(content) do
+    lines = String.split(content, "\n")
+
+    case yaml_block(lines, 0, "mcp_servers", 0, length(lines) - 1) do
+      nil ->
+        String.trim_trailing(content) <>
+          "\n\nmcp_servers:\n" <> render_yaml([{"cleohub", cleohub_mcp()}], 2, 2) <> "\n"
+
+      {idx, last} ->
+        body = Enum.slice(lines, (idx + 1)..last//1)
+        step = child_indent(body, 2)
+        {_old, kept} = take_child(body, step, "cleohub")
+        rendered = String.split(render_yaml([{"cleohub", cleohub_mcp()}], step, step), "\n")
+        # Last in the block: take_child/3 counts the comments and blank lines after
+        # an entry as its own, so cleohub placed first would eat the next server's
+        # comment on the following start.
+        splice(lines, idx + 1, last, kept ++ rendered)
     end
   end
 

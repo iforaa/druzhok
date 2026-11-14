@@ -235,8 +235,10 @@ defmodule Druzhok.Panel do
   key) as links to the superbot, like its «🎁 Пригласить»:
   `{:ok, %{links: [...], used: n}}` or `:error`.
   """
-  def invites(%Instance{ruoc_api_key: key}) when is_binary(key) and key != "" do
-    with {:ok, codes} <- Druzhok.Ruoc.referrals(key),
+  def invites(inst, opts \\ [])
+
+  def invites(%Instance{ruoc_api_key: key}, opts) when is_binary(key) and key != "" do
+    with {:ok, codes} <- Druzhok.Ruoc.referrals(key, opts),
          %{username: manager} when is_binary(manager) <-
            profile(Druzhok.Settings.get("manager_bot_token")) do
       {:ok,
@@ -249,7 +251,7 @@ defmodule Druzhok.Panel do
     end
   end
 
-  def invites(_), do: :error
+  def invites(_, _opts), do: :error
 
   @doc "ruoc's picture models for the panel's picker, or `:error`."
   def image_models do
