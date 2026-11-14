@@ -118,9 +118,15 @@ cmp -s "$ops/docs-convert" /usr/local/lib/druzhok/docs-convert || { echo "/usr/l
 [ "$(stat -c %U /usr/local/lib/druzhok/docs-convert)" = root ] || { echo "the docs-convert wrapper is not root's"; exit 1; }
 [ -x /usr/lib/libreoffice/program/soffice ] || { echo "LibreOffice missing: apt-get install libreoffice-core-nogui libreoffice-writer-nogui libreoffice-calc-nogui libreoffice-impress-nogui"; exit 1; }
 id -u cleo-docs >/dev/null 2>&1 || { echo "no cleo-docs user"; exit 1; }
+# In the bot's workspace, not /tmp: druzhok-ctl exec runs without the unit's
+# PrivateTmp, so the bot user cannot write the host's /tmp. Made by the bot,
+# removed by this script whatever happens.
+smoke_dir=/data/tenants/$name/workspace/.smoke-$(od -An -N8 -tx1 /dev/urandom | tr -d ' \n')
+trap 'rm -rf "$smoke_dir"' EXIT
 conv=$(druzhok-ctl exec "$name" "$venv_bin/python" -I -c '
-import docx, os, shutil, subprocess, tempfile
-d = tempfile.mkdtemp(dir="/tmp")
+import docx, os, shutil, subprocess, sys
+d = sys.argv[1]
+os.mkdir(d, 0o700)
 try:
     src = os.path.join(d, "smoke.docx")
     doc = docx.Document(); doc.add_paragraph("Проверка конвертера Дружок"); doc.save(src)
@@ -129,8 +135,8 @@ try:
     t = subprocess.run(["pdftotext", os.path.join(d, "smoke.pdf"), "-"], capture_output=True, text=True).stdout
     print("TEXT:" + " ".join(t.split()))
 finally:
-    shutil.rmtree(d)
-' || true)
+    shutil.rmtree(d, ignore_errors=True)
+' "$smoke_dir" || true)
 echo "$conv"
 echo "$conv" | grep -q "TEXT:Проверка конвертера Дружок" || { echo "document conversion failed"; exit 1; }
 
