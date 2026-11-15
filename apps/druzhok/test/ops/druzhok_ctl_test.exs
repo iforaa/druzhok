@@ -82,6 +82,69 @@ defmodule Druzhok.Ops.DruzhokCtlTest do
     assert %{calls: ""} = run(dir, ~s(TELEGRAM_WEBHOOK_PORT="20009; reboot"\n), "nft_webhook_add")
   end
 
+  # The members file /etc/nftables.conf includes after druzhok.nft, so a reload
+  # (`flush ruleset`) brings the sets back with their bots instead of empty.
+  defp persist(dir, passwd, envs) do
+    envdir = Path.join(dir, "envs")
+    File.mkdir_p!(envdir)
+    for {name, body} <- envs, do: File.write!(Path.join(envdir, "#{name}.env"), body)
+    members = Path.join(dir, "nftables.d/druzhok.zz-members.nft")
+    [fun] = Regex.run(~r/^nft_persist\(\) \{.*?^\}\n/ms, File.read!(@ctl))
+
+    script = """
+    set -euo pipefail
+    NFT_FAMILY=inet NFT_TABLE=druzhok NFT_SET=bot_uids NFT_WEBHOOK_SET=bot_webhook
+    ENVDIR=#{envdir} NFT_MEMBERS=#{members}
+    getent() { printf '%s' '#{passwd}'; }
+    #{fun}
+    nft_persist
+    """
+
+    {out, code} = System.cmd("bash", ["-c", script], stderr_to_stdout: true)
+    assert code == 0, out
+    {File.read!(members), File.ls!(Path.dirname(members))}
+  end
+
+  test "the saved members are every bot uid and every bot's webhook port", %{dir: dir} do
+    passwd =
+      "root:x:0:0::/root:/bin/bash\n" <>
+        "bot-kot:x:990:990::/data/tenants/kot:/usr/sbin/nologin\n" <>
+        "caddy:x:999:988::/var/lib/caddy:/usr/sbin/nologin\n" <>
+        "bot-pes:x:991:991::/data/tenants/pes:/usr/sbin/nologin\n"
+
+    {text, files} =
+      persist(dir, passwd, [{"kot", ~s(TELEGRAM_WEBHOOK_PORT="20009"\n)}, {"pes", ~s(OTHER="x"\n)}])
+
+    lines = text |> String.split("\n", trim: true) |> Enum.reject(&String.starts_with?(&1, "#"))
+
+    assert lines == [
+             "add element inet druzhok bot_uids { 990,991 }",
+             "add element inet druzhok bot_webhook { 990 . 20009 }"
+           ]
+
+    # The temporary dot file is gone: the include glob never sees a half-written one.
+    assert files == ["druzhok.zz-members.nft"]
+  end
+
+  test "no bots: no add element lines, which nft would refuse empty", %{dir: dir} do
+    {text, _} = persist(dir, "root:x:0:0::/root:/bin/bash\n", [])
+    refute text =~ "add element"
+  end
+
+  test "a port line that is not a plain number is not saved", %{dir: dir} do
+    {text, _} =
+      persist(dir, "bot-kot:x:990:990::/x:/y\n", [{"kot", ~s(TELEGRAM_WEBHOOK_PORT="20009; reboot"\n)}])
+
+    refute text =~ "bot_webhook"
+  end
+
+  test "the members file sorts after druzhok.nft in the include glob" do
+    assert Enum.sort(["druzhok.zz-members.nft", "druzhok.nft", "host-input.nft"]) ==
+             ["druzhok.nft", "druzhok.zz-members.nft", "host-input.nft"]
+
+    assert File.read!(@ctl) =~ "NFT_MEMBERS=/etc/nftables.d/druzhok.zz-members.nft"
+  end
+
   # systemctl show answers per property; everything else is the same stub.
   defp status_of(dir, active, sub, procs \\ nil) do
     cg = Path.join(dir, "cg")
