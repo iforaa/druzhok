@@ -211,13 +211,16 @@ HERMES_BIN=$PWD/hermes-agent/.venv/bin/hermes DATABASE_PATH=data/druzhok.db mix 
 ## Server (KZ, PS Cloud Almaty)
 
 ```bash
-# ~/druzhok on the box is an rsync target (symlink to /data/home-ubuntu/druzhok-new), not a git checkout
+# ~/druzhok on the box is an rsync target (symlink to /data/druzhok-app), not a git checkout.
+# druzhok.service runs as user `druzhok` (sudo only for druzhok-ctl and docs-convert): the tree is ubuntu's, so
+# compile here as ubuntu; the database is druzhok's and druzhok.env is root:druzhok 0640, so migrate with sudo.
+# (Its file capabilities still let druzhok write anywhere; they go when tenant file access runs as the bot.)
 ops/build-app.sh   # only when apps/druzhok_web/assets/app changed; the build output is committed
 rsync -az --delete --exclude=_build --exclude=deps --exclude=node_modules apps config ops mix.exs mix.lock .tool-versions ubuntu@94.247.135.159:~/druzhok/
 ssh ubuntu@94.247.135.159
-. ~/.asdf/asdf.sh; set -a; . /etc/druzhok/druzhok.env; set +a
+. ~/.asdf/asdf.sh; export HEX_HOME=/data/home-ubuntu/.hex MIX_HOME=/data/home-ubuntu/.mix TMPDIR=/data/home-ubuntu/tmp
 cd ~/druzhok && MIX_ENV=prod mix compile
-MIX_ENV=prod mix ecto.migrate          # DATABASE_PATH comes from druzhok.env
+sudo ops/druzhok-migrate               # as druzhok; DATABASE_PATH comes from druzhok.env
 sudo install -D -m 0644 -o root -g root apps/druzhok/priv/panel-save/save.py /usr/local/lib/druzhok/panel-save.py   # every deploy
 sudo install -m 0755 -o root -g root ops/docs-convert /usr/local/lib/druzhok/docs-convert                       # every deploy
 sudo install -m 0755 -o root -g root ops/soffice-shim /usr/local/bin/soffice && sudo ln -sfn soffice /usr/local/bin/libreoffice
@@ -225,9 +228,22 @@ sudo install -m 0755 -o root -g root ops/soffice-shim /usr/local/bin/soffice && 
 #   sudo apt-get install -y --no-install-recommends libreoffice-core-nogui libreoffice-writer-nogui libreoffice-calc-nogui \
 #     libreoffice-impress-nogui fonts-liberation fonts-crosextra-carlito fonts-crosextra-caladea
 #   sudo useradd --system --no-create-home --home-dir /nonexistent --shell /usr/sbin/nologin cleo-docs
-#   sudo install -d -m 0711 -o root -g root /var/lib/cleo-docs && sudo install -d -m 0771 -o root -g ubuntu /var/lib/cleo-docs/jobs
+#   sudo install -d -m 0711 -o root -g root /var/lib/cleo-docs && sudo install -d -m 0771 -o root -g druzhok /var/lib/cleo-docs/jobs
 #   sudo install -m 0440 ops/sudoers-druzhok /etc/sudoers.d/druzhok && sudo visudo -cf /etc/sudoers.d/druzhok
 sudo systemctl restart druzhok
+# once, on a box that still runs druzhok as ubuntu (cleo-demo was switched 2026-11-16). Until this is done the new
+# ops/druzhok, druzhok-run.sh and druzhok-migrate fail there with "setpriv: invalid user":
+#   sudo useradd --system --home-dir /data/druzhok-home --shell /usr/sbin/nologin druzhok
+#   sudo install -d -m 0700 -o druzhok -g druzhok /data/druzhok-home && sudo -u druzhok mkdir -m 0700 /data/druzhok-home/tmp
+#   sudo install -d -m 0755 -o ubuntu -g ubuntu /data/druzhok-app && rsync -a ~/druzhok/ /data/druzhok-app/
+#   cd /data/druzhok-app && MIX_ENV=prod mix compile           # as ubuntu, env as above
+#   sudo install -m 0440 ops/sudoers-druzhok /etc/sudoers.d/druzhok && sudo visudo -cf /etc/sudoers.d/druzhok
+#   sudo systemctl stop druzhok
+#   sudo chown -R druzhok:druzhok /data/druzhok && sudo chown druzhok:druzhok /data/tenants/.druzhok-staging
+#   sudo chown root:druzhok /etc/druzhok/druzhok.env && sudo chmod 0640 /etc/druzhok/druzhok.env
+#   sudo chgrp druzhok /var/lib/cleo-docs/jobs
+#   sudo install -m 0644 ops/druzhok.service /etc/systemd/system/druzhok.service && sudo systemctl daemon-reload
+#   sudo systemctl start druzhok && mv ~/druzhok ~/druzhok.old && ln -s /data/druzhok-app ~/druzhok
 ```
 
 Machine page: `GET /internal/status` (`Druzhok.Status`, `FetchAuth` secret, cached 10 s) gives ruoc-gateway's CleoHub console the host, disks, hermes install, Telegram updates waiting, queue mode (`queue`: null when off, else `slots`, `holding`, `waiting` = the scheduler's line, null when `Scheduler.line/1` misses its 500 ms) and bots (`created_at`, `memory_max_mb`, `last_error_at`, null exactly when `last_error` is). Read only, no `sudo`, never wakes a bot: `/proc`, `df -Pk` per disk, the rows, Settings, and `memory.current`/`memory.max` under `system-hermes.slice`; a failed reading is null for that field (a bot's memory reads 0 and its unit counts as down), a failed database read is 503. No owner ids, tokens or message text; `last_error` is scrubbed.
