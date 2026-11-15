@@ -166,12 +166,28 @@ remove_bind_lock() {
   systemctl daemon-reload
 }
 
+# The bot's home and workspace, below a dir the bot owns. `install -d` (and
+# chmod/chown by name) follows a symlink the bot planted there and would hand
+# the bot whatever directory it points at, so these are only ever made with
+# mkdir, which refuses an existing name; `chown -R` on the tree then gives
+# them to the bot without following links.
+tenant_dirs() {
+  local d p
+  for d in home workspace; do
+    p="$root/$d"
+    if [ -L "$p" ]; then die "$d is a symlink: $p"; fi
+    if [ -e "$p" ] && [ ! -d "$p" ]; then die "$d is not a directory: $p"; fi
+    [ -d "$p" ] || mkdir -m 0700 "$p"
+  done
+}
+
 case "$cmd" in
   create)
     if ! user_exists; then
       useradd --system --no-create-home --shell /usr/sbin/nologin --home-dir "$root" "$user"
     fi
-    install -d -m 0700 -o "$user" -g "$user" "$root" "$root/home" "$root/workspace"
+    install -d -m 0700 -o "$user" -g "$user" "$root"
+    tenant_dirs
     # Data copied in from another host is root-owned; hand it to the bot.
     chown -R "$user:$user" "$root"
     mkdir -p "$ENVDIR"; chmod 0755 "$ENVDIR"
