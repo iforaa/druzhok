@@ -26,7 +26,7 @@ defmodule Druzhok.Cleohub do
       description:
         "Тариф этого бота в CleoHub: название, статус, до какого числа оплачен, сколько израсходовано " <>
           "лимита на 5 часов и на неделю и когда они обновятся. Вызывай, когда спрашивают про тариф, " <>
-          "лимиты или «сколько осталось».",
+          "лимиты или «сколько осталось». Даты и время в ответе уже в часовом поясе владельца: называй их как есть.",
       inputSchema: %{type: "object", properties: %{}, required: []}
     },
     %{
@@ -123,12 +123,12 @@ defmodule Druzhok.Cleohub do
         structured = %{
           plan: plan_name(sub, limits),
           status: sub && sub.status,
-          period_end: sub && iso(sub.period_end),
-          session: limits && window_map(limits.session),
-          weekly: limits && window_map(limits.weekly),
-          pool: limits && limits.pool && window_map(limits.pool),
+          period_end: sub && local(sub.period_end, tz),
+          session: limits && window_map(limits.session, tz),
+          weekly: limits && window_map(limits.weekly, tz),
+          pool: limits && limits.pool && window_map(limits.pool, tz),
           spent: limits && limits.spent,
-          trial: trial && %{state: trial.state, ends_at: iso(trial.ends_at)}
+          trial: trial && %{state: trial.state, ends_at: local(trial.ends_at, tz)}
         }
 
         {:ok, Enum.join(lines, "\n"), structured}
@@ -180,7 +180,8 @@ defmodule Druzhok.Cleohub do
   defp trial_line(%{state: "paused"}, _tz), do: "Пробный период приостановлен."
   defp trial_line(_, _tz), do: nil
 
-  defp window_map(%{used_percent: pct, resets_at: at}), do: %{used_percent: pct, resets_at: iso(at)}
+  defp window_map(%{used_percent: pct, resets_at: at}, tz),
+    do: %{used_percent: pct, resets_at: local(at, tz)}
 
   # --- cleohub_plans ---------------------------------------------------------
 
@@ -382,16 +383,43 @@ defmodule Druzhok.Cleohub do
 
   # --- shared ----------------------------------------------------------------
 
-  defp local(%DateTime{} = at, tz) do
-    shown =
-      case DateTime.shift_zone(at, tz || "UTC") do
-        {:ok, dt} -> dt
-        _ -> at
+  # Times the model copies as they are, never ISO: given 2026-11-22T14:56:00Z it
+  # once told an owner «22 февраля». The bot's own zone, Moscow when it has none;
+  # the year only when it is not the current one there.
+  @months ~w(января февраля марта апреля мая июня июля августа сентября октября ноября декабря)
+  @default_tz "Europe/Moscow"
+
+  @doc false
+  def local(at, tz, now \\ DateTime.utc_now())
+  def local(nil, _tz, _now), do: nil
+
+  def local(%DateTime{} = at, tz, now) do
+    zone = if is_binary(tz) and tz != "", do: tz, else: @default_tz
+
+    {shown, zone} =
+      case DateTime.shift_zone(at, zone) do
+        {:ok, dt} -> {dt, zone}
+        _ -> {DateTime.shift_zone!(at, @default_tz), @default_tz}
       end
 
-    Calendar.strftime(shown, "%d.%m.%Y %H:%M") <> " (#{shown.zone_abbr})"
+    year = if shown.year != DateTime.shift_zone!(now, zone).year, do: " #{shown.year}", else: ""
+    month = Enum.at(@months, shown.month - 1)
+
+    "#{shown.day} #{month}#{year}, #{Calendar.strftime(shown, "%H:%M")} (#{zone_label(shown, zone)})"
   end
 
-  defp iso(nil), do: nil
-  defp iso(%DateTime{} = at), do: DateTime.to_iso8601(at)
+  defp zone_label(_dt, "Europe/Moscow"), do: "МСК"
+
+  defp zone_label(dt, _zone) do
+    case dt.utc_offset + dt.std_offset do
+      0 ->
+        "UTC"
+
+      off ->
+        sign = if off < 0, do: "−", else: "+"
+        h = div(abs(off), 3600)
+        m = div(rem(abs(off), 3600), 60)
+        "UTC#{sign}#{h}" <> if(m == 0, do: "", else: ":" <> String.pad_leading("#{m}", 2, "0"))
+    end
+  end
 end

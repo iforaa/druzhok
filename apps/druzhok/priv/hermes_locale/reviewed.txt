@@ -100,6 +100,7 @@ gateway.compress.nothing_to_do	unreachable: manual /compress is denied for tenan
 gateway.confirm.*	unreachable: approvals.destructive_slash_confirm is false
 gateway.context.*	unreachable: /context and its replies are admin-only for tenants
 gateway.credits.*	unreachable: Nous Portal credits, not used
+gateway.cron_failure_end_user	clean
 gateway.debug.*	unreachable: /debug and its replies are admin-only for tenants
 gateway.deny.*	unreachable: /deny and its replies are admin-only for tenants
 gateway.diff.*	unreachable: /diff and its replies are admin-only for tenants

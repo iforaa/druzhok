@@ -154,7 +154,9 @@ defmodule DruzhokWebWeb.CleohubMcpControllerTest do
   end
 
   describe "cleohub_account" do
-    test "plan, windows and trial; never the balance", %{conn: conn, stub: stub} do
+    test "plan, windows and trial; never the balance", %{conn: conn, stub: stub, instance: instance} do
+      instance |> Ecto.Changeset.change(timezone: "Europe/Moscow") |> Repo.update!()
+
       Bypass.expect_once(stub.bypass, "GET", "/v1/balance", fn c ->
         Druzhok.RuocStub.record(stub, "GET /v1/balance", c)
         |> Druzhok.RuocStub.reply(200, %{
@@ -175,14 +177,17 @@ defmodule DruzhokWebWeb.CleohubMcpControllerTest do
       text = text(result)
 
       assert result["isError"] == false
-      assert text =~ "Тариф: «Лайт» (действует), оплачен до 01.12.2026"
-      assert text =~ "Лимит на 5 часов: израсходовано 40 %, обновится 14.11.2026 18:00"
+      # Ready human times in the bot's zone; the year only when it is not this one.
+      assert text =~ ~r/Тариф: «Лайт» \(действует\), оплачен до 1 декабря( 2026)?, 03:00 \(МСК\)\./u
+      assert text =~ ~r/Лимит на 5 часов: израсходовано 40 %, обновится 14 ноября( 2026)?, 21:00 \(МСК\)\./u
       assert text =~ "Лимит на неделю: израсходовано 100 %"
       assert text =~ "Сейчас лимит на неделю исчерпан."
       refute text =~ "123"
       refute Jason.encode!(result) =~ "123"
       assert result["structuredContent"]["plan"] == "Лайт"
-      assert result["structuredContent"]["session"] == %{"used_percent" => 40, "resets_at" => "2026-11-14T18:00:00Z"}
+      assert %{"used_percent" => 40, "resets_at" => session_reset} = result["structuredContent"]["session"]
+      assert session_reset =~ ~r/\A14 ноября( 2026)?, 21:00 \(МСК\)\z/u
+      refute Jason.encode!(result["structuredContent"]) =~ "2026-11-14T"
 
       [call] = Druzhok.RuocStub.calls(stub, "GET /v1/balance")
       assert {"authorization", "Bearer " <> bot_key()} in call.headers
