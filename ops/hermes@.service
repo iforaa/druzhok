@@ -45,6 +45,9 @@ CapabilityBoundingSet=
 # A bot sees only its own processes in /proc.
 ProtectProc=invisible
 PrivateIPC=yes
+# Host services a bot never needs. D-Bus (polkit behind it) and snapd answer any
+# local user, and both have had privilege-escalation bugs. "-": absent is fine.
+InaccessiblePaths=-/run/dbus -/run/snapd.socket -/run/snapd-snap.socket
 
 MemoryMax=1G
 MemoryHigh=800M

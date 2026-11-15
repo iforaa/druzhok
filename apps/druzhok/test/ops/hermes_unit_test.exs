@@ -20,6 +20,12 @@ defmodule Druzhok.Ops.HermesUnitTest do
     end
   end
 
+  test "a bot cannot reach the host's D-Bus or snapd sockets" do
+    lines = directives("hermes@.service")
+
+    assert "InaccessiblePaths=-/run/dbus -/run/snapd.socket -/run/snapd-snap.socket" in lines
+  end
+
   # Under it psutil's children() raises, so killing a background job can leave its
   # child running, and that process keeps the bot from sleeping.
   test "a bot keeps /proc's host-wide files: ProcSubset stays off" do

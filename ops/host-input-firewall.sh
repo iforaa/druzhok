@@ -10,8 +10,10 @@
 #
 # The rollback is a systemd timer, so it fires when the SSH session is gone. Rules
 # reach /etc/nftables.d only on confirm, so a reboot also undoes an unconfirmed
-# apply. Never use `systemctl reload|restart nftables` here: /etc/nftables.conf
-# starts with `flush ruleset`, which also empties @bot_uids and so opens bot egress.
+# apply. Don't use `systemctl reload|restart nftables` here: /etc/nftables.conf
+# starts with `flush ruleset`, which loads the saved rules instead of this
+# pending table and drops fail2ban's bans. (The bot sets survive it: druzhok-ctl
+# saves their members to /etc/nftables.d/druzhok.zz-members.nft.)
 set -euo pipefail
 
 FAMILY=inet

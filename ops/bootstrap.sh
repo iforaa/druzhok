@@ -107,6 +107,8 @@ for envf in /etc/druzhok/*.env; do
   port=$(sed -n 's/^TELEGRAM_WEBHOOK_PORT="\([0-9]\{1,5\}\)"$/\1/p' "$envf" | head -n 1)
   if [ -n "$port" ]; then nft add element inet druzhok bot_webhook "{ $uid . $port }"; fi
 done
+# ...and save them where /etc/nftables.conf includes them, so a reload keeps them.
+/usr/local/sbin/druzhok-ctl sync-nft
 systemctl daemon-reload
 systemd-analyze verify /etc/systemd/system/hermes@.service /etc/systemd/system/druzhok.service || true
 
