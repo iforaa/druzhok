@@ -1,5 +1,10 @@
 {
   email igor.n.kuz@gmail.com
+  # The admin API on a socket in caddy's 0750 home, not on 127.0.0.1:2019:
+  # any local user (the demo account, a bot after an nftables reload) could
+  # otherwise rewrite routes or read the edge secret. `caddy reload` reads the
+  # address from this file, so `systemctl reload caddy` still works.
+  admin unix//var/lib/caddy/admin.sock|0600
 }
 
 # Druzhok: the LLM proxy, Telegram webhooks, /internal/fetch. Must be a more
