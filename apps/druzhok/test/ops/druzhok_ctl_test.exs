@@ -202,4 +202,51 @@ defmodule Druzhok.Ops.DruzhokCtlTest do
     assert status_of(dir, "active", "running", 3) == "active 3"
     assert status_of(dir <> "-none", "inactive", "dead") == "inactive 0"
   end
+
+  # The bot owns its tenant dir, so `home` or `workspace` may be a symlink it
+  # planted. `install -d` there would chown and chmod the link's target as root.
+  defp tenant_dirs(root) do
+    [fun] = Regex.run(~r/^tenant_dirs\(\) \{.*?^\}\n/ms, File.read!(@ctl))
+
+    script = """
+    set -euo pipefail
+    die() { echo "druzhok-ctl: $*" >&2; exit 1; }
+    root=#{root}
+    #{fun}
+    tenant_dirs
+    """
+
+    System.cmd("bash", ["-c", script], stderr_to_stdout: true)
+  end
+
+  test "create makes missing home and workspace and keeps existing ones", %{dir: dir} do
+    File.mkdir_p!(Path.join(dir, "workspace"))
+    File.write!(Path.join(dir, "workspace/keep"), "x")
+
+    assert {_, 0} = tenant_dirs(dir)
+    assert File.dir?(Path.join(dir, "home"))
+    assert File.read!(Path.join(dir, "workspace/keep")) == "x"
+  end
+
+  test "create refuses a home or workspace that is a symlink, and leaves the target alone", %{dir: dir} do
+    target = Path.join(dir, "elsewhere")
+    File.mkdir_p!(target)
+    File.chmod!(target, 0o755)
+
+    for d <- ~w(home workspace) do
+      root = Path.join(dir, "tenant-#{d}")
+      File.mkdir_p!(root)
+      File.ln_s!(target, Path.join(root, d))
+
+      assert {out, 1} = tenant_dirs(root)
+      assert out =~ "#{d} is a symlink"
+    end
+
+    assert File.stat!(target).mode |> Bitwise.band(0o777) == 0o755
+    assert File.ls!(target) == []
+  end
+
+  test "the script never runs install -d below the tenant dir" do
+    refute File.read!(@ctl) =~ ~r/install -d[^\n]*\$root\//
+  end
 end
