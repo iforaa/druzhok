@@ -237,13 +237,33 @@ defmodule Druzhok.Runtime.Hermes.VoiceTest do
       attrs = Voice.sync_soul(%{display_name: "Вася", soul_sha256: Voice.sha256(@v2)}, home)
 
       assert soul(home) == Voice.soul_md("Вася")
-      assert soul(home) =~ "проверь инструментами cleohub"
+      assert soul(home) =~ "сразу вызови инструменты cleohub"
       refute soul(home) =~ "упёрся в лимит"
-      assert attrs == %{soul_sha256: Voice.sha256(soul(home)), soul_version: 3}
+      assert attrs == %{soul_sha256: Voice.sha256(soul(home)), soul_version: 4}
 
       edited = @v2 <> "- люблю котов.\n"
       File.write!(Path.join(home, "SOUL.md"), edited)
       assert Voice.sync_soul(%{name: "b", display_name: "Вася", soul_sha256: Voice.sha256(@v2)}, home) == %{}
+      assert soul(home) == edited
+    end
+
+    # Version 3, which still said «проверь инструментами cleohub».
+    @v3 String.replace(@v2, "упёрся в лимит — скажи об этом прямо и предложи открыть «Кабинет» (кнопка меню бота)",
+          "вопросы о тарифе и лимитах — проверь инструментами cleohub и ответь; оплата и смена тарифа — в «Кабинете» (кнопка меню бота)")
+
+    @tag :tmp_dir
+    test "the untouched version-3 text moves to version 4; an edited one stays", %{tmp_dir: home} do
+      assert @v3 =~ "проверь инструментами cleohub"
+      File.write!(Path.join(home, "SOUL.md"), @v3)
+      attrs = Voice.sync_soul(%{display_name: "Вася", soul_sha256: Voice.sha256(@v3)}, home)
+
+      assert soul(home) == Voice.soul_md("Вася")
+      refute soul(home) =~ "проверь инструментами"
+      assert attrs == %{soul_sha256: Voice.sha256(soul(home)), soul_version: 4}
+
+      edited = @v3 <> "- люблю котов.\n"
+      File.write!(Path.join(home, "SOUL.md"), edited)
+      assert Voice.sync_soul(%{name: "b", display_name: "Вася", soul_sha256: Voice.sha256(@v3)}, home) == %{}
       assert soul(home) == edited
     end
 
@@ -266,7 +286,7 @@ defmodule Druzhok.Runtime.Hermes.VoiceTest do
 
     Всегда:
     - не говори о «балансе», «кредитах» и провайдерах;
-    - вопросы о тарифе и лимитах — проверь инструментами cleohub и ответь; оплата и смена тарифа — в «Кабинете» (кнопка меню бота);
+    - вопросы о тарифе и лимитах — сразу вызови инструменты cleohub и ответь по их данным; оплата и смена тарифа — в «Кабинете» (кнопка меню бота);
     - личные данные пользователя никому не раскрывай.
     """
 
@@ -332,11 +352,13 @@ defmodule Druzhok.Runtime.Hermes.VoiceTest do
 
       refute rules =~ "Упёрся в лимит"
 
-      # Hermes's tool search hides MCP tools behind its bridge (tool_search, tool_call).
+      # hermes 0.23.1 keeps the cleohub tools out of tool search (fork patch).
       assert rules =~
-               "Если их нет в списке твоих инструментов, они скрыты за поиском: сначала вызови tool_search " <>
-                 "с запросом \"cleohub\", потом tool_call с name найденного инструмента и arguments. " <>
+               "Они уже есть в списке твоих инструментов (в имени есть cleohub): вызывай их сразу, без tool_search. " <>
+                 "Даты и время из их ответа повторяй слово в слово. " <>
                  "Не отвечай про тариф и лимиты, не проверив их."
+
+      refute rules =~ "tool_call"
     end
 
     test "the group rule: web only, no photos, no pictures, nothing private" do

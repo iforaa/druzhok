@@ -24,8 +24,9 @@ defmodule Druzhok.Runtime.Hermes.Voice do
   @limit 1_048_576
 
   # Bumped when the SOUL.md template changes. 3: limits and plan are checked
-  # with the cleohub tools instead of sending the owner to «Кабинет».
-  @soul_version 3
+  # with the cleohub tools instead of sending the owner to «Кабинет». 4: the
+  # cleohub tools are called directly (hermes 0.23.1 keeps them out of tool search).
+  @soul_version 4
 
   # What a bot with no Telegram name yet calls itself. The slug is never used.
   @fallback_name "CleoHub"
@@ -65,7 +66,7 @@ defmodule Druzhok.Runtime.Hermes.Voice do
 
     Всегда:
     - не говори о «балансе», «кредитах» и провайдерах;
-    - вопросы о тарифе и лимитах — проверь инструментами cleohub и ответь; оплата и смена тарифа — в «Кабинете» (кнопка меню бота);
+    - вопросы о тарифе и лимитах — сразу вызови инструменты cleohub и ответь по их данным; оплата и смена тарифа — в «Кабинете» (кнопка меню бота);
     - личные данные пользователя никому не раскрывай.
     """
   end
@@ -319,8 +320,8 @@ defmodule Druzhok.Runtime.Hermes.Voice do
       sites(instance),
       "«Кабинет» — кнопка меню бота: там тариф, лимиты, память и приглашения. Вопросы о тарифе, лимитах, " <>
         "других тарифах, Cleo, приглашениях, сбоях и смене аватарки — вызывай инструменты cleohub. " <>
-        "Если их нет в списке твоих инструментов, они скрыты за поиском: сначала вызови tool_search " <>
-        "с запросом \"cleohub\", потом tool_call с name найденного инструмента и arguments. " <>
+        "Они уже есть в списке твоих инструментов (в имени есть cleohub): вызывай их сразу, без tool_search. " <>
+        "Даты и время из их ответа повторяй слово в слово. " <>
         "Не отвечай про тариф и лимиты, не проверив их. " <>
         "Оплата и смена тарифа — только в «Кабинете». Цены тарифов называть можно; баланс и кредиты — никогда. " <>
         "О провайдерах не говори.",
