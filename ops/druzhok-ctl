@@ -35,6 +35,9 @@ die() { echo "druzhok-ctl: $*" >&2; exit 1; }
 
 cmd=$1; name=$2; shift 2
 [ "$cmd" = sync-nft ] || [[ "$name" =~ ^[a-z0-9][a-z0-9_-]{0,30}$ ]] || die "invalid bot name: $name"
+# A bot's env file is $ENVDIR/<name>.env, and druzhok.env there is the service's
+# own, which ops/smoke.sh sources as root: no bot may be called that.
+[ "$name" != druzhok ] || die "reserved bot name: $name"
 
 user="bot-$name"
 unit="hermes@$name.service"

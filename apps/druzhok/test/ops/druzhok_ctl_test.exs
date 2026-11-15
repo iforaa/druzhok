@@ -249,4 +249,12 @@ defmodule Druzhok.Ops.DruzhokCtlTest do
   test "the script never runs install -d below the tenant dir" do
     refute File.read!(@ctl) =~ ~r/install -d[^\n]*\$root\//
   end
+
+  # /etc/druzhok/druzhok.env is the service's own env file, sourced by root.
+  test "the name druzhok is refused before anything is written" do
+    script = File.read!(@ctl) |> String.replace(~S<[ "$(id -u)" -eq 0 ] || die "must run as root">, "")
+    {out, code} = System.cmd("bash", ["-c", script, "druzhok-ctl", "create", "druzhok"], stderr_to_stdout: true)
+    assert code == 1
+    assert out =~ "reserved bot name"
+  end
 end
