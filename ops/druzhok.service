@@ -4,21 +4,27 @@ After=network-online.target
 Wants=network-online.target
 
 [Service]
-User=ubuntu
-Group=ubuntu
-WorkingDirectory=/home/ubuntu/druzhok
+# Its own user, not the admin login `ubuntu`: `ubuntu` has passwordless sudo
+# for everything, so a bug in an internet-facing service running as it is root
+# on the box. `druzhok` may sudo only druzhok-ctl and docs-convert
+# (ops/sudoers-druzhok), and the code tree is ubuntu's: druzhok reads it and
+# cannot change what it runs, so the tree is compiled at deploy, never here.
+User=druzhok
+Group=druzhok
+WorkingDirectory=/data/druzhok-app
 # All prod env (MIX_ENV, DATABASE_PATH, DRUZHOK_HOST, HEX/MIX homes, secrets)
 # lives in druzhok.env, shared with ops/druzhok-run.sh and ops/smoke.sh.
 EnvironmentFile=/etc/druzhok/druzhok.env
 Environment=PHX_SERVER=true PORT=4000
-ExecStart=/bin/bash -lc '. /home/ubuntu/.asdf/asdf.sh && exec mix phx.server'
+ExecStart=/bin/bash -c '. ops/runtime-env.sh && exec mix phx.server --no-compile --no-deps-check'
 Restart=always
 RestartSec=5
 KillMode=mixed
 # Tenant dirs are 0700 bot-<name> and hermes chmods its files 0600; Druzhok
-# must still read/write config.yaml, AGENTS.md and serve sites/. It already
-# holds root-equivalent power through sudo druzhok-ctl, so file caps add no
-# new trust. druzhok-ctl start chowns the tree back to the bot.
+# must still read/write config.yaml, AGENTS.md and the panel's files.
+# druzhok-ctl start chowns the tree back to the bot. These capabilities still
+# let druzhok write any file on the host: they go once file access runs as the
+# bot's own user through druzhok-ctl.
 # No CapabilityBoundingSet here: it would also cap what setuid sudo can gain,
 # and `sudo druzhok-ctl` then dies with "unable to change to root gid".
 AmbientCapabilities=CAP_DAC_OVERRIDE CAP_DAC_READ_SEARCH CAP_CHOWN CAP_FOWNER

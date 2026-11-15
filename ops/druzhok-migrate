@@ -1,0 +1,12 @@
+#!/usr/bin/env bash
+# druzhok-migrate — run the pending database migrations, as user druzhok: the
+# database is druzhok's and 0600, so the deploying user cannot open it.
+# Compile first, as ubuntu (CLAUDE.md, "Server"); this never compiles.
+#   sudo ops/druzhok-migrate
+set -euo pipefail
+[ "$(id -u)" -eq 0 ] || { echo "run with sudo" >&2; exit 1; }
+cd "$(dirname "$0")/.."
+exec setpriv --reuid=druzhok --regid=druzhok --init-groups bash -c '
+  set -a; . /etc/druzhok/druzhok.env; set +a
+  . ops/runtime-env.sh
+  exec mix ecto.migrate --no-compile --no-deps-check'

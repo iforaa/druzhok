@@ -23,7 +23,13 @@ else
   mkdir -p /data
 fi
 install -d -m 0755 /data/tenants /data/opt
-install -d -m 0750 -o ubuntu -g ubuntu /data/druzhok
+# druzhok.service runs as its own user: the database and its home are its own,
+# the code tree is ubuntu's and read-only to it (ops/druzhok.service).
+id -u druzhok >/dev/null 2>&1 || useradd --system --home-dir /data/druzhok-home --shell /usr/sbin/nologin druzhok
+install -d -m 0750 -o druzhok -g druzhok /data/druzhok
+install -d -m 0700 -o druzhok -g druzhok /data/druzhok-home /data/druzhok-home/tmp
+install -d -m 0755 -o ubuntu -g ubuntu /data/druzhok-app
+[ -e /home/ubuntu/druzhok ] || sudo -u ubuntu ln -sfn /data/druzhok-app /home/ubuntu/druzhok
 install -d -o ubuntu -g ubuntu /data/home-ubuntu "$ASDF_DIR"
 [ -L /opt/hermes ] || ln -sfn "$HERMES_DIR" /opt/hermes
 [ -L /home/ubuntu/.asdf ] || { rm -rf /home/ubuntu/.asdf; sudo -u ubuntu ln -sfn "$ASDF_DIR" /home/ubuntu/.asdf; }
@@ -122,10 +128,10 @@ step "document converter (POST /v2/docs/convert)"
 # One soffice per job, as cleo-docs, in a sandboxed transient unit started by the
 # root-owned wrapper (Druzhok.Docs). Bots get the shim as soffice/libreoffice,
 # ahead of /usr/bin on their PATH; it sends files to druzhok. The jobs dir is
-# druzhok's (group ubuntu); others may only pass through, to their own job dir.
+# druzhok's (group druzhok); others may only pass through, to their own job dir.
 id -u cleo-docs >/dev/null 2>&1 || useradd --system --no-create-home --home-dir /nonexistent --shell /usr/sbin/nologin cleo-docs
 install -d -m 0711 -o root -g root /var/lib/cleo-docs
-install -d -m 0771 -o root -g ubuntu /var/lib/cleo-docs/jobs
+install -d -m 0771 -o root -g druzhok /var/lib/cleo-docs/jobs
 install -m 0755 -o root -g root "$OPS/docs-convert" /usr/local/lib/druzhok/docs-convert
 install -m 0755 -o root -g root "$OPS/soffice-shim" /usr/local/bin/soffice
 ln -sfn soffice /usr/local/bin/libreoffice
@@ -148,7 +154,7 @@ DATABASE_PATH=/data/druzhok/druzhok.db
 HEX_HOME=/data/home-ubuntu/.hex
 MIX_HOME=/data/home-ubuntu/.mix
 EOT
-chown ubuntu:ubuntu "$ENVF"; chmod 0600 "$ENVF"
+chown druzhok:druzhok "$ENVF"; chmod 0600 "$ENVF"
 
 step "asdf + erlang/elixir for ubuntu (per .tool-versions)"
 TV=/home/ubuntu/druzhok/.tool-versions

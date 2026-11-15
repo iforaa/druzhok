@@ -211,13 +211,15 @@ HERMES_BIN=$PWD/hermes-agent/.venv/bin/hermes DATABASE_PATH=data/druzhok.db mix 
 ## Server (KZ, PS Cloud Almaty)
 
 ```bash
-# ~/druzhok on the box is an rsync target (symlink to /data/home-ubuntu/druzhok-new), not a git checkout
+# ~/druzhok on the box is an rsync target (symlink to /data/druzhok-app), not a git checkout.
+# druzhok.service runs as user `druzhok` (sudo only for druzhok-ctl and docs-convert): the tree is ubuntu's and
+# read-only to it, so compile here as ubuntu; the database and druzhok.env are druzhok's, so migrate with sudo.
 ops/build-app.sh   # only when apps/druzhok_web/assets/app changed; the build output is committed
 rsync -az --delete --exclude=_build --exclude=deps --exclude=node_modules apps config ops mix.exs mix.lock .tool-versions ubuntu@94.247.135.159:~/druzhok/
 ssh ubuntu@94.247.135.159
-. ~/.asdf/asdf.sh; set -a; . /etc/druzhok/druzhok.env; set +a
+. ~/.asdf/asdf.sh; export HEX_HOME=/data/home-ubuntu/.hex MIX_HOME=/data/home-ubuntu/.mix TMPDIR=/data/home-ubuntu/tmp
 cd ~/druzhok && MIX_ENV=prod mix compile
-MIX_ENV=prod mix ecto.migrate          # DATABASE_PATH comes from druzhok.env
+sudo ops/druzhok-migrate               # as druzhok; DATABASE_PATH comes from druzhok.env
 sudo install -D -m 0644 -o root -g root apps/druzhok/priv/panel-save/save.py /usr/local/lib/druzhok/panel-save.py   # every deploy
 sudo install -m 0755 -o root -g root ops/docs-convert /usr/local/lib/druzhok/docs-convert                       # every deploy
 sudo install -m 0755 -o root -g root ops/soffice-shim /usr/local/bin/soffice && sudo ln -sfn soffice /usr/local/bin/libreoffice
@@ -225,7 +227,7 @@ sudo install -m 0755 -o root -g root ops/soffice-shim /usr/local/bin/soffice && 
 #   sudo apt-get install -y --no-install-recommends libreoffice-core-nogui libreoffice-writer-nogui libreoffice-calc-nogui \
 #     libreoffice-impress-nogui fonts-liberation fonts-crosextra-carlito fonts-crosextra-caladea
 #   sudo useradd --system --no-create-home --home-dir /nonexistent --shell /usr/sbin/nologin cleo-docs
-#   sudo install -d -m 0711 -o root -g root /var/lib/cleo-docs && sudo install -d -m 0771 -o root -g ubuntu /var/lib/cleo-docs/jobs
+#   sudo install -d -m 0711 -o root -g root /var/lib/cleo-docs && sudo install -d -m 0771 -o root -g druzhok /var/lib/cleo-docs/jobs
 #   sudo install -m 0440 ops/sudoers-druzhok /etc/sudoers.d/druzhok && sudo visudo -cf /etc/sudoers.d/druzhok
 sudo systemctl restart druzhok
 ```
