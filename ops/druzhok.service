@@ -7,8 +7,9 @@ Wants=network-online.target
 # Its own user, not the admin login `ubuntu`: `ubuntu` has passwordless sudo
 # for everything, so a bug in an internet-facing service running as it is root
 # on the box. `druzhok` may sudo only druzhok-ctl and docs-convert
-# (ops/sudoers-druzhok), and the code tree is ubuntu's: druzhok reads it and
-# cannot change what it runs, so the tree is compiled at deploy, never here.
+# (ops/sudoers-druzhok). The code tree is ubuntu's, not druzhok's, so it is
+# compiled at deploy and never here. That alone does not stop a taken-over
+# druzhok from changing the tree: see the capabilities below.
 User=druzhok
 Group=druzhok
 WorkingDirectory=/data/druzhok-app

@@ -7,6 +7,7 @@ set -euo pipefail
 [ "$(id -u)" -eq 0 ] || { echo "run with sudo" >&2; exit 1; }
 cd "$(dirname "$0")/.."
 exec setpriv --reuid=druzhok --regid=druzhok --init-groups bash -c '
+  set -e
   set -a; . /etc/druzhok/druzhok.env; set +a
   . ops/runtime-env.sh
   exec mix ecto.migrate --no-compile --no-deps-check'

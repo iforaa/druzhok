@@ -13,6 +13,7 @@ exec setpriv --reuid=druzhok --regid=druzhok --init-groups \
   --inh-caps=+dac_override,+dac_read_search,+chown,+fowner \
   --ambient-caps=+dac_override,+dac_read_search,+chown,+fowner \
   bash -c '
+    set -e
     set -a; . /etc/druzhok/druzhok.env; set +a
     . ops/runtime-env.sh
     exec mix run --no-start --no-compile --no-deps-check -e "Application.put_env(:druzhok, :manager_bot, false); Application.ensure_all_started(:druzhok); $0"' "$expr"

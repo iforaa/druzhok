@@ -24,12 +24,34 @@ else
 fi
 install -d -m 0755 /data/tenants /data/opt
 # druzhok.service runs as its own user: the database and its home are its own,
-# the code tree is ubuntu's and read-only to it (ops/druzhok.service).
+# the code tree is ubuntu's, not the service's (ops/druzhok.service).
 id -u druzhok >/dev/null 2>&1 || useradd --system --home-dir /data/druzhok-home --shell /usr/sbin/nologin druzhok
+# /data is root's, so these two names cannot be swapped for a link by anyone
+# else. Below them is druzhok's: `install -d` follows a symlink it planted
+# there and would hand it the target, so its tmp is only ever made by mkdir.
 install -d -m 0750 -o druzhok -g druzhok /data/druzhok
-install -d -m 0700 -o druzhok -g druzhok /data/druzhok-home /data/druzhok-home/tmp
-install -d -m 0755 -o ubuntu -g ubuntu /data/druzhok-app
-[ -e /home/ubuntu/druzhok ] || sudo -u ubuntu ln -sfn /data/druzhok-app /home/ubuntu/druzhok
+install -d -m 0700 -o druzhok -g druzhok /data/druzhok-home
+[ -L /data/druzhok-home/tmp ] && { echo "!! /data/druzhok-home/tmp is a symlink; remove it and re-run"; exit 1; }
+[ -d /data/druzhok-home/tmp ] || sudo -u druzhok mkdir -m 0700 /data/druzhok-home/tmp
+chown -R druzhok:druzhok /data/druzhok
+[ ! -d /data/tenants/.druzhok-staging ] || chown druzhok:druzhok /data/tenants/.druzhok-staging
+
+# The tree lives in /data/druzhok-app, where druzhok can read it: ubuntu's home
+# is closed to it. ~/druzhok is a link to it, so a deploy's rsync lands there.
+# A tree cloned or synced somewhere else (this script runs from it) is copied
+# in once and its old place kept aside.
+APP=/data/druzhok-app
+install -d -m 0755 -o ubuntu -g ubuntu "$APP"
+SRC=$(cd "$OPS/.." && pwd -P)
+if [ "$SRC" != "$APP" ]; then
+  [ -f "$APP/mix.exs" ] || sudo -u ubuntu cp -a "$SRC/." "$APP/"
+  if [ -e /home/ubuntu/druzhok ] && [ ! -L /home/ubuntu/druzhok ]; then
+    mv /home/ubuntu/druzhok "/home/ubuntu/druzhok.before-app-$(date +%Y%m%d%H%M%S)"
+  fi
+  OPS=$APP/ops
+fi
+sudo -u ubuntu ln -sfn "$APP" /home/ubuntu/druzhok
+[ -f "$APP/mix.exs" ] || { echo "!! $APP holds no druzhok tree"; exit 1; }
 install -d -o ubuntu -g ubuntu /data/home-ubuntu "$ASDF_DIR"
 [ -L /opt/hermes ] || ln -sfn "$HERMES_DIR" /opt/hermes
 [ -L /home/ubuntu/.asdf ] || { rm -rf /home/ubuntu/.asdf; sudo -u ubuntu ln -sfn "$ASDF_DIR" /home/ubuntu/.asdf; }
@@ -154,7 +176,9 @@ DATABASE_PATH=/data/druzhok/druzhok.db
 HEX_HOME=/data/home-ubuntu/.hex
 MIX_HOME=/data/home-ubuntu/.mix
 EOT
-chown druzhok:druzhok "$ENVF"; chmod 0600 "$ENVF"
+# Root's, readable by druzhok and not writable by it: ops/smoke.sh sources this
+# file as root, so a service that could write it would run code as root.
+chown root:druzhok "$ENVF"; chmod 0640 "$ENVF"
 
 step "asdf + erlang/elixir for ubuntu (per .tool-versions)"
 TV=/home/ubuntu/druzhok/.tool-versions

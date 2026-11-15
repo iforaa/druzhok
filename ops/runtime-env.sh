@@ -3,7 +3,7 @@
 # scripts alike.
 #
 # Druzhok runs as its own user `druzhok`, which has no sudo beyond druzhok-ctl
-# and docs-convert and cannot write the code it runs. asdf's shims call
+# and docs-convert and does not own the code it runs. asdf's shims call
 # ~ubuntu/.asdf/bin/asdf, inside a home `druzhok` cannot enter, so the installs
 # are used directly.
 DRUZHOK_APP=${DRUZHOK_APP:-/data/druzhok-app}
