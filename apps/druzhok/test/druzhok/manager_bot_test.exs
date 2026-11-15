@@ -310,9 +310,10 @@ defmodule Druzhok.ManagerBotTest do
     refute inst.allow_all_telegram_users
     assert inst.display_name == "Кот"
     assert inst.soul_preset == "business"
-    # New bots: Moscow time, pictures on with ruoc's default model.
+    # New bots: Moscow time, pictures on with ruoc's default model, websites on.
     assert inst.timezone == "Europe/Moscow"
     assert inst.image_gen_enabled
+    assert inst.website_hosting_enabled
     assert inst.image_gen_model == nil
     assert File.read!(Path.join([root, "kot_1a2b", "SOUL.md"])) ==
              Druzhok.Runtime.Hermes.Voice.soul_md("Кот", "business")
