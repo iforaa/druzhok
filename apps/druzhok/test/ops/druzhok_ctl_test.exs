@@ -89,7 +89,11 @@ defmodule Druzhok.Ops.DruzhokCtlTest do
     File.mkdir_p!(envdir)
     for {name, body} <- envs, do: File.write!(Path.join(envdir, "#{name}.env"), body)
     members = Path.join(dir, "nftables.d/druzhok.zz-members.nft")
-    [fun] = Regex.run(~r/^nft_persist\(\) \{.*?^\}\n/ms, File.read!(@ctl))
+    fun =
+      for f <- ~w(nft_persist nft_persist_locked), into: "" do
+        [body] = Regex.run(~r/^#{f}\(\) \{.*?^\}\n/ms, File.read!(@ctl))
+        body
+      end
 
     script = """
     set -euo pipefail
@@ -123,7 +127,7 @@ defmodule Druzhok.Ops.DruzhokCtlTest do
            ]
 
     # The temporary dot file is gone: the include glob never sees a half-written one.
-    assert files == ["druzhok.zz-members.nft"]
+    assert Enum.reject(files, &(&1 == ".druzhok-members.lock")) == ["druzhok.zz-members.nft"]
   end
 
   test "no bots: no add element lines, which nft would refuse empty", %{dir: dir} do
@@ -138,11 +142,21 @@ defmodule Druzhok.Ops.DruzhokCtlTest do
     refute text =~ "bot_webhook"
   end
 
-  test "the members file sorts after druzhok.nft in the include glob" do
-    assert Enum.sort(["druzhok.zz-members.nft", "druzhok.nft", "host-input.nft"]) ==
-             ["druzhok.nft", "druzhok.zz-members.nft", "host-input.nft"]
+  # nft's include glob loads files in sorted order: the sets must be declared
+  # (bootstrap installs them as druzhok.nft) before the members file adds to them.
+  test "the members file sorts after the file that declares the sets" do
+    bootstrap = File.read!(Path.expand("../../../../ops/bootstrap.sh", __DIR__))
+    [_, decl] = Regex.run(~r{install -m 0644 "\$OPS/nftables-druzhok\.nft" /etc/nftables\.d/(\S+)}, bootstrap)
+    [_, members] = Regex.run(~r{^NFT_MEMBERS=/etc/nftables\.d/(\S+)$}m, File.read!(@ctl))
 
-    assert File.read!(@ctl) =~ "NFT_MEMBERS=/etc/nftables.d/druzhok.zz-members.nft"
+    assert decl < members, "#{members} would load before #{decl} declares the sets"
+  end
+
+  test "a bot user without an env file is saved without a port, and nothing fails", %{dir: dir} do
+    {text, _} = persist(dir, "bot-kot:x:990:990::/x:/y\nbot-gone:x:991:991::/x:/y\n", [{"kot", ~s(TELEGRAM_WEBHOOK_PORT="20009"\n)}])
+
+    assert text =~ "add element inet druzhok bot_uids { 990,991 }"
+    assert text =~ "add element inet druzhok bot_webhook { 990 . 20009 }"
   end
 
   # systemctl show answers per property; everything else is the same stub.
