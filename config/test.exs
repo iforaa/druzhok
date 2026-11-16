@@ -24,6 +24,7 @@ config :druzhok,
     tick_ms: 50,
     unit_poll_ms: 0,
     idle_check_ms: 0,
+    cron_reread_ms: 0,
     quiet_check_ms: 0,
     backoff_ms: [300, 600]
   ],

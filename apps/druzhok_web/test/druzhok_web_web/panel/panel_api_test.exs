@@ -416,15 +416,10 @@ defmodule DruzhokWebWeb.PanelApiTest do
     end
   end
 
-  # Records the hand-over file while it exists, and answers what the test set.
+  # Records the job the script would get on stdin, and answers what the test set.
   defmodule Saver do
-    def run(name, dir, path) do
-      stat = File.stat!(path)
-
-      send(
-        Application.get_env(:druzhok, :panel_saver_test),
-        {:saved, name, dir, path, File.read!(path), stat}
-      )
+    def run(name, dir, job) do
+      send(Application.get_env(:druzhok, :panel_saver_test), {:saved, name, dir, job})
 
       Application.get_env(
         :druzhok,
@@ -454,8 +449,9 @@ defmodule DruzhokWebWeb.PanelApiTest do
     defp reply_with(out, code \\ 0),
       do: Application.put_env(:druzhok, :panel_saver_reply, {out, code})
 
+    # Nothing of a save is ever written next to the tenant dirs.
     defp hand_overs(dir) do
-      dir |> Path.dirname() |> File.ls!() |> Enum.filter(&String.starts_with?(&1, ".panel-save-"))
+      dir |> Path.dirname() |> File.ls!() |> Enum.filter(&String.starts_with?(&1, "."))
     end
 
     test "POST /files/:kind hands over the input and answers the hash", %{
@@ -473,7 +469,7 @@ defmodule DruzhokWebWeb.PanelApiTest do
              }
 
       name = inst.name
-      assert_received {:saved, ^name, ^dir, path, job, stat}
+      assert_received {:saved, ^name, ^dir, job}
 
       assert Jason.decode!(job) == %{
                "target" => ["memories", "MEMORY.md"],
@@ -483,12 +479,7 @@ defmodule DruzhokWebWeb.PanelApiTest do
                "limit" => 2200
              }
 
-      # Next to the tenant dirs, the bot's own, readable by it alone.
-      assert Path.dirname(path) == Path.dirname(Path.expand(dir))
-      assert String.starts_with?(Path.basename(path), ".panel-save-")
-      assert Bitwise.band(stat.mode, 0o777) == 0o400
-      assert stat.uid == File.stat!(dir).uid
-      assert hand_overs(dir) == [], "the hand-over file is removed after the run"
+      assert hand_overs(dir) == []
     end
 
     test "each route names its target and limit", %{conn: conn, dir: dir} do
@@ -507,7 +498,7 @@ defmodule DruzhokWebWeb.PanelApiTest do
           ] do
         c = api(conn, "/app/api/" <> route, post: %{text: "t", base_sha256: base})
         assert c.status == 200, route
-        assert_received {:saved, _, _, _, job, _}
+        assert_received {:saved, _, _, job}
 
         assert %{"target" => ^target, "kind" => ^kind, "limit" => ^limit, "base_sha256" => ^base} =
                  Jason.decode!(job)
@@ -530,7 +521,7 @@ defmodule DruzhokWebWeb.PanelApiTest do
         assert get_resp_header(c, "cache-control") == ["no-store"]
       end
 
-      refute_received {:saved, _, _, _, _, _}
+      refute_received {:saved, _, _, _}
       assert hand_overs(dir) == []
 
       big = api(conn, "/app/api/files/soul", post: %{text: String.duplicate("x", 512 * 1024 + 1)})
@@ -544,7 +535,7 @@ defmodule DruzhokWebWeb.PanelApiTest do
 
       c = api(conn, "/app/api/skills/github/gh", post: %{text: "x", base_sha256: nil})
       assert {c.status, error_type(c)} == {404, "not_found"}
-      refute_received {:saved, _, _, _, _, _}
+      refute_received {:saved, _, _, _}
     end
 
     test "the script's answers map to the API's", %{conn: conn} do
@@ -639,7 +630,7 @@ defmodule DruzhokWebWeb.PanelApiTest do
       old = F.build(123, @token, 456, auth_date: System.system_time(:second) - 61 * 60)
       c = api(conn, "/app/api/files/memory", init: old, post: %{text: "x", base_sha256: nil})
       assert {c.status, error_type(c)} == {401, "init_stale"}
-      refute_received {:saved, _, _, _, _, _}
+      refute_received {:saved, _, _, _}
       assert api(build_conn(), "/app/api/files/memory", init: old).status == 200
 
       fresh = F.build(123, @token, 456, auth_date: System.system_time(:second) - 59 * 60)
@@ -665,7 +656,7 @@ defmodule DruzhokWebWeb.PanelApiTest do
       Repo.update!(Ecto.Changeset.change(inst, cabinet_off: true))
       c = api(build_conn(), "/app/api/files/memory", body)
       assert {c.status, error_type(c)} == {403, "cabinet_off"}
-      refute_received {:saved, _, _, _, _, _}
+      refute_received {:saved, _, _, _}
     end
 
     test "a save does not wake or restart the bot, or touch settings", %{conn: conn, inst: inst} do

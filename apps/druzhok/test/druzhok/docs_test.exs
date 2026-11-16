@@ -30,6 +30,17 @@ defmodule Druzhok.DocsTest do
     assert String.split(inputs, "|") |> Enum.sort() == Enum.sort(Docs.inputs())
   end
 
+  # The wrapper is root and the job dir was druzhok's to fill: a chown that
+  # followed a link in it would hand over whatever the link points at.
+  test "the wrapper never chowns through a link, and hands the job dir back" do
+    text = File.read!(@wrapper)
+    chowns = Regex.scan(~r/^\s*chown [^\n]*$/m, text) |> List.flatten()
+    assert length(chowns) == 2
+    for line <- chowns, do: assert(line =~ "chown -h -R -P ", line)
+    assert text =~ ~s(trap 'hand_back "$job"' EXIT)
+    assert text =~ ~r/systemctl stop [^\n]*\n  hand_back "\$2"/
+  end
+
   describe "with a real soffice (Runner.Local)" do
     @describetag :soffice
 

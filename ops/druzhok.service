@@ -6,10 +6,9 @@ Wants=network-online.target
 [Service]
 # Its own user, not the admin login `ubuntu`: `ubuntu` has passwordless sudo
 # for everything, so a bug in an internet-facing service running as it is root
-# on the box. `druzhok` may sudo only druzhok-ctl and docs-convert
+# on the box. `druzhok` may sudo only druzhok-ctl, tenant-fs and docs-convert
 # (ops/sudoers-druzhok). The code tree is ubuntu's, not druzhok's, so it is
-# compiled at deploy and never here. That alone does not stop a taken-over
-# druzhok from changing the tree: see the capabilities below.
+# compiled at deploy and never here, and druzhok cannot change what it runs.
 User=druzhok
 Group=druzhok
 WorkingDirectory=/data/druzhok-app
@@ -21,14 +20,12 @@ ExecStart=/bin/bash -c '. ops/runtime-env.sh && exec mix phx.server --no-compile
 Restart=always
 RestartSec=5
 KillMode=mixed
-# Tenant dirs are 0700 bot-<name> and hermes chmods its files 0600; Druzhok
-# must still read/write config.yaml, AGENTS.md and the panel's files.
-# druzhok-ctl start chowns the tree back to the bot. These capabilities still
-# let druzhok write any file on the host: they go once file access runs as the
-# bot's own user through druzhok-ctl.
-# No CapabilityBoundingSet here: it would also cap what setuid sudo can gain,
-# and `sudo druzhok-ctl` then dies with "unable to change to root gid".
-AmbientCapabilities=CAP_DAC_OVERRIDE CAP_DAC_READ_SEARCH CAP_CHOWN CAP_FOWNER
+# No capabilities: tenant dirs are 0700 bot-<name>, and druzhok reads and
+# writes config.yaml, SOUL.md and the panel's files there through the
+# tenant-fs helper, which does it as the bot's own user (Druzhok.TenantFiles).
+# No CapabilityBoundingSet and no NoNewPrivileges either: both would also cap
+# what setuid sudo can gain, and `sudo druzhok-ctl` then dies with "unable to
+# change to root gid".
 
 [Install]
 WantedBy=multi-user.target

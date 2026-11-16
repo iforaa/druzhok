@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # druzhok <command> [args] — the operator CLI (Druzhok.CLI; `druzhok help`).
-# Runs like ops/druzhok-run.sh: as user druzhok, prod env, file caps for 0700
-# tenant dirs, no second manager bot poller, no compiling. Logs below warning are kept off the output.
+# Runs like ops/druzhok-run.sh: as user druzhok, prod env, no second manager
+# bot poller, no compiling. Logs below warning are kept off the output.
 #   sudo ops/druzhok show igorhermes
 #   echo "$TOKEN" | sudo ops/druzhok set mybot telegram_token=-
 set -euo pipefail
@@ -9,8 +9,6 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 # shellcheck disable=SC2016
 exec setpriv --reuid=druzhok --regid=druzhok --init-groups \
-  --inh-caps=+dac_override,+dac_read_search,+chown,+fowner \
-  --ambient-caps=+dac_override,+dac_read_search,+chown,+fowner \
   bash -c '
     set -e
     set -a; . /etc/druzhok/druzhok.env; set +a

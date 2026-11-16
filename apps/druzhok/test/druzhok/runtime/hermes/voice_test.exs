@@ -171,8 +171,9 @@ defmodule Druzhok.Runtime.Hermes.VoiceTest do
 
     test "a legacy text is not replaced when its backup cannot be written", %{home: home} do
       put_soul(home, @hermes_default)
-      # No staging dir can be made: every TenantFiles write fails.
-      File.write!(Path.join(Path.dirname(home), ".druzhok-staging"), "")
+      # Nothing can be made in the dir: every TenantFiles write fails.
+      File.chmod!(home, 0o500)
+      on_exit(fn -> File.chmod(home, 0o700) end)
       assert Voice.sync_soul(%{display_name: "Вася"}, home) == %{}
       assert soul(home) == @hermes_default
     end

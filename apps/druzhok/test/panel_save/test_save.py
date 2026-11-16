@@ -40,12 +40,12 @@ class Base(unittest.TestCase):
         self.home.mkdir()
         self.job_file = self.root / "job.json"
 
-    def run_raw(self, *args, driver=None, wait=True):
+    def run_raw(self, *args, driver=None, wait=True, stdin=None):
         env = {"HERMES_HOME": str(self.home), "PATH": os.environ.get("PATH", ""), "HOME": str(self.root)}
         cmd = [PYTHON, "-I"] + (["-c", driver] if driver else [str(SCRIPT)]) + list(args)
         if not wait:
             return subprocess.Popen(cmd, env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
-        return subprocess.run(cmd, env=env, capture_output=True, text=True, timeout=120)
+        return subprocess.run(cmd, env=env, capture_output=True, text=True, timeout=120, input=stdin)
 
     def save(self, target, kind, text, base=None, limit=2200, driver=None, wait=True):
         self.job_file.write_text(
@@ -371,6 +371,17 @@ class Links(Base):
     def test_a_path_with_dots_is_refused(self):
         for target in (["..", "x"], ["a/b"], [], "SOUL.md"):
             self.assertEqual(self.save(target, "memory", "моё"), {"error": "save_failed"}, target)
+
+
+class Stdin(Base):
+    def test_the_job_comes_on_stdin(self):
+        # How druzhok sends it (Druzhok.Panel.Editor): "-" in place of a path.
+        job = json.dumps({"target": ["memories", "MEMORY.md"], "kind": "memory", "base_sha256": None,
+                          "text": "со стандартного ввода", "limit": 2200})
+        reply = json.loads(self.run_raw("-", stdin=job).stdout)
+        self.assertIn("sha256", reply)
+        self.assertEqual((self.home / "memories" / "MEMORY.md").read_text(), "со стандартного ввода")
+        self.assertEqual(json.loads(self.run_raw("-", stdin="not json").stdout)["error"], "save_failed")
 
 
 class Garbage(Base):

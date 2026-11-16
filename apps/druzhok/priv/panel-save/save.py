@@ -83,8 +83,12 @@ class Hermes:
 
 
 def read_job(path):
-    with open(path, "rb") as f:
-        raw = f.read()
+    # "-": the job is on stdin, which druzhok fills (Druzhok.Panel.Editor).
+    if path == "-":
+        raw = sys.stdin.buffer.read()
+    else:
+        with open(path, "rb") as f:
+            raw = f.read()
     try:
         job = json.loads(raw.decode("utf-8"))
     except UnicodeDecodeError:

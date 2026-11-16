@@ -118,6 +118,8 @@ done
 echo "== document conversion"
 cmp -s "$ops/soffice-shim" /usr/local/bin/soffice || { echo "/usr/local/bin/soffice is missing or stale: install ops/soffice-shim (CLAUDE.md, deploy recipe)"; exit 1; }
 [ "$(readlink /usr/local/bin/libreoffice)" = soffice ] || { echo "/usr/local/bin/libreoffice is not a link to the shim"; exit 1; }
+cmp -s "$ops/../apps/druzhok/priv/tenant-fs/tenant_fs.py" /usr/local/lib/druzhok/tenant-fs || { echo "/usr/local/lib/druzhok/tenant-fs is missing or stale: install it (CLAUDE.md, deploy recipe)"; exit 1; }
+[ "$(stat -c %U /usr/local/lib/druzhok/tenant-fs)" = root ] || { echo "the tenant-fs helper is not root's"; exit 1; }
 cmp -s "$ops/docs-convert" /usr/local/lib/druzhok/docs-convert || { echo "/usr/local/lib/druzhok/docs-convert is missing or stale"; exit 1; }
 [ "$(stat -c %U /usr/local/lib/druzhok/docs-convert)" = root ] || { echo "the docs-convert wrapper is not root's"; exit 1; }
 [ -x /usr/lib/libreoffice/program/soffice ] || { echo "LibreOffice missing: apt-get install libreoffice-core-nogui libreoffice-writer-nogui libreoffice-calc-nogui libreoffice-impress-nogui"; exit 1; }

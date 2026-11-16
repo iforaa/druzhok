@@ -69,6 +69,19 @@ defmodule Druzhok.HostStub do
 
   defp record(op, name), do: Agent.update(__MODULE__, &%{&1 | calls: [{op, name} | &1.calls]})
 
+  # Not recorded: the tests count starts, stops and destroys.
+  @impl true
+  def prepare(_name, _env, data_root) do
+    File.mkdir_p!(data_root)
+    :ok
+  end
+
+  @impl true
+  def wipe(_name, data_root) do
+    File.rm_rf(data_root)
+    :ok
+  end
+
   @impl true
   def start(name, _env, _root) do
     record(:start, name)
