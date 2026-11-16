@@ -257,4 +257,52 @@ defmodule Druzhok.Ops.DruzhokCtlTest do
     assert code == 1
     assert out =~ "reserved bot name"
   end
+
+  # The script with its root check off, /data/tenants moved to `tenants` and
+  # `id` answering for a bot user that is there (`exists`) or not.
+  defp ctl(tenants, exists, args) do
+    script =
+      File.read!(@ctl)
+      |> String.replace(~S<[ "$(id -u)" -eq 0 ] || die "must run as root">, "")
+      |> String.replace("TENANTS=/data/tenants", "TENANTS=#{tenants}")
+
+    script = "id() { #{if exists, do: "echo 1234", else: "return 1"}; }\n" <> script
+    System.cmd("bash", ["-c", script, "druzhok-ctl" | args], stderr_to_stdout: true)
+  end
+
+  describe "purge" do
+    test "removes a destroyed bot's dir, and a link in it without its target", %{dir: dir} do
+      outside = Path.join(dir, "outside")
+      File.mkdir_p!(Path.join(dir, "tenants/kot/workspace"))
+      File.mkdir_p!(outside)
+      File.write!(Path.join(outside, "keep"), "x")
+      File.ln_s!(outside, Path.join(dir, "tenants/kot/workspace/link"))
+
+      assert {_, 0} = ctl(Path.join(dir, "tenants"), false, ["purge", "kot"])
+      refute File.exists?(Path.join(dir, "tenants/kot"))
+      assert File.read!(Path.join(outside, "keep")) == "x"
+      # Nothing there is fine too.
+      assert {_, 0} = ctl(Path.join(dir, "tenants"), false, ["purge", "kot"])
+    end
+
+    test "refuses while the bot's user exists, a tenant dir that is a link, and a bad name", %{dir: dir} do
+      tenants = Path.join(dir, "tenants")
+      File.mkdir_p!(Path.join(tenants, "kot"))
+      assert {out, 1} = ctl(tenants, true, ["purge", "kot"])
+      assert out =~ "bot still exists"
+      assert File.dir?(Path.join(tenants, "kot"))
+
+      outside = Path.join(dir, "outside")
+      File.mkdir_p!(outside)
+      File.write!(Path.join(outside, "keep"), "x")
+      File.ln_s!(outside, Path.join(tenants, "lnk"))
+      assert {out, 1} = ctl(tenants, false, ["purge", "lnk"])
+      assert out =~ "symlink"
+      assert File.read!(Path.join(outside, "keep")) == "x"
+
+      assert {out, 1} = ctl(tenants, false, ["purge", "../outside"])
+      assert out =~ "invalid bot name"
+      assert File.exists?(Path.join(outside, "keep"))
+    end
+  end
 end

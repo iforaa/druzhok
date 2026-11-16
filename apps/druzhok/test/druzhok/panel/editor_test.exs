@@ -35,15 +35,6 @@ defmodule Druzhok.Panel.EditorTest do
     %{inst: inst, dir: dir, root: root}
   end
 
-  test "sweep removes left-over hand-over files and nothing else", %{root: root, dir: dir} do
-    File.write!(Path.join(root, ".panel-save-abc"), "{}")
-    File.write!(Path.join(root, "other"), "x")
-    assert :ok = Editor.sweep()
-    refute File.exists?(Path.join(root, ".panel-save-abc"))
-    assert File.exists?(Path.join(root, "other"))
-    assert File.dir?(dir)
-  end
-
   test "check_script: quiet when it matches or none is configured, an error when it differs", %{
     root: root
   } do
@@ -59,11 +50,6 @@ defmodule Druzhok.Panel.EditorTest do
     assert capture_log(fn -> assert Editor.check_script() == :stale end) =~ "differs"
     File.rm!(copy)
     assert capture_log(fn -> assert Editor.check_script() == :stale end) =~ "missing"
-  end
-
-  test "sweep without a data root does nothing" do
-    System.put_env("DRUZHOK_DATA_ROOT", "/nonexistent/editor-test")
-    assert :ok = Editor.sweep()
   end
 
   describe "with the real script" do
@@ -112,8 +98,8 @@ defmodule Druzhok.Panel.EditorTest do
 
       assert File.read!(Path.join(dir, "memories/MEMORY.md")) == "вторая"
 
-      assert File.ls!(Path.dirname(dir)) |> Enum.filter(&String.starts_with?(&1, ".panel-save-")) ==
-               []
+      # Nothing is left next to the tenant dirs.
+      assert File.ls!(Path.dirname(dir)) == [Path.basename(dir)]
     end
 
     test "the limit comes from Runtime.Hermes", %{inst: inst} do

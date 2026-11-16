@@ -5,7 +5,7 @@ defmodule Druzhok.Panel.Lister do
 
   An in-process walk resolves the whole path again at every step, and the
   bot, which owns these directories, can swap a parent for a symlink between
-  two steps; with druzhok's CAP_DAC_READ_SEARCH that would list another
+  two steps; done with more rights than the bot's, that would list another
   tenant's tree. Run as the bot's uid, a race reaches only what the bot could
   read itself. Prod goes through `druzhok-ctl exec` (a transient unit with the
   bot's uid; it does not start or wake the bot). Dev and test run the same

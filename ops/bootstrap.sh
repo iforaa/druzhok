@@ -34,7 +34,6 @@ install -d -m 0700 -o druzhok -g druzhok /data/druzhok-home
 [ -L /data/druzhok-home/tmp ] && { echo "!! /data/druzhok-home/tmp is a symlink; remove it and re-run"; exit 1; }
 [ -d /data/druzhok-home/tmp ] || sudo -u druzhok mkdir -m 0700 /data/druzhok-home/tmp
 chown -R druzhok:druzhok /data/druzhok
-[ ! -d /data/tenants/.druzhok-staging ] || chown druzhok:druzhok /data/tenants/.druzhok-staging
 
 # The tree lives in /data/druzhok-app, where druzhok can read it: ubuntu's home
 # is closed to it. ~/druzhok is a link to it, so a deploy's rsync lands there.
@@ -155,6 +154,8 @@ id -u cleo-docs >/dev/null 2>&1 || useradd --system --no-create-home --home-dir 
 install -d -m 0711 -o root -g root /var/lib/cleo-docs
 install -d -m 0771 -o root -g druzhok /var/lib/cleo-docs/jobs
 install -m 0755 -o root -g root "$OPS/docs-convert" /usr/local/lib/druzhok/docs-convert
+# Druzhok's file work in tenant dirs, done as the bot (Druzhok.TenantFiles).
+install -m 0755 -o root -g root "$OPS/../apps/druzhok/priv/tenant-fs/tenant_fs.py" /usr/local/lib/druzhok/tenant-fs
 install -m 0755 -o root -g root "$OPS/soffice-shim" /usr/local/bin/soffice
 ln -sfn soffice /usr/local/bin/libreoffice
 

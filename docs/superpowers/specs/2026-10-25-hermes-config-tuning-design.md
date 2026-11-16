@@ -68,6 +68,9 @@ From here on, every druzhok read or write of a tenant file goes through `Druzhok
   2. create the file exclusively (through `TenantFiles.write/4`);
   3. chown it to the bot's uid.
 - **Reads** already refuse a symlink anywhere below the tenant dir and verify the descriptor.
+- **Superseded 2026-11-16:** druzhok has no file capabilities and no staging dir. `Druzhok.TenantFiles` sends every
+  read and write to `priv/tenant-fs/tenant_fs.py`, which acts as the bot's user and walks the path with O_NOFOLLOW
+  openat, so the residual race below is gone. What follows is the first design.
 - **Writes, new `TenantFiles.write/4`:**
   1. lstat every path component below the tenant dir and refuse any symlink;
   2. prepare the temp file (exclusive create, chmod, chown to the bot's uid) in `.druzhok-staging`, a 0700

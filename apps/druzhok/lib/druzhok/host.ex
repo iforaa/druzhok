@@ -13,10 +13,19 @@ defmodule Druzhok.Host do
           :active | :activating | :restarting | :stopping | :inactive | :failed | :unknown
   @type stats :: %{mem_bytes: non_neg_integer(), cpu_usec: non_neg_integer()} | nil
 
+  @doc "Starts the bot's unit. `prepare/3` has run for this start, with the same env."
   @callback start(name, env :: %{String.t() => String.t()}, data_root :: String.t()) ::
               :ok | {:error, term()}
+  @doc """
+  Before a start's file work: the bot's user and its tenant dir exist, with
+  the env file as given. Safe to repeat.
+  """
+  @callback prepare(name, env :: %{String.t() => String.t()}, data_root :: String.t()) ::
+              :ok | {:error, term()}
+  @doc "After `destroy/1`: the bot's tenant dir and all in it are gone."
+  @callback wipe(name, data_root :: String.t()) :: :ok | {:error, term()}
   @callback stop(name) :: :ok
-  @callback destroy(name) :: :ok
+  @callback destroy(name) :: :ok | {:error, term()}
   @callback status(name) :: status
   @callback stats(name) :: stats
   @doc "Processes the bot runs right now (1 = hermes alone, at rest); nil if unknown."
@@ -45,6 +54,8 @@ defmodule Druzhok.Host do
   def valid_name?(_), do: false
 
   def start(name, env, data_root), do: impl().start(name, env, data_root)
+  def prepare(name, env, data_root), do: impl().prepare(name, env, data_root)
+  def wipe(name, data_root), do: impl().wipe(name, data_root)
   def stop(name), do: impl().stop(name)
   def destroy(name), do: impl().destroy(name)
   def status(name), do: impl().status(name)

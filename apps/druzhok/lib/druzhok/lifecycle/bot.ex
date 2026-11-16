@@ -192,7 +192,7 @@ defmodule Druzhok.Lifecycle.Bot do
         # Only the scheduler wakes a bot in queue mode; a relay poke is a no-op.
         if state.grant, do: granted_wake(state, inst), else: state
 
-      reason = Wake.reason(inst) ->
+      reason = Wake.reason(inst, cron: sleeping_cron(inst)) ->
         # Refused, the row stays asleep: the relay keeps holding updates.
         through_gate(state, inst, fn -> wake(state, inst, reason) end)
 
@@ -253,6 +253,24 @@ defmodule Druzhok.Lifecycle.Bot do
     set(inst, sleeping: false, woke_at: now())
     if reason == :update, do: Typing.start(inst)
     start_action(state, inst)
+  end
+
+  # A sleeping bot's jobs file cannot change, and reading it takes a helper
+  # process, so its wake time is read again only every cron_reread_ms. A bot
+  # that slept since the last read is read at once.
+  defp sleeping_cron(inst) do
+    now_ms = System.monotonic_time(:millisecond)
+    every = Queue.opt(:cron_reread_ms)
+
+    case Process.get(:sleeping_cron) do
+      {result, at, woke_at} when woke_at == inst.woke_at and now_ms - at < every ->
+        result
+
+      _ ->
+        result = Idle.cron_wake_at(inst)
+        Process.put(:sleeping_cron, {result, now_ms, inst.woke_at})
+        result
+    end
   end
 
   # The scheduler's grant is one attempt. The reason is read again (rows

@@ -9,7 +9,8 @@
 #   stats <name>       → <mem_bytes>|<cpu_usec>
 #   procs <name>       → number of processes in the unit's cgroup (0 when stopped)
 #   logs <name> <n>
-#   exec <name> <cmd> [args…]                run as the bot user
+#   exec <name> <cmd> [args…]                run as the bot user (stdin is passed on)
+#   purge <name>                             remove a destroyed bot's tenant dir
 #   sync-nft                                 rewrite the saved nft set members (no name)
 set -euo pipefail
 
@@ -192,7 +193,8 @@ case "$cmd" in
     install -d -m 0700 -o "$user" -g "$user" "$root"
     tenant_dirs
     # Data copied in from another host is root-owned; hand it to the bot.
-    chown -R "$user:$user" "$root"
+    # -h: a link in it is chowned itself, never followed.
+    chown -h -R "$user:$user" "$root"
     mkdir -p "$ENVDIR"; chmod 0755 "$ENVDIR"
     write_env
     nft_add
@@ -202,9 +204,9 @@ case "$cmd" in
     ;;
   start|restart)
     user_exists || die "no such bot: $name"
-    # Druzhok (CAP_DAC_OVERRIDE) may have created/rewritten files as its own
-    # user; hand the whole tree back to the bot before it runs.
-    chown -R "$user:$user" "$root"
+    # Data copied in by hand is root-owned; hand the whole tree to the bot
+    # before it runs. -h: a link in it is chowned itself, never followed.
+    chown -h -R "$user:$user" "$root"
     # bootstrap.sh deletes and reloads the druzhok table on its own, which
     # empties the sets: re-add this bot live on every start, then save the
     # members so a reload of /etc/nftables.conf brings them back too.
@@ -262,11 +264,26 @@ case "$cmd" in
       systemctl reset-failed "$unit" 2>/dev/null || true
       nft_del
       nft_webhook_del
+      # What is not in the unit (an exec job, a tenant-fs child) may still run
+      # as the user, and userdel refuses a user with a process.
+      pkill -KILL -U "$user" 2>/dev/null || true
+      for _ in 1 2 3 4 5 6 7 8 9 10; do
+        pgrep -U "$user" >/dev/null 2>&1 || break
+        sleep 0.2
+      done
       userdel "$user"
     fi
     nft_persist
     remove_bind_lock
     rm -f "$envf"
+    ;;
+  purge)
+    # /data/tenants is root's, so druzhok cannot remove a tenant dir itself.
+    # Only once the bot is destroyed: nothing runs as its user any more.
+    if user_exists; then die "bot still exists: $name"; fi
+    if [ -L "$root" ]; then die "tenant dir is a symlink: $root"; fi
+    # rm never follows a link: one inside the tree is removed, not its target.
+    rm -rf -- "$root"
     ;;
   sync-nft)
     nft_persist

@@ -12,7 +12,7 @@ defmodule Druzhok.Runtime.Hermes.Voice do
     (`migrate_agents_md/2`).
 
   Every file is read and written through `Druzhok.TenantFiles`: the bot owns
-  its dir and druzhok writes with CAP_DAC_OVERRIDE. What druzhok last wrote
+  its dir, and the tenant-fs helper does the work as the bot's own user. What druzhok last wrote
   is recorded in the instance row (`soul_sha256`, `soul_version`,
   `agents_md_sha256`), never in a file the bot can edit.
   """
@@ -423,20 +423,20 @@ defmodule Druzhok.Runtime.Hermes.Voice do
   # --- Shared ---------------------------------------------------------------------
 
   # Whether the file is there and readable as ours to judge: `:missing` only
-  # when nothing at all is at that name; a link, a dangling one included, or a
-  # file of another owner is refused.
+  # when nothing at all is at that name; a link, a dangling one included, is
+  # refused.
   defp current(data_root, segments) do
-    case File.lstat(Path.join([data_root | segments])) do
+    case TenantFiles.lstat(data_root, segments) do
       {:error, :enoent} ->
         :missing
 
-      {:ok, %File.Stat{type: :regular}} ->
+      {:ok, %{type: :regular}} ->
         case TenantFiles.read_text(data_root, segments, @limit) do
           {:ok, %{text: text, truncated: false}} -> {:ok, text}
           other -> {:refused, other}
         end
 
-      {:ok, %File.Stat{type: type}} ->
+      {:ok, %{type: type}} ->
         {:refused, type}
 
       {:error, reason} ->
@@ -472,7 +472,7 @@ defmodule Druzhok.Runtime.Hermes.Voice do
   @doc false
   # Backup names of `name` in `dirs`, oldest first.
   def backups(data_root, dirs, name) do
-    case File.ls(Path.join([data_root | dirs])) do
+    case TenantFiles.ls(data_root, dirs) do
       {:ok, files} ->
         files |> Enum.filter(&String.starts_with?(&1, name <> ".bak-")) |> Enum.sort()
 

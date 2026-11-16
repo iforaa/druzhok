@@ -8,13 +8,16 @@ defmodule Druzhok.Lifecycle.Idle do
   """
 
   import Ecto.Query
-  alias Druzhok.{Instance, Repo, Usage}
+  alias Druzhok.{Instance, Repo, TenantFiles, Usage}
   alias Druzhok.Telegram.{Inbox, Webhook}
 
   @default_minutes 30
   @cron_lead_s 3 * 60
   # A run this close after the lead is not worth a sleep and a wake.
   @cron_soon_s 5 * 60
+  @cron_file ["cron", "jobs.json"]
+  @cron_limit 1_048_576
+  @state_limit 65_536
   # Queue mode's switch checks: never part of the sleep check.
   @switch_only [:acked, :inflight, :cron_lead]
 
@@ -147,15 +150,19 @@ defmodule Druzhok.Lifecycle.Idle do
   # hermes rewrites gateway_state.json at every turn boundary (active_agents
   # counts running agents, cron runs and API runs).
   defp no_turns(inst) do
-    path = Path.join(data_root(inst), "gateway_state.json")
-
-    with {:ok, body} <- File.read(path),
+    with {:ok, %{bytes: body, truncated: false}} <-
+           TenantFiles.read(data_root(inst), ["gateway_state.json"], @state_limit),
          {:ok, %{"gateway_state" => "running", "active_agents" => 0}} <- Jason.decode(body) do
       :ok
     else
-      {:ok, %{} = state} -> {:busy, {:turns, Map.take(state, ["gateway_state", "active_agents"])}}
-      _ -> {:busy, :gateway_state_unreadable}
+      {:ok, %{} = state} when not is_map_key(state, :bytes) ->
+        {:busy, {:turns, Map.take(state, ["gateway_state", "active_agents"])}}
+
+      _ ->
+        {:busy, :gateway_state_unreadable}
     end
+  rescue
+    TenantFiles.Error -> {:busy, :gateway_state_unreadable}
   end
 
   # At rest a bot's cgroup holds hermes alone; a terminal or background
@@ -202,18 +209,40 @@ defmodule Druzhok.Lifecycle.Idle do
   `next_run_at`. `{:ok, nil}` without one; `:error` when `cron/jobs.json`
   cannot be read or an enabled job has no aware `next_run_at`.
   """
-  def cron_wake_at(inst) do
-    case next_cron_run(inst) do
-      {:ok, %DateTime{} = at} -> {:ok, DateTime.add(at, -cron_lead_s())}
-      other -> other
-    end
+  def cron_wake_at(inst), do: inst |> next_cron_run() |> wake_at()
+
+  @doc """
+  `cron_wake_at/1` for several bots, their jobs files read in one helper call:
+  `%{instance id => result}`.
+  """
+  def cron_wake_at_all([]), do: %{}
+
+  def cron_wake_at_all(insts) do
+    insts
+    |> Enum.map(&{data_root(&1), [{@cron_file, @cron_limit}]})
+    |> TenantFiles.read_all(missing: true)
+    |> Enum.zip(insts)
+    |> Map.new(fn
+      {[read], inst} -> {inst.id, read |> cron_run() |> wake_at()}
+      {:error, inst} -> {inst.id, :error}
+    end)
+  rescue
+    TenantFiles.Error -> Map.new(insts, &{&1.id, :error})
   end
 
-  @doc "The bot's `cron/jobs.json`."
-  def cron_path(inst), do: Path.join([data_root(inst), "cron", "jobs.json"])
+  defp wake_at({:ok, %DateTime{} = at}), do: {:ok, DateTime.add(at, -cron_lead_s())}
+  defp wake_at(other), do: other
 
   defp next_cron_run(inst) do
-    with {:ok, body} <- File.read(cron_path(inst)),
+    data_root(inst) |> TenantFiles.read(@cron_file, @cron_limit, missing: true) |> cron_run()
+  rescue
+    TenantFiles.Error -> :error
+  end
+
+  # The earliest run in a read of `cron/jobs.json`: no file is no job; a file
+  # that cannot be read, a link in its place included, is `:error`.
+  defp cron_run(read) do
+    with {:ok, %{bytes: body, truncated: false}} <- read,
          {:ok, %{"jobs" => jobs}} when is_list(jobs) <- Jason.decode(body) do
       jobs
       |> Enum.filter(&enabled_job?/1)
@@ -224,7 +253,7 @@ defmodule Druzhok.Lifecycle.Idle do
         end
       end)
     else
-      {:error, :enoent} -> {:ok, nil}
+      :missing -> {:ok, nil}
       _ -> :error
     end
   end

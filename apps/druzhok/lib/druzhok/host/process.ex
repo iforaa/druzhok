@@ -33,6 +33,22 @@ defmodule Druzhok.Host.Process do
   end
 
   @impl Druzhok.Host
+  def prepare(_name, _env, data_root) do
+    case File.mkdir_p(data_root) do
+      :ok -> :ok
+      {:error, reason} -> {:error, reason}
+    end
+  end
+
+  @impl Druzhok.Host
+  def wipe(_name, data_root) do
+    case File.rm_rf(data_root) do
+      {:ok, _} -> :ok
+      {:error, reason, file} -> {:error, {reason, file}}
+    end
+  end
+
+  @impl Druzhok.Host
   def stop(name) do
     case lookup(name) do
       nil ->

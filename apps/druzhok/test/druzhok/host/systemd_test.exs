@@ -80,13 +80,10 @@ defmodule Druzhok.Host.SystemdTest do
              ~s(A="1"\nB="say \\"hi\\" \\\\ $X"\n)
   end
 
-  test "start runs create (env on stdin) then start, every time", %{log: log} do
+  test "prepare runs create with the env on stdin; start only starts", %{log: log} do
+    assert :ok = Systemd.prepare("bot-a", %{"K" => "v"}, "/data/tenants/bot-a")
     assert :ok = Systemd.start("bot-a", %{"K" => "v"}, "/data/tenants/bot-a")
-    assert [{"create", "bot-a", _, ~s(K="v")}, {"start", "bot-a", _, _}] = calls(log)
-
-    File.write!(log, "")
-    assert :ok = Systemd.start("bot-a", %{"K" => "v2"}, "/data/tenants/bot-a")
-    assert [{"create", "bot-a", _, ~s(K="v2")}, {"start", "bot-a", _, _}] = calls(log)
+    assert [{"create", "bot-a", _, ~s(K="v")}, {"start", "bot-a", _, ""}] = calls(log)
   end
 
   test "status maps words to atoms" do

@@ -83,7 +83,7 @@ defmodule Druzhok.Docs do
           try do
             deliver(result, job, to, on_result)
           after
-            if job, do: File.rm_rf(job)
+            if job, do: remove_job(job)
           end
 
         {:error, :busy} ->
@@ -108,7 +108,7 @@ defmodule Druzhok.Docs do
         {runner().run(job, to, filter), job}
       rescue
         e ->
-          File.rm_rf(job)
+          remove_job(job)
           reraise e, __STACKTRACE__
       end
     else
@@ -158,10 +158,9 @@ defmodule Druzhok.Docs do
     end
   end
 
-  # The converter ran as another user and wrote this dir; nothing of it runs
-  # any more, so what lstat says now holds. Only a plain file at the one
-  # expected path is read: never a link that would point druzhok, which may
-  # read any file, somewhere else.
+  # The converter ran as another user and wrote this dir, which the wrapper
+  # has handed back; nothing of it runs any more, so what lstat says now
+  # holds. Only a plain file at the one expected path is read, never a link.
   defp check_output(job, out, to) do
     expected = Path.join([job, "out", "input." <> to])
 
@@ -184,9 +183,28 @@ defmodule Druzhok.Docs do
   def cancel(job) do
     r = runner()
     if function_exported?(r, :cancel, 1), do: r.cancel(job)
-    File.rm_rf(job)
+    remove_job(job)
     Logger.warning("[docs] request gone mid-conversion: stopped #{Path.basename(job)}")
     :ok
+  end
+
+  # While a job converts its dir is the converter's user's, and the wrapper
+  # hands it back when it ends. A dir it could not hand back yet (a wrapper
+  # that timed out or was killed) is stopped and handed back, then deleted.
+  defp remove_job(job) do
+    case File.rm_rf(job) do
+      {:ok, _} ->
+        :ok
+
+      {:error, _, _} ->
+        r = runner()
+        if function_exported?(r, :cancel, 1), do: r.cancel(job)
+
+        case File.rm_rf(job) do
+          {:ok, _} -> :ok
+          {:error, reason, file} -> Logger.error("[docs] cannot delete #{file}: #{inspect(reason)}")
+        end
+    end
   end
 
   @doc "Delete every job dir left under the jobs root."

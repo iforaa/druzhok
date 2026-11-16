@@ -1138,17 +1138,16 @@ defmodule Druzhok.Runtime.Hermes do
   end
 
   def clear_sessions(data_root) do
-    data_root
-    |> Path.join("sessions")
-    |> File.rm_rf!()
-
-    :ok
+    case TenantFiles.rm_tree(data_root, ["sessions"]) do
+      :ok -> :ok
+      {:error, reason} -> raise "cannot clear sessions in #{data_root}: #{inspect(reason)}"
+    end
   end
 
   def read_allowed_users(data_root) do
-    path = Path.join([data_root, "platforms", "pairing", "telegram-approved.json"])
+    segments = ["platforms", "pairing", "telegram-approved.json"]
 
-    with {:ok, body} <- File.read(path),
+    with {:ok, %{bytes: body, truncated: false}} <- TenantFiles.read(data_root, segments, 1_048_576),
          {:ok, map} when is_map(map) <- Jason.decode(body) do
       Map.keys(map)
     else

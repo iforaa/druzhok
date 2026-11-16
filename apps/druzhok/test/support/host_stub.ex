@@ -18,6 +18,7 @@ defmodule Druzhok.HostStub do
             units: %{},
             calls: [],
             start: :ok,
+            destroy: :ok,
             start_for: %{},
             procs: 1,
             hooks: %{},
@@ -49,6 +50,9 @@ defmodule Druzhok.HostStub do
   def on_start(name, result),
     do: Agent.update(__MODULE__, &put_in(&1, [:start_for, name], result))
 
+  @doc "What `destroy/1` returns from now on: `:ok` or `{:error, r}` (the unit and user stay)."
+  def on_destroy(result), do: Agent.update(__MODULE__, &%{&1 | destroy: result})
+
   def set_procs(n), do: Agent.update(__MODULE__, &%{&1 | procs: n})
   @doc "Make `holding_units/0` fail (`:error`) or work again (`:ok`)."
   def set_list(result), do: Agent.update(__MODULE__, &%{&1 | list: result})
@@ -68,6 +72,19 @@ defmodule Druzhok.HostStub do
   end
 
   defp record(op, name), do: Agent.update(__MODULE__, &%{&1 | calls: [{op, name} | &1.calls]})
+
+  # Not recorded: the tests count starts, stops and destroys.
+  @impl true
+  def prepare(_name, _env, data_root) do
+    File.mkdir_p!(data_root)
+    :ok
+  end
+
+  @impl true
+  def wipe(_name, data_root) do
+    File.rm_rf(data_root)
+    :ok
+  end
 
   @impl true
   def start(name, _env, _root) do
@@ -97,8 +114,10 @@ defmodule Druzhok.HostStub do
   @impl true
   def destroy(name) do
     record(:destroy, name)
-    Agent.update(__MODULE__, &%{&1 | units: Map.delete(&1.units, name)})
-    :ok
+
+    with :ok <- Agent.get(__MODULE__, & &1.destroy) do
+      Agent.update(__MODULE__, &%{&1 | units: Map.delete(&1.units, name)})
+    end
   end
 
   @impl true

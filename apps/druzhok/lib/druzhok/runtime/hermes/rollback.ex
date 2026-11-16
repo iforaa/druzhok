@@ -127,11 +127,11 @@ defmodule Druzhok.Runtime.Hermes.Rollback do
   end
 
   defp ours?(root, segments, recorded, absent_ok?) do
-    case File.lstat(Path.join([root | segments])) do
+    case TenantFiles.lstat(root, segments) do
       {:error, :enoent} when absent_ok? ->
         :ours
 
-      {:ok, %File.Stat{type: :regular}} ->
+      {:ok, %{type: :regular}} ->
         case read(root, segments) do
           {:ok, text} -> if Voice.sha256(text) == recorded, do: :ours, else: :edited
           other -> other

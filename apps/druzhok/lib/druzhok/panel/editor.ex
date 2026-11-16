@@ -3,26 +3,23 @@ defmodule Druzhok.Panel.Editor do
   Saves a text page from the bot panel (spec
   `docs/superpowers/specs/2026-10-31-panel-editable-pages-design.md`).
 
-  The save itself is `priv/panel-save/save.py`, run **as the bot's own user**.
-  `TenantFiles.write/4` must not be used here: it checks directories by path
-  and renames by path with druzhok's CAP_DAC_OVERRIDE, so a bot swapping
-  `memories` for a symlink between the two could make a save land in another
-  tenant. As the bot's uid a swap reaches only what the bot could write itself,
-  and the save can hold hermes's locks and use hermes's own checks.
+  The save itself is `priv/panel-save/save.py`, run **as the bot's own user**
+  in the bot's own environment, so that it can hold hermes's locks and use
+  hermes's own checks; a swapped directory reaches only what the bot could
+  write itself.
 
-  System.cmd cannot close stdin and argv is visible in `ps`, so the input goes
-  over in a file only the bot can read (`TenantFiles.hand_over/3`). `exec`
-  neither starts nor wakes the bot, and a save does not touch `settings_seq`.
+  argv is visible in `ps`, so the job goes over on the script's stdin
+  (`Druzhok.Cmd`). `exec` neither starts nor wakes the bot, and a save does
+  not touch `settings_seq`.
   Prod goes through `druzhok-ctl exec`; dev and test run the same command
   directly, or the stub in config `:panel_saver`.
   """
 
   require Logger
 
-  alias Druzhok.{BotManager, Instance, Panel, TenantFiles}
+  alias Druzhok.{BotManager, Instance, Panel}
 
   @max_body 512 * 1024
-  @prefix ".panel-save-"
   @python "/opt/hermes/.venv/bin/python"
   @timeout_ms 60_000
   # :global.trans sleeps a random time up to 8 s a try, about 84 s in all on
@@ -49,16 +46,9 @@ defmodule Druzhok.Panel.Editor do
   end
 
   @doc """
-  At boot: removes hand-over files a crash left behind, and says so loudly when
-  the installed script is not this release's, which only `ops/smoke.sh` and
-  this would otherwise notice.
+  At boot: says so loudly when the installed script is not this release's,
+  which only `ops/smoke.sh` and this would otherwise notice.
   """
-  def boot do
-    sweep()
-    check_script()
-  end
-
-  @doc false
   def check_script do
     with installed when is_binary(installed) <- Application.get_env(:druzhok, :panel_save_script),
          ours = Application.app_dir(:druzhok, "priv/panel-save/save.py"),
@@ -70,20 +60,6 @@ defmodule Druzhok.Panel.Editor do
       :stale
     else
       _ -> :ok
-    end
-  end
-
-  @doc "Removes hand-over files a crash left behind."
-  def sweep do
-    root = BotManager.data_root_base()
-
-    case File.ls(root) do
-      {:ok, names} ->
-        for name <- names, String.starts_with?(name, @prefix), do: File.rm(Path.join(root, name))
-        :ok
-
-      _ ->
-        :ok
     end
   end
 
@@ -128,24 +104,13 @@ defmodule Druzhok.Panel.Editor do
         limit: edit.limit
       })
 
-    case TenantFiles.hand_over(dir, job, @prefix) do
-      {:ok, path} ->
-        try do
-          inst.name |> command(dir, path) |> answer(inst.name)
-        after
-          File.rm(path)
-        end
-
-      {:error, reason} ->
-        Logger.warning("[panel] no hand-over file for #{inst.name}: #{inspect(reason)}")
-        failed("could not prepare the save")
-    end
+    inst.name |> command(dir, job) |> answer(inst.name)
   end
 
   # A timed-out run may still finish; the page's next save then gets
   # file_changed, which is safe.
-  defp command(name, dir, path) do
-    task = Task.async(fn -> exec(name, dir, path) end)
+  defp command(name, dir, job) do
+    task = Task.async(fn -> exec(name, dir, job) end)
     timeout = Application.get_env(:druzhok, :panel_save_timeout_ms, @timeout_ms)
 
     case Task.yield(task, timeout) || Task.shutdown(task, :brutal_kill) do
@@ -154,18 +119,19 @@ defmodule Druzhok.Panel.Editor do
     end
   end
 
-  defp exec(name, dir, path) do
+  # `-`: the job is the script's stdin.
+  defp exec(name, dir, job) do
     case Application.get_env(:druzhok, :panel_saver) do
       {m, f} ->
-        apply(m, f, [name, dir, path])
+        apply(m, f, [name, dir, job])
 
       nil ->
         if Application.get_env(:druzhok, :host) == Druzhok.Host.Systemd do
-          Druzhok.Host.exec(name, [@python, "-I", script(), path])
+          Druzhok.Host.Systemd.exec(name, [@python, "-I", script(), "-"], input: job)
         else
           File.mkdir_p(Path.join(dir, "workspace"))
 
-          System.cmd(dev_python(), ["-I", script(), path],
+          Druzhok.Cmd.run(dev_python(), ["-I", script(), "-"], job,
             env: [{"HERMES_HOME", dir}],
             cd: Path.join(dir, "workspace"),
             stderr_to_stdout: true

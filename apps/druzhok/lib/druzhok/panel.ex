@@ -337,10 +337,16 @@ defmodule Druzhok.Panel do
     skills = skills_scan(inst)
     site = site(inst)
 
+    # Nothing of the files is wanted here, only their size and date.
+    [soul, memory, user] =
+      dir
+      |> TenantFiles.read_many(for kind <- ~w(soul memory user), do: {@files[kind], 0})
+      |> Enum.map(&file_meta/1)
+
     %{
-      soul: file_meta(dir, @files["soul"]),
-      memory: file_meta(dir, @files["memory"]),
-      user: file_meta(dir, @files["user"]),
+      soul: soul,
+      memory: memory,
+      user: user,
       jobs: %{count: length(jobs(inst).jobs)},
       skills: %{own: length(skills.own), bundled: skills.bundled},
       site:
@@ -352,20 +358,12 @@ defmodule Druzhok.Panel do
     }
   end
 
-  defp file_meta(dir, segments) do
-    case TenantFiles.open(dir, segments) do
-      {:ok, fd, _path, stat} ->
-        :file.close(fd)
-        %{size: stat.size, modified_at: DateTime.from_unix!(stat.mtime)}
-
-      :not_found ->
-        nil
-    end
-  end
+  defp file_meta({:ok, %{size: size, modified_at: at}}), do: %{size: size, modified_at: at}
+  defp file_meta(:not_found), do: nil
 
   @doc """
   One of the fixed Markdown files: `soul`, `memory`, `user`. Nothing at that
-  name (`File.lstat` says `:enoent`) is an empty, editable page for the memory
+  name (`TenantFiles.lstat/2` says `:enoent`) is an empty, editable page for the memory
   files and `:not_found` for `soul`; a file that is there but cannot be read
   safely is an empty page that says so and cannot be edited, so that a save can
   never take it for absent. Invalid UTF-8 is `:not_text`, 422 in place of the file.
@@ -375,7 +373,7 @@ defmodule Druzhok.Panel do
       dir = tenant_dir(inst)
       limit = limit(kind)
 
-      case {File.lstat(Path.join([dir | segments])), kind} do
+      case {TenantFiles.lstat(dir, segments), kind} do
         {{:error, :enoent}, "soul"} ->
           :not_found
 
@@ -622,9 +620,8 @@ defmodule Druzhok.Panel do
           end
         end)
         |> Enum.filter(&TenantFiles.valid_segments?/1)
-        |> Enum.map(fn segs ->
-          front = front_matter(dir, skill_file(segs))
-
+        |> front_matters(dir)
+        |> Enum.map(fn {segs, front} ->
           %{
             segments: segs,
             name: front["name"] || List.last(segs),
@@ -668,9 +665,17 @@ defmodule Druzhok.Panel do
     end
   end
 
+  # Every skill's front matter, read in one go: `[{segments, front}]`.
+  defp front_matters([], _dir), do: []
+
+  defp front_matters(skills, dir) do
+    texts = TenantFiles.read_texts(dir, for(segs <- skills, do: {skill_file(segs), 16 * 1024}))
+    for {segs, text} <- Enum.zip(skills, texts), do: {segs, front_matter(text)}
+  end
+
   # The leading `---` block's `name:` and `description:` lines; no YAML library.
-  defp front_matter(dir, segments) do
-    case TenantFiles.read_text(dir, segments, 16 * 1024) do
+  defp front_matter(read) do
+    case read do
       {:ok, %{text: text}} ->
         case String.split(text, ~r/\r?\n/) do
           ["---" | rest] ->

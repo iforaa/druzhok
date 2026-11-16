@@ -402,7 +402,9 @@ defmodule Druzhok.BotManagerLifecycleTest do
     test "wipes the data dir under the root and drops the row", %{name: name, data_root: root} do
       {:ok, _} = BotManager.create(name, %{model: "m", telegram_token: "1A"})
       dir = Path.join(root, name)
-      assert File.dir?(dir)
+      # The dir is made at the first start, not with the row.
+      refute File.exists?(dir)
+      File.mkdir_p!(Path.join(dir, "workspace"))
 
       assert :ok = BotManager.delete(name, wait: true)
 

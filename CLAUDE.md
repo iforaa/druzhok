@@ -75,7 +75,7 @@ docs/superpowers/specs|plans  design docs (see 2026-08-23-systemd-host-*)
 
 `Druzhok.Host` is the process backend: `Host.Systemd` in prod (shells out to `sudo druzhok-ctl`), `Host.Process` in dev/test (spawns `hermes gateway run` as a port; `HERMES_BIN` env or `config :druzhok, :hermes_bin`). Selected by `DRUZHOK_HOST=systemd`.
 
-Prod env (MIX_ENV, DATABASE_PATH, DRUZHOK_HOST, HEX/MIX homes, SECRET_KEY_BASE, PHX_HOST) lives only in `/etc/druzhok/druzhok.env`; `druzhok.service`, `ops/druzhok-run.sh` and `ops/smoke.sh` all source it. One-off prod `mix run` must go through `sudo ops/druzhok-run.sh '<expr>'` (file caps for 0700 tenant dirs).
+Prod env (MIX_ENV, DATABASE_PATH, DRUZHOK_HOST, HEX/MIX homes, SECRET_KEY_BASE, PHX_HOST) lives only in `/etc/druzhok/druzhok.env`; `druzhok.service`, `ops/druzhok-run.sh` and `ops/smoke.sh` all source it. One-off prod `mix run` must go through `sudo ops/druzhok-run.sh '<expr>'` (as user `druzhok`, with druzhok.env).
 
 ## Proxy endpoints (all require `Authorization: Bearer <tenant_key>`)
 
@@ -176,14 +176,17 @@ panel-ready bot (`Onboarding.panel_ready?`) the superbot drops 🎨/🗑 and ans
 `X-Druzhok-Edge` header (`DRUZHOK_EDGE_SECRET`, env only; bots reach :4000 directly), and the API checks Telegram's
 Ed25519 signature plus the bot-token HMAC and the owner (`Plugs.PanelAuth`). Owners edit the text pages (spec `docs/superpowers/specs/2026-10-31-panel-editable-pages-design.md`): `POST /app/api/files/:kind`
 (`soul`, `memory`, `user`) and `POST /app/api/skills[/:category]/:name` (own skills; `GET /app/api/skills` lists `skills` and `system`,
-and system ones stay read only), with init data under 1 hour old. `Druzhok.Panel.Editor` hands the input over in a 0400 file next to the
-tenant dirs and runs `priv/panel-save/save.py`, installed at `/usr/local/lib/druzhok/panel-save.py` (root's, `:panel_save_script`), **as the
-bot's uid** through `druzhok-ctl exec`, so a swapped directory reaches only what the bot could write; never save with `TenantFiles.write/4`.
+and system ones stay read only), with init data under 1 hour old. `Druzhok.Panel.Editor` sends the input on stdin
+to `priv/panel-save/save.py`, installed at `/usr/local/lib/druzhok/panel-save.py` (root's, `:panel_save_script`), run **as the
+bot's uid** through `druzhok-ctl exec`, so a swapped directory reaches only what the bot could write, and the save holds hermes's locks.
 The script holds hermes's locks, uses its checks and private names (`ops/smoke.sh` runs `--check`), compares `base_sha256` under the lock and
 keeps one generation in `<file>.panel-bak`. A save neither wakes nor restarts the bot; a running chat sees it after `/new` or compaction. Tasks
-and the site stay read only. Files are read through
-`Druzhok.TenantFiles` (no symlink below the tenant dir, verified descriptor); directory listings run as the bot's
-uid (`Druzhok.Panel.Lister`, `druzhok-ctl exec` + GNU find). `Druzhok.Cabinet` moves each button to the panel on
+and the site stay read only. Druzhok has no file capabilities: every read and write
+below a tenant dir goes through `Druzhok.TenantFiles`, which asks the root-owned helper `/usr/local/lib/druzhok/tenant-fs`
+(`priv/tenant-fs/tenant_fs.py`, through sudo; dev and tests run the script directly). The helper becomes the bot's user before it opens
+the dir and never follows a symlink below it; several files, or several bots, go in one call (`read_many`, `read_all`), and a helper
+that did not answer raises `TenantFiles.Error` rather than read as "no file". Never use `File.*` on a tenant path. Directory listings
+run as the bot's uid too (`Druzhok.Panel.Lister`, `druzhok-ctl exec` + GNU find). `Druzhok.Cabinet` moves each button to the panel on
 the next start, wake, owner message or `bind-cabinet`.
 
 The superbot is invite-only: `admissions` (`Druzhok.Admissions`) records who may create a bot,
@@ -202,6 +205,7 @@ mix test --cover        # enforces per-app thresholds set in each mix.exs; raise
 # the panel's save script, against a hermes venv (its Elixir end-to-end tests use the same variable):
 HERMES_PYTHON=$PWD/hermes-agent/.venv/bin/python python3 -m unittest discover -s apps/druzhok/test/panel_save
 python3 -m unittest discover -s apps/druzhok/test/publish_existing_sites
+python3 -m unittest discover -s apps/druzhok/test/tenant_fs   # what the tenant-fs helper refuses as root
 python3 -m unittest discover -s apps/druzhok/test/soffice_shim   # ops/soffice-shim; mix test runs one real conversion when soffice exists (:soffice)
 MIX_ENV=test mix ecto.migrate   # after pulling new migrations (test DB is data/druzhok_test.db)
 # run with a real local hermes venv for Host.Process:
@@ -212,9 +216,9 @@ HERMES_BIN=$PWD/hermes-agent/.venv/bin/hermes DATABASE_PATH=data/druzhok.db mix 
 
 ```bash
 # ~/druzhok on the box is an rsync target (symlink to /data/druzhok-app), not a git checkout.
-# druzhok.service runs as user `druzhok` (sudo only for druzhok-ctl and docs-convert): the tree is ubuntu's, so
-# compile here as ubuntu; the database is druzhok's and druzhok.env is root:druzhok 0640, so migrate with sudo.
-# (Its file capabilities still let druzhok write anywhere; they go when tenant file access runs as the bot.)
+# druzhok.service runs as user `druzhok` (sudo only for druzhok-ctl, tenant-fs and docs-convert) with no
+# capabilities: the tree is ubuntu's, so compile here as ubuntu; the database is druzhok's and druzhok.env is
+# root:druzhok 0640, so migrate with sudo. Files in tenant dirs are read and written as the bot (tenant-fs).
 ops/build-app.sh   # only when apps/druzhok_web/assets/app changed; the build output is committed
 rsync -az --delete --exclude=_build --exclude=deps --exclude=node_modules apps config ops mix.exs mix.lock .tool-versions ubuntu@94.247.135.159:~/druzhok/
 ssh ubuntu@94.247.135.159
@@ -223,6 +227,8 @@ cd ~/druzhok && MIX_ENV=prod mix compile
 sudo ops/druzhok-migrate               # as druzhok; DATABASE_PATH comes from druzhok.env
 sudo install -D -m 0644 -o root -g root apps/druzhok/priv/panel-save/save.py /usr/local/lib/druzhok/panel-save.py   # every deploy
 sudo install -m 0755 -o root -g root ops/docs-convert /usr/local/lib/druzhok/docs-convert                       # every deploy
+sudo install -m 0755 -o root -g root apps/druzhok/priv/tenant-fs/tenant_fs.py /usr/local/lib/druzhok/tenant-fs   # every deploy
+sudo install -m 0755 -o root -g root ops/druzhok-ctl /usr/local/sbin/druzhok-ctl                                # when it changed
 sudo install -m 0755 -o root -g root ops/soffice-shim /usr/local/bin/soffice && sudo ln -sfn soffice /usr/local/bin/libreoffice
 # once, before the first deploy with the document converter (bootstrap.sh does the same on a new box):
 #   sudo apt-get install -y --no-install-recommends libreoffice-core-nogui libreoffice-writer-nogui libreoffice-calc-nogui \
@@ -230,6 +236,12 @@ sudo install -m 0755 -o root -g root ops/soffice-shim /usr/local/bin/soffice && 
 #   sudo useradd --system --no-create-home --home-dir /nonexistent --shell /usr/sbin/nologin cleo-docs
 #   sudo install -d -m 0711 -o root -g root /var/lib/cleo-docs && sudo install -d -m 0771 -o root -g druzhok /var/lib/cleo-docs/jobs
 #   sudo install -m 0440 ops/sudoers-druzhok /etc/sudoers.d/druzhok && sudo visudo -cf /etc/sudoers.d/druzhok
+# once, BEFORE the restart below, on a box whose druzhok.service still has AmbientCapabilities (cleo-demo lost them
+# 2026-11-16). The new code cannot read a tenant file until sudoers allows tenant-fs:
+#   sudo install -m 0440 ops/sudoers-druzhok /etc/sudoers.d/druzhok && sudo visudo -cf /etc/sudoers.d/druzhok
+#   sudo install -m 0644 ops/druzhok.service /etc/systemd/system/druzhok.service && sudo systemctl daemon-reload
+# and after the restart:
+#   sudo rm -rf /data/tenants/.druzhok-staging && sudo find /data/tenants -maxdepth 1 -name '.panel-save-*' -delete
 sudo systemctl restart druzhok
 # once, on a box that still runs druzhok as ubuntu (cleo-demo was switched 2026-11-16). Until this is done the new
 # ops/druzhok, druzhok-run.sh and druzhok-migrate fail there with "setpriv: invalid user":
@@ -239,7 +251,7 @@ sudo systemctl restart druzhok
 #   cd /data/druzhok-app && MIX_ENV=prod mix compile           # as ubuntu, env as above
 #   sudo install -m 0440 ops/sudoers-druzhok /etc/sudoers.d/druzhok && sudo visudo -cf /etc/sudoers.d/druzhok
 #   sudo systemctl stop druzhok
-#   sudo chown -R druzhok:druzhok /data/druzhok && sudo chown druzhok:druzhok /data/tenants/.druzhok-staging
+#   sudo chown -R druzhok:druzhok /data/druzhok
 #   sudo chown root:druzhok /etc/druzhok/druzhok.env && sudo chmod 0640 /etc/druzhok/druzhok.env
 #   sudo chgrp druzhok /var/lib/cleo-docs/jobs
 #   sudo install -m 0644 ops/druzhok.service /etc/systemd/system/druzhok.service && sudo systemctl daemon-reload

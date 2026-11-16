@@ -11,15 +11,35 @@ defmodule Druzhok.Host.Systemd do
   @default_ctl ["sudo", "-n", "/usr/local/sbin/druzhok-ctl"]
   @cgroup_dir "/sys/fs/cgroup/system.slice/system-hermes.slice"
 
+  # `create` is idempotent: ensures user + dirs + nft membership and
+  # (re)writes the env file, so it doubles as update-env on restarts.
   @impl true
-  def start(name, env, _data_root) do
-    # `create` is idempotent: ensures user + dirs + nft membership and
-    # (re)writes the env file, so it doubles as update-env on restarts.
+  def prepare(name, env, _data_root) do
     with :ok <- check_name(name) do
-      with {_, 0} <- ctl(["create", name], input: env_file(env)),
-           {_, 0} <- ctl(["start", name]) do
-        :ok
-      else
+      case ctl(["create", name], input: env_file(env)) do
+        {_, 0} -> :ok
+        {out, code} -> {:error, {:druzhok_ctl, code, String.trim(out)}}
+      end
+    end
+  end
+
+  # The tenant dir is in /data/tenants, which is root's: only the helper can
+  # remove it, and it refuses while the bot's user is still there.
+  @impl true
+  def wipe(name, _data_root) do
+    with :ok <- check_name(name) do
+      case ctl(["purge", name]) do
+        {_, 0} -> :ok
+        {out, code} -> {:error, {:druzhok_ctl, code, String.trim(out)}}
+      end
+    end
+  end
+
+  @impl true
+  def start(name, _env, _data_root) do
+    with :ok <- check_name(name) do
+      case ctl(["start", name]) do
+        {_, 0} -> :ok
         {out, code} -> {:error, {:druzhok_ctl, code, String.trim(out)}}
       end
     end
@@ -33,8 +53,12 @@ defmodule Druzhok.Host.Systemd do
 
   @impl true
   def destroy(name) do
-    with :ok <- check_name(name), do: ctl(["destroy", name])
-    :ok
+    with :ok <- check_name(name) do
+      case ctl(["destroy", name]) do
+        {_, 0} -> :ok
+        {out, code} -> {:error, {:druzhok_ctl, code, String.trim(out)}}
+      end
+    end
   end
 
   @impl true
@@ -109,10 +133,11 @@ defmodule Druzhok.Host.Systemd do
     end
   end
 
+  # `input:` becomes the command's stdin (`druzhok-ctl exec` passes it on).
   @impl true
-  def exec(name, args) do
+  def exec(name, args, opts \\ []) do
     case check_name(name) do
-      :ok -> ctl(["exec", name | args])
+      :ok -> ctl(["exec", name | args], opts)
       {:error, _} -> {"invalid bot name", 1}
     end
   end
@@ -191,18 +216,7 @@ defmodule Druzhok.Host.Systemd do
         System.cmd(bin, prefix ++ args, stderr_to_stdout: true)
 
       input ->
-        # System.cmd has no stdin; hand the env file over via a 0600 temp file.
-        tmp = Path.join(System.tmp_dir!(), "druzhok-env-#{System.unique_integer([:positive])}")
-        File.write!(tmp, input)
-        File.chmod!(tmp, 0o600)
-
-        try do
-          System.cmd("sh", ["-c", ~s(exec "$0" "$@" < "#{tmp}"), bin | prefix ++ args],
-            stderr_to_stdout: true
-          )
-        after
-          File.rm(tmp)
-        end
+        Druzhok.Cmd.run(bin, prefix ++ args, input, stderr_to_stdout: true)
     end
   end
 end

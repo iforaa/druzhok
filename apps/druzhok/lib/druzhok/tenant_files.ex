@@ -1,162 +1,115 @@
 defmodule Druzhok.TenantFiles do
   @moduledoc """
-  Reading a file a bot owns, safely, for the bot panel.
+  Druzhok's file work inside a bot's tenant dir: reading for the panel and the
+  lifecycle checks, writing druzhok's own files there (config.yaml, SOUL.md,
+  the seeds).
 
-  The bot owns everything below its tenant dir and druzhok reads with
-  CAP_DAC_READ_SEARCH: a symlink followed here hands out any file on the host.
-  So no component below the tenant dir may be a symlink, and the bytes come
-  from a descriptor we verified rather than from a second lookup by name,
-  which the bot could swap in between.
+  The bot owns everything below its tenant dir, 0700, and druzhok has no file
+  capabilities, so none of this is done in this process. Every call goes to
+  the `tenant-fs` helper (`priv/tenant-fs/tenant_fs.py`, installed root-owned
+  and run through sudo in prod, kept open by `TenantFiles.Server`), which becomes the bot's own user before it
+  touches the dir and never follows a symlink below it. A bot that plants a
+  link, or swaps a directory mid-call, reaches nothing it could not reach
+  itself; another tenant's files and the host's are out of reach by uid.
 
-  The walk alone cannot stop a bot that swaps an *intermediate* directory for
-  a symlink between druzhok's lookups (each lookup re-resolves the whole
-  path), so the opened file must also belong to the tenant: its owner is the
-  tenant dir's owner, the bot's own uid. Another tenant's files have another
-  owner, host files belong to root, so a swap reaches nothing the bot could
-  not read itself.
+  Dev and test run the same script as the caller, on the dir itself.
 
-  Directory *listings* are not done here: an in-process walk re-resolves the
-  path at every step, so `Druzhok.Panel.Lister` lists as the bot's own user.
-
-  Writing (`write/4`, druzhok's own files in the tenant dir: config.yaml,
-  SOUL.md) has the same problem the other way round: druzhok writes with
-  CAP_DAC_OVERRIDE, so a write that follows a symlink lands anywhere on the
-  host. Writes never open, chmod or chown anything by name inside the bot's
-  dir: the file is prepared in a staging dir next to the tenant dirs, which no
-  bot can write, and then renamed over the target (rename(2) replaces a link
-  instead of following it) or, for a seed, hard-linked into place.
-
-  `write/4` checks the directories by path and renames by path, so a bot that
-  swaps a directory between the two redirects the write. It runs in start sync;
-  a panel save, which an awake bot can race, runs as the bot's uid instead
-  (`Druzhok.Panel.Editor`), helped by `hand_over/3`.
+  A call that could not ask the helper at all (sudo refused, the script is
+  missing, it died) raises `Druzhok.TenantFiles.Error`: "the file is not
+  there" must never be confused with "nobody looked", because a start seeds
+  what is missing. Directory *listings* for the panel are `Druzhok.Panel.Lister`.
   """
+
+  require Logger
+
+  defmodule Error do
+    defexception [:message]
+  end
+
+  @prod_cmd ["sudo", "-n", "/usr/local/lib/druzhok/tenant-fs"]
 
   @doc """
-  Opens `segments` below `tenant_dir`. `index: true` serves a directory as its
-  `index.html`. `{:ok, fd, path, %File.Stat{}}` or `:not_found`; the
-  caller closes `fd`. The stat is the open descriptor's. `uid:` overrides the
-  owner the file must have (default: the tenant dir's owner).
+  Reads at most `limit` bytes of the regular file at `segments`:
+  `{:ok, %{bytes: binary, size: n, modified_at: DateTime, truncated: bool}}`
+  or `:not_found` (nothing there, not a regular file, a link on the way).
+  `index: true` serves a directory as its `index.html`; `missing: true` tells
+  nothing at that name, `:missing`, from a file that cannot be read.
   """
-  def open(tenant_dir, segments, opts \\ []) do
-    index? = Keyword.get(opts, :index, false)
+  def read(tenant_dir, segments, limit, opts \\ []) do
+    [result] = read_many(tenant_dir, [{segments, limit}], opts)
+    result
+  end
 
-    with {:ok, uid} <- owner(tenant_dir, opts),
-         {:ok, file, _stat} <- walk(tenant_dir, segments, index?),
-         {:ok, fd} <- :file.open(file, [:read, :binary, :raw]) do
-      # Re-walk now that the file is open: the descriptor is only trusted if
-      # the symlink-free path still leads to the very inode it refers to.
-      with {:ok, info} <- :file.read_file_info(fd, time: :posix),
-           opened = File.Stat.from_record(info),
-           {:ok, ^file, %File.Stat{inode: inode, major_device: dev}} <-
-             walk(tenant_dir, segments, index?),
-           true <-
-             opened.type == :regular and opened.inode == inode and opened.major_device == dev,
-           true <- opened.uid == uid do
-        {:ok, fd, file, opened}
-      else
-        _ ->
-          :file.close(fd)
-          :not_found
-      end
+  @doc "`read/4` for several `{segments, limit}` of one bot in one helper call."
+  def read_many(tenant_dir, files, opts \\ []) do
+    case read_all([{tenant_dir, files}], opts) do
+      [results] when is_list(results) -> results
+      [:error] -> raise Error, "tenant-fs could not do the job for #{tenant_dir}"
+    end
+  end
+
+  @doc """
+  `read_many/3` across bots, one helper call for all of them:
+  `[{tenant_dir, [{segments, limit}]}]` in, a list of result lists out. A bot
+  whose job the helper could not do has `:error` in place of its list, so one
+  bot's trouble is not every bot's; no answer at all still raises.
+  """
+  def read_all(jobs, opts \\ []) do
+    index? = Keyword.get(opts, :index, false)
+    # No tenant dir is nothing there, as it is for a path below one.
+    absent = if Keyword.get(opts, :missing, false), do: :missing, else: :not_found
+
+    jobs
+    |> Enum.map(fn {dir, files} ->
+      {dir,
+       for(
+         {segments, limit} <- files,
+         do: %{op: "read", path: segments, limit: limit, index: index?}
+       )}
+    end)
+    |> run_jobs()
+    |> Enum.zip(jobs)
+    |> Enum.map(fn
+      {{:ok, results}, _job} -> Enum.map(results, &read_result(&1, absent))
+      {{:error, :no_tenant_dir}, {_dir, files}} -> Enum.map(files, fn _ -> absent end)
+      {{:error, {:refused, _}}, _job} -> :error
+    end)
+  end
+
+  defp read_result(%{"ok" => true, "data" => data, "size" => size, "mtime" => mtime} = r, _absent)
+       when is_binary(data) and is_integer(size) and is_integer(mtime) do
+    with {:ok, bytes} <- Base.decode64(data),
+         {:ok, modified_at} <- DateTime.from_unix(mtime) do
+      {:ok,
+       %{bytes: bytes, size: size, modified_at: modified_at, truncated: r["truncated"] == true}}
     else
       _ -> :not_found
     end
   end
 
-  defp owner(tenant_dir, opts) do
-    case Keyword.fetch(opts, :uid) do
-      {:ok, uid} ->
-        {:ok, uid}
-
-      :error ->
-        case File.lstat(tenant_dir) do
-          {:ok, %File.Stat{type: :directory, uid: uid}} -> {:ok, uid}
-          _ -> :not_found
-        end
-    end
-  end
-
-  @doc """
-  Puts `content` where only the bot can read it, for a command run as the bot:
-  `<tenant parent>/<prefix><random>`, owned by the tenant dir's owner, mode 0400.
-  Prepared in the staging dir and renamed into place; the parent is root's, so
-  the bot cannot swap the path, and other bots cannot read the file. `{:ok, path}`
-  or `{:error, reason}`; the caller removes it.
-  """
-  def hand_over(tenant_dir, content, prefix) do
-    with {:ok, uid} <- owner(tenant_dir, []),
-         {:ok, staging} <- staging(tenant_dir),
-         tmp = Path.join(staging, staged_name("h")),
-         {:ok, fd} <- :file.open(tmp, [:write, :exclusive, :binary, :raw]) do
-      path = Path.join(Path.dirname(staging), staged_name(prefix))
-
-      result =
-        with :ok <- write_close(fd, content),
-             :ok <- :file.change_mode(tmp, 0o400),
-             :ok <- :file.change_owner(tmp, uid),
-             :ok <- :file.rename(tmp, path) do
-          {:ok, path}
-        end
-
-      _ = :file.delete(tmp)
-      result
-    else
-      :not_found -> {:error, :no_tenant_dir}
-      {:error, _} = error -> error
-    end
-  end
-
-  @doc """
-  Reads at most `limit` bytes of a file through `open/3`:
-  `{:ok, %{bytes: binary, size: n, modified_at: DateTime, truncated: bool}}`
-  or `:not_found`. Reads `limit + 4` so a cut can be told from an exact fit.
-  """
-  def read(tenant_dir, segments, limit, opts \\ []) do
-    with {:ok, fd, _file, stat} <- open(tenant_dir, segments, opts) do
-      try do
-        bytes =
-          case :file.read(fd, limit + 4) do
-            {:ok, data} -> data
-            :eof -> ""
-            {:error, _} -> nil
-          end
-
-        if is_nil(bytes) do
-          :not_found
-        else
-          truncated = byte_size(bytes) > limit
-          bytes = if truncated, do: binary_part(bytes, 0, limit), else: bytes
-
-          {:ok,
-           %{
-             bytes: bytes,
-             size: stat.size,
-             modified_at: DateTime.from_unix!(stat.mtime),
-             truncated: truncated
-           }}
-        end
-      after
-        :file.close(fd)
-      end
-    end
-  end
+  defp read_result(%{"ok" => false, "error" => "enoent"}, absent), do: absent
+  defp read_result(_, _absent), do: :not_found
 
   @doc """
   `read/3` for text: a cut is trimmed back to a whole UTF-8 character, then
   the text must be valid UTF-8. `{:ok, %{text: …, sha256: …, …}}`, `:not_found`
   or `:not_text`. `sha256` is the hex hash of the whole file, nil after a cut.
   """
-  def read_text(tenant_dir, segments, limit, opts \\ []) do
-    with {:ok, %{bytes: bytes, truncated: truncated} = r} <-
-           read(tenant_dir, segments, limit, opts) do
-      text = if truncated, do: trim_utf8(bytes), else: bytes
+  def read_text(tenant_dir, segments, limit, opts \\ []),
+    do: tenant_dir |> read(segments, limit, opts) |> as_text()
 
-      if String.valid?(text),
-        do: {:ok, r |> Map.delete(:bytes) |> Map.merge(%{text: text, sha256: sha256(r)})},
-        else: :not_text
-    end
+  @doc "`read_text/4` for several `{segments, limit}` of one bot in one helper call."
+  def read_texts(tenant_dir, files), do: tenant_dir |> read_many(files) |> Enum.map(&as_text/1)
+
+  defp as_text({:ok, %{bytes: bytes, truncated: truncated} = r}) do
+    text = if truncated, do: trim_utf8(bytes), else: bytes
+
+    if String.valid?(text),
+      do: {:ok, r |> Map.delete(:bytes) |> Map.merge(%{text: text, sha256: sha256(r)})},
+      else: :not_text
   end
+
+  defp as_text(other), do: other
 
   defp sha256(%{truncated: true}), do: nil
   defp sha256(%{bytes: bytes}), do: :crypto.hash(:sha256, bytes) |> Base.encode16(case: :lower)
@@ -190,192 +143,99 @@ defmodule Druzhok.TenantFiles do
   end
 
   @doc """
+  What is at `segments`, a link never followed: `{:ok, %{type: :regular |
+  :directory | :symlink | :other, size: n, mtime: unix}}` or `{:error, reason}`
+  (`:enoent` when nothing is there, `:not_a_directory` for a link or a file on
+  the way).
+  """
+  def lstat(tenant_dir, segments) do
+    case op(tenant_dir, %{op: "stat", path: segments}) do
+      {:ok, %{"type" => type, "size" => size, "mtime" => mtime}}
+      when type in ~w(regular directory symlink other) and is_integer(size) and is_integer(mtime) ->
+        {:ok, %{type: String.to_atom(type), size: size, mtime: mtime}}
+
+      {:ok, _} ->
+        {:error, :bad_answer}
+
+      # No tenant dir is nothing there, as it is for a path below one.
+      {:error, :no_tenant_dir} ->
+        {:error, :enoent}
+
+      {:error, _} = error ->
+        error
+    end
+  end
+
+  @doc "The names in the real directory at `segments`: `{:ok, [name]}` or `{:error, reason}`."
+  def ls(tenant_dir, segments) do
+    case op(tenant_dir, %{op: "ls", path: segments}) do
+      {:ok, %{"names" => names}} when is_list(names) -> {:ok, Enum.filter(names, &is_binary/1)}
+      {:ok, _} -> {:error, :bad_answer}
+      {:error, _} = error -> error
+    end
+  end
+
+  @doc """
   Writes `content` to `segments` below `tenant_dir` without following a
   symlink. Missing directories are created; any existing component that is
   not a real directory, or a target that is not a regular file, is refused.
-  The file is owned by the tenant dir's owner (`uid:` overrides) and keeps an
-  existing file's mode (`mode:` for a new one, default 0644).
+  The file is the bot's and keeps an existing file's mode (`mode:` for a new
+  one, default 0644).
 
-  `create: true` writes only when nothing is there yet (a hard link of the
-  temp file, which fails rather than replace). Returns `:ok`, `{:ok, :exists}`
-  (create, a regular file is already there) or `{:error, reason}`.
+  `create: true` writes only when nothing is there yet. Returns `:ok`,
+  `{:ok, :exists}` (create, a regular file is already there) or
+  `{:error, reason}`.
   """
   def write(tenant_dir, segments, content, opts \\ []) do
-    {dirs, [name]} = Enum.split(segments, -1)
-    create? = Keyword.get(opts, :create, false)
+    request = %{
+      op: "write",
+      path: segments,
+      data: Base.encode64(IO.iodata_to_binary(content)),
+      create: Keyword.get(opts, :create, false),
+      mode: Keyword.get(opts, :mode)
+    }
 
-    with {:ok, uid} <- owner(tenant_dir, opts),
-         {:ok, dir} <- ensure_dirs(tenant_dir, dirs, uid),
-         target = Path.join(dir, name),
-         {:ok, mode} <- target_mode(target) do
-      if create? and mode != :new do
-        {:ok, :exists}
-      else
-        mode = if mode == :new, do: Keyword.get(opts, :mode, 0o644), else: mode
-        put_file(tenant_dir, dirs, target, content, uid, mode, create?)
-      end
-    else
-      :not_found -> {:error, :no_tenant_dir}
+    case op(tenant_dir, request) do
+      {:ok, %{"exists" => true}} -> {:ok, :exists}
+      {:ok, _} -> :ok
       {:error, _} = error -> error
     end
   end
 
   @doc """
   Makes sure `segments` below `tenant_dir` are real directories, creating
-  missing ones owned by the tenant (as `write/4` does). `{:ok, path}` or
-  `{:error, reason}`.
+  missing ones as the bot. `{:ok, path}` or `{:error, reason}`.
   """
-  def ensure_dir(tenant_dir, segments, opts \\ []) do
-    with {:ok, uid} <- owner(tenant_dir, opts) do
-      ensure_dirs(tenant_dir, segments, uid)
-    else
-      :not_found -> {:error, :no_tenant_dir}
-    end
-  end
-
-  defp ensure_dirs(tenant_dir, dirs, uid) do
-    Enum.reduce_while(dirs, {:ok, tenant_dir}, fn seg, {:ok, dir} ->
-      path = Path.join(dir, seg)
-
-      case File.lstat(path) do
-        {:ok, %File.Stat{type: :directory}} ->
-          {:cont, {:ok, path}}
-
-        {:error, :enoent} ->
-          case make_dir(tenant_dir, path, uid) do
-            :ok -> {:cont, {:ok, path}}
-            {:error, reason} -> {:halt, {:error, reason}}
-          end
-
-        _ ->
-          {:halt, {:error, :not_a_directory}}
-      end
-    end)
-  end
-
-  # A new directory is made and chowned in the staging dir, then renamed into
-  # place: a chown by path inside the bot's dir would follow a link the bot
-  # swapped in. rename(2) of a directory fails on an existing link or file.
-  defp make_dir(tenant_dir, path, uid) do
-    with {:ok, staging} <- staging(tenant_dir),
-         tmp = Path.join(staging, staged_name("d")),
-         # Only a name this call created is cleaned up below.
-         :ok <- File.mkdir(tmp) do
-      result =
-        with :ok <- :file.change_mode(tmp, 0o700),
-             :ok <- :file.change_owner(tmp, uid) do
-          :file.rename(tmp, path)
-        end
-
-      _ = :file.del_dir(tmp)
-      result
-    end
-  end
-
-  defp target_mode(target) do
-    case File.lstat(target) do
-      {:ok, %File.Stat{type: :regular, mode: mode}} -> {:ok, Bitwise.band(mode, 0o7777)}
-      {:ok, _} -> {:error, :not_regular}
-      {:error, :enoent} -> {:ok, :new}
-      {:error, reason} -> {:error, reason}
-    end
-  end
-
-  # The temp file is written, chmodded and chowned in the staging dir, which
-  # the bot cannot write: chmod(2)/chown(2) by path inside the bot's own dir
-  # would follow a symlink the bot swapped in for the temp name and hand any
-  # host file to it (druzhok has CAP_CHOWN/CAP_FOWNER). Only then is it moved
-  # into the bot's dir, by rename(2) (replaces, never follows the target) or,
-  # for a seed, link(2) (fails if anything is there).
-  defp put_file(tenant_dir, dirs, target, content, uid, mode, create?) do
-    with {:ok, staging} <- staging(tenant_dir),
-         tmp = Path.join(staging, staged_name("f")),
-         # Only a name this call created is cleaned up below.
-         {:ok, fd} <- :file.open(tmp, [:write, :exclusive, :binary, :raw]) do
-      result =
-        with :ok <- write_close(fd, content),
-             :ok <- :file.change_mode(tmp, mode),
-             :ok <- :file.change_owner(tmp, uid),
-             # The directories may have been swapped since ensure_dirs/3.
-             true <- real_dir?(tenant_dir, dirs) || {:error, :not_a_directory} do
-          if create? do
-            case :file.make_link(tmp, target) do
-              :ok -> :ok
-              {:error, :eexist} -> {:ok, :exists}
-              {:error, reason} -> {:error, reason}
-            end
-          else
-            :file.rename(tmp, target)
-          end
-        end
-
-      # After a rename the temp name is gone; after a link (or a failure) it is not.
-      _ = :file.delete(tmp)
-      result
-    end
-  end
-
-  # Random, so names stay unique across BEAMs sharing the staging dir
-  # (druzhok.service and an ops/druzhok-run.sh one-off); an exclusive create
-  # still refuses a collision.
-  defp staged_name(prefix),
-    do: prefix <> Base.encode16(:crypto.strong_rand_bytes(12), case: :lower)
-
-  # `.druzhok-staging` next to the tenant dirs: the same filesystem (rename and
-  # link need it) and a parent no bot can write (/data/tenants is root's), so
-  # nothing in it can be swapped. Created on first use, kept at 0700.
-  defp staging(tenant_dir) do
-    dir = Path.join(Path.dirname(Path.expand(tenant_dir)), ".druzhok-staging")
-    _ = File.mkdir(dir)
-
-    case File.lstat(dir) do
-      {:ok, %File.Stat{type: :directory}} -> with :ok <- File.chmod(dir, 0o700), do: {:ok, dir}
-      _ -> {:error, :no_staging_dir}
-    end
-  end
-
-  defp write_close(fd, content) do
-    result = :file.write(fd, content)
-    :ok = :file.close(fd)
-    result
+  def ensure_dir(tenant_dir, segments) do
+    with {:ok, _} <- op(tenant_dir, %{op: "mkdir", path: segments}),
+         do: {:ok, Path.join([tenant_dir | segments])}
   end
 
   @doc """
-  Removes the regular file at `segments` below `tenant_dir` when it belongs
-  to the tenant (`uid:` overrides). unlink(2) removes a link rather than
-  follow it, and the directories are checked to be real first. `:ok`,
-  `:not_found` (nothing there) or `{:error, reason}` (not a regular file of
-  the tenant's, a directory swapped for a link).
+  Removes the regular file at `segments`. A link is never followed: one at the
+  target is refused, one on the way too. `:ok`, `:not_found` (nothing there) or
+  `{:error, reason}`.
   """
-  def delete(tenant_dir, segments, opts \\ []) do
-    {dirs, [_name]} = Enum.split(segments, -1)
-    target = Path.join([tenant_dir | segments])
+  def delete(tenant_dir, segments) do
+    case op(tenant_dir, %{op: "delete", path: segments}) do
+      {:ok, _} -> :ok
+      {:error, :enoent} -> :not_found
+      {:error, _} = error -> error
+    end
+  end
 
-    with {:ok, uid} <- owner(tenant_dir, opts),
-         true <- real_dir?(tenant_dir, dirs) || {:error, :not_a_directory} do
-      case File.lstat(target) do
-        {:ok, %File.Stat{type: :regular, uid: ^uid}} -> :file.delete(target)
-        {:ok, _} -> {:error, :not_regular}
-        {:error, :enoent} -> :not_found
-        {:error, reason} -> {:error, reason}
-      end
-    else
-      :not_found -> {:error, :no_tenant_dir}
+  @doc "Removes the tree at `segments` (missing is fine); links are unlinked, never followed."
+  def rm_tree(tenant_dir, segments) do
+    case op(tenant_dir, %{op: "rmtree", path: segments}) do
+      {:ok, _} -> :ok
+      {:error, :no_tenant_dir} -> :ok
       {:error, _} = error -> error
     end
   end
 
   @doc "Whether every component of `segments` below `tenant_dir` is a real directory."
-  def real_dir?(tenant_dir, segments) do
-    Enum.reduce_while(segments, tenant_dir, fn seg, dir ->
-      path = Path.join(dir, seg)
-
-      case File.lstat(path) do
-        {:ok, %File.Stat{type: :directory}} -> {:cont, path}
-        _ -> {:halt, false}
-      end
-    end) != false
-  end
+  def real_dir?(tenant_dir, segments),
+    do: match?({:ok, _}, op(tenant_dir, %{op: "is_dir", path: segments}))
 
   @doc """
   Whether request-supplied path segments are acceptable: no empty, `.`, `..`,
@@ -390,34 +250,128 @@ defmodule Druzhok.TenantFiles do
     end)
   end
 
-  # Descend from `dir` one component at a time with lstat. Every intermediate
-  # must be a real directory and the target a real regular file; with
-  # `index?`, a directory target resolves to its index.html.
-  defp walk(dir, [], true), do: walk_leaf(Path.join(dir, "index.html"))
-  defp walk(_dir, [], false), do: :not_found
+  @doc """
+  At boot: says so loudly when the installed helper is not this release's
+  (`Druzhok.Panel.Editor.check_script/0` does the same for the save script).
+  """
+  def check_script do
+    with ["sudo", "-n", installed] <- command(),
+         ours = Application.app_dir(:druzhok, "priv/tenant-fs/tenant_fs.py"),
+         false <- File.read(installed) == File.read(ours) do
+      Logger.error(
+        "[tenant-fs] #{installed} is missing or differs from #{ours}: install it (CLAUDE.md, deploy recipe)"
+      )
 
-  defp walk(dir, [last], index?) do
-    path = Path.join(dir, last)
-
-    case File.lstat(path) do
-      {:ok, %File.Stat{type: :directory}} when index? -> walk(path, [], true)
-      _ -> walk_leaf(path)
+      :stale
+    else
+      _ -> :ok
     end
   end
 
-  defp walk(dir, [next | rest], index?) do
-    path = Path.join(dir, next)
+  # --- the helper -------------------------------------------------------------
 
-    case File.lstat(path) do
-      {:ok, %File.Stat{type: :directory}} -> walk(path, rest, index?)
-      _ -> :not_found
+  defp op(tenant_dir, request) do
+    case run(tenant_dir, [request]) do
+      {:ok, [%{"ok" => true} = answer]} -> {:ok, answer}
+      {:ok, [%{"error" => reason}]} -> {:error, reason(reason)}
+      {:error, _} = error -> error
     end
   end
 
-  defp walk_leaf(path) do
-    case File.lstat(path) do
-      {:ok, %File.Stat{type: :regular} = stat} -> {:ok, path, stat}
-      _ -> :not_found
+  defp run(tenant_dir, ops) do
+    case run_jobs([{tenant_dir, ops}]) do
+      [{:error, {:refused, why}}] -> raise Error, "tenant-fs refused the job: #{why}"
+      [result] -> result
     end
   end
+
+  # `[{tenant_dir, ops}]` -> `[{:ok, results} | {:error, :no_tenant_dir} |
+  # {:error, {:refused, text}}]`, in order. Refused: the helper could not do
+  # that job (it timed out, the dir cannot be opened), which is never "no file".
+  defp run_jobs([]), do: []
+
+  defp run_jobs(jobs) do
+    prod? = Application.get_env(:druzhok, :host) == Druzhok.Host.Systemd
+
+    request = %{
+      jobs:
+        for {dir, ops} <- jobs do
+          # The helper takes the name and finds the dir itself, as root; a dir
+          # that is not a bot's tenant dir gets a name no bot can have.
+          if prod?, do: %{name: bot_name(dir), ops: ops}, else: %{dir: Path.expand(dir), ops: ops}
+        end
+    }
+
+    with {:ok, out} <- ask(Jason.encode!(request)),
+         {:ok, %{"jobs" => answers}} when length(answers) == length(jobs) <- Jason.decode(out) do
+      for {answer, {_dir, ops}} <- Enum.zip(answers, jobs), do: job_result(answer, length(ops))
+    else
+      other ->
+        raise Error, "tenant-fs did not answer: #{inspect(other, limit: 5, printable_limit: 200)}"
+    end
+  end
+
+  # The helper kept open answers first (`TenantFiles.Server`); when it cannot,
+  # one is run for this request alone.
+  defp ask(request) do
+    [bin | args] = cmd = command()
+
+    case Druzhok.TenantFiles.Server.request(cmd, request) do
+      {:ok, out} ->
+        {:ok, out}
+
+      :error ->
+        case Druzhok.Cmd.run(bin, args, request) do
+          {out, 0} -> {:ok, out}
+          other -> other
+        end
+    end
+  end
+
+  defp job_result(%{"ok" => true, "results" => results}, n)
+       when is_list(results) and length(results) == n do
+    if Enum.all?(results, &is_map/1),
+      do: {:ok, results},
+      else: {:error, {:refused, "an answer that is not one"}}
+  end
+
+  defp job_result(%{"ok" => false, "error" => error}, _n)
+       when error in ["no_tenant_dir", "no_bot"],
+       do: {:error, :no_tenant_dir}
+
+  defp job_result(other, _n),
+    do: {:error, {:refused, inspect(other, limit: 5, printable_limit: 200)}}
+
+  defp bot_name(dir) do
+    name = Path.basename(dir)
+
+    if Path.dirname(Path.expand(dir)) == Druzhok.BotManager.data_root_base() and
+         Druzhok.Host.valid_name?(name),
+       do: name,
+       else: ""
+  end
+
+  defp command do
+    case Application.get_env(:druzhok, :tenant_fs) do
+      [_ | _] = cmd ->
+        cmd
+
+      nil ->
+        if Application.get_env(:druzhok, :host) == Druzhok.Host.Systemd do
+          @prod_cmd
+        else
+          [python(), "-I", Application.app_dir(:druzhok, "priv/tenant-fs/tenant_fs.py")]
+        end
+    end
+  end
+
+  defp python, do: System.find_executable("python3") || "/usr/bin/python3"
+
+  @reasons ~w(not_a_directory not_regular no_tenant_dir enoent eacces eperm enospc edquot
+              eexist enotempty eisdir enametoolong erofs eio bad_path bad_data bad_mode
+              bad_limit bad_op not_found)
+
+  # The helper's word for a refusal, as an atom when it is one we know.
+  defp reason(reason) when reason in @reasons, do: String.to_atom(reason)
+  defp reason(_), do: :failed
 end

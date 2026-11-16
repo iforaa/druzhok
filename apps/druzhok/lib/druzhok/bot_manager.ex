@@ -79,8 +79,8 @@ defmodule Druzhok.BotManager do
     if blank?(opts[:telegram_token]) do
       {:error, "telegram token required"}
     else
+      # Only the path: the dir is made at the first start (`prepare_start/1`).
       workspace = Path.join([data_root_base(), name, "workspace"])
-      File.mkdir_p!(workspace)
 
       case insert(name, opts, workspace) do
         {:ok, instance} ->
@@ -254,6 +254,13 @@ defmodule Druzhok.BotManager do
     env = Hermes.base_env(instance) |> Map.merge(Hermes.env_vars(instance))
     data_root = Hermes.data_root(instance)
 
+    # The bot's user and its dir come first: the files below are written as
+    # that user.
+    case Druzhok.Host.prepare(instance.name, env, data_root) do
+      :ok -> :ok
+      {:error, reason} -> raise "cannot prepare #{instance.name}: #{inspect(reason)}"
+    end
+
     write_workspace_files(data_root, Hermes.workspace_files(instance))
 
     # Hermes runs in the workspace (terminal.cwd); a tenant can leave a file
@@ -332,10 +339,9 @@ defmodule Druzhok.BotManager do
   # suspend, simply runs it again. A suspend that fails keeps the row, so the
   # live account stays visible and the delete is retried.
   def destroy_instance(%Instance{} = instance) do
-    Druzhok.Host.destroy(instance.name)
-    wipe_data_dir(instance)
-
-    with :ok <- delete_sites(instance),
+    with :ok <- destroy_host(instance),
+         :ok <- wipe_data_dir(instance),
+         :ok <- delete_sites(instance),
          :ok <- suspend_ruoc(instance) do
       Repo.delete(instance, stale_error_field: :id)
       :ok
@@ -397,21 +403,35 @@ defmodule Druzhok.BotManager do
 
   defp suspend_ruoc(_), do: :ok
 
+  # A bot whose user or data stays behind is not deleted: the row is kept and
+  # the delete tried again, or a later bot of the same name would start with
+  # this one's memory.
+  defp destroy_host(instance) do
+    case Druzhok.Host.destroy(instance.name) do
+      :ok -> :ok
+      {:error, reason} -> {:error, {:host_destroy, reason}}
+    end
+  end
+
   defp wipe_data_dir(instance) do
     data_root = Hermes.data_root(instance)
 
     if safe_to_wipe?(data_root) do
-      case File.rm_rf(data_root) do
-        {:ok, _} ->
+      case Druzhok.Host.wipe(instance.name, data_root) do
+        :ok ->
           Logger.info("Wiped data dir for #{instance.name}: #{data_root}")
+          :ok
 
-        {:error, reason, file} ->
-          Logger.error("Failed to wipe #{data_root} (#{file}): #{inspect(reason)}")
+        {:error, reason} ->
+          Logger.error("Failed to wipe #{data_root}: #{inspect(reason)}")
+          {:error, {:wipe, reason}}
       end
     else
       Logger.warning(
         "Refusing to wipe unsafe data dir for #{instance.name}: #{inspect(data_root)}"
       )
+
+      :ok
     end
   end
 
@@ -449,12 +469,9 @@ defmodule Druzhok.BotManager do
   def exec(name, args) when is_list(args), do: Druzhok.Host.exec(name, args)
 
   # Through TenantFiles: the bot owns its data root and could leave a symlink
-  # (even a dangling one) where a seed goes, and druzhok writes with
-  # CAP_DAC_OVERRIDE. A refused write is never followed; it fails the start,
-  # which the controller records and retries.
+  # (even a dangling one) where a seed goes. A refused write is never
+  # followed; it fails the start, which the controller records and retries.
   defp write_workspace_files(data_root, files) do
-    File.mkdir_p!(data_root)
-
     for entry <- files do
       {rel_path, content, mode} =
         case entry do

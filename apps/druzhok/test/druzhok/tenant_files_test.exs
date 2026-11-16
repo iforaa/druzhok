@@ -3,8 +3,10 @@ defmodule Druzhok.TenantFilesTest do
 
   alias Druzhok.TenantFiles
 
-  # Each test has its own parent, so the staging dir write/4 keeps next to
-  # the tenant dirs (`<parent>/.druzhok-staging`) is private to it.
+  # Every call here runs the real helper (priv/tenant-fs/tenant_fs.py), as the
+  # caller. What it refuses as root is in test/tenant_fs/test_tenant_fs.py;
+  # becoming the bot needs root and a bot, and ops/smoke.sh does one real read
+  # through sudo on the box.
   setup do
     parent = Path.join(System.tmp_dir!(), "tenantfiles-#{System.unique_integer([:positive])}")
     dir = Path.join(parent, "t")
@@ -13,7 +15,7 @@ defmodule Druzhok.TenantFilesTest do
     File.mkdir_p!(outside)
     File.write!(Path.join(outside, "secret"), "token")
     on_exit(fn -> File.rm_rf!(parent) end)
-    %{dir: dir, outside: outside, staging: Path.join(parent, ".druzhok-staging")}
+    %{dir: dir, outside: outside}
   end
 
   test "reads a file with its size and time", %{dir: dir} do
@@ -33,18 +35,105 @@ defmodule Druzhok.TenantFilesTest do
     assert :not_found = TenantFiles.read_text(dir, ["memories", "MEMORY.md"], 100)
   end
 
-  test "a file owned by anyone but the tenant dir's owner is refused", %{dir: dir} do
-    File.write!(Path.join(dir, "SOUL.md"), "x")
-    %File.Stat{uid: me} = File.lstat!(dir)
-    assert {:ok, _} = TenantFiles.read(dir, ["SOUL.md"], 10)
-    assert {:ok, _} = TenantFiles.read(dir, ["SOUL.md"], 10, uid: me)
-    # Another tenant's file reached through a swapped parent has another owner.
-    assert :not_found = TenantFiles.read(dir, ["SOUL.md"], 10, uid: me + 1)
-  end
-
   test "a missing file and a directory are not found", %{dir: dir} do
     assert :not_found = TenantFiles.read(dir, ["nope"], 10)
     assert :not_found = TenantFiles.read(dir, ["memories"], 10)
+    assert :not_found = TenantFiles.read(dir <> "-nope", ["a"], 10)
+  end
+
+  test "missing: true tells nothing there from something unreadable", %{dir: dir, outside: outside} do
+    assert :missing = TenantFiles.read(dir, ["nope"], 10, missing: true)
+    assert :missing = TenantFiles.read(dir, ["cron", "jobs.json"], 10, missing: true)
+    assert :missing = TenantFiles.read(dir <> "-nope", ["a"], 10, missing: true)
+    assert :not_found = TenantFiles.read(dir, ["memories"], 10, missing: true)
+    File.ln_s!(Path.join(outside, "secret"), Path.join(dir, "link"))
+    assert :not_found = TenantFiles.read(dir, ["link"], 10, missing: true)
+  end
+
+  test "index: true serves a directory as its index.html", %{dir: dir} do
+    File.mkdir_p!(Path.join(dir, "site"))
+    File.write!(Path.join(dir, "site/index.html"), "<p>")
+    assert {:ok, %{bytes: "<p>"}} = TenantFiles.read(dir, ["site"], 10, index: true)
+    assert :not_found = TenantFiles.read(dir, ["site"], 10)
+  end
+
+  test "several files, and several bots, are read in one call", %{dir: dir} do
+    File.write!(Path.join(dir, "a"), "1")
+    File.write!(Path.join(dir, "memories/b"), "22")
+
+    assert [{:ok, %{bytes: "1"}}, :not_found, {:ok, %{bytes: "22", size: 2}}] =
+             TenantFiles.read_many(dir, [{["a"], 10}, {["nope"], 10}, {["memories", "b"], 10}])
+
+    assert [{:ok, %{text: "1"}}, :not_found] = TenantFiles.read_texts(dir, [{["a"], 10}, {["x"], 1}])
+
+    # A limit of 0 gives the size and date and none of the bytes.
+    assert [{:ok, %{bytes: "", size: 2, truncated: true}}] =
+             TenantFiles.read_many(dir, [{["memories", "b"], 0}])
+
+    assert [[{:ok, %{bytes: "1"}}], [:not_found]] =
+             TenantFiles.read_all([{dir, [{["a"], 10}]}, {dir <> "-nope", [{["a"], 10}]}])
+
+    assert TenantFiles.read_all([]) == []
+  end
+
+  test "lstat says what is there and follows nothing", %{dir: dir, outside: outside} do
+    File.write!(Path.join(dir, "f"), "abc")
+    File.ln_s!(Path.join(outside, "gone"), Path.join(dir, "dangling"))
+    File.ln_s!(outside, Path.join(dir, "out"))
+    assert {:ok, %{type: :regular, size: 3}} = TenantFiles.lstat(dir, ["f"])
+    assert {:ok, %{type: :directory}} = TenantFiles.lstat(dir, ["memories"])
+    assert {:ok, %{type: :symlink}} = TenantFiles.lstat(dir, ["dangling"])
+    assert {:error, :enoent} = TenantFiles.lstat(dir, ["nope"])
+    assert {:error, :enoent} = TenantFiles.lstat(dir, ["nope", "deeper"])
+    assert {:error, :not_a_directory} = TenantFiles.lstat(dir, ["out", "secret"])
+    assert {:error, :enoent} = TenantFiles.lstat(dir <> "-nope", ["f"])
+  end
+
+  test "ls lists a real directory only", %{dir: dir, outside: outside} do
+    File.write!(Path.join(dir, "memories/b"), "")
+    File.write!(Path.join(dir, "memories/a"), "")
+    assert {:ok, ["a", "b"]} = TenantFiles.ls(dir, ["memories"])
+    assert {:ok, ["memories"]} = TenantFiles.ls(dir, [])
+    File.ln_s!(outside, Path.join(dir, "out"))
+    assert {:error, :not_a_directory} = TenantFiles.ls(dir, ["out"])
+    assert {:error, :enoent} = TenantFiles.ls(dir, ["nope"])
+  end
+
+  test "a path that climbs out is refused", %{dir: dir} do
+    assert :not_found = TenantFiles.read(dir, ["..", "outside", "secret"], 10)
+    assert {:error, :bad_path} = TenantFiles.write(dir, ["..", "outside", "x"], "x")
+    assert {:error, :bad_path} = TenantFiles.write(dir, ["a/b"], "x")
+    assert {:error, :bad_path} = TenantFiles.rm_tree(dir, [])
+  end
+
+  describe "delete/2 and rm_tree/2" do
+    test "delete removes a regular file and never a link or a directory", %{dir: dir, outside: outside} do
+      File.write!(Path.join(dir, "f"), "x")
+      assert :ok = TenantFiles.delete(dir, ["f"])
+      assert :not_found = TenantFiles.delete(dir, ["f"])
+      assert {:error, :not_regular} = TenantFiles.delete(dir, ["memories"])
+      File.ln_s!(Path.join(outside, "secret"), Path.join(dir, "link"))
+      assert {:error, :not_regular} = TenantFiles.delete(dir, ["link"])
+      File.ln_s!(outside, Path.join(dir, "out"))
+      assert {:error, :not_a_directory} = TenantFiles.delete(dir, ["out", "secret"])
+      assert File.read!(Path.join(outside, "secret")) == "token"
+    end
+
+    test "rm_tree removes the tree and unlinks links without following them", %{dir: dir, outside: outside} do
+      File.mkdir_p!(Path.join(dir, "sessions/a/b"))
+      File.write!(Path.join(dir, "sessions/a/b/f"), "x")
+      File.ln_s!(outside, Path.join(dir, "sessions/a/out"))
+      assert :ok = TenantFiles.rm_tree(dir, ["sessions"])
+      refute File.exists?(Path.join(dir, "sessions"))
+      assert File.read!(Path.join(outside, "secret")) == "token"
+      # Nothing there, and no tenant dir, are both fine.
+      assert :ok = TenantFiles.rm_tree(dir, ["sessions"])
+      assert :ok = TenantFiles.rm_tree(dir <> "-nope", ["sessions"])
+      # A link at the name itself is unlinked, its target kept.
+      File.ln_s!(outside, Path.join(dir, "sessions"))
+      assert :ok = TenantFiles.rm_tree(dir, ["sessions"])
+      assert File.dir?(outside) and not File.exists?(Path.join(dir, "sessions"))
+    end
   end
 
   test "a long file is cut back to a whole character", %{dir: dir} do
@@ -94,15 +183,15 @@ defmodule Druzhok.TenantFilesTest do
   end
 
   describe "write/4" do
-    test "replaces a regular file, keeping its mode", %{dir: dir, staging: staging} do
+    test "replaces a regular file, keeping its mode", %{dir: dir} do
       path = Path.join(dir, "config.yaml")
       File.write!(path, "old")
       File.chmod!(path, 0o640)
       assert :ok = TenantFiles.write(dir, ["config.yaml"], "new")
       assert File.read!(path) == "new"
       assert Bitwise.band(File.stat!(path).mode, 0o777) == 0o640
+      # Nothing of the write is left beside it.
       assert File.ls!(dir) |> Enum.sort() == ["config.yaml", "memories"]
-      assert File.ls!(staging) == []
     end
 
     test "creates missing directories and a new file", %{dir: dir} do
@@ -137,61 +226,88 @@ defmodule Druzhok.TenantFilesTest do
       refute File.exists?(Path.join(outside, "AGENTS.md"))
     end
 
-    test "create: true leaves an existing file alone", %{dir: dir, staging: staging} do
+    test "create: true leaves an existing file alone", %{dir: dir} do
       File.write!(Path.join(dir, "config.yaml"), "mine")
       assert {:ok, :exists} = TenantFiles.write(dir, ["config.yaml"], "seed", create: true)
       assert File.read!(Path.join(dir, "config.yaml")) == "mine"
       assert :ok = TenantFiles.write(dir, ["new.yaml"], "seed", create: true)
       assert File.read!(Path.join(dir, "new.yaml")) == "seed"
-      # The seed's staged copy is gone once it is linked into place.
-      assert File.ls!(staging) == []
+      # The seed's temp copy is gone once it is linked into place.
+      assert File.ls!(dir) |> Enum.sort() == ["config.yaml", "memories", "new.yaml"]
     end
 
-    test "prepares files in a private 0700 staging dir, never in the bot's dir",
-         %{dir: dir, staging: staging} do
-      refute File.exists?(staging)
-      assert :ok = TenantFiles.write(dir, ["workspace", "AGENTS.md"], "x")
-      # The staging dir exists only because write/4 used it, and is empty after.
-      assert %File.Stat{type: :directory, mode: mode} = File.lstat!(staging)
-      assert Bitwise.band(mode, 0o777) == 0o700
-      assert File.ls!(staging) == []
-      assert File.ls!(dir) |> Enum.sort() == ["memories", "workspace"]
-      assert File.ls!(Path.join(dir, "workspace")) == ["AGENTS.md"]
+    test "new directories are 0700 and a new file takes the mode given", %{dir: dir} do
+      assert :ok = TenantFiles.write(dir, ["workspace", "a", "x"], "x", mode: 0o600)
+      assert Bitwise.band(File.stat!(Path.join(dir, "workspace/a")).mode, 0o777) == 0o700
+      assert Bitwise.band(File.stat!(Path.join(dir, "workspace/a/x")).mode, 0o777) == 0o600
+      assert :ok = TenantFiles.write(dir, ["y"], "y")
+      assert Bitwise.band(File.stat!(Path.join(dir, "y")).mode, 0o777) == 0o644
+      assert File.ls!(Path.join(dir, "workspace/a")) == ["x"]
     end
 
-    test "a failed write leaves nothing staged", %{dir: dir, outside: outside, staging: staging} do
+    test "a failed write leaves nothing behind", %{dir: dir, outside: outside} do
       File.ln_s!(outside, Path.join(dir, "workspace"))
       assert {:error, :not_a_directory} = TenantFiles.write(dir, ["workspace", "x"], "x")
-      assert File.ls(staging) in [{:ok, []}, {:error, :enoent}]
+      assert File.ls!(outside) == ["secret"]
+      assert {:error, :not_regular} = TenantFiles.write(dir, ["memories"], "x")
+      assert File.ls!(dir) |> Enum.sort() == ["memories", "workspace"]
+    end
+
+    test "ensure_dir makes real directories and refuses a link", %{dir: dir, outside: outside} do
+      assert {:ok, path} = TenantFiles.ensure_dir(dir, ["workspace", "sites"])
+      assert path == Path.join(dir, "workspace/sites") and File.dir?(path)
+      assert {:ok, _} = TenantFiles.ensure_dir(dir, ["workspace"])
+      File.ln_s!(outside, Path.join(dir, "out"))
+      assert {:error, :not_a_directory} = TenantFiles.ensure_dir(dir, ["out"])
+      assert {:error, :no_tenant_dir} = TenantFiles.ensure_dir(dir <> "-nope", ["workspace"])
     end
 
     test "a missing tenant dir is an error", %{dir: dir} do
       assert {:error, :no_tenant_dir} = TenantFiles.write(dir <> "-nope", ["config.yaml"], "x")
     end
   end
+end
 
-  describe "hand_over/3" do
-    test "the file is next to the tenant dir, 0400, the tenant's", %{dir: tenant} do
-      parent = Path.dirname(tenant)
+defmodule Druzhok.TenantFilesHelperTest do
+  # Not async: the helper's command is app env, which every test shares.
+  use ExUnit.Case, async: false
 
-      assert {:ok, path} = TenantFiles.hand_over(tenant, "данные", ".panel-save-")
-      assert Path.dirname(path) == Path.expand(parent)
-      assert String.starts_with?(Path.basename(path), ".panel-save-")
-      assert File.read!(path) == "данные"
-      stat = File.stat!(path)
-      assert Bitwise.band(stat.mode, 0o777) == 0o400
-      assert stat.uid == File.stat!(tenant).uid
-      assert File.ls!(Path.join(parent, ".druzhok-staging")) == []
+  alias Druzhok.TenantFiles
 
-      assert {:ok, other} = TenantFiles.hand_over(tenant, "x", ".panel-save-")
-      assert other != path
-    end
+  setup do
+    dir = Path.join(System.tmp_dir!(), "tenantfiles-h-#{System.unique_integer([:positive])}")
+    File.mkdir_p!(dir)
+    on_exit(fn -> File.rm_rf!(dir) end)
+    %{dir: dir}
+  end
 
-    test "no tenant dir: refused" do
-      missing =
-        Path.join(System.tmp_dir!(), "handover-none-#{System.unique_integer([:positive])}")
+  test "a tenant dir that cannot be opened is an error for that bot alone, never nothing there",
+       %{dir: dir} do
+    shut = dir <> "-shut"
+    File.mkdir_p!(shut)
+    File.write!(Path.join(dir, "a"), "x")
+    File.chmod!(shut, 0o000)
+    on_exit(fn -> File.chmod(shut, 0o700) && File.rm_rf(shut) end)
 
-      assert {:error, :no_tenant_dir} = TenantFiles.hand_over(missing, "x", ".p-")
-    end
+    assert_raise TenantFiles.Error, fn -> TenantFiles.read(shut, ["a"], 10, missing: true) end
+    assert_raise TenantFiles.Error, fn -> TenantFiles.lstat(shut, ["a"]) end
+    assert_raise TenantFiles.Error, fn -> TenantFiles.rm_tree(shut, ["a"]) end
+
+    assert [[{:ok, %{bytes: "x"}}], :error, [:missing]] =
+             TenantFiles.read_all(
+               [{dir, [{["a"], 10}]}, {shut, [{["a"], 10}]}, {dir <> "-nope", [{["a"], 10}]}],
+               missing: true
+             )
+  end
+
+  test "a helper that does not answer raises, never reads as nothing there", %{dir: dir} do
+    Application.put_env(:druzhok, :tenant_fs, ["/bin/sh", "-c", "exit 7"])
+    on_exit(fn -> Application.delete_env(:druzhok, :tenant_fs) end)
+    assert_raise TenantFiles.Error, fn -> TenantFiles.read(dir, ["a"], 10) end
+    assert_raise TenantFiles.Error, fn -> TenantFiles.write(dir, ["a"], "x") end
+    assert_raise TenantFiles.Error, fn -> TenantFiles.real_dir?(dir, []) end
+
+    Application.put_env(:druzhok, :tenant_fs, ["/bin/sh", "-c", "echo '{\"jobs\":[]}'"])
+    assert_raise TenantFiles.Error, fn -> TenantFiles.read(dir, ["a"], 10) end
   end
 end

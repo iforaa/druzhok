@@ -37,8 +37,6 @@ defmodule Druzhok.Lifecycle.Scheduler do
   alias Druzhok.Telegram.{Inbox, Webhook}
 
   @grace_checks [:telegram, :acked, :proxy, :inflight, :turns, :cron_lead, :processes]
-  # A cached jobs file is read again at least this often, whatever its mtime says.
-  @cron_reread_ms 60_000
 
   def start_link(opts \\ []), do: GenServer.start_link(__MODULE__, opts, name: __MODULE__)
 
@@ -226,9 +224,11 @@ defmodule Druzhok.Lifecycle.Scheduler do
   defp line(state, sleeping, now) do
     waking = Inbox.oldest_waking(now)
 
+    fresh = read_cron(sleeping, state.cron)
+
     {entries, cron} =
       Enum.flat_map_reduce(sleeping, %{}, fn inst, cache ->
-        {result, entry} = cron_for(inst, state.cron)
+        {result, _at} = entry = Map.get(fresh, inst.id) || state.cron[inst.id]
         cache = Map.put(cache, inst.id, entry)
 
         reason =
@@ -256,26 +256,23 @@ defmodule Druzhok.Lifecycle.Scheduler do
   defp key(:cron, _inst, _waking, {:ok, %DateTime{} = at}, _seen), do: at
   defp key(_reason, inst, _waking, _cron, seen), do: seen[inst.id]
 
-  # A jobs file is read again only when it changed, or a minute has passed
-  # (mtime has whole seconds).
-  defp cron_for(inst, cache) do
-    stamp =
-      case File.stat(Idle.cron_path(inst), time: :posix) do
-        {:ok, %{mtime: m, size: s}} -> {m, s}
-        {:error, :enoent} -> :none
-        _ -> :unreadable
-      end
-
+  # A sleeping bot's jobs file is read as the bot's own user, by a helper
+  # process, so not on every tick: again once the last read is cron_reread_ms
+  # old, all the bots due in one helper call. A bot that has just gone to
+  # sleep has no entry and is read at once. `%{id => {result, read at}}`.
+  defp read_cron(sleeping, cache) do
     now_ms = System.monotonic_time(:millisecond)
+    every = Queue.opt(:cron_reread_ms)
 
-    case cache[inst.id] do
-      {^stamp, result, at} when stamp != :unreadable and now_ms - at < @cron_reread_ms ->
-        {result, {stamp, result, at}}
-
-      _ ->
-        result = Idle.cron_wake_at(inst)
-        {result, {stamp, result, now_ms}}
-    end
+    sleeping
+    |> Enum.filter(fn inst ->
+      case cache[inst.id] do
+        {_result, at} -> now_ms - at >= every
+        nil -> true
+      end
+    end)
+    |> Idle.cron_wake_at_all()
+    |> Map.new(fn {id, result} -> {id, {result, now_ms}} end)
   end
 
   # --- notices --------------------------------------------------------------

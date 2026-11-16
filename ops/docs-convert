@@ -10,9 +10,12 @@
 # bots' memory ceiling (and queue mode's bot_slots sized to it) covers it too. Prints the output path and exits 0;
 # exits 3 when the conversion failed, 4 when it ran out of time, 5 when the
 # converter is not installed or the unit could not run it, 2 on bad arguments.
-# Druzhok deletes the job dir afterwards, whatever happened.
+# Druzhok deletes the job dir afterwards, whatever happened: it has no file
+# capabilities, so the dir is handed back to it (the user sudo ran this for)
+# once nothing of the unit runs any more.
 #
-# docs-convert --stop <job dir>: stop that job's unit (its request is gone).
+# docs-convert --stop <job dir>: stop that job's unit (its request is gone, or
+# a crash left the dir) and hand the dir back.
 set -euo pipefail
 
 SOFFICE=/usr/lib/libreoffice/program/soffice
@@ -24,12 +27,22 @@ die() { echo "docs-convert: $1" >&2; exit "${2:-2}"; }
 
 [ "$(id -u)" -eq 0 ] || die "must run as root"
 
+# Give the job dir back to the user sudo ran this for. -h and -P: a link is
+# chowned itself, never followed, whatever was put in the dir meanwhile.
+hand_back() {
+  local uid=${SUDO_UID:-}
+  [[ "$uid" =~ ^[1-9][0-9]*$ ]] || return 0
+  [ -d "$1" ] && [ ! -L "$1" ] || return 0
+  chown -h -R -P "$uid" -- "$1" 2>/dev/null || true
+}
+
 job_re='^/var/lib/cleo-docs/jobs/([A-Za-z0-9_-]{16,})$'
 
 if [ "${1:-}" = --stop ]; then
   [ $# -eq 2 ] || die "usage: docs-convert --stop <job dir>"
   [[ "$2" =~ $job_re ]] || die "bad job dir"
   systemctl stop "cleo-docs-${BASH_REMATCH[1]}.service" 2>/dev/null || true
+  hand_back "$2"
   exit 0
 fi
 
@@ -75,8 +88,11 @@ in=${inputs[0]}
 [ -z "$(find "$job" -mindepth 1 -type l -print -quit)" ] || die "links in the job dir"
 [ -z "$(find "$job/out" -mindepth 1 -print -quit)" ] || die "output dir not empty"
 
-chown -R -P "$USER_NAME:$USER_NAME" -- "$job"
+chown -h -R -P "$USER_NAME:$USER_NAME" -- "$job"
 chmod 0700 "$job"
+# systemd-run --wait returns when the unit is gone, so by any exit from here
+# on nothing runs as cleo-docs in the dir.
+trap 'hand_back "$job"' EXIT
 
 status=0
 # OOMScoreAdjust=1000: on a system-hermes.slice OOM the kernel kills soffice, not a bot mid-turn.

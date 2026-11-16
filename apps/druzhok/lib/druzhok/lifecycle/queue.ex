@@ -11,6 +11,7 @@ defmodule Druzhok.Lifecycle.Queue do
     grace_s: 60,
     extension_s: 180,
     drain_check_ms: 5_000,
+    cron_reread_ms: 10_000,
     settle_s: 10,
     max_drain_s: 30 * 60,
     notice_after_s: 60,

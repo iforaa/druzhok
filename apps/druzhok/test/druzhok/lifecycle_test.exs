@@ -222,6 +222,23 @@ defmodule Druzhok.LifecycleTest do
                [:stop, :destroy]
     end
 
+    test "a destroy that fails keeps the row and the data, and is tried again", %{root: root} do
+      inst = idle_bot(root, %{sleep_enabled: false})
+      data = Druzhok.Runtime.Hermes.data_root(inst)
+      File.mkdir_p!(data)
+      HostStub.on_destroy({:error, {:druzhok_ctl, 1, "userdel: user is in use"}})
+      BotManager.delete(inst.name)
+      assert eventually(fn -> reload(inst).delete_failures == 1 end)
+      assert reload(inst).delete_error =~ "userdel"
+      assert File.dir?(data)
+
+      HostStub.on_destroy(:ok)
+      Repo.update_all(Instance, set: [delete_failed_at: nil])
+      poke(inst)
+      assert eventually(fn -> Repo.get(Instance, inst.id) == nil end)
+      refute File.exists?(data)
+    end
+
     test "the first pass fills started_at for a running bot and restarts nothing", %{root: root} do
       inst = idle_bot(root, %{started_at: nil, sleep_enabled: false})
       poke(inst)

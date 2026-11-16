@@ -7,7 +7,9 @@ so the bot's workspace is not on sys.path, and reads back one line of JSON:
     {"sha256": "...", "modified_at": "..."}
     {"error": "<type>", ...}
 
-    save.py <hand-over file>   JSON {target, kind, base_sha256, text, limit}
+    save.py -                  JSON {target, kind, base_sha256, text, limit} on
+                               stdin (how druzhok calls it)
+    save.py <file>             the same JSON in a file
     save.py --check            imports every hermes name used; touches no file
 
 Running as the bot's uid means a directory the bot swaps for a symlink reaches
@@ -83,8 +85,12 @@ class Hermes:
 
 
 def read_job(path):
-    with open(path, "rb") as f:
-        raw = f.read()
+    # "-": the job is on stdin, which druzhok fills (Druzhok.Panel.Editor).
+    if path == "-":
+        raw = sys.stdin.buffer.read()
+    else:
+        with open(path, "rb") as f:
+            raw = f.read()
     try:
         job = json.loads(raw.decode("utf-8"))
     except UnicodeDecodeError:
