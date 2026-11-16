@@ -48,7 +48,8 @@ New `Druzhok.Panel.Editor`, inside `:global.trans` per bot and file:
 
 1. Refuse up front, without running anything: body not a string, or over 512 KiB; system skill or unknown path (404, using the
    existing `skills_scan` lookup).
-2. Hand over the input. `System.cmd` has no way to close stdin, and argv is limited and visible in `ps`. So write JSON
+2. (Superseded 2026-11-16: druzhok has no file capabilities any more; the JSON goes on the script's stdin, `save.py -`,
+   through `druzhok-ctl exec`, and there is no hand-over file.) Hand over the input. `System.cmd` has no way to close stdin, and argv is limited and visible in `ps`. So write JSON
    `{target, kind, base_sha256, text, limit}` to `<tenant parent>/.panel-save-<random>`: prepared in the staging dir, owned by the bot's
    uid, mode 0400, renamed into place. The parent is root's, so the bot cannot swap the path, and other bots cannot read the file.
    Removed after the run, and any left over are removed at boot.

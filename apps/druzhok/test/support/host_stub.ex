@@ -18,6 +18,7 @@ defmodule Druzhok.HostStub do
             units: %{},
             calls: [],
             start: :ok,
+            destroy: :ok,
             start_for: %{},
             procs: 1,
             hooks: %{},
@@ -48,6 +49,9 @@ defmodule Druzhok.HostStub do
   @doc "What starts of `name` alone return, until changed again."
   def on_start(name, result),
     do: Agent.update(__MODULE__, &put_in(&1, [:start_for, name], result))
+
+  @doc "What `destroy/1` returns from now on: `:ok` or `{:error, r}` (the unit and user stay)."
+  def on_destroy(result), do: Agent.update(__MODULE__, &%{&1 | destroy: result})
 
   def set_procs(n), do: Agent.update(__MODULE__, &%{&1 | procs: n})
   @doc "Make `holding_units/0` fail (`:error`) or work again (`:ok`)."
@@ -110,8 +114,10 @@ defmodule Druzhok.HostStub do
   @impl true
   def destroy(name) do
     record(:destroy, name)
-    Agent.update(__MODULE__, &%{&1 | units: Map.delete(&1.units, name)})
-    :ok
+
+    with :ok <- Agent.get(__MODULE__, & &1.destroy) do
+      Agent.update(__MODULE__, &%{&1 | units: Map.delete(&1.units, name)})
+    end
   end
 
   @impl true

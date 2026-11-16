@@ -75,7 +75,7 @@ docs/superpowers/specs|plans  design docs (see 2026-08-23-systemd-host-*)
 
 `Druzhok.Host` is the process backend: `Host.Systemd` in prod (shells out to `sudo druzhok-ctl`), `Host.Process` in dev/test (spawns `hermes gateway run` as a port; `HERMES_BIN` env or `config :druzhok, :hermes_bin`). Selected by `DRUZHOK_HOST=systemd`.
 
-Prod env (MIX_ENV, DATABASE_PATH, DRUZHOK_HOST, HEX/MIX homes, SECRET_KEY_BASE, PHX_HOST) lives only in `/etc/druzhok/druzhok.env`; `druzhok.service`, `ops/druzhok-run.sh` and `ops/smoke.sh` all source it. One-off prod `mix run` must go through `sudo ops/druzhok-run.sh '<expr>'` (file caps for 0700 tenant dirs).
+Prod env (MIX_ENV, DATABASE_PATH, DRUZHOK_HOST, HEX/MIX homes, SECRET_KEY_BASE, PHX_HOST) lives only in `/etc/druzhok/druzhok.env`; `druzhok.service`, `ops/druzhok-run.sh` and `ops/smoke.sh` all source it. One-off prod `mix run` must go through `sudo ops/druzhok-run.sh '<expr>'` (as user `druzhok`, with druzhok.env).
 
 ## Proxy endpoints (all require `Authorization: Bearer <tenant_key>`)
 
@@ -205,6 +205,7 @@ mix test --cover        # enforces per-app thresholds set in each mix.exs; raise
 # the panel's save script, against a hermes venv (its Elixir end-to-end tests use the same variable):
 HERMES_PYTHON=$PWD/hermes-agent/.venv/bin/python python3 -m unittest discover -s apps/druzhok/test/panel_save
 python3 -m unittest discover -s apps/druzhok/test/publish_existing_sites
+python3 -m unittest discover -s apps/druzhok/test/tenant_fs   # what the tenant-fs helper refuses as root
 python3 -m unittest discover -s apps/druzhok/test/soffice_shim   # ops/soffice-shim; mix test runs one real conversion when soffice exists (:soffice)
 MIX_ENV=test mix ecto.migrate   # after pulling new migrations (test DB is data/druzhok_test.db)
 # run with a real local hermes venv for Host.Process:
@@ -235,13 +236,13 @@ sudo install -m 0755 -o root -g root ops/soffice-shim /usr/local/bin/soffice && 
 #   sudo useradd --system --no-create-home --home-dir /nonexistent --shell /usr/sbin/nologin cleo-docs
 #   sudo install -d -m 0711 -o root -g root /var/lib/cleo-docs && sudo install -d -m 0771 -o root -g druzhok /var/lib/cleo-docs/jobs
 #   sudo install -m 0440 ops/sudoers-druzhok /etc/sudoers.d/druzhok && sudo visudo -cf /etc/sudoers.d/druzhok
-sudo systemctl restart druzhok
-# once, on a box whose druzhok.service still has AmbientCapabilities (cleo-demo lost them 2026-11-16): install
-# tenant-fs, druzhok-ctl and docs-convert as above, then
+# once, BEFORE the restart below, on a box whose druzhok.service still has AmbientCapabilities (cleo-demo lost them
+# 2026-11-16). The new code cannot read a tenant file until sudoers allows tenant-fs:
 #   sudo install -m 0440 ops/sudoers-druzhok /etc/sudoers.d/druzhok && sudo visudo -cf /etc/sudoers.d/druzhok
 #   sudo install -m 0644 ops/druzhok.service /etc/systemd/system/druzhok.service && sudo systemctl daemon-reload
-#   sudo systemctl restart druzhok
+# and after the restart:
 #   sudo rm -rf /data/tenants/.druzhok-staging && sudo find /data/tenants -maxdepth 1 -name '.panel-save-*' -delete
+sudo systemctl restart druzhok
 # once, on a box that still runs druzhok as ubuntu (cleo-demo was switched 2026-11-16). Until this is done the new
 # ops/druzhok, druzhok-run.sh and druzhok-migrate fail there with "setpriv: invalid user":
 #   sudo useradd --system --home-dir /data/druzhok-home --shell /usr/sbin/nologin druzhok

@@ -37,7 +37,6 @@ defmodule Druzhok.Lifecycle.Scheduler do
   alias Druzhok.Telegram.{Inbox, Webhook}
 
   @grace_checks [:telegram, :acked, :proxy, :inflight, :turns, :cron_lead, :processes]
-  # A cached jobs file is read again at least this often, whatever its mtime says.
 
   def start_link(opts \\ []), do: GenServer.start_link(__MODULE__, opts, name: __MODULE__)
 

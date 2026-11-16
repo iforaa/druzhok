@@ -42,13 +42,17 @@ defmodule Druzhok.TenantFiles do
 
   @doc "`read/4` for several `{segments, limit}` of one bot in one helper call."
   def read_many(tenant_dir, files, opts \\ []) do
-    [results] = read_all([{tenant_dir, files}], opts)
-    results
+    case read_all([{tenant_dir, files}], opts) do
+      [results] when is_list(results) -> results
+      [:error] -> raise Error, "tenant-fs could not do the job for #{tenant_dir}"
+    end
   end
 
   @doc """
   `read_many/3` across bots, one helper call for all of them:
-  `[{tenant_dir, [{segments, limit}]}]` in, a list of result lists out.
+  `[{tenant_dir, [{segments, limit}]}]` in, a list of result lists out. A bot
+  whose job the helper could not do has `:error` in place of its list, so one
+  bot's trouble is not every bot's; no answer at all still raises.
   """
   def read_all(jobs, opts \\ []) do
     index? = Keyword.get(opts, :index, false)
@@ -68,6 +72,7 @@ defmodule Druzhok.TenantFiles do
     |> Enum.map(fn
       {{:ok, results}, _job} -> Enum.map(results, &read_result(&1, absent))
       {{:error, :no_tenant_dir}, {_dir, files}} -> Enum.map(files, fn _ -> absent end)
+      {{:error, {:refused, _}}, _job} -> :error
     end)
   end
 
@@ -274,11 +279,15 @@ defmodule Druzhok.TenantFiles do
   end
 
   defp run(tenant_dir, ops) do
-    [result] = run_jobs([{tenant_dir, ops}])
-    result
+    case run_jobs([{tenant_dir, ops}]) do
+      [{:error, {:refused, why}}] -> raise Error, "tenant-fs refused the job: #{why}"
+      [result] -> result
+    end
   end
 
-  # `[{tenant_dir, ops}]` -> `[{:ok, results} | {:error, reason}]`, in order.
+  # `[{tenant_dir, ops}]` -> `[{:ok, results} | {:error, :no_tenant_dir} |
+  # {:error, {:refused, text}}]`, in order. Refused: the helper could not do
+  # that job (it timed out, the dir cannot be opened), which is never "no file".
   defp run_jobs([]), do: []
 
   defp run_jobs(jobs) do
@@ -323,7 +332,7 @@ defmodule Druzhok.TenantFiles do
        when is_list(results) and length(results) == n do
     if Enum.all?(results, &is_map/1),
       do: {:ok, results},
-      else: raise(Error, "tenant-fs answered something unexpected")
+      else: {:error, {:refused, "an answer that is not one"}}
   end
 
   defp job_result(%{"ok" => false, "error" => error}, _n)
@@ -331,8 +340,7 @@ defmodule Druzhok.TenantFiles do
        do: {:error, :no_tenant_dir}
 
   defp job_result(other, _n),
-    do:
-      raise(Error, "tenant-fs refused the job: #{inspect(other, limit: 5, printable_limit: 200)}")
+    do: {:error, {:refused, inspect(other, limit: 5, printable_limit: 200)}}
 
   defp bot_name(dir) do
     name = Path.basename(dir)

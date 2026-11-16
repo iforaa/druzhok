@@ -13,6 +13,7 @@ defmodule Druzhok.Host do
           :active | :activating | :restarting | :stopping | :inactive | :failed | :unknown
   @type stats :: %{mem_bytes: non_neg_integer(), cpu_usec: non_neg_integer()} | nil
 
+  @doc "Starts the bot's unit. `prepare/3` has run for this start, with the same env."
   @callback start(name, env :: %{String.t() => String.t()}, data_root :: String.t()) ::
               :ok | {:error, term()}
   @doc """
@@ -24,7 +25,7 @@ defmodule Druzhok.Host do
   @doc "After `destroy/1`: the bot's tenant dir and all in it are gone."
   @callback wipe(name, data_root :: String.t()) :: :ok | {:error, term()}
   @callback stop(name) :: :ok
-  @callback destroy(name) :: :ok
+  @callback destroy(name) :: :ok | {:error, term()}
   @callback status(name) :: status
   @callback stats(name) :: stats
   @doc "Processes the bot runs right now (1 = hermes alone, at rest); nil if unknown."

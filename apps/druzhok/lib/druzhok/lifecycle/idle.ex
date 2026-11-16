@@ -222,7 +222,10 @@ defmodule Druzhok.Lifecycle.Idle do
     |> Enum.map(&{data_root(&1), [{@cron_file, @cron_limit}]})
     |> TenantFiles.read_all(missing: true)
     |> Enum.zip(insts)
-    |> Map.new(fn {[read], inst} -> {inst.id, read |> cron_run() |> wake_at()} end)
+    |> Map.new(fn
+      {[read], inst} -> {inst.id, read |> cron_run() |> wake_at()}
+      {:error, inst} -> {inst.id, :error}
+    end)
   rescue
     TenantFiles.Error -> Map.new(insts, &{&1.id, :error})
   end

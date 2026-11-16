@@ -339,10 +339,9 @@ defmodule Druzhok.BotManager do
   # suspend, simply runs it again. A suspend that fails keeps the row, so the
   # live account stays visible and the delete is retried.
   def destroy_instance(%Instance{} = instance) do
-    Druzhok.Host.destroy(instance.name)
-    wipe_data_dir(instance)
-
-    with :ok <- delete_sites(instance),
+    with :ok <- destroy_host(instance),
+         :ok <- wipe_data_dir(instance),
+         :ok <- delete_sites(instance),
          :ok <- suspend_ruoc(instance) do
       Repo.delete(instance, stale_error_field: :id)
       :ok
@@ -404,6 +403,16 @@ defmodule Druzhok.BotManager do
 
   defp suspend_ruoc(_), do: :ok
 
+  # A bot whose user or data stays behind is not deleted: the row is kept and
+  # the delete tried again, or a later bot of the same name would start with
+  # this one's memory.
+  defp destroy_host(instance) do
+    case Druzhok.Host.destroy(instance.name) do
+      :ok -> :ok
+      {:error, reason} -> {:error, {:host_destroy, reason}}
+    end
+  end
+
   defp wipe_data_dir(instance) do
     data_root = Hermes.data_root(instance)
 
@@ -411,14 +420,18 @@ defmodule Druzhok.BotManager do
       case Druzhok.Host.wipe(instance.name, data_root) do
         :ok ->
           Logger.info("Wiped data dir for #{instance.name}: #{data_root}")
+          :ok
 
         {:error, reason} ->
           Logger.error("Failed to wipe #{data_root}: #{inspect(reason)}")
+          {:error, {:wipe, reason}}
       end
     else
       Logger.warning(
         "Refusing to wipe unsafe data dir for #{instance.name}: #{inspect(data_root)}"
       )
+
+      :ok
     end
   end
 

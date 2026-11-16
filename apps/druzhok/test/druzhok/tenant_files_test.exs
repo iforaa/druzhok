@@ -4,8 +4,9 @@ defmodule Druzhok.TenantFilesTest do
   alias Druzhok.TenantFiles
 
   # Every call here runs the real helper (priv/tenant-fs/tenant_fs.py), as the
-  # caller: what it does as root, becoming the bot, is checked on the box
-  # (ops/smoke.sh).
+  # caller. What it refuses as root is in test/tenant_fs/test_tenant_fs.py;
+  # becoming the bot needs root and a bot, and ops/smoke.sh does one real read
+  # through sudo on the box.
   setup do
     parent = Path.join(System.tmp_dir!(), "tenantfiles-#{System.unique_integer([:positive])}")
     dir = Path.join(parent, "t")
@@ -278,6 +279,25 @@ defmodule Druzhok.TenantFilesHelperTest do
     File.mkdir_p!(dir)
     on_exit(fn -> File.rm_rf!(dir) end)
     %{dir: dir}
+  end
+
+  test "a tenant dir that cannot be opened is an error for that bot alone, never nothing there",
+       %{dir: dir} do
+    shut = dir <> "-shut"
+    File.mkdir_p!(shut)
+    File.write!(Path.join(dir, "a"), "x")
+    File.chmod!(shut, 0o000)
+    on_exit(fn -> File.chmod(shut, 0o700) && File.rm_rf(shut) end)
+
+    assert_raise TenantFiles.Error, fn -> TenantFiles.read(shut, ["a"], 10, missing: true) end
+    assert_raise TenantFiles.Error, fn -> TenantFiles.lstat(shut, ["a"]) end
+    assert_raise TenantFiles.Error, fn -> TenantFiles.rm_tree(shut, ["a"]) end
+
+    assert [[{:ok, %{bytes: "x"}}], :error, [:missing]] =
+             TenantFiles.read_all(
+               [{dir, [{["a"], 10}]}, {shut, [{["a"], 10}]}, {dir <> "-nope", [{["a"], 10}]}],
+               missing: true
+             )
   end
 
   test "a helper that does not answer raises, never reads as nothing there", %{dir: dir} do

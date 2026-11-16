@@ -36,8 +36,8 @@ defmodule Druzhok.Host.Systemd do
   end
 
   @impl true
-  def start(name, env, data_root) do
-    with :ok <- prepare(name, env, data_root) do
+  def start(name, _env, _data_root) do
+    with :ok <- check_name(name) do
       case ctl(["start", name]) do
         {_, 0} -> :ok
         {out, code} -> {:error, {:druzhok_ctl, code, String.trim(out)}}
@@ -53,8 +53,12 @@ defmodule Druzhok.Host.Systemd do
 
   @impl true
   def destroy(name) do
-    with :ok <- check_name(name), do: ctl(["destroy", name])
-    :ok
+    with :ok <- check_name(name) do
+      case ctl(["destroy", name]) do
+        {_, 0} -> :ok
+        {out, code} -> {:error, {:druzhok_ctl, code, String.trim(out)}}
+      end
+    end
   end
 
   @impl true

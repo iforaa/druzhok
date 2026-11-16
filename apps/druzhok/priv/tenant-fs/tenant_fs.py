@@ -13,9 +13,11 @@ so druzhok does not pay for sudo and a Python start on every call:
     {"jobs": [{"name": "<bot>", "ops": [{"op": "read", "path": ["config.yaml"], "limit": 4096}, ...]}]}
     {"jobs": [{"ok": true, "results": [{"ok": true, "data": "<base64>", ...}, ...]}]}
 
-As root, each job runs in a child that has become `bot-<name>` for good before
-it touches /data/tenants/<name>, so nothing here can reach what the bot could
-not reach itself. Not as root (dev, tests) a job names its dir instead,
+As root, each job runs in a child that acts as `bot-<name>` (its effective
+uid and gid, no group, no capability in effect) before it touches
+/data/tenants/<name>, so nothing here can reach what the bot could not reach
+itself. The child's real uid stays root's only so that the bot cannot signal
+it: a bot that could stop the child would hold up druzhok. Not as root (dev, tests) a job names its dir instead,
 `{"dir": "/abs/path"}`, and runs as the caller; root refuses "dir".
 
 No path component is ever followed as a symlink: every step is an openat with
@@ -42,12 +44,13 @@ import json
 import os
 import pwd
 import re
+import select
 import signal
 import stat
 import sys
 
 TENANTS = "/data/tenants"
-NAME_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{0,30}$")
+NAME_RE = re.compile(r"[a-z0-9][a-z0-9_-]{0,30}")
 MAX_READ = 16 * 1024 * 1024
 JOB_TIMEOUT_S = 60
 DIR_FLAGS = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC
@@ -359,8 +362,12 @@ OPS = {
 def run_ops(tenant_dir, ops):
     try:
         root = os.open(tenant_dir, DIR_FLAGS)
-    except OSError:
+    except FileNotFoundError:
         return {"ok": False, "error": "no_tenant_dir"}
+    except OSError as e:
+        # A dir that is there and cannot be opened (the bot chmodded it) is
+        # not a missing one.
+        return {"ok": False, "error": "tenant_dir_" + code(e)}
     results = []
     try:
         for op in ops:
@@ -380,21 +387,54 @@ def run_ops(tenant_dir, ops):
 
 
 def become(user):
-    """This process is `user` from here on: no group, no way back."""
+    """This process acts as `user` from here on: its files, its permissions.
+
+    Only the effective ids change. With the real and saved uid still root's
+    the bot cannot signal this process (kill(2) matches those two), so it
+    cannot stop a job half way; the kernel still drops every capability from
+    the effective set when the effective uid leaves 0, which is checked.
+    """
     os.setgroups([])
-    os.setgid(user.pw_gid)
-    os.setuid(user.pw_uid)
-    if os.getuid() != user.pw_uid or os.geteuid() != user.pw_uid or user.pw_uid == 0:
+    os.setresgid(user.pw_gid, user.pw_gid, user.pw_gid)
+    os.setresuid(0, user.pw_uid, 0)
+    if os.geteuid() != user.pw_uid or os.getegid() != user.pw_gid or user.pw_uid == 0:
         raise RuntimeError("did not become the bot")
+    with open("/proc/self/status") as status:
+        caps = [line.split()[1] for line in status if line.startswith("CapEff:")]
+    if len(caps) != 1 or int(caps[0], 16) != 0:
+        raise RuntimeError("capabilities still in effect")
+
+
+def read_answer(r, pid):
+    """What the child wrote before the deadline, or None; the child is reaped."""
+    deadline = JOB_TIMEOUT_S + 5
+    chunks = []
+    done = False
     try:
-        os.setuid(0)
-    except OSError:
-        return
-    raise RuntimeError("could become root again")
+        end = os.times().elapsed + deadline
+        while True:
+            left = end - os.times().elapsed
+            if left <= 0 or not select.select([r], [], [], left)[0]:
+                break
+            chunk = os.read(r, 1 << 16)
+            if not chunk:
+                done = True
+                break
+            chunks.append(chunk)
+    finally:
+        os.close(r)
+        if not done:
+            # Its own alarm should have ended it; SIGKILL ends a stopped one too.
+            try:
+                os.kill(pid, signal.SIGKILL)
+            except OSError:
+                pass
+    _, status = os.waitpid(pid, 0)
+    return b"".join(chunks) if done and status == 0 else None
 
 
 def run_as_bot(name, ops):
-    """Runs the job in a child that is bot-<name>; its answer comes over a pipe."""
+    """Runs the job in a child acting as bot-<name>; its answer comes over a pipe."""
     try:
         user = pwd.getpwnam("bot-" + name)
     except KeyError:
@@ -409,7 +449,7 @@ def run_as_bot(name, ops):
             os.close(r)
             signal.alarm(JOB_TIMEOUT_S)
             # The child answers over the pipe only: it keeps no descriptor
-            # of the channel to druzhok once it runs under the bot's uid.
+            # of the channel to druzhok while it acts as the bot.
             null = os.open(os.devnull, os.O_RDWR)
             os.dup2(null, 0)
             os.dup2(null, 1)
@@ -423,15 +463,12 @@ def run_as_bot(name, ops):
         finally:
             os._exit(status)
     os.close(w)
-    with os.fdopen(r, "rb") as pipe:
-        raw = pipe.read()
-    _, status = os.waitpid(pid, 0)
-    if status != 0:
-        return {"ok": False, "error": "job_failed"}
+    raw = read_answer(r, pid)
     try:
-        return json.loads(raw)
+        answer = json.loads(raw) if raw is not None else None
     except ValueError:
-        return {"ok": False, "error": "job_failed"}
+        answer = None
+    return answer if isinstance(answer, dict) else {"ok": False, "error": "job_failed"}
 
 
 def run_job(job, root):
@@ -439,7 +476,7 @@ def run_job(job, root):
         return {"ok": False, "error": "bad_job"}
     if root:
         name = job.get("name")
-        if "dir" in job or not isinstance(name, str) or not NAME_RE.match(name):
+        if "dir" in job or not isinstance(name, str) or not NAME_RE.fullmatch(name):
             return {"ok": False, "error": "bad_job"}
         return run_as_bot(name, job["ops"])
     tenant_dir = job.get("dir")

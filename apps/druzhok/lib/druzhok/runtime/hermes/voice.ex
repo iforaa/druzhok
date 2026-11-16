@@ -12,7 +12,7 @@ defmodule Druzhok.Runtime.Hermes.Voice do
     (`migrate_agents_md/2`).
 
   Every file is read and written through `Druzhok.TenantFiles`: the bot owns
-  its dir and druzhok writes with CAP_DAC_OVERRIDE. What druzhok last wrote
+  its dir, and the tenant-fs helper does the work as the bot's own user. What druzhok last wrote
   is recorded in the instance row (`soul_sha256`, `soul_version`,
   `agents_md_sha256`), never in a file the bot can edit.
   """
