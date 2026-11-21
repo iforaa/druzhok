@@ -6,7 +6,7 @@ defmodule Druzhok.CLI do
   """
 
   import Ecto.Query, only: [from: 2]
-  alias Druzhok.{BotManager, BotSettings, Instance, Repo, Ruoc, Settings}
+  alias Druzhok.{BotManager, BotSettings, DiskLimit, Instance, Repo, Ruoc, Settings}
 
   @help """
   usage: druzhok <command> [args]
@@ -29,6 +29,9 @@ defmodule Druzhok.CLI do
     bind-cabinet [<bot>]          bind each bot (or one) to ruoc's bot cabinet now and
                                   set its owner's «Кабинет» menu button; prints each
     bind-cabinet --off [<bot>]    put the owners' menu buttons back to the default
+    disk-apply                    set every bot's disk limit on the host now (bot_disk_mb,
+                                  bot_disk_files, disk_mb), no restarts; after a
+                                  settings change and to reach sleeping bots
     settings                      global settings (secrets masked)
     settings set key=value...     change global settings; value "-" reads stdin
 
@@ -53,7 +56,8 @@ defmodule Druzhok.CLI do
     for inst <- BotManager.list() do
       status = Druzhok.Lifecycle.shown_status(inst, BotManager.status(inst.name))
       sleep = if inst.sleep_enabled, do: " sleep-on", else: ""
-      IO.puts("#{pad(inst.name, 28)} #{pad(status, 10)} #{inst.model}#{sleep}")
+      disk = DiskLimit.short(inst)
+      IO.puts("#{pad(inst.name, 28)} #{pad(status, 10)} #{pad(disk, 22)} #{inst.model}#{sleep}")
     end
 
     :ok
@@ -62,8 +66,30 @@ defmodule Druzhok.CLI do
   defp run(["show", bot]) do
     with {:ok, rows} <- BotSettings.show(bot) |> explain() do
       for {k, v} <- rows, do: IO.puts("#{pad(to_string(k), 26)} #{format(v)}")
-      IO.puts("#{pad("cabinet", 26)} #{cabinet_state(Repo.get_by(Instance, name: bot))}")
+      inst = Repo.get_by(Instance, name: bot)
+      IO.puts("#{pad("cabinet", 26)} #{cabinet_state(inst)}")
+      for {k, v} <- disk_rows(inst), do: IO.puts("#{pad(k, 26)} #{v}")
       :ok
+    end
+  end
+
+  # Each bot's limit from Settings `bot_disk_mb`/`bot_disk_files` and its
+  # `instances.disk_mb` (`DiskLimit.limit/1`), set on the host with no start or
+  # restart; nothing the disk check wrote is read. A bot being deleted is left
+  # alone. With quotas off nothing could be set, so nothing is tried.
+  defp run(["disk-apply"]) do
+    case Druzhok.Host.quotas() do
+      :on ->
+        apply_disk_limits()
+
+      :off ->
+        IO.puts("quotas are off on this host: nothing is set")
+
+      :unknown ->
+        IO.puts("this host has no quotas (dev backend): nothing is set")
+
+      {:error, reason} ->
+        {:error, "cannot tell whether quotas are on: #{inspect(reason)}"}
     end
   end
 
@@ -107,8 +133,13 @@ defmodule Druzhok.CLI do
 
   defp run(["set", bot | pairs]) when pairs != [] do
     with {:ok, attrs} <- pairs(pairs),
-         {:ok, _inst, restarted?} <- BotSettings.update(bot, attrs) |> explain() do
+         {:ok, inst, restarted?} <- BotSettings.update(bot, attrs) |> explain() do
       IO.puts(if restarted?, do: "saved; restart requested", else: "saved")
+
+      if inst.disk_limit_result == :no_user,
+        do: IO.puts("disk limit: set at first start (the bot never started)")
+
+      :ok
     end
   end
 
@@ -195,6 +226,54 @@ defmodule Druzhok.CLI do
   end
 
   defp run(args), do: {:error, "unknown command: #{Enum.join(args, " ")} (try: druzhok help)"}
+
+  defp describe_limit(:off), do: "off"
+  defp describe_limit({mb, files}), do: "#{mb} MB, #{files} files"
+
+  defp apply_disk_limits do
+    results =
+      for inst <-
+            Repo.all(from(i in Instance, where: i.delete_requested == false, order_by: i.name)) do
+        result = DiskLimit.apply(inst)
+        limit = describe_limit(DiskLimit.limit(inst))
+        IO.puts("#{pad(inst.name, 28)} #{limit}: #{describe_apply(result)}")
+        result
+      end
+
+    if Enum.any?(results, &match?({:error, _}, &1)),
+      do: {:error, "some limits were not set; see above"},
+      else: :ok
+  end
+
+  defp describe_apply(:ok), do: "set"
+  defp describe_apply(:no_user), do: "set at first start (never started)"
+  defp describe_apply(:unknown), do: "no quotas here"
+  defp describe_apply({:error, reason}), do: "error: #{inspect(reason)}"
+
+  # The disk check's last reading (disk limit spec, "Where usage shows").
+  defp disk_rows(%Instance{disk_checked_at: %DateTime{} = at} = inst) do
+    usage =
+      if DiskLimit.pct(DiskLimit.reading(inst)) == nil and Settings.disk_quota() == "on",
+        do: "без лимита",
+        else:
+          "#{DiskLimit.size(inst.disk_used_kb)} из #{DiskLimit.size(inst.disk_limit_kb)}, " <>
+            "#{inst.disk_files} из #{inst.disk_file_limit} файлов"
+
+    [
+      {"disk", usage},
+      {"disk_limit (should be)", describe_limit(DiskLimit.limit(inst))},
+      {"disk_warned", format(inst.disk_warned)},
+      {"disk_checked_at", format(at)}
+    ]
+  end
+
+  defp disk_rows(%Instance{} = inst),
+    do: [
+      {"disk", "unknown (not checked yet, or quotas off)"},
+      {"disk_limit (should be)", describe_limit(DiskLimit.limit(inst))}
+    ]
+
+  defp disk_rows(_), do: []
 
   defp failed_cabinet?({:error, :not_eligible}), do: false
   defp failed_cabinet?({:error, {:menu_button, :not_opened}}), do: false
@@ -336,7 +415,14 @@ defmodule Druzhok.CLI do
   defp explain({:error, %Ecto.Changeset{} = cs}), do: {:error, inspect(cs.errors)}
 
   defp explain({:error, {:unpublish_failed, reason}}),
-    do: {:error, "could not take all the sites down, nothing saved (some may be down already): #{reason}"}
+    do:
+      {:error,
+       "could not take all the sites down, nothing saved (some may be down already): #{reason}"}
+
+  defp explain({:error, {:disk_limit_not_applied, reason}}),
+    do:
+      {:error,
+       "saved, but the disk limit was not set on the host: #{inspect(reason)}; try disk-apply"}
 
   defp explain({:error, reason}) when not is_binary(reason), do: {:error, inspect(reason)}
   defp explain(other), do: other

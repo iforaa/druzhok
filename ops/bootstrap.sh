@@ -13,10 +13,14 @@ ASDF_DIR=/data/home-ubuntu/.asdf     # /home/ubuntu/.asdf -> here
 step() { echo; echo "==> $*"; }
 
 step "data disk → /data"
+# Per-bot disk limits are ext4 user quotas (docs/superpowers/specs/2026-11-21-bot-disk-limit-design.md):
+# the `quota` feature counts and the `usrquota` mount option enforces; neither
+# works without the other. A /data that already exists is not changed here: it
+# gets the feature in a maintenance window (the spec's Rollout).
 if [ -b "$DATA_DEV" ]; then
-  if ! blkid "$DATA_DEV" >/dev/null 2>&1; then mkfs.ext4 -q -L druzhok-data "$DATA_DEV"; fi
+  if ! blkid "$DATA_DEV" >/dev/null 2>&1; then mkfs.ext4 -q -O quota -L druzhok-data "$DATA_DEV"; fi
   mkdir -p /data
-  grep -q " /data " /etc/fstab || echo "LABEL=druzhok-data /data ext4 defaults,nofail 0 2" >> /etc/fstab
+  grep -q " /data " /etc/fstab || echo "LABEL=druzhok-data /data ext4 defaults,nofail,usrquota 0 2" >> /etc/fstab
   mountpoint -q /data || mount /data
 else
   echo "!! $DATA_DEV not found; using root filesystem for /data"
@@ -62,8 +66,11 @@ apt-get install -y -q --no-install-recommends git curl build-essential nftables 
   libssl-dev libncurses-dev autoconf m4 \
   python3 python3-venv ffmpeg ghostscript poppler-utils unattended-upgrades debian-keyring debian-archive-keyring apt-transport-https \
   libreoffice-core-nogui libreoffice-writer-nogui libreoffice-calc-nogui libreoffice-impress-nogui \
-  fonts-liberation fonts-crosextra-carlito fonts-crosextra-caladea
+  fonts-liberation fonts-crosextra-carlito fonts-crosextra-caladea quota
 apt-get clean
+# setquota/repquota for druzhok-ctl. The package also ships the rpc quota
+# daemon for NFS clients, which nothing here needs: keep it off.
+systemctl disable --now quotarpc.service >/dev/null 2>&1 || true
 command -v uv >/dev/null || { curl -LsSf https://astral.sh/uv/install.sh | env UV_INSTALL_DIR=/usr/local/bin sh; }
 
 step "caddy (with cloudflare dns module)"

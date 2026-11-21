@@ -172,6 +172,8 @@ export interface Bot {
   }
   /** What happens to settings saved in the panel (panel controls spec). */
   apply: { state: ApplyState; error: string | null }
+  /** How full the bot's disk is, «245 МБ из 1 ГБ»; null before the first check or without a limit. */
+  disk: string | null
   access: { allow_all_users: boolean; allowed_users: number; free_response_chats: number }
   billing_url: string
   /** The superbot's @username, where a delete is confirmed; null when unknown. */

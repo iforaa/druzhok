@@ -16,6 +16,11 @@ defmodule Druzhok.Status do
   the bots whose unit holds memory) and `waiting` (the line's length, nil when
   the scheduler does not answer within 500 ms).
 
+  Disk (spec 2026-11-21-bot-disk-limit-design.md): per bot `disk_used_mb`,
+  `disk_limit_mb` and `disk_pct` from what `Druzhok.DiskCheck` last wrote to
+  the row (all null before a check, `disk_pct` null without a limit), and
+  `disk_quota` at the top: "on", "off", or null on a host that never had quotas.
+
   Nothing here may carry an owner id, a token or message text: each bot's map is
   written out field by field, and `last_error` is scrubbed.
   """
@@ -94,6 +99,7 @@ defmodule Druzhok.Status do
       hermes_version: hermes_version(),
       gate: %{start_min_free_mb: StartGate.min_free_mb()},
       queue: queue(readings),
+      disk_quota: Druzhok.Settings.disk_quota(),
       telegram: telegram(pending, now),
       bots: Enum.map(readings, fn {inst, memory} -> bot(inst, memory, pending) end)
     }
@@ -144,8 +150,24 @@ defmodule Druzhok.Status do
       last_error: error,
       last_error_at: error_at,
       queued_updates: pending |> Map.get(inst.id, {0, nil}) |> elem(0),
+      disk_used_mb: disk_mb(inst, inst.disk_used_kb),
+      disk_limit_mb: disk_mb(inst, inst.disk_limit_kb),
+      disk_pct: disk_pct(inst),
       created_at: DateTime.from_naive!(inst.inserted_at, "Etc/UTC")
     }
+  end
+
+  defp disk_mb(%Instance{disk_checked_at: nil}, _kb), do: nil
+  defp disk_mb(_inst, kb) when is_integer(kb), do: div(kb, 1024)
+  defp disk_mb(_inst, _kb), do: nil
+
+  defp disk_pct(%Instance{disk_checked_at: nil}), do: nil
+
+  defp disk_pct(inst) do
+    case Druzhok.DiskLimit.pct(Druzhok.DiskLimit.reading(inst)) do
+      nil -> nil
+      pct -> trunc(pct)
+    end
   end
 
   # nil is "no unit running": one bad row must not cost the response.

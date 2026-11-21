@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
 # Records every invocation to $FAKE_CTL_LOG and answers like druzhok-ctl.
 log="${FAKE_CTL_LOG:?}"
-cmd="$1"; name="$2"; shift 2
+cmd="$1"
+# disk-all and quotas take no bot name.
+case "$cmd" in disk-all|quotas) name=-; shift;; *) name="$2"; shift 2;; esac
 stdin=""
 case "$cmd" in create) stdin="$(cat)";; esac
 printf '%s\t%s\t%s\t%s\n' "$cmd" "$name" "$*" "$(printf '%s' "$stdin" | base64 | tr -d '\n')" >> "$log"
@@ -15,6 +17,9 @@ case "$cmd" in
   status)      if [ -f "$state" ]; then cat "$state"; else echo unknown; fi; exit 0;;
   stats)       echo "123456|7890"; exit 0;;
   logs)        echo "line1"; echo "line2"; exit 0;;
+  quota)       exit "${FAKE_CTL_QUOTA_EXIT:-0}";;
+  quotas)      echo "${FAKE_CTL_QUOTAS:-off}"; exit 0;;
+  disk-all)    printf '%s\n' "${FAKE_CTL_DISK_ALL:--}"; exit 0;;
   exec)        [ "$1" = curl ] && exit 7; exec "$@";;
   *)           echo "unknown command $cmd" >&2; exit 2;;
 esac

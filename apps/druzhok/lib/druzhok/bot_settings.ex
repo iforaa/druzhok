@@ -19,8 +19,9 @@ defmodule Druzhok.BotSettings do
               allowed_telegram_chats owner_telegram_id timezone)a
 
   # Read per request (image_gen_model by the proxy), by the lifecycle
-  # controller (sleep_enabled) or by druzhok (welcome_message).
-  @live ~w(sleep_enabled image_gen_model welcome_message)a
+  # controller (sleep_enabled) or by druzhok (welcome_message). disk_mb, the
+  # operator's disk limit override, is set on the host right after the save.
+  @live ~w(sleep_enabled image_gen_model welcome_message disk_mb)a
 
   @secret ~w(telegram_token tenant_key ruoc_api_key telegram_webhook_secret)a
 
@@ -68,6 +69,14 @@ defmodule Druzhok.BotSettings do
   is `{:error, {:unpublish_failed, reason}}`: the owner was told the pages are
   gone, so "off" is not saved while they still open. Sites taken down before the
   refusal stay down.
+
+  A change of `disk_mb` (operator only) is set on the host right after the
+  write, with no restart. If the host refuses it the answer is
+  `{:error, {:disk_limit_not_applied, reason}}`, and unlike the error above the
+  row **was** saved: only the host's limit is not set yet (`ops/druzhok
+  disk-apply`, or the bot's next start, sets it). A bot that never started has
+  no Linux user yet; that is not an error, its first start sets the limit, and
+  the instance returned says so in `disk_limit_result: :no_user`.
   """
   def update(name, attrs, opts \\ []) do
     with {:ok, inst} <- fetch(name),
@@ -84,9 +93,21 @@ defmodule Druzhok.BotSettings do
         end
 
       if match?({:ok, _, _}, result), do: sweep_sites(inst, changes)
-      result
+      apply_disk_limit(result, changes)
     end
   end
+
+  # Without a restart: the limit is the bot user's, not hermes's. The row is
+  # saved either way; a refusal is reported so the operator can run disk-apply.
+  # :no_user (never started) and :unknown (no quotas in this backend) are not.
+  defp apply_disk_limit({:ok, updated, restarted?}, %{disk_mb: _}) do
+    case Druzhok.DiskLimit.apply(updated) do
+      {:error, reason} -> {:error, {:disk_limit_not_applied, reason}}
+      other -> {:ok, %{updated | disk_limit_result: other}, restarted?}
+    end
+  end
+
+  defp apply_disk_limit(result, _changes), do: result
 
   defp update_now(inst, changes, restart?) do
     with {:ok, updated} <- inst |> Instance.changeset(changes) |> Repo.update() do

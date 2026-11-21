@@ -123,6 +123,16 @@ defmodule Druzhok.Host.Process do
     {:ok, Map.new(units)}
   end
 
+  # Dev and tests have no quotas and never call sudo.
+  @impl Druzhok.Host
+  def quota(_name, _disk_mb, _files), do: :unknown
+
+  @impl Druzhok.Host
+  def disk_all, do: :unknown
+
+  @impl Druzhok.Host
+  def quotas, do: :unknown
+
   @impl Druzhok.Host
   def exec(name, args) do
     case lookup(name) do
@@ -134,7 +144,11 @@ defmodule Druzhok.Host.Process do
         [cmd | rest] = args
 
         try do
-          System.cmd(resolve_bin(cmd), rest, env: Map.to_list(env), cd: cwd, stderr_to_stdout: true)
+          System.cmd(resolve_bin(cmd), rest,
+            env: Map.to_list(env),
+            cd: cwd,
+            stderr_to_stdout: true
+          )
         rescue
           e in ErlangError -> {Exception.message(e), 127}
         end
