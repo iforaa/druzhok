@@ -63,10 +63,13 @@ defmodule Druzhok.ManagerBotTest do
       params["text"] == "Как назовём бота?\nИли напишите своё имя." and
         (is_nil(chat_id) or params["chat_id"] == chat_id)
     end)
-    assert params["reply_markup"] == %{
-      "keyboard" => [[%{"text" => "Дружок"}, %{"text" => "Ася"}], [%{"text" => "Макс"}, %{"text" => "Кеша"}]],
-      "one_time_keyboard" => true, "resize_keyboard" => true
-    }
+    assert %{
+             "keyboard" => [[%{"text" => a}, %{"text" => b}], [%{"text" => c}, %{"text" => d}]],
+             "one_time_keyboard" => true,
+             "resize_keyboard" => true
+           } = params["reply_markup"]
+
+    assert Enum.all?([a, b, c, d], &(&1 in Druzhok.ManagerBot.Names.all()))
     params
   end
 
