@@ -37,7 +37,9 @@ defmodule Druzhok.ManagerBot.OnboardingTest do
       {:ok, session, {:reply_keyboard, prompt, keyboard}} = Onboarding.handle_input(session, %{text: "🤖 Создать бота"})
       assert prompt == "Как назовём бота?\nИли напишите своё имя."
       assert keyboard.one_time_keyboard
-      assert Enum.map(List.flatten(keyboard.keyboard), & &1.text) == ["Дружок", "Ася", "Макс", "Кеша"]
+      assert [[_, _], [_, _]] = keyboard.keyboard
+      names = Enum.map(List.flatten(keyboard.keyboard), & &1.text)
+      assert Enum.all?(names, &(&1 in Druzhok.ManagerBot.Names.all()))
       assert session.step == :name
     end
 

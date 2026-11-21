@@ -227,9 +227,13 @@ defmodule Druzhok.ManagerBot.Onboarding do
   @doc "The line that takes the chosen name, and the name keyboard with it."
   def name_ack(name), do: "Отлично, #{name}!"
 
-  def name_keyboard do
-    %{keyboard: [[%{text: "Дружок"}, %{text: "Ася"}], [%{text: "Макс"}, %{text: "Кеша"}]],
-      resize_keyboard: true, one_time_keyboard: true}
+  @doc """
+  The name suggestions under the naming prompt: four from the pool
+  (`Names.pick/0`), drawn again every time the prompt is sent.
+  """
+  def name_keyboard(names \\ Druzhok.ManagerBot.Names.pick()) do
+    rows = names |> Enum.map(&%{text: &1}) |> Enum.chunk_every(2)
+    %{keyboard: rows, resize_keyboard: true, one_time_keyboard: true}
   end
 
   def create_race_message, do: "Код успели использовать. Попросите новый и создайте бота заново."
