@@ -23,7 +23,10 @@ defmodule Druzhok.HostStub do
             procs: 1,
             hooks: %{},
             pauses: [],
-            list: :ok
+            list: :ok,
+            quotas: [],
+            quota: :ok,
+            disk_all: :unknown
           }
         end,
         name: __MODULE__
@@ -182,6 +185,30 @@ defmodule Druzhok.HostStub do
       end
     end)
   end
+
+  # Kept apart from `calls/0`, which the lifecycle tests compare whole.
+  @impl true
+  def quota(name, disk_mb, files) do
+    Agent.get_and_update(
+      __MODULE__,
+      &{&1.quota, %{&1 | quotas: [{name, disk_mb, files} | &1.quotas]}}
+    )
+  end
+
+  @doc "Every `quota/3` call as `{name, disk_mb | :off, files}`, in order."
+  def quota_calls, do: Agent.get(__MODULE__, &Enum.reverse(&1.quotas))
+  @doc "What `quota/3` answers from now on."
+  def on_quota(result), do: Agent.update(__MODULE__, &%{&1 | quota: result})
+
+  @impl true
+  def quotas, do: Agent.get(__MODULE__, &Map.get(&1, :quotas_state, :unknown))
+  @doc "What `quotas/0` answers from now on."
+  def set_quotas(state), do: Agent.update(__MODULE__, &Map.put(&1, :quotas_state, state))
+
+  @impl true
+  def disk_all, do: Agent.get(__MODULE__, & &1.disk_all)
+  @doc "What `disk_all/0` answers from now on: `{:ok, map}`, `:off`, `:unknown` or `{:error, r}`."
+  def set_disk_all(result), do: Agent.update(__MODULE__, &%{&1 | disk_all: result})
 
   defp holding(:active), do: :active
   defp holding(:activating), do: :activating

@@ -688,10 +688,12 @@ defmodule Druzhok.Cabinet do
     end
   end
 
+  @doc false
   # Telegram's own refusal of this message (blocked, no such chat, revoked
   # token, a bad button) comes back the same way every time. A 429, a 5xx or no
-  # answer at all may pass, so those are tried again.
-  defp undeliverable?(reason) do
+  # answer at all may pass, so those are tried again. Druzhok.DiskCheck's
+  # owner messages settle the same way.
+  def undeliverable?(reason) do
     case telegram_code(reason) do
       code when is_integer(code) -> code in 400..499 and code != 429
       _ -> false

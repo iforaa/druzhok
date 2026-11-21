@@ -12,6 +12,18 @@
 #   exec <name> <cmd> [args…]                run as the bot user (stdin is passed on)
 #   purge <name>                             remove a destroyed bot's tenant dir
 #   sync-nft                                 rewrite the saved nft set members (no name)
+#   quota <name> <disk_mb> <files>           set the bot user's hard disk limits
+#   quota <name> off                         clear them; exit 3 when the bot's user
+#                                            does not exist yet (never started: its
+#                                            first start sets the limit)
+#   quotas             → on|off for the tenants' filesystem (no name, no repquota)
+#   disk <name>        → <used_kb>|<limit_kb>|<files>|<file_limit>, or - when quotas are off
+#   disk-all           → <name>|<used_kb>|<limit_kb>|<files>|<file_limit> per bot user
+#                        (no name), or - when quotas are off
+# Disk limits are ext4 user quotas on the filesystem that holds $TENANTS
+# (docs/superpowers/specs/2026-11-21-bot-disk-limit-design.md); `quotas_on`
+# alone decides whether they are on, and every quota command does nothing
+# when they are not.
 set -euo pipefail
 
 TENANTS=/data/tenants
@@ -30,12 +42,15 @@ NFT_MEMBERS=/etc/nftables.d/druzhok.zz-members.nft
 die() { echo "druzhok-ctl: $*" >&2; exit 1; }
 
 [ "$(id -u)" -eq 0 ] || die "must run as root"
-# `sync-nft` is the one command without a bot name.
-[ "${1:-}" = sync-nft ] && set -- sync-nft -
+# `sync-nft`, `disk-all` and `quotas` are the commands without a bot name.
+case "${1:-}" in sync-nft|disk-all|quotas) set -- "$1" - ;; esac
 [ $# -ge 2 ] || die "usage: druzhok-ctl <cmd> <name> [args]"
 
 cmd=$1; name=$2; shift 2
-[ "$cmd" = sync-nft ] || [[ "$name" =~ ^[a-z0-9][a-z0-9_-]{0,30}$ ]] || die "invalid bot name: $name"
+case "$cmd" in
+  sync-nft|disk-all|quotas) ;;
+  *) [[ "$name" =~ ^[a-z0-9][a-z0-9_-]{0,30}$ ]] || die "invalid bot name: $name" ;;
+esac
 # A bot's env file is $ENVDIR/<name>.env, and druzhok.env there is the service's
 # own, which ops/smoke.sh sources as root: no bot may be called that.
 [ "$name" != druzhok ] || die "reserved bot name: $name"
@@ -185,6 +200,43 @@ tenant_dirs() {
   done
 }
 
+# Whether user quotas are enforced on the filesystem that holds $TENANTS, and
+# if so its mount point in QUOTA_MNT. All three must hold: the tools are
+# installed, the mount has `usrquota`, and the filesystem has the ext4 `quota`
+# feature. The feature alone counts but does not enforce, and the option
+# without the feature makes setquota fail; `quotaon -p` says "on" either way,
+# so it is never asked (disk limit spec, "Checked on the server").
+quotas_on() {
+  local src mnt opts features
+  QUOTA_MNT=
+  command -v setquota >/dev/null 2>&1 || return 1
+  command -v repquota >/dev/null 2>&1 || return 1
+  read -r src mnt opts < <(findmnt -n -o SOURCE,TARGET,OPTIONS --target "$TENANTS" 2>/dev/null) || return 1
+  [ -n "$opts" ] || return 1
+  case ",$opts," in *,usrquota,*) ;; *) return 1 ;; esac
+  # Read whole, then matched: `grep -q` in the pipe could close it early, and
+  # pipefail would take that as a failure.
+  features=$(tune2fs -l "$src" 2>/dev/null | sed -n 's/^Filesystem features:[[:space:]]*//p') || return 1
+  case " $features " in *" quota "*) ;; *) return 1 ;; esac
+  QUOTA_MNT=$mnt
+}
+
+# repquota's CSV (-n: users as #<uid>; block figures in KB) as
+# <uid>|<used_kb>|<limit_kb>|<files>|<file_limit>, one line per user.
+quota_report() {
+  repquota -u -n -O csv "$QUOTA_MNT" | tr -d '"' |
+    awk -F, '$1 ~ /^#[0-9]+$/ { print substr($1, 2) "|" $4 "|" $6 "|" $8 "|" $10 }'
+}
+
+# One uid's figures from a report read before (whole, so no early exit here
+# can break the pipe into repquota); a user it does not list uses nothing and
+# has no limit.
+quota_line_of() {
+  local report=$1 uid=$2 line
+  line=$(awk -F'|' -v u="$uid" '$1 == u { sub(/^[0-9]+\|/, ""); print; exit }' <<<"$report")
+  echo "${line:-0|0|0|0}"
+}
+
 case "$cmd" in
   create)
     if ! user_exists; then
@@ -271,6 +323,11 @@ case "$cmd" in
         pgrep -U "$user" >/dev/null 2>&1 || break
         sleep 0.2
       done
+      # Linux reuses uids: a new bot given this one would inherit the limits.
+      # Not fatal: every start sets the limits of the bot it starts anyway.
+      if quotas_on; then
+        setquota -u "$user" 0 0 0 0 "$QUOTA_MNT" || echo "druzhok-ctl: could not clear the disk limits of $user" >&2
+      fi
       userdel "$user"
     fi
     nft_persist
@@ -287,6 +344,44 @@ case "$cmd" in
     ;;
   sync-nft)
     nft_persist
+    ;;
+  quota)
+    # Hard limits only, no soft limit or grace. Arguments are checked first,
+    # so a bad call fails the same on a box without quotas.
+    if [ "${1:-}" = off ] && [ $# -eq 1 ]; then
+      blocks=0; inodes=0
+    elif [ $# -eq 2 ] && [[ "$1" =~ ^[1-9][0-9]{0,6}$ ]] && [[ "$2" =~ ^[1-9][0-9]{0,9}$ ]]; then
+      blocks=$(( $1 * 1024 )); inodes=$2
+    else
+      die "usage: druzhok-ctl quota <name> <disk_mb> <files> | quota <name> off"
+    fi
+    quotas_on || exit 0
+    if ! user_exists; then
+      # Nothing to clear for a user that is gone. A bot that never started has
+      # no user yet: not a failure, its first start sets the limit (exit 3,
+      # which druzhok tells apart from a refusal).
+      [ "$blocks" -eq 0 ] && exit 0
+      echo "druzhok-ctl: no user for bot $name yet" >&2
+      exit 3
+    fi
+    setquota -u "$user" 0 "$blocks" 0 "$inodes" "$QUOTA_MNT" || die "setquota failed for $user"
+    ;;
+  disk)
+    if ! quotas_on; then echo -; exit 0; fi
+    user_exists || die "no such bot: $name"
+    report=$(quota_report)
+    quota_line_of "$report" "$(uid_of)"
+    ;;
+  quotas)
+    if quotas_on; then echo on; else echo off; fi
+    ;;
+  disk-all)
+    if ! quotas_on; then echo -; exit 0; fi
+    report=$(quota_report)
+    while IFS=: read -r uname _ uid _; do
+      case "$uname" in bot-*) ;; *) continue ;; esac
+      echo "${uname#bot-}|$(quota_line_of "$report" "$uid")"
+    done < <(getent passwd)
     ;;
   *)
     die "unknown command: $cmd"

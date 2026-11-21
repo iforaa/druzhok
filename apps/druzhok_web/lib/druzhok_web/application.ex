@@ -16,7 +16,8 @@ defmodule DruzhokWeb.Application do
   end
 
   # The Telegram relay, the bot cabinet (Druzhok.Cabinet, before the
-  # controller that casts to it) and the bot lifecycle controller run only where the
+  # controller that casts to it), the bot lifecycle controller and the disk
+  # check (one sender of its messages) run only where the
   # endpoint serves (druzhok.service, `mix phx.server`), never in a BEAM that
   # merely boots the app — a one-off `ops/druzhok-run.sh`, `ops/druzhok`,
   # `iex -S mix` — so there is never a second relay
@@ -24,7 +25,7 @@ defmodule DruzhokWeb.Application do
   # tests too (no server); both have their own tests in apps/druzhok.
   defp relay do
     if Phoenix.Endpoint.server?(:druzhok_web, DruzhokWebWeb.Endpoint),
-      do: [Druzhok.Telegram.Relay, Druzhok.Cabinet, Druzhok.Lifecycle],
+      do: [Druzhok.Telegram.Relay, Druzhok.Cabinet, Druzhok.Lifecycle, Druzhok.DiskCheck],
       else: []
   end
 

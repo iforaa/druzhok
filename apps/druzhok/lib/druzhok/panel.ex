@@ -104,6 +104,8 @@ defmodule Druzhok.Panel do
         memory_provider: inst.memory_provider
       },
       apply: apply(inst),
+      # One line from the disk check's last reading, nil before one or without a limit.
+      disk: Druzhok.DiskLimit.usage_line(inst),
       access: access(inst),
       billing_url: billing_url(),
       superbot: superbot()

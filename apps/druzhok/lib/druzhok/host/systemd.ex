@@ -12,15 +12,108 @@ defmodule Druzhok.Host.Systemd do
   @cgroup_dir "/sys/fs/cgroup/system.slice/system-hermes.slice"
 
   # `create` is idempotent: ensures user + dirs + nft membership and
-  # (re)writes the env file, so it doubles as update-env on restarts.
+  # (re)writes the env file, so it doubles as update-env on restarts. Then the
+  # bot's disk limit, so every start and wake applies the current one.
   @impl true
   def prepare(name, env, _data_root) do
     with :ok <- check_name(name) do
       case ctl(["create", name], input: env_file(env)) do
+        {_, 0} ->
+          apply_disk_limit(name)
+          :ok
+
+        {out, code} ->
+          {:error, {:druzhok_ctl, code, String.trim(out)}}
+      end
+    end
+  end
+
+  # Never fails the start: an unlimited bot is better than a bot that is down,
+  # and Druzhok.DiskCheck reports a bot with no limit.
+  defp apply_disk_limit(name) do
+    result =
+      case Druzhok.DiskLimit.limit_by_name(name) do
+        :off -> quota(name, :off, 0)
+        {mb, files} -> quota(name, mb, files)
+      end
+
+    # `create` just made the user, so :no_user cannot happen here.
+    with {:error, _} <- result,
+         do: Logger.error("[host] #{name}: disk limit not set: #{inspect(result)}")
+  rescue
+    e -> Logger.error("[host] #{name}: disk limit not set: #{Exception.message(e)}")
+  end
+
+  # Not through `create`: that rewrites the env file from stdin.
+  @impl true
+  def quota(name, disk_mb, files) do
+    args =
+      case disk_mb do
+        :off -> ["off"]
+        mb -> [Integer.to_string(mb), Integer.to_string(files)]
+      end
+
+    with :ok <- check_name(name) do
+      case ctl(["quota", name | args]) do
         {_, 0} -> :ok
+        # No `bot-<name>` user yet: the bot never started, and its first start sets the limit.
+        {_, 3} -> :no_user
         {out, code} -> {:error, {:druzhok_ctl, code, String.trim(out)}}
       end
     end
+  end
+
+  @impl true
+  def disk_all do
+    case ctl(["disk-all"]) do
+      {out, 0} -> parse_disk_all(out)
+      {out, code} -> {:error, {:druzhok_ctl, code, String.trim(out)}}
+    end
+  rescue
+    e -> {:error, Exception.message(e)}
+  end
+
+  @impl true
+  def quotas do
+    case ctl(["quotas"]) do
+      {out, 0} ->
+        case String.trim(out) do
+          "on" -> :on
+          "off" -> :off
+          other -> {:error, {:druzhok_ctl, 0, other}}
+        end
+
+      {out, code} ->
+        {:error, {:druzhok_ctl, code, String.trim(out)}}
+    end
+  rescue
+    e -> {:error, Exception.message(e)}
+  end
+
+  @doc false
+  # `-` alone is quotas off; else `name|used_kb|limit_kb|files|file_limit`
+  # lines. A line that does not read is skipped, not fatal for the rest.
+  def parse_disk_all(out) do
+    case String.trim(out) do
+      "-" ->
+        :off
+
+      text ->
+        disks =
+          for line <- String.split(text, "\n", trim: true),
+              [name | numbers] <- [String.split(String.trim(line), "|")],
+              Druzhok.Host.valid_name?(name),
+              [used, limit, files, file_limit] <- [parse_numbers(numbers)],
+              into: %{},
+              do: {name, %{used_kb: used, limit_kb: limit, files: files, file_limit: file_limit}}
+
+        {:ok, disks}
+    end
+  end
+
+  defp parse_numbers(fields) do
+    parsed = Enum.map(fields, &Integer.parse/1)
+    if Enum.all?(parsed, &match?({n, ""} when n >= 0, &1)), do: Enum.map(parsed, &elem(&1, 0))
   end
 
   # The tenant dir is in /data/tenants, which is root's: only the helper can

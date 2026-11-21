@@ -26,7 +26,8 @@ defmodule Druzhok.Settings do
            ruoc_url ruoc_admin_host ruoc_admin_token ruoc_catalog_key fetch_secret bot_creation
            sleep_idle_minutes start_min_free_mb docs_min_free_mb ruoc_site_url
            group_rate_user_per_min group_rate_chat_per_hour
-           bot_slots slice_minutes max_bots min_free_disk_mb cleohub_notice)
+           bot_slots slice_minutes max_bots min_free_disk_mb cleohub_notice
+           bot_disk_mb bot_disk_files)
   @secret ~w(openai_api_key manager_bot_token ruoc_admin_token ruoc_catalog_key
              fetch_secret)
 
@@ -81,6 +82,32 @@ defmodule Druzhok.Settings do
       {n, ""} when n > 0 -> n
       _ -> default
     end
+  end
+
+  @doc """
+  Every bot's disk limit in MB (default 1024), or `:off`: then no bot should
+  have one, an override included. Only the exact word `off` turns it off; unset
+  or a typo is the default, so a typo cannot remove the limit.
+
+  Changing it changes only what `Druzhok.DiskLimit.limit/1` answers. The limits
+  already set on the host stay until `sudo ops/druzhok disk-apply` sets every
+  bot's (or each bot's own next start or wake does), so turning limits off is
+  this setting and then disk-apply.
+  """
+  def bot_disk_mb do
+    if get("bot_disk_mb") == "off", do: :off, else: positive_int("bot_disk_mb", 1024)
+  end
+
+  @doc "Every bot's file-count limit at `bot_disk_mb` (default 100000); an override scales it."
+  def bot_disk_files, do: positive_int("bot_disk_files", 100_000)
+
+  @doc """
+  Whether the filesystem with the tenant dirs had user quotas on at the last
+  disk check: "on", "off", or nil on a host where they never were (dev, a box
+  before its window). Kept by `Druzhok.DiskCheck`, not an operator key.
+  """
+  def disk_quota do
+    if get("disk_quota_seen"), do: get("disk_quota")
   end
 
   @doc """

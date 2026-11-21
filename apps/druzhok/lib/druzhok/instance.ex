@@ -3,80 +3,96 @@ defmodule Druzhok.Instance do
   import Ecto.Changeset
 
   schema "instances" do
-    field :name, :string
-    field :telegram_token, :string
-    field :model, :string
-    field :workspace, :string
-    field :active, :boolean, default: true
-    field :owner_telegram_id, :integer
-    field :timezone, :string, default: "UTC"
-    field :language, :string, default: "ru"
-    field :tenant_key, :string
-    field :mention_only, :boolean, default: false
-    field :welcome_message, :string
-    field :allowed_telegram_ids, :string
-    field :allowed_telegram_chats, :string
-    field :allow_all_telegram_users, :boolean, default: false
-    field :trigger_name, :string
-    field :image_model, :string
-    field :group_shared_memory, :boolean, default: false
-    field :website_hosting_enabled, :boolean, default: false
-    field :image_gen_enabled, :boolean, default: false
-    field :image_gen_model, :string
-    field :ruoc_account_id, :string
-    field :ruoc_api_key, :string
-    field :memory_provider, :string, default: "mnemosyne"
+    field(:name, :string)
+    field(:telegram_token, :string)
+    field(:model, :string)
+    field(:workspace, :string)
+    field(:active, :boolean, default: true)
+    field(:owner_telegram_id, :integer)
+    field(:timezone, :string, default: "UTC")
+    field(:language, :string, default: "ru")
+    field(:tenant_key, :string)
+    field(:mention_only, :boolean, default: false)
+    field(:welcome_message, :string)
+    field(:allowed_telegram_ids, :string)
+    field(:allowed_telegram_chats, :string)
+    field(:allow_all_telegram_users, :boolean, default: false)
+    field(:trigger_name, :string)
+    field(:image_model, :string)
+    field(:group_shared_memory, :boolean, default: false)
+    field(:website_hosting_enabled, :boolean, default: false)
+    field(:image_gen_enabled, :boolean, default: false)
+    field(:image_gen_model, :string)
+    field(:ruoc_account_id, :string)
+    field(:ruoc_api_key, :string)
+    field(:memory_provider, :string, default: "mnemosyne")
     # Telegram delivery (Druzhok.Telegram.Webhook): "polling" or "webhook".
-    field :telegram_mode, :string, default: "polling"
-    field :telegram_webhook_secret, :string
-    field :telegram_relay_paused_until, :utc_datetime
-    field :telegram_relay_pause_reason, :string
+    field(:telegram_mode, :string, default: "polling")
+    field(:telegram_webhook_secret, :string)
+    field(:telegram_relay_paused_until, :utc_datetime)
+    field(:telegram_relay_pause_reason, :string)
     # Lifecycle (sleep/wake spec, "Model"): requests, written by anyone...
-    field :start_seq, :integer, default: 0
-    field :stop_seq, :integer, default: 0
-    field :delete_requested, :boolean, default: false
-    field :sleep_enabled, :boolean, default: true
+    field(:start_seq, :integer, default: 0)
+    field(:stop_seq, :integer, default: 0)
+    field(:delete_requested, :boolean, default: false)
+    field(:sleep_enabled, :boolean, default: true)
     # ...and what the controller did, written only by Druzhok.Lifecycle.Bot.
-    field :sleeping, :boolean, default: false
-    field :applied_seq, :integer, default: 0
-    field :stopped_seq, :integer, default: 0
-    field :failed_seq, :integer, default: 0
-    field :started_at, :utc_datetime
-    field :started_mode, :string
-    field :woke_at, :utc_datetime
-    field :start_error, :string
-    field :start_failed_at, :utc_datetime_usec
-    field :start_failures, :integer, default: 0
-    field :delete_error, :string
-    field :delete_failed_at, :utc_datetime_usec
-    field :delete_failures, :integer, default: 0
+    field(:sleeping, :boolean, default: false)
+    field(:applied_seq, :integer, default: 0)
+    field(:stopped_seq, :integer, default: 0)
+    field(:failed_seq, :integer, default: 0)
+    field(:started_at, :utc_datetime)
+    field(:started_mode, :string)
+    field(:woke_at, :utc_datetime)
+    field(:start_error, :string)
+    field(:start_failed_at, :utc_datetime_usec)
+    field(:start_failures, :integer, default: 0)
+    field(:delete_error, :string)
+    field(:delete_failed_at, :utc_datetime_usec)
+    field(:delete_failures, :integer, default: 0)
     # Bot cabinet (Druzhok.Cabinet): "<bot_id>:<owner_tg_id>" of the last
     # binding ruoc accepted, the cabinet's address it returned, and whether
     # the owner's menu button was set for that binding.
-    field :cabinet_binding, :string
-    field :cabinet_url, :string
-    field :cabinet_menu_set, :boolean, default: false
-    field :cabinet_off, :boolean, default: false
-    field :support_notified_at, :utc_datetime_usec
+    field(:cabinet_binding, :string)
+    field(:cabinet_url, :string)
+    field(:cabinet_menu_set, :boolean, default: false)
+    field(:cabinet_off, :boolean, default: false)
+    field(:support_notified_at, :utc_datetime_usec)
     # Server-owned (`Druzhok.Cabinet`): never in a cast list.
-    field :first_tasks_sent_at, :utc_datetime_usec
+    field(:first_tasks_sent_at, :utc_datetime_usec)
     # The bot's voice (Runtime.Hermes.Voice): its Telegram name, and the hash
     # of what druzhok last wrote to SOUL.md and AGENTS.md ("deleted" when the
     # migration removed AGENTS.md).
-    field :display_name, :string
+    field(:display_name, :string)
     # The character picked at creation (`Voice.soul_presets/0`), nil = none.
-    field :soul_preset, :string
-    field :soul_sha256, :string
-    field :soul_version, :integer
-    field :agents_md_sha256, :string
+    field(:soul_preset, :string)
+    field(:soul_sha256, :string)
+    field(:soul_version, :integer)
+    field(:agents_md_sha256, :string)
     # Panel controls (spec 2026-10-26-panel-controls-design.md): a save that
     # needs a restart bumps settings_seq; a successful start records the seq
     # it ran with. A delete started in the panel waits for the superbot tap.
-    field :settings_seq, :integer, default: 0
-    field :settings_applied_seq, :integer, default: 0
-    field :settings_saved_at, :utc_datetime_usec
-    field :delete_confirm_token, :string
-    field :delete_confirm_expires_at, :utc_datetime
+    field(:settings_seq, :integer, default: 0)
+    field(:settings_applied_seq, :integer, default: 0)
+    field(:settings_saved_at, :utc_datetime_usec)
+    field(:delete_confirm_token, :string)
+    field(:delete_confirm_expires_at, :utc_datetime)
+    # Disk limit (spec 2026-11-21-bot-disk-limit-design.md). `disk_mb` is the
+    # operator's override of Settings `bot_disk_mb` (`ops/druzhok set`); the
+    # rest is server-owned (`Druzhok.DiskCheck`) and never in a cast list:
+    # nil | "80" | "full", when the operator was told about this full
+    # episode, and what the last check read.
+    field(:disk_mb, :integer)
+    field(:disk_warned, :string)
+    field(:disk_operator_alerted_at, :utc_datetime_usec)
+    field(:disk_used_kb, :integer)
+    field(:disk_limit_kb, :integer)
+    field(:disk_files, :integer)
+    field(:disk_file_limit, :integer)
+    field(:disk_checked_at, :utc_datetime)
+    # Not stored: what setting `disk_mb` on the host answered in
+    # `BotSettings.update/3` (`:ok`, `:no_user`, `:unknown`), for the CLI to say.
+    field(:disk_limit_result, :any, virtual: true)
 
     timestamps()
   end
@@ -103,8 +119,41 @@ defmodule Druzhok.Instance do
 
   def changeset(instance, attrs) do
     instance
-    |> cast(attrs, [:name, :telegram_token, :model, :workspace, :active, :owner_telegram_id, :timezone, :language, :tenant_key, :mention_only, :welcome_message, :allowed_telegram_ids, :allowed_telegram_chats, :allow_all_telegram_users, :trigger_name, :image_model, :group_shared_memory, :website_hosting_enabled, :image_gen_enabled, :image_gen_model, :ruoc_account_id, :ruoc_api_key, :memory_provider, :telegram_mode, :telegram_webhook_secret, :telegram_relay_paused_until, :telegram_relay_pause_reason, :sleep_enabled, :display_name, :soul_preset])
+    |> cast(attrs, [
+      :name,
+      :telegram_token,
+      :model,
+      :workspace,
+      :active,
+      :owner_telegram_id,
+      :timezone,
+      :language,
+      :tenant_key,
+      :mention_only,
+      :welcome_message,
+      :allowed_telegram_ids,
+      :allowed_telegram_chats,
+      :allow_all_telegram_users,
+      :trigger_name,
+      :image_model,
+      :group_shared_memory,
+      :website_hosting_enabled,
+      :image_gen_enabled,
+      :image_gen_model,
+      :ruoc_account_id,
+      :ruoc_api_key,
+      :memory_provider,
+      :telegram_mode,
+      :telegram_webhook_secret,
+      :telegram_relay_paused_until,
+      :telegram_relay_pause_reason,
+      :sleep_enabled,
+      :display_name,
+      :soul_preset,
+      :disk_mb
+    ])
     |> validate_required([:name, :model, :workspace])
+    |> validate_number(:disk_mb, greater_than: 0)
     |> validate_inclusion(:memory_provider, @memory_providers)
     |> validate_inclusion(:soul_preset, Druzhok.Runtime.Hermes.Voice.soul_presets())
     |> validate_inclusion(:telegram_mode, Druzhok.Telegram.Webhook.modes())
@@ -135,6 +184,7 @@ defmodule Druzhok.Instance do
   def add_allowed_id(instance, user_id) do
     ids = get_allowed_ids(instance)
     user_id = to_string(user_id)
+
     if user_id in ids do
       {:ok, instance}
     else
@@ -146,6 +196,7 @@ defmodule Druzhok.Instance do
 
   def remove_allowed_id(instance, user_id) do
     ids = get_allowed_ids(instance) |> Enum.reject(&(&1 == to_string(user_id)))
+
     instance
     |> changeset(%{allowed_telegram_ids: Jason.encode!(ids)})
     |> Druzhok.Repo.update()

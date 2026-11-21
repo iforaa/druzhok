@@ -157,4 +157,113 @@ defmodule Druzhok.CLITest do
       assert {1, _} = run_cli(["bind-cabinet", "no-such-bot"])
     end
   end
+
+  describe "disk limits" do
+    setup do
+      Druzhok.HostStub.use()
+      clear = fn -> Repo.delete_all(from(s in Druzhok.Settings, where: s.key in ["bot_disk_mb", "bot_disk_files"])) end
+      clear.()
+      on_exit(clear)
+      %{name: "disk#{System.unique_integer([:positive])}"}
+    end
+
+    test "set disk_mb applies at once, without a restart; empty clears it", %{name: name} do
+      inst = bot(name, %{active: true})
+      assert {0, out} = run_cli(["set", name, "disk_mb=2048"])
+      assert out =~ "saved"
+      refute out =~ "restart"
+      assert Repo.get(Instance, inst.id).disk_mb == 2048
+      assert {0, _} = run_cli(["set", name, "disk_mb="])
+      assert Repo.get(Instance, inst.id).disk_mb == nil
+      assert Druzhok.HostStub.quota_calls() == [{name, 2048, 200_000}, {name, 1024, 100_000}]
+      assert Druzhok.HostStub.calls(:start) == []
+      assert {1, _} = run_cli(["set", name, "disk_mb=0"])
+    end
+
+    test "a refused limit is reported, and the row is saved", %{name: name} do
+      inst = bot(name, %{})
+      Druzhok.HostStub.on_quota({:error, :nope})
+
+      assert {:error, {:disk_limit_not_applied, :nope}} =
+               Druzhok.BotSettings.update(name, %{"disk_mb" => "4096"})
+
+      assert Repo.get(Instance, inst.id).disk_mb == 4096
+      assert {1, _} = run_cli(["set", name, "disk_mb=8192"])
+      assert Repo.get(Instance, inst.id).disk_mb == 8192
+    end
+
+    # Its user is made at the first start, which sets the limit.
+    test "a bot that never started: saved, set at first start, not an error", %{name: name} do
+      inst = bot(name, %{})
+      Druzhok.HostStub.on_quota(:no_user)
+      assert {0, out} = run_cli(["set", name, "disk_mb=4096"])
+      assert out =~ "saved"
+      assert out =~ "set at first start"
+      assert Repo.get(Instance, inst.id).disk_mb == 4096
+    end
+
+    test "disk-apply sets every bot not being deleted, starting none", %{name: name} do
+      bot(name, %{disk_mb: 512})
+      bot(name <> "x", %{delete_requested: true})
+      Druzhok.HostStub.set_quotas(:on)
+      assert {0, out} = run_cli(["disk-apply"])
+      assert out =~ "#{name} "
+      assert out =~ "512 MB, 50000 files: set"
+      quotas = Druzhok.HostStub.quota_calls()
+      assert {name, 512, 50_000} in quotas
+      refute Enum.any?(quotas, &(elem(&1, 0) == name <> "x"))
+      assert Druzhok.HostStub.calls(:start) == []
+
+      Druzhok.Settings.set("bot_disk_mb", "off")
+      assert {0, out} = run_cli(["disk-apply"])
+      assert out =~ "#{name} "
+      assert {name, :off, 0} in Druzhok.HostStub.quota_calls()
+
+      Druzhok.HostStub.on_quota(:no_user)
+      assert {0, out} = run_cli(["disk-apply"])
+      assert out =~ "set at first start"
+
+      Druzhok.HostStub.on_quota({:error, :nope})
+      assert {1, _} = run_cli(["disk-apply"])
+    end
+
+    test "disk-apply with quotas off says so once and sets nothing", %{name: name} do
+      bot(name, %{})
+
+      for {state, line} <- [off: "quotas are off on this host", unknown: "this host has no quotas"] do
+        Druzhok.HostStub.set_quotas(state)
+        assert {0, out} = run_cli(["disk-apply"])
+        assert out =~ line
+        refute out =~ name
+        refute out =~ ": set"
+      end
+
+      assert Druzhok.HostStub.quota_calls() == []
+    end
+
+    test "disk-apply that cannot tell whether quotas are on fails", %{name: name} do
+      bot(name, %{})
+      Druzhok.HostStub.set_quotas({:error, :sudo})
+      assert {1, out} = run_cli(["disk-apply"])
+      refute out =~ name
+      assert Druzhok.HostStub.quota_calls() == []
+    end
+
+    test "show and list read the last check from the row", %{name: name} do
+      bot(name, %{
+        disk_used_kb: 512 * 1024,
+        disk_limit_kb: 1024 * 1024,
+        disk_files: 10,
+        disk_file_limit: 100_000,
+        disk_checked_at: ~U[2026-11-21 10:00:00Z]
+      })
+
+      assert {0, out} = run_cli(["show", name])
+      assert out =~ "512 МБ из 1 ГБ, 10 из 100000 файлов"
+      assert out =~ "1024 MB, 100000 files"
+      assert out =~ "2026-11-21T10:00:00Z"
+      assert {0, out} = run_cli(["list"])
+      assert out =~ "512 МБ/1 ГБ 50%"
+    end
+  end
 end

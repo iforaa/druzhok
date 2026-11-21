@@ -80,10 +80,82 @@ defmodule Druzhok.Host.SystemdTest do
              ~s(A="1"\nB="say \\"hi\\" \\\\ $X"\n)
   end
 
-  test "prepare runs create with the env on stdin; start only starts", %{log: log} do
+  test "prepare runs create with the env on stdin, then sets the disk limit; start only starts",
+       %{log: log} do
     assert :ok = Systemd.prepare("bot-a", %{"K" => "v"}, "/data/tenants/bot-a")
     assert :ok = Systemd.start("bot-a", %{"K" => "v"}, "/data/tenants/bot-a")
-    assert [{"create", "bot-a", _, ~s(K="v")}, {"start", "bot-a", _, ""}] = calls(log)
+
+    assert [
+             {"create", "bot-a", _, ~s(K="v")},
+             {"quota", "bot-a", "1024 100000", ""},
+             {"start", "bot-a", _, ""}
+           ] = calls(log)
+  end
+
+  # An unlimited bot is better than a bot that is down.
+  test "a failed quota call is logged and does not fail the start", %{log: log} do
+    System.put_env("FAKE_CTL_QUOTA_EXIT", "1")
+    on_exit(fn -> System.delete_env("FAKE_CTL_QUOTA_EXIT") end)
+
+    output =
+      ExUnit.CaptureLog.capture_log(fn ->
+        assert :ok = Systemd.prepare("bot-a", %{}, "/data/tenants/bot-a")
+      end)
+
+    assert output =~ "disk limit not set"
+    assert [{"create", _, _, _}, {"quota", _, _, _}] = calls(log)
+  end
+
+  test "quota never goes through create: limits or off as arguments", %{log: log} do
+    assert :ok = Systemd.quota("bot-a", 2048, 200_000)
+    assert :ok = Systemd.quota("bot-a", :off, 0)
+    assert {:error, :invalid_name} = Systemd.quota("../x", 1, 1)
+    assert [{"quota", "bot-a", "2048 200000", ""}, {"quota", "bot-a", "off", ""}] = calls(log)
+
+    System.put_env("FAKE_CTL_QUOTA_EXIT", "1")
+    on_exit(fn -> System.delete_env("FAKE_CTL_QUOTA_EXIT") end)
+    assert {:error, {:druzhok_ctl, 1, _}} = Systemd.quota("bot-a", 1, 1)
+
+    # Exit 3: no user yet, a bot that never started. Not a failure.
+    System.put_env("FAKE_CTL_QUOTA_EXIT", "3")
+    assert Systemd.quota("bot-a", 1, 1) == :no_user
+  end
+
+  test "quotas asks druzhok-ctl for on or off, without a repquota", %{log: log} do
+    on_exit(fn -> System.delete_env("FAKE_CTL_QUOTAS") end)
+    assert Systemd.quotas() == :off
+    System.put_env("FAKE_CTL_QUOTAS", "on")
+    assert Systemd.quotas() == :on
+    System.put_env("FAKE_CTL_QUOTAS", "maybe")
+    assert {:error, _} = Systemd.quotas()
+    assert Enum.all?(calls(log), &(elem(&1, 0) == "quotas"))
+  end
+
+  describe "disk_all" do
+    test "reads one druzhok-ctl call: - is quotas off" do
+      on_exit(fn -> System.delete_env("FAKE_CTL_DISK_ALL") end)
+      assert Systemd.disk_all() == :off
+
+      System.put_env("FAKE_CTL_DISK_ALL", "kot|2048|1048576|31|100000")
+
+      assert Systemd.disk_all() ==
+               {:ok,
+                %{"kot" => %{used_kb: 2048, limit_kb: 1_048_576, files: 31, file_limit: 100_000}}}
+    end
+
+    test "parse_disk_all skips lines it cannot read" do
+      out = "kot|1|2|3|4\nBad!|1|2|3|4\npes|x|2|3|4\nmur|1|2|3\nnew|0|0|0|0\n"
+
+      assert Systemd.parse_disk_all(out) ==
+               {:ok,
+                %{
+                  "kot" => %{used_kb: 1, limit_kb: 2, files: 3, file_limit: 4},
+                  "new" => %{used_kb: 0, limit_kb: 0, files: 0, file_limit: 0}
+                }}
+
+      assert Systemd.parse_disk_all("-\n") == :off
+      assert Systemd.parse_disk_all("") == {:ok, %{}}
+    end
   end
 
   test "status maps words to atoms" do

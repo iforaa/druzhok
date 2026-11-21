@@ -260,6 +260,16 @@ sudo systemctl restart druzhok
 
 Machine page: `GET /internal/status` (`Druzhok.Status`, `FetchAuth` secret, cached 10 s) gives ruoc-gateway's CleoHub console the host, disks, hermes install, Telegram updates waiting, queue mode (`queue`: null when off, else `slots`, `holding`, `waiting` = the scheduler's line, null when `Scheduler.line/1` misses its 500 ms) and bots (`created_at`, `memory_max_mb`, `last_error_at`, null exactly when `last_error` is). Read only, no `sudo`, never wakes a bot: `/proc`, `df -Pk` per disk, the rows, Settings, and `memory.current`/`memory.max` under `system-hermes.slice`; a failed reading is null for that field (a bot's memory reads 0 and its unit counts as down), a failed database read is 503. No owner ids, tokens or message text; `last_error` is scrubbed.
 
+Disk limit per bot (spec `docs/superpowers/specs/2026-11-21-bot-disk-limit-design.md`): an ext4 user quota on `bot-<name>`, hard limits only.
+Settings `bot_disk_mb` (1024; the exact word `off` means no limit, a typo is 1024) and `bot_disk_files` (100000), override `instances.disk_mb`
+(`ops/druzhok set <bot> disk_mb=<n>`, applied at once; the file cap scales with it). `druzhok-ctl quota|disk|disk-all` do nothing (`-`) unless
+`quotas_on` holds: tools installed, `usrquota` on the mount, ext4 `quota` feature. `Host.Systemd.prepare` sets the limit after `create` on every
+start (a failure is logged, never fails the start); `sudo ops/druzhok disk-apply` sets it for every bot without a start (a never-started bot has
+no user yet: "set at first start"). A settings change reaches the host only through `disk-apply` or each bot's next start: turning limits
+off is `sudo ops/druzhok settings set bot_disk_mb=off` **and then** `sudo ops/druzhok disk-apply`. `Druzhok.DiskCheck`
+(druzhok.service only, every 10 min) writes the readings to the row and tells the owner at 80% and when full (bot's token, no wake) and the
+operator when full (superbot token); the cabinet, `ops/druzhok list/show` and `/internal/status` read the row. Never `quotaon`/`quotaoff` `/data` by hand.
+
 Operator CLI (replaces the dashboard, spec `docs/superpowers/specs/2026-10-21-dashboard-removal-design.md`):
 `sudo ops/druzhok help` — `list`, `show <bot>`, `set <bot> key=value…` (restarts a running bot when the field
 needs it, `Druzhok.BotSettings`; `value=-` reads stdin for secrets), `start|stop|restart <bot>` (waits),

@@ -382,10 +382,60 @@ defmodule DruzhokWebWeb.StatusControllerTest do
              "last_error" => nil,
              "last_error_at" => nil,
              "queued_updates" => 0,
+             "disk_used_mb" => nil,
+             "disk_limit_mb" => nil,
+             "disk_pct" => nil,
              "created_at" => "2026-11-01T09:00:00Z"
            }
 
     assert %{"display_name" => "Кот", "ruoc_account_id" => "acc_1"} = bot_named(body, "named")
+  end
+
+  # The disk check's row, never druzhok-ctl (disk limit spec, "Where usage shows").
+  test "disk use comes from the last check on the row, and disk_quota from its settings", %{
+    conn: conn
+  } do
+    import Ecto.Query, only: [from: 2]
+    keys = ["disk_quota_seen", "disk_quota"]
+    clear = fn -> Repo.delete_all(from(s in Druzhok.Settings, where: s.key in ^keys)) end
+    clear.()
+    on_exit(clear)
+    checked = ~U[2026-11-21 10:00:00Z]
+
+    bot!("full", %{})
+    |> Ecto.Changeset.change(
+      disk_used_kb: 900 * 1024,
+      disk_limit_kb: 1024 * 1024,
+      disk_files: 10,
+      disk_file_limit: 100_000,
+      disk_checked_at: checked
+    )
+    |> Repo.update!()
+
+    bot!("nolimit", %{})
+    |> Ecto.Changeset.change(
+      disk_used_kb: 2048,
+      disk_limit_kb: 0,
+      disk_files: 3,
+      disk_file_limit: 0,
+      disk_checked_at: checked
+    )
+    |> Repo.update!()
+
+    body = status(conn)
+    assert Map.has_key?(body, "disk_quota") and body["disk_quota"] == nil
+
+    assert %{"disk_used_mb" => 900, "disk_limit_mb" => 1024, "disk_pct" => 87} =
+             bot_named(body, "full")
+
+    assert %{"disk_used_mb" => 2, "disk_limit_mb" => 0, "disk_pct" => nil} =
+             bot_named(body, "nolimit")
+
+    Druzhok.Settings.set("disk_quota_seen", "1")
+    Druzhok.Settings.set("disk_quota", "on")
+    assert status(conn)["disk_quota"] == "on"
+    Druzhok.Settings.set("disk_quota", "off")
+    assert status(conn)["disk_quota"] == "off"
   end
 
   test "carries no owner id, token or message text", %{conn: conn} do

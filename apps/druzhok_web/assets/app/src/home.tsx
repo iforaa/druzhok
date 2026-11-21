@@ -145,6 +145,7 @@ export default function Home({ bot, go }: { bot: Bot; go: Go }) {
         ) : (
           <div className="skeleton__line" aria-busy="true" />
         )}
+        {bot.disk ? <Row icon="disk" tone="grey" title="Память бота" sub={bot.disk} /> : null}
       </div>
 
       <button className="invite-card" onClick={() => open({ kind: "invites" })}>
