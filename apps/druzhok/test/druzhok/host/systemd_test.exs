@@ -80,6 +80,23 @@ defmodule Druzhok.Host.SystemdTest do
              ~s(A="1"\nB="say \\"hi\\" \\\\ $X"\n)
   end
 
+  test "check_env refuses a line break or a NUL in a value" do
+    assert Systemd.check_env(%{"A" => "1", "B" => ~s(say "hi")}) == :ok
+
+    assert Systemd.check_env(%{"T" => "123:abc\nTELEGRAM_WEBHOOK_PORT=\"20001\""}) ==
+             {:error, {:bad_env, "T"}}
+
+    assert Systemd.check_env(%{"T" => "a\rb"}) == {:error, {:bad_env, "T"}}
+    assert Systemd.check_env(%{"T" => "a" <> <<0>>}) == {:error, {:bad_env, "T"}}
+  end
+
+  test "prepare refuses an env with a line break and runs nothing", %{log: log} do
+    assert {:error, {:bad_env, "K"}} =
+             Systemd.prepare("bot-a", %{"K" => "v\nX=\"1\""}, "/data/tenants/bot-a")
+
+    refute File.exists?(log) and calls(log) != []
+  end
+
   test "prepare runs create with the env on stdin, then sets the disk limit; start only starts",
        %{log: log} do
     assert :ok = Systemd.prepare("bot-a", %{"K" => "v"}, "/data/tenants/bot-a")

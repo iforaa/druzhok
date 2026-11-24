@@ -16,7 +16,8 @@ defmodule Druzhok.Host.Systemd do
   # bot's disk limit, so every start and wake applies the current one.
   @impl true
   def prepare(name, env, _data_root) do
-    with :ok <- check_name(name) do
+    with :ok <- check_name(name),
+         :ok <- check_env(env) do
       case ctl(["create", name], input: env_file(env)) do
         {_, 0} ->
           apply_disk_limit(name)
@@ -279,6 +280,19 @@ defmodule Druzhok.Host.Systemd do
   end
 
   defp unit_name(_), do: nil
+
+  @doc """
+  `:ok`, or `{:error, {:bad_env, key}}` for a value with a line break or a NUL.
+  `env_file/1` escapes quotes and backslashes only, so a line break in a value
+  (a token or a name someone typed) would start a line of its own in the file
+  druzhok-ctl writes: another variable, read by the bot and by druzhok-ctl.
+  """
+  def check_env(env) do
+    case Enum.find(env, fn {_k, v} -> String.contains?(to_string(v), ["\n", "\r", <<0>>]) end) do
+      nil -> :ok
+      {k, _} -> {:error, {:bad_env, k}}
+    end
+  end
 
   @doc "Serialise env as a systemd EnvironmentFile (sorted, double-quoted, escaped)."
   def env_file(env) do

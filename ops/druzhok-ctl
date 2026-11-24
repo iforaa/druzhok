@@ -302,12 +302,30 @@ case "$cmd" in
     # Run as a transient unit so the env file is parsed by systemd exactly as
     # hermes@.service sees it (no second parser here), with the same HOME/PATH.
     # ExecSearchPath resolves the binary AND becomes $PATH (systemd ≥ 250).
+    # The same sandbox as hermes@.service (keep the two in step): what runs here
+    # reads files the bot wrote (hermes's home, the workspace), so it must not
+    # get what the bot's own unit refuses it — setuid binaries, other users'
+    # processes, the host's /tmp, D-Bus, namespaces, unlimited memory.
     exec systemd-run --quiet --wait --pipe --collect \
-      --uid="$user" --gid="$user" \
+      --uid="$user" --gid="$user" --slice=system-hermes.slice \
       -p EnvironmentFile="$envf" -p WorkingDirectory="$root/workspace" \
       -p ExecSearchPath="$HERMES_BIN_DIR" -p ExecSearchPath=/usr/local/bin \
       -p ExecSearchPath=/usr/bin -p ExecSearchPath=/bin \
-      -E HOME="$root/home" \
+      -E HOME="$root/home" -E MALLOC_ARENA_MAX=2 \
+      -p NoNewPrivileges=yes \
+      -p ProtectSystem=strict -p ProtectHome=yes -p ReadWritePaths="$root" \
+      -p PrivateTmp=yes -p PrivateDevices=yes \
+      -p ProtectKernelTunables=yes -p ProtectKernelModules=yes \
+      -p ProtectControlGroups=yes -p ProtectClock=yes -p ProtectHostname=yes \
+      -p RestrictSUIDSGID=yes -p RestrictRealtime=yes -p RestrictNamespaces=yes \
+      -p LockPersonality=yes \
+      -p SystemCallFilter=@system-service -p SystemCallErrorNumber=EPERM \
+      -p RestrictAddressFamilies="AF_INET AF_INET6 AF_UNIX" \
+      -p CapabilityBoundingSet= \
+      -p ProtectProc=invisible -p PrivateIPC=yes \
+      -p InaccessiblePaths=-/run/dbus -p InaccessiblePaths=-/run/snapd.socket \
+      -p InaccessiblePaths=-/run/snapd-snap.socket \
+      -p MemoryMax=1G -p MemoryHigh=800M -p CPUQuota=100% -p TasksMax=256 \
       -- "$@" 2>&1
     ;;
   destroy)
