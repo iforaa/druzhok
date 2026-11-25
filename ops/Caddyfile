@@ -14,6 +14,14 @@ druzhok.oldey.dev {
     dns cloudflare {env.CLOUDFLARE_API_TOKEN}
   }
   encode zstd gzip
+  # /internal/* is ruoc-gateway calling back (alpha-eridanus, 195.49.213.8):
+  # nobody else. It holds the fetch secret too; this keeps the rest of the
+  # internet off it.
+  @internal_outside {
+    path /internal /internal/*
+    not remote_ip 195.49.213.8
+  }
+  respond @internal_outside 404
   reverse_proxy 127.0.0.1:4000 {
     # `header_up X-Druzhok-Edge <secret>`, so only Caddy can reach druzhok's
     # /app (bots dial :4000 directly). The file is root:caddy 0640 and holds
