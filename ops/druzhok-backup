@@ -1,0 +1,177 @@
+#!/bin/bash
+# Off-site backups with restic to Beget S3 (bucket 71e89eb48ab5-druzhok-backups).
+#
+#   druzhok-backup nightly        bots' data, druzhok's db, /etc/druzhok, Caddy config
+#   druzhok-backup db             druzhok's db only (hourly)
+#   druzhok-backup set-keys       asks for the S3 access and secret key, saves them
+#   druzhok-backup restore-bot <bot> <dir> [snapshot]
+#                                 puts a bot's files, its databases in place, in <dir>
+#   druzhok-backup forget         applies retention and prunes (weekly, from nightly)
+#   druzhok-backup restic <args>  restic with the repository set (snapshots, check...)
+#
+# restic encrypts on this host: Beget only ever holds ciphertext. Without the
+# password in /etc/druzhok/backup-password the backups cannot be read, so its
+# owner keeps a copy outside this server.
+#
+# SQLite files are never read live: each is copied with sqlite's backup API
+# into /data/backup-stage first, and the copy is what is uploaded. The copy runs
+# as the file's owner: root opening a bot's database could leave a root-owned
+# -wal/-shm the bot can then not write, and a bot's "*.db" could be a symlink
+# to a file only root may read.
+#
+# A successful nightly run touches /var/lib/druzhok-backup/last-ok, which
+# Druzhok.HostUpdates watches (alert after 26 h).
+set -euo pipefail
+
+CONF=/etc/druzhok
+KEYS=$CONF/backup-s3.env
+export RESTIC_REPOSITORY=s3:https://s3.ru1.storage.beget.cloud/71e89eb48ab5-druzhok-backups
+export RESTIC_PASSWORD_FILE=$CONF/backup-password
+export RESTIC_CACHE_DIR=/var/cache/restic
+STAGE=/data/backup-stage
+STATE=/var/lib/druzhok-backup
+TENANTS=/data/tenants
+DRUZHOK_DB=/data/druzhok/druzhok.db
+
+die() { echo "druzhok-backup: $*" >&2; exit 1; }
+[ "$(id -u)" = 0 ] || die "run as root"
+# The hourly and nightly runs share $STAGE and prune locks the repository:
+# one run at a time, the next one waits.
+exec 9>/run/druzhok-backup.lock
+flock 9
+
+load_keys() {
+  [ -r "$KEYS" ] || die "no $KEYS: run druzhok-backup set-keys"
+  set -a; . "$KEYS"; set +a
+  [ -r "$RESTIC_PASSWORD_FILE" ] || die "no $RESTIC_PASSWORD_FILE"
+}
+
+# Copies one SQLite file to $STAGE/<dest>, as the file's owner.
+stage_db() {
+  local src=$1 dest=$STAGE/$2 uid gid work
+  [ -f "$src" ] && [ ! -L "$src" ] || return 0
+  uid=$(stat -c %u "$src"); gid=$(stat -c %g "$src")
+  work=$STAGE/.w/$uid
+  install -d -m 0700 -o "$uid" -g "$gid" "$work"
+  rm -f "$work/copy"
+  # env -i: the S3 keys are in this shell's environment, and the owner (a
+  # bot) can read the environment of its own uid's processes.
+  if env -i PATH=/usr/bin:/bin setpriv --reuid="$uid" --regid="$gid" --clear-groups \
+      --no-new-privs sqlite3 -batch -bail "$src" ".timeout 15000" ".backup '$work/copy'"; then
+    mkdir -p "$(dirname "$dest")"
+    mv -f "$work/copy" "$dest"
+    chown root:root "$dest"; chmod 0600 "$dest"
+  else
+    echo "druzhok-backup: could not copy $src" >&2
+    FAILED=1
+  fi
+}
+
+fresh_stage() {
+  rm -rf "$STAGE"
+  install -d -m 0711 "$STAGE"
+  install -d -m 0711 "$STAGE/.w"
+}
+
+stage_all_dbs() {
+  local f
+  stage_db "$DRUZHOK_DB" druzhok/druzhok.db
+  while IFS= read -r -d '' f; do
+    stage_db "$f" "tenants/${f#$TENANTS/}"
+  done < <(find "$TENANTS" -mindepth 2 -type f -name '*.db' -print0)
+  rm -rf "$STAGE/.w"
+}
+
+nightly() {
+  load_keys
+  FAILED=0
+  fresh_stage
+  stage_all_dbs
+  # The live databases are left out under $TENANTS only: their copies in
+  # $STAGE have the same names.
+  restic backup --tag nightly --one-file-system \
+    --exclude "$TENANTS/*/cache" --exclude "$TENANTS/*/audio_cache" \
+    --exclude "$TENANTS/*/image_cache" --exclude "$TENANTS/*/logs" \
+    --exclude "$TENANTS/**/*.db" --exclude "$TENANTS/**/*.db-wal" \
+    --exclude "$TENANTS/**/*.db-shm" --exclude "$TENANTS/**/*.db-journal" \
+    --exclude '*.lock' --exclude '*.sock' --exclude '*.pid' \
+    --exclude "$CONF/backup-password" --exclude "$KEYS" \
+    "$TENANTS" "$STAGE" "$CONF" /etc/caddy
+  rm -rf "$STAGE"
+  [ "$FAILED" = 0 ] || die "some databases were not copied (see above); last-ok not updated"
+  install -d -m 0755 "$STATE"
+  touch "$STATE/last-ok"; chmod 0644 "$STATE/last-ok"
+  # Sundays: retention and prune.
+  if [ "$(date -u +%u)" = 7 ]; then forget; fi
+}
+
+db_only() {
+  load_keys
+  FAILED=0
+  fresh_stage
+  stage_db "$DRUZHOK_DB" druzhok/druzhok.db
+  rm -rf "$STAGE/.w"
+  [ "$FAILED" = 0 ] || die "druzhok.db not copied"
+  restic backup --tag db "$STAGE/druzhok"
+  rm -rf "$STAGE"
+}
+
+forget() {
+  load_keys
+  restic forget --tag nightly --keep-daily 7 --keep-weekly 4 --keep-monthly 3
+  restic forget --tag db --keep-hourly 48 --keep-daily 7
+  restic prune
+}
+
+set_keys() {
+  local a s
+  read -r -p "S3 access key: " a
+  read -r -s -p "S3 secret key: " s; echo
+  [ -n "$a" ] && [ -n "$s" ] || die "both keys are needed"
+  umask 077
+  printf 'AWS_ACCESS_KEY_ID=%s\nAWS_SECRET_ACCESS_KEY=%s\n' "$a" "$s" > "$KEYS"
+  chmod 0600 "$KEYS"
+  if [ ! -s "$RESTIC_PASSWORD_FILE" ]; then
+    head -c 32 /dev/urandom | base64 > "$RESTIC_PASSWORD_FILE"
+    chmod 0600 "$RESTIC_PASSWORD_FILE"
+    echo "New encryption password in $RESTIC_PASSWORD_FILE: keep a copy off this server."
+  fi
+  load_keys
+  if restic cat config >/dev/null 2>&1; then
+    echo "Repository reachable."
+  else
+    restic init
+  fi
+}
+
+# Restores one bot into <dir>/<bot>, with its database copies put back where
+# the bot keeps them. It does not touch the live bot: stop it and swap dirs by
+# hand once the result looks right.
+restore_bot() {
+  local bot=${1:?bot} dir=${2:?dir} snap=${3:-latest}
+  case $bot in */*|.*|'') die "bad bot name" ;; esac
+  load_keys
+  [ ! -e "$dir/$bot" ] || die "$dir/$bot exists"
+  local tmp; tmp=$(mktemp -d "$dir/.restore.XXXXXX")
+  restic restore "$snap" --tag nightly --target "$tmp" \
+    --include "$TENANTS/$bot" --include "$STAGE/tenants/$bot"
+  mv "$tmp$TENANTS/$bot" "$dir/$bot"
+  if [ -d "$tmp$STAGE/tenants/$bot" ]; then
+    (cd "$tmp$STAGE/tenants/$bot" && find . -type f -name '*.db' -print0) |
+      while IFS= read -r -d '' f; do
+        cp "$tmp$STAGE/tenants/$bot/$f" "$dir/$bot/$f"
+      done
+  fi
+  rm -rf "$tmp"
+  echo "Restored $bot ($snap) into $dir/$bot. Owner: chown -R bot-$bot:bot-$bot before use."
+}
+
+case ${1:-} in
+  nightly) nightly ;;
+  db) db_only ;;
+  forget) forget ;;
+  set-keys) set_keys ;;
+  restore-bot) shift; restore_bot "$@" ;;
+  restic) shift; load_keys; restic "$@" ;;
+  *) sed -n '2,12p' "$0"; exit 2 ;;
+esac

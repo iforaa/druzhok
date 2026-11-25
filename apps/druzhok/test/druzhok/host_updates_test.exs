@@ -25,6 +25,13 @@ defmodule Druzhok.HostUpdatesTest do
     assert kinds(%{ok() | reboot_required: @now - 4 * @day}) == [:reboot_overdue]
   end
 
+  test "a backup older than 26 hours, or never done, once backups are set up" do
+    assert kinds(Map.put(ok(), :backup_ok, :off)) == []
+    assert kinds(Map.put(ok(), :backup_ok, @now - 20 * 3600)) == []
+    assert kinds(Map.put(ok(), :backup_ok, @now - 27 * 3600)) == [:backup_stale]
+    assert kinds(Map.put(ok(), :backup_ok, nil)) == [:backup_stale]
+  end
+
   test "run/2 does nothing on a host without apt's periodic dir" do
     state = %{paths: %{periodic_dir: "/nonexistent-#{System.unique_integer()}"}, reported: %{}}
     assert HostUpdates.run(state, @now) == state

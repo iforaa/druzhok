@@ -1,0 +1,11 @@
+[Unit]
+Description=Druzhok database backup (hourly)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/druzhok-backup db
+Nice=10
+IOSchedulingClass=idle
+CPUWeight=20

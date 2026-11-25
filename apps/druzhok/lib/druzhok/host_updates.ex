@@ -13,6 +13,9 @@ defmodule Druzhok.HostUpdates do
       (`/var/lib/apt/periodic/upgrade-stamp`).
     * `:reboot_overdue` — a reboot has been pending for 3 days
       (`/var/run/reboot-required`), so the nightly reboot is not happening.
+    * `:backup_stale` — the nightly off-site backup (`ops/druzhok-backup`)
+      has not succeeded for 26 hours (`/var/lib/druzhok-backup/last-ok`).
+      Only once that dir exists, i.e. backups were set up on this host.
 
   Both are readable by the `druzhok` user. On a machine with no
   `/var/lib/apt/periodic` (dev, tests) it does nothing. Runs only where
@@ -28,10 +31,12 @@ defmodule Druzhok.HostUpdates do
   @report_every_s 24 * 3600
   @upgrades_max_age_s 2 * 24 * 3600
   @reboot_max_age_s 3 * 24 * 3600
+  @backup_max_age_s 26 * 3600
 
   @defaults %{
     periodic_dir: "/var/lib/apt/periodic",
-    reboot_required: "/var/run/reboot-required"
+    reboot_required: "/var/run/reboot-required",
+    backup_dir: "/var/lib/druzhok-backup"
   }
 
   def start_link(opts \\ []), do: GenServer.start_link(__MODULE__, opts, name: __MODULE__)
@@ -94,6 +99,22 @@ defmodule Druzhok.HostUpdates do
 
         _ ->
           nil
+      end,
+      case Map.get(facts, :backup_ok, :off) do
+        :off ->
+          nil
+
+        nil ->
+          {:backup_stale,
+           "Резервная копия ещё ни разу не прошла: journalctl -u druzhok-backup.service"}
+
+        t when now - t > @backup_max_age_s ->
+          {:backup_stale,
+           "Резервная копия не проходила #{div(now - t, 3600)} ч. " <>
+             "Проверь: journalctl -u druzhok-backup.service"}
+
+        _ ->
+          nil
       end
     ]
     |> Enum.reject(&is_nil/1)
@@ -102,7 +123,12 @@ defmodule Druzhok.HostUpdates do
   defp facts(paths) do
     %{
       upgrade_stamp: mtime(Path.join(paths.periodic_dir, "upgrade-stamp")),
-      reboot_required: mtime(paths.reboot_required)
+      reboot_required: mtime(paths.reboot_required),
+      backup_ok:
+        if(File.dir?(paths.backup_dir),
+          do: mtime(Path.join(paths.backup_dir, "last-ok")),
+          else: :off
+        )
     }
   end
 

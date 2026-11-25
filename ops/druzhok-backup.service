@@ -1,0 +1,12 @@
+[Unit]
+Description=Druzhok off-site backup (restic, Beget S3)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/druzhok-backup nightly
+Nice=10
+IOSchedulingClass=idle
+# One core on this box: the backup yields to druzhok and the bots.
+CPUWeight=20

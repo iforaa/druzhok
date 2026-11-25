@@ -1,0 +1,11 @@
+[Unit]
+Description=Nightly Druzhok backup
+
+[Timer]
+# 01:30 UTC: after the 23:00 reboot window, before morning traffic in MSK.
+OnCalendar=*-*-* 01:30:00 UTC
+RandomizedDelaySec=15m
+Persistent=true
+
+[Install]
+WantedBy=timers.target
