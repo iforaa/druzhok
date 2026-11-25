@@ -349,6 +349,105 @@ defmodule DruzhokWebWeb.PanelApiTest do
     end
   end
 
+  describe "group privacy" do
+    setup do
+      bypass = Bypass.open()
+      prev = Application.get_env(:druzhok, :telegram_api_base)
+      Application.put_env(:druzhok, :telegram_api_base, "http://localhost:#{bypass.port}")
+
+      on_exit(fn ->
+        Application.delete_env(:druzhok, :test_profiles)
+
+        if prev,
+          do: Application.put_env(:druzhok, :telegram_api_base, prev),
+          else: Application.delete_env(:druzhok, :telegram_api_base)
+      end)
+
+      %{bypass: bypass}
+    end
+
+    # Telegram as the bot sees it: setMySettings stores the value, getMe reads it
+    # back, and the panel's own getMe (`:test_profiles`) follows.
+    defp telegram(bypass) do
+      test = self()
+
+      Bypass.expect(bypass, "POST", "/:bot/:method", fn conn ->
+        {:ok, raw, conn} = Plug.Conn.read_body(conn)
+        ["", bot, method] = String.split(conn.request_path, "/")
+        assert bot == "bot" <> @token
+
+        result =
+          case method do
+            "setMySettings" ->
+              on = Jason.decode!(raw)["can_read_all_group_messages"]
+              send(test, {:set, on})
+              me = %{"first_name" => "Ромик", "username" => "romik_bot", "can_read_all_group_messages" => on}
+              Application.put_env(:druzhok, :test_profiles, %{@token => me})
+              true
+
+            "getMe" ->
+              Application.get_env(:druzhok, :test_profiles)[@token]
+          end
+
+        Plug.Conn.resp(conn, 200, Jason.encode!(%{"ok" => true, "result" => result}))
+      end)
+    end
+
+    test "switches it at Telegram and answers with what getMe now says", %{conn: conn, bypass: bypass} do
+      telegram(bypass)
+
+      c = api(conn, "/app/api/group-privacy", post: %{on: true})
+      assert c.status == 200
+      assert Jason.decode!(c.resp_body)["bot"]["settings"]["read_all_group_messages"] == true
+      assert_received {:set, true}
+
+      c = api(build_conn(), "/app/api/group-privacy", post: %{on: false})
+      assert Jason.decode!(c.resp_body)["bot"]["settings"]["read_all_group_messages"] == false
+      assert_received {:set, false}
+    end
+
+    test "a 502 after Telegram took the change: the next read shows Telegram's value", %{conn: conn, bypass: bypass} do
+      me = fn on -> %{"first_name" => "Ромик", "username" => "romik_bot", "can_read_all_group_messages" => on} end
+      Druzhok.Panel.forget_profile(@token)
+      Application.put_env(:druzhok, :test_profiles, %{@token => me.(false)})
+      assert Jason.decode!(api(conn, "/app/api/bot").resp_body)["settings"]["read_all_group_messages"] == false
+
+      # setMySettings goes through, the confirming getMe fails.
+      Bypass.expect(bypass, fn conn ->
+        case conn.request_path do
+          "/bot" <> _ = path ->
+            if String.ends_with?(path, "/setMySettings") do
+              Application.put_env(:druzhok, :test_profiles, %{@token => me.(true)})
+              Plug.Conn.resp(conn, 200, Jason.encode!(%{"ok" => true, "result" => true}))
+            else
+              Plug.Conn.resp(conn, 500, "")
+            end
+        end
+      end)
+
+      c = api(build_conn(), "/app/api/group-privacy", post: %{on: true})
+      assert {c.status, error_type(c)} == {502, "telegram_failed"}
+
+      c = api(build_conn(), "/app/api/bot")
+      assert Jason.decode!(c.resp_body)["settings"]["read_all_group_messages"] == true
+    end
+
+    test "Telegram not answering is a 502", %{conn: conn, bypass: bypass} do
+      Bypass.down(bypass)
+      c = api(conn, "/app/api/group-privacy", post: %{on: true})
+      assert {c.status, error_type(c)} == {502, "telegram_failed"}
+    end
+
+    test "init data over 10 minutes old must be renewed; a bad body is refused", %{conn: conn} do
+      old = F.build(123, @token, 456, auth_date: System.system_time(:second) - 11 * 60)
+      c = api(conn, "/app/api/group-privacy", init: old, post: %{on: true})
+      assert {c.status, error_type(c)} == {401, "init_stale"}
+
+      assert api(build_conn(), "/app/api/group-privacy", post: %{on: "yes"}).status == 400
+      assert api(build_conn(), "/app/api/group-privacy", post: %{}).status == 400
+    end
+  end
+
   describe "skills" do
     setup %{dir: dir} do
       for {rel, body} <- [

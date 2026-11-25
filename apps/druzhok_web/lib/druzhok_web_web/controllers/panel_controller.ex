@@ -22,9 +22,12 @@ defmodule DruzhokWebWeb.PanelController do
       POST /app/api/delete          deletes the bot (init data under 10 min old)
       GET /app/api/groups
       POST /app/api/groups/:chat_id {"action": "approve" | "block" | "remove"} (init data under 10 min old)
+      POST /app/api/group-privacy   {"on": true | false} reads every group message or only calls (init data under 10 min old)
   """
 
   use DruzhokWebWeb, :controller
+
+  require Logger
 
   alias Druzhok.Panel
   alias DruzhokWebWeb.Plugs.PanelAuth
@@ -152,6 +155,32 @@ defmodule DruzhokWebWeb.PanelController do
       end
     end
   end
+
+  # Whether the bot gets every message of its groups (`Telegram.GroupPrivacy`).
+  # Telegram holds it, so this answers with the getMe that confirmed the change;
+  # on a 502 the page reads the bot again.
+  def group_privacy(conn, %{"on" => on}) when is_boolean(on) do
+    inst = conn.assigns.instance
+
+    if System.system_time(:second) - conn.assigns.auth_date > @group_max_age_s do
+      PanelAuth.error(conn, 401, "init_stale", "close the panel and open it again")
+    else
+      case Druzhok.Telegram.GroupPrivacy.set(inst.telegram_token, on) do
+        {:ok, _on, me} ->
+          Panel.remember_profile(inst.telegram_token, me)
+          reply(conn, %{bot: Panel.bot(inst)})
+
+        {:error, reason} ->
+          # setMySettings may have gone through: the panel reads getMe afresh.
+          Panel.forget_profile(inst.telegram_token)
+          Logger.warning("[panel] group privacy for #{inst.name} not confirmed: #{inspect(reason)}")
+          PanelAuth.error(conn, 502, "telegram_failed", "Telegram did not confirm the setting")
+      end
+    end
+  end
+
+  def group_privacy(conn, _params),
+    do: PanelAuth.error(conn, 400, "invalid_setting", "the body must be {\"on\": true | false}")
 
   # Telegram's chat ids fit in 52 bits; anything longer is not one.
   defp chat_id(text) do

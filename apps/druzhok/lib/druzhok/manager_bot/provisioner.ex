@@ -5,13 +5,13 @@ defmodule Druzhok.ManagerBot.Provisioner do
   Called by ManagerBot GenServer when a `managed_bot` update arrives.
   Handles: token retrieval → instance creation (with the name the owner
   typed and the character picked, from which the first start writes
-  SOUL.md) → first start.
+  SOUL.md) → privacy mode off → first start.
   """
 
   require Logger
 
   alias Druzhok.{BotManager, Instance, Ruoc}
-  alias Druzhok.Telegram.API
+  alias Druzhok.Telegram.{API, GroupPrivacy}
 
   @doc """
   Run the full provisioning pipeline.
@@ -31,6 +31,8 @@ defmodule Druzhok.ManagerBot.Provisioner do
            soul_preset: session[:soul_preset]
          }),
          {:ok, _result} <- BotManager.create(instance_name, opts) do
+      read_all_group_messages(instance_name, token)
+
       # The owner is already in the allowlist via owner_telegram_id (see
       # runtime/hermes.ex build_allowlist/1), so no auto-pair + restart is
       # needed. A slow or failed start is the lifecycle controller's to retry,
@@ -76,6 +78,16 @@ defmodule Druzhok.ManagerBot.Provisioner do
   end
 
   # --- Private ---
+
+  # Privacy mode off, so the group name the bot was given works without an
+  # @mention (`Telegram.GroupPrivacy`). Not a provisioning error: the owner can
+  # switch it in the panel.
+  defp read_all_group_messages(instance_name, token) do
+    case GroupPrivacy.set(token, true) do
+      {:ok, true, _me} -> :ok
+      other -> Logger.warning("Group privacy of #{instance_name} left as it was: #{inspect(other)}")
+    end
+  end
 
   defp fetch_token(manager_token, bot_user_id) do
     case API.get_managed_bot_token(manager_token, bot_user_id) do

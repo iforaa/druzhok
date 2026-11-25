@@ -370,7 +370,8 @@ defmodule Druzhok.Lifecycle.Bot do
 
   # Panel controls spec, «A quiet restart»: settings the owner saved in the
   # panel reach hermes only through a restart, which must not cut off an
-  # answer or kill a job the agent started. So: no Telegram update and no
+  # answer or kill a job the agent started. So: no Telegram update that would
+  # wake it (`Inbox.wakes`; skipped group chatter does not count) and no
   # proxy call for a minute, no turn, no process besides hermes; then hold
   # the relay, let a delivery in flight land and look again. Never forced: a
   # bot that is never quiet keeps the change until it is. While a change waits
@@ -643,8 +644,8 @@ defmodule Druzhok.Lifecycle.Bot do
     end
   end
 
-  # Nothing delivered within the settle time (hermes buffers text up to 4 s
-  # before a turn), no turn, hermes alone, no proxy call open.
+  # Nothing that wakes the bot delivered within the settle time (hermes
+  # buffers text up to 4 s before a turn; skipped chatter starts none), no turn, hermes alone, no proxy call open.
   defp drained?(inst) do
     Idle.check(inst,
       window_s: Queue.opt(:settle_s),

@@ -29,7 +29,6 @@ defmodule Druzhok.Telegram.Inbox do
 
   @expire_after_s 24 * 60 * 60
   @prune_after_s 3 * 24 * 60 * 60
-  @backlog_wake_s 20 * 60 * 60
 
   @doc """
   Store one update for a bot that is in webhook mode *at the moment of the
@@ -87,16 +86,14 @@ defmodule Druzhok.Telegram.Inbox do
 
   @doc """
   The oldest pending row that may wake a sleeping bot, or nil: one marked
-  `wakes`, or any row once the oldest has waited `backlog_wake_s` (20 h), so
-  rows that never wake are still delivered before they expire at 24 h.
+  `wakes`. A row that does not wake (group chatter a mention-only bot skips,
+  which privacy mode off makes common) waits for the next real wake and is
+  delivered then, in order, or expires unread at 24 h; it never wakes the bot
+  or puts it in the queue's line on its own.
   """
-  def next_waking(instance_id, now \\ DateTime.utc_now()) do
-    backlog_before = DateTime.add(now, -backlog_wake_s())
-
+  def next_waking(instance_id) do
     from(u in __MODULE__,
-      where:
-        u.instance_id == ^instance_id and is_nil(u.acked_at) and
-          (u.wakes or u.received_at < ^backlog_before),
+      where: u.instance_id == ^instance_id and is_nil(u.acked_at) and u.wakes,
       order_by: [asc: u.update_id],
       limit: 1
     )
@@ -105,14 +102,12 @@ defmodule Druzhok.Telegram.Inbox do
 
   @doc """
   `%{instance_id => received_at}` of every bot's oldest pending row that may
-  wake it, by the rule of `next_waking/2`, in one query: the queue
+  wake it, by the rule of `next_waking/1`, in one query: the queue
   scheduler's line key for `:update`.
   """
-  def oldest_waking(now \\ DateTime.utc_now()) do
-    backlog_before = DateTime.add(now, -backlog_wake_s())
-
+  def oldest_waking do
     from(u in __MODULE__,
-      where: is_nil(u.acked_at) and (u.wakes or u.received_at < ^backlog_before),
+      where: is_nil(u.acked_at) and u.wakes,
       group_by: u.instance_id,
       select: {u.instance_id, min(u.received_at)}
     )
@@ -131,8 +126,6 @@ defmodule Druzhok.Telegram.Inbox do
     |> Repo.one()
   end
 
-  defp backlog_wake_s,
-    do: Application.get_env(:druzhok, :telegram_backlog_wake_s, @backlog_wake_s)
 
   def ack(%__MODULE__{id: id}), do: set(id, acked_at: DateTime.utc_now())
 

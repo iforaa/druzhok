@@ -101,7 +101,9 @@ defmodule Druzhok.Panel do
         image_gen_enabled: inst.image_gen_enabled,
         image_gen_model: inst.image_gen_model,
         website_hosting_enabled: inst.website_hosting_enabled,
-        memory_provider: inst.memory_provider
+        memory_provider: inst.memory_provider,
+        # Telegram's, not a column (`Telegram.GroupPrivacy`); nil when getMe did not say.
+        read_all_group_messages: profile && Map.get(profile, :read_all)
       },
       apply: apply(inst),
       # One line from the disk check's last reading, nil before one or without a limit.
@@ -161,13 +163,14 @@ defmodule Druzhok.Panel do
 
   @doc """
   The bot's Telegram name and @username, from `getMe`, as Telegram writes
-  them: `%{title:, username:}` or nil. Cached per token for an hour; a miss
+  them, and whether it reads every group message: `%{title:, username:,
+  read_all:}` or nil. Cached per token for an hour; a miss
   asks Telegram and waits at most 3 s. A failed ask answers the last known
   profile (or nil) and is not repeated for a minute, so a Telegram outage
   costs one 3 s wait a minute, not one per request.
   """
   def profile(token) when is_binary(token) and token != "" do
-    key = {__MODULE__, :profile, :crypto.hash(:sha256, token)}
+    key = profile_key(token)
     now = System.monotonic_time(:second)
 
     case :persistent_term.get(key, nil) do
@@ -202,18 +205,45 @@ defmodule Druzhok.Panel do
 
   def profile(_), do: nil
 
+  @doc """
+  Caches a `getMe` answer the caller already has (a map as Telegram sends it)
+  as `profile/1`'s, e.g. the one that confirmed a settings change.
+  """
+  def remember_profile(token, %{} = me) when is_binary(token) and token != "" do
+    :persistent_term.put(profile_key(token), {System.monotonic_time(:second), to_profile(me)})
+    :ok
+  end
+
+  @doc "Drops `profile/1`'s cached answer for `token`, so the next call asks Telegram."
+  def forget_profile(token) when is_binary(token) do
+    :persistent_term.erase(profile_key(token))
+    :ok
+  end
+
+  def forget_profile(_), do: :ok
+
+  defp profile_key(token), do: {__MODULE__, :profile, :crypto.hash(:sha256, token)}
+
   defp get_me(token) do
     {mod, fun} = Application.get_env(:druzhok, :panel_get_me, {Druzhok.Telegram.API, :get_me})
 
     case apply(mod, fun, [token]) do
       {:ok, %{} = me} ->
-        %{title: text_or_nil(me["first_name"]), username: text_or_nil(me["username"])}
+        to_profile(me)
 
       _ ->
         nil
     end
   rescue
     _ -> nil
+  end
+
+  defp to_profile(me) do
+    %{
+      title: text_or_nil(me["first_name"]),
+      username: text_or_nil(me["username"]),
+      read_all: if(is_boolean(me["can_read_all_group_messages"]), do: me["can_read_all_group_messages"])
+    }
   end
 
   defp text_or_nil(v) when is_binary(v) and v != "", do: v

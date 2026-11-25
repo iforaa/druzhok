@@ -333,6 +333,20 @@ defmodule Druzhok.LifecycleTest do
       assert {:busy, :telegram} = check(inst)
     end
 
+    test "group chatter that would not wake the bot is no work, pending or delivered", %{inst: inst} do
+      # A mention-only bot with privacy mode off gets every group message.
+      :ok = Inbox.enqueue(inst.id, 4, ~s({"update_id":4}), wakes: false)
+      assert check(inst) == :idle
+
+      Druzhok.Repo.get_by!(Inbox, instance_id: inst.id, update_id: 4) |> Inbox.ack()
+      assert check(inst) == :idle
+      assert check(inst, only: [:telegram, :acked]) == :idle
+
+      :ok = Inbox.enqueue(inst.id, 5, ~s({"update_id":5}))
+      Druzhok.Repo.get_by!(Inbox, instance_id: inst.id, update_id: 5) |> Inbox.ack()
+      assert {:busy, :delivered} = check(inst, only: [:acked])
+    end
+
     test "a recent proxy call", %{inst: inst} do
       Repo.insert!(%Druzhok.Usage{
         instance_id: inst.id,

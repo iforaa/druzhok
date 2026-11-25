@@ -292,6 +292,9 @@ defmodule Druzhok.ManagerBotTest do
 
     assert TelegramStub.await_call(stub, "getManagedBotToken", &(&1["user_id"] == 555), 10_000)
     done = TelegramStub.await_call(stub, "editMessageText", &(&1["text"] =~ "создан и запущен"), 15_000)
+
+    # Privacy mode off with the new bot's own token, so its group name works without an @mention.
+    assert TelegramStub.calls(stub, "managed:setMySettings") == [%{"can_read_all_group_messages" => true}]
     assert done["chat_id"] == @owner
     assert done["text"] =~ "https://t.me/kot_1a2b_bot"
     refute Enum.any?(sent_texts(stub), &(&1 =~ "создан и запущен"))
@@ -348,6 +351,23 @@ defmodule Druzhok.ManagerBotTest do
     # No name typed: the slug is never used as one. No character: today's text.
     assert File.read!(Path.join([root, "zhora_ff00", "SOUL.md"])) ==
              Druzhok.Runtime.Hermes.Voice.soul_md("CleoHub")
+  end
+
+  test "a bot is still created and started when Telegram refuses to turn privacy off", %{stub: stub} do
+    TelegramStub.set_managed_bot_token(stub, "560NEWBOT")
+    cleanup_instance("mira_aa01")
+
+    # A Bot API server older than 10.5 has no setMySettings.
+    Bypass.stub(stub.bypass, "POST", "/bot560NEWBOT/setMySettings", fn conn ->
+      Plug.Conn.resp(conn, 404, Jason.encode!(%{"ok" => false, "error_code" => 404, "description" => "Not Found"}))
+    end)
+
+    TelegramStub.push_update(stub, managed_bot_update(560, "mira_aa01_bot"))
+    TelegramStub.await_call(stub, "editMessageText", &(&1["text"] =~ "создан и запущен"), 15_000)
+
+    refute Enum.any?(TelegramStub.calls(stub, "editMessageText"), &(&1["text"] =~ "Ошибка"))
+    assert Repo.get_by!(Instance, name: "mira_aa01").telegram_token == "560NEWBOT"
+    assert eventually(fn -> Druzhok.BotManager.status("mira_aa01") == "active" end)
   end
 
   test "provisioning failure is reported to the creator", %{stub: stub} do

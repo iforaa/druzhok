@@ -222,7 +222,7 @@ defmodule Druzhok.Lifecycle.Scheduler do
   # --- the line -------------------------------------------------------------
 
   defp line(state, sleeping, now) do
-    waking = Inbox.oldest_waking(now)
+    waking = Inbox.oldest_waking()
 
     fresh = read_cron(sleeping, state.cron)
 

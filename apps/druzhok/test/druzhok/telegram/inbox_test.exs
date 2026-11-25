@@ -17,16 +17,21 @@ defmodule Druzhok.Telegram.InboxTest do
     assert Inbox.next_pending(inst.id).payload == ~s({"update_id":7})
   end
 
-  test "next_waking skips rows that do not wake, until they have waited 20 h", %{inst: inst} do
+  test "rows that do not wake never wake the bot or join the line, however old", %{inst: inst} do
     :ok = Inbox.enqueue(inst.id, 1, ~s({"update_id":1}), wakes: false)
+    day_old = DateTime.add(DateTime.utc_now(), -23 * 3600)
+    Repo.update_all(from(u in Inbox, where: u.instance_id == ^inst.id), set: [received_at: day_old])
+
     assert Inbox.next_waking(inst.id) == nil
+    refute Map.has_key?(Inbox.oldest_waking(), inst.id)
     assert Inbox.pending_count(inst.id) == 1
 
-    assert %Inbox{update_id: 1} =
-             Inbox.next_waking(inst.id, DateTime.add(DateTime.utc_now(), 20 * 3600 + 1))
-
+    # A real message wakes it; the line key is that message's time, not the chatter's.
     :ok = Inbox.enqueue(inst.id, 2, ~s({"update_id":2}))
     assert %Inbox{update_id: 2} = Inbox.next_waking(inst.id)
+    assert DateTime.compare(Inbox.oldest_waking()[inst.id], day_old) == :gt
+    # The chatter is still delivered first, in order.
+    assert Inbox.next_pending(inst.id).update_id == 1
   end
 
   test "nothing is stored for a bot that is not in webhook mode at the moment of the insert" do

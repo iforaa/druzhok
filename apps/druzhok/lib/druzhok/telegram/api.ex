@@ -123,6 +123,11 @@ defmodule Druzhok.Telegram.API do
     call(token, "setChatMenuButton", %{chat_id: chat_id, menu_button: menu_button})
   end
 
+  @doc "Changes the calling bot's own BotFather settings (Bot API 10.5), e.g. `%{can_read_all_group_messages: true}`."
+  def set_my_settings(token, settings) when is_map(settings) do
+    call(token, "setMySettings", settings)
+  end
+
   def get_managed_bot_token(token, bot_user_id) do
     call(token, "getManagedBotToken", %{user_id: bot_user_id})
   end

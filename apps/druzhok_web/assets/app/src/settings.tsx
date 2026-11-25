@@ -209,6 +209,7 @@ export default function Settings({ bot, onBot, go }: { bot: Bot; onBot: (b: Bot)
       </div>
       <ApplyNote bot={bot} settings={settings} go={go} />
 
+      <GroupReading bot={bot} onBot={onBot} />
       <Groups onBot={onBot} />
 
       <section className="card">
@@ -253,6 +254,71 @@ export default function Settings({ bot, onBot, go }: { bot: Bot; onBot: (b: Bot)
       {deleteError ? <p className="note-error">{deleteError}</p> : null}
 
       <p className="hint hint--center">Последний запуск бота: {when(bot.started_at)}</p>
+    </>
+  )
+}
+
+/**
+ * Whether the bot gets every message in its groups (Telegram's privacy mode
+ * off). Needed for the group name to work without an @mention; when it
+ * answers is still «В группах». Telegram holds it, so this shows what getMe
+ * said and nothing when Telegram did not answer.
+ */
+function GroupReading({ bot, onBot }: { bot: Bot; onBot: (b: Bot) => void }) {
+  const [busy, setBusy] = useState(false)
+  const [failed, setFailed] = useState<string | null>(null)
+  const on = bot.settings.read_all_group_messages
+  if (on === null) return null
+  const { mention_only: mentionOnly, trigger_name: name } = bot.settings
+
+  // What it means depends on «В группах»: a bot that answers everything
+  // answers every message it now sees.
+  const onText = mentionOnly
+    ? "Бот будет видеть все сообщения в группах, а отвечать по-прежнему только когда зовут. Участники увидят, что у бота есть доступ к сообщениям."
+    : "Бот будет видеть все сообщения в группах и отвечать на каждое, потому что в «В группах» выбрано «на всё». Участники увидят, что у бота есть доступ к сообщениям."
+  const offText = mentionOnly && name
+    ? `Бот будет видеть в группах только сообщения с @упоминанием и ответы ему. На имя «${name.length > 30 ? `${name.slice(0, 30)}…` : name}» без @ он перестанет откликаться.`
+    : "Бот будет видеть в группах только сообщения с @упоминанием и ответы ему."
+  const sub = !on
+    ? "только @упоминания и ответы ему"
+    : !mentionOnly
+      ? "видит и отвечает на всё"
+      : name
+        ? `откликается на «${name}» без @`
+        : "видит всё, отвечает на @упоминания"
+
+  const change = async (next: boolean) => {
+    const ok = await confirmDialog(next ? onText : offText)
+    if (!ok) return
+    setBusy(true)
+    setFailed(null)
+    try {
+      const r = await panelApi.setGroupPrivacy(next)
+      onBot(r.bot)
+    } catch (err) {
+      setFailed(explain(err))
+      // Telegram may hold the new value even after a failure: show what it says now.
+      panelApi.bot().then(onBot, () => {})
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <>
+      <div className="group">
+        <Toggle
+          icon="group"
+          tone="purple"
+          title="Видеть все сообщения в группах"
+          sub={sub}
+          on={on}
+          busy={busy}
+          onChange={change}
+        />
+      </div>
+      {failed ? <p className="note-error">{failed}</p> : null}
+      <p className="hint">Права администратора не нужны. В группах, где бот уже есть, изменение заработает, когда его удалят из группы и добавят снова.</p>
     </>
   )
 }

@@ -169,6 +169,8 @@ export interface Bot {
     image_gen_model: string | null
     website_hosting_enabled: boolean
     memory_provider: string
+    /** Whether the bot gets every group message (Telegram's privacy mode off); null when Telegram did not say. */
+    read_all_group_messages: boolean | null
   }
   /** What happens to settings saved in the panel (panel controls spec). */
   apply: { state: ApplyState; error: string | null }
@@ -306,6 +308,7 @@ export const panelApi = {
   groups: () => panel<{ groups: GroupChat[] }>("groups"),
   decideGroup: (chatId: number, action: GroupAction) =>
     panelPost<{ groups: GroupChat[]; bot: Bot }>(`groups/${chatId}`, { action }),
+  setGroupPrivacy: (on: boolean) => panelPost<{ bot: Bot }>("group-privacy", { on }),
 }
 
 // Answers the screens share (the account shows on Бот and Счёт), kept
@@ -438,6 +441,8 @@ export function explain(err: unknown): string {
       return "Кабинет для этого бота выключен."
     case "unpublish_failed":
       return "Не получилось снять все сайты с публикации, поэтому настройка не изменилась. Часть сайтов могла уже перестать открываться. Попробуйте ещё раз."
+    case "telegram_failed":
+      return "Telegram не подтвердил изменение. Проверьте переключатель и попробуйте ещё раз чуть позже."
     case "groups_polling":
       return "Этот бот пока не может работать в группах. Напишите в поддержку."
     case "not_text":

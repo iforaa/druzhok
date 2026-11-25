@@ -110,6 +110,7 @@ defmodule DruzhokWebWeb.Router do
       post "/delete", PanelController, :delete
       get "/groups", PanelController, :groups
       post "/groups/:chat_id", PanelController, :group
+      post "/group-privacy", PanelController, :group_privacy
     end
   end
 

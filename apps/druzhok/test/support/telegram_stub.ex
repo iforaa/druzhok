@@ -85,7 +85,34 @@ defmodule Druzhok.TelegramStub do
       reply(conn, Agent.get(updates, & &1.managed_token))
     end)
 
+    stub_managed_bot(stub, "999MANAGED")
     stub
+  end
+
+  # What provisioning asks Telegram with the new bot's own token. Its calls are
+  # recorded as `managed:<method>`. getMe reports the last setMySettings value.
+  defp stub_managed_bot(%{bypass: bypass} = stub, token) do
+    {:ok, read_all} = Agent.start(fn -> false end)
+    ExUnit.Callbacks.on_exit(fn -> if Process.alive?(read_all), do: Agent.stop(read_all) end)
+
+    Bypass.stub(bypass, "POST", "/bot#{token}/setMySettings", fn conn ->
+      {:ok, raw, conn} = Plug.Conn.read_body(conn)
+      params = Jason.decode!(raw)
+      Agent.update(stub.calls, &[%{method: "managed:setMySettings", params: params} | &1])
+      Agent.update(read_all, fn now -> Map.get(params, "can_read_all_group_messages", now) end)
+      reply(conn, true)
+    end)
+
+    Bypass.stub(bypass, "POST", "/bot#{token}/getMe", fn conn ->
+      conn = record(stub, "managed:getMe", conn)
+
+      reply(conn, %{
+        "id" => 2,
+        "is_bot" => true,
+        "username" => "managed_bot",
+        "can_read_all_group_messages" => Agent.get(read_all, & &1)
+      })
+    end)
   end
 
   @doc """
@@ -106,8 +133,9 @@ defmodule Druzhok.TelegramStub do
     Agent.update(updates, fn s -> %{s | queue: s.queue ++ [update]} end)
   end
 
-  def set_managed_bot_token(%{updates: updates}, token) do
+  def set_managed_bot_token(%{updates: updates} = stub, token) do
     Agent.update(updates, fn s -> %{s | managed_token: token} end)
+    stub_managed_bot(stub, token)
   end
 
   @doc "Decoded params of every recorded call to `method`, oldest first."

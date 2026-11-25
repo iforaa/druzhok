@@ -96,8 +96,8 @@ changes a restart field) and `settings_applied_seq` (the `settings_seq` a succes
   follows.
 - **A quiet restart for an awake bot.** In `awake/2` (`bot.ex:164`), when `settings_seq >
   settings_applied_seq`, the controller looks for a quiet moment on its tick:
-  1. `Idle.check(inst, window_s: 60, only: [:telegram, :proxy, :turns, :processes])`: no Telegram update and
-     no proxy call in the last 60 s, no running turn, and no process in the unit's cgroup besides hermes
+  1. `Idle.check(inst, window_s: 60, only: [:telegram, :proxy, :turns, :processes])`: no Telegram update that
+     would wake the bot (`wakes`, since the group privacy change) and no proxy call in the last 60 s, no running turn, and no process in the unit's cgroup besides hermes
      (a terminal or background job the agent started; a stop would kill it). `only:` is a new option
      selecting existing checks (`no_telegram`, `no_proxy_calls`, `no_turns`, `one_process`, `idle.ex:44-47`).
      `wanted`, `not_paused`, `started_long_ago` and `no_cron` are not part of it: they decide sleep, not this.

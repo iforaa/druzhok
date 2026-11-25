@@ -251,7 +251,10 @@ A bot awake under rule 6 is idle when all of these hold:
    paused.
 2. `started_at` is older than the idle window. Bots running at deploy have `started_at` nil; the
    controller's first pass sets it to now for a bot whose unit is active, and nil never counts as old.
-3. No `telegram_updates` row for it with `received_at` inside the window, and none pending.
+3. No `telegram_updates` row for it marked `wakes` with `received_at` inside the window, and none pending.
+   Rows that do not wake (group chatter a mention-only bot skips) do not count: with privacy mode off
+   (`Telegram.GroupPrivacy`, 2026-11-26) a bot receives every group message, and that chatter must not
+   keep it awake. The same holds for the delivered-row check (`none_acked`).
 4. No `usage_logs` row for it inside the window. Every LLM, search, scrape, image and embedding call goes
    through the proxy, so this covers work that Telegram does not show.
 5. `gateway_state.json`: `gateway_state == "running"` and `active_agents == 0`. Unreadable or missing →
@@ -295,9 +298,10 @@ the background on a miss or when the bot falls asleep; until it is known every @
 doubt the row wakes.
 
 Wake rule 5, the worker's poke and the typing indicator look only at `Inbox.next_waking/1`: the oldest
-pending row that is `wakes`, or any pending row older than 20 h. A row that does not wake is still held
-and delivered in order on the next wake, so a bot that observes group chatter sees it before the message
-that woke it; the 20 h rule delivers it before Telegram's 24 h expiry would drop it. A `mention_only`
+pending row that is `wakes`. A row that does not wake is still held and delivered in order on the next
+wake, so a bot that observes group chatter sees it before the message that woke it; with no real wake
+within 24 h it expires unread. (Until 2026-11-26 any row older than 20 h also woke the bot; with privacy
+mode off that woke bots in talkative groups for chatter alone and put them at the head of the queue's line.) A `mention_only`
 change made after a row was queued does not re-mark it; the restart that applies the change wakes the
 bot anyway.
 

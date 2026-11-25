@@ -105,10 +105,16 @@ defmodule Druzhok.Lifecycle.Idle do
 
   defp started_long_ago(_, _), do: {:busy, :recently_started}
 
+  # Only rows that would wake the bot count (`Inbox.wakes`, `Telegram.Addressed`):
+  # with privacy mode off (`Telegram.GroupPrivacy`) a mention-only bot receives
+  # every group message, and chatter it will not answer must not keep it awake
+  # or put off a quiet restart.
   defp no_telegram(inst, cutoff) do
     recent =
       from(u in Inbox,
-        where: u.instance_id == ^inst.id and (u.received_at > ^cutoff or is_nil(u.acked_at)),
+        where:
+          u.instance_id == ^inst.id and u.wakes and
+            (u.received_at > ^cutoff or is_nil(u.acked_at)),
         select: count()
       )
       |> Repo.one()
@@ -118,10 +124,13 @@ defmodule Druzhok.Lifecycle.Idle do
 
   # A row handed to the bot within the window (not one dropped instead):
   # hermes may still hold it in its text buffer, up to 4 s before a turn.
+  # Chatter that does not wake the bot starts no turn, so it does not count.
   defp none_acked(inst, cutoff) do
     recent =
       from(u in Inbox,
-        where: u.instance_id == ^inst.id and u.acked_at > ^cutoff and is_nil(u.dropped_reason),
+        where:
+          u.instance_id == ^inst.id and u.wakes and u.acked_at > ^cutoff and
+            is_nil(u.dropped_reason),
         select: count()
       )
       |> Repo.one()
