@@ -1,0 +1,10 @@
+[Unit]
+Description=ruoc off-site backup (restic, Beget S3)
+After=network-online.target postgresql.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/ruoc-backup nightly
+Nice=10
+IOSchedulingClass=idle

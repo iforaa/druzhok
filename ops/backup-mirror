@@ -1,0 +1,88 @@
+#!/bin/bash
+# Copies the other server's backup bucket into a bucket only this server holds
+# the key to, so a server taken over cannot wipe every copy of its own data:
+#
+#   druzhok host (cleo-demo):      ruoc-backups    -> ruoc-copy
+#   ruoc host (alpha-eridanus):    druzhok-backups -> dzh-copy
+#
+# Only adds: --ignore-existing never overwrites an object, and nothing is ever
+# deleted in the copy. restic's files are written once under their content's
+# hash, so the copy is a valid repository (a superset of the source, with the
+# same password); junk an attacker adds to the source is added, never swapped
+# for good data. Old data in the copy is pruned by hand, from a laptop.
+#
+#   backup-mirror run        copy, then check the source has a snapshot < 26 h old
+#   backup-mirror set-keys   asks for both buckets' keys
+#
+# /etc/backup-mirror.env (root 0600): SRC_BUCKET, DST_BUCKET and the keys.
+# A successful run touches $OK_FILE (default /var/lib/backup-mirror/last-ok).
+set -euo pipefail
+
+CONF=/etc/backup-mirror.env
+ENDPOINT=https://s3.ru1.storage.beget.cloud
+MAX_AGE_S=$((26 * 3600))
+
+die() { echo "backup-mirror: $*" >&2; exit 1; }
+[ "$(id -u)" = 0 ] || die "run as root"
+
+# Remotes come from the environment only: no rclone.conf (and no notice about it).
+export RCLONE_CONFIG=/dev/null
+
+remote() { # name key secret
+  export "RCLONE_CONFIG_$1_TYPE=s3" "RCLONE_CONFIG_$1_PROVIDER=Other" \
+    "RCLONE_CONFIG_$1_ENDPOINT=$ENDPOINT" "RCLONE_CONFIG_$1_ACCESS_KEY_ID=$2" \
+    "RCLONE_CONFIG_$1_SECRET_ACCESS_KEY=$3"
+}
+
+load() {
+  [ -r "$CONF" ] || die "no $CONF: run backup-mirror set-keys"
+  . "$CONF"
+  remote SRC "$SRC_KEY" "$SRC_SECRET"
+  remote DST "$DST_KEY" "$DST_SECRET"
+  OK_FILE=${OK_FILE:-/var/lib/backup-mirror/last-ok}
+}
+
+run() {
+  load
+  local out
+  if ! out=$(rclone copy "SRC:$SRC_BUCKET" "DST:$DST_BUCKET" \
+      --ignore-existing --exclude "locks/**" --transfers 4 --stats-one-line --stats 0 2>&1); then
+    echo "$out" | tail -5 >&2
+    die "rclone copy failed"
+  fi
+  # The other server's backup must itself be fresh: its newest snapshot file.
+  local newest now
+  newest=$(rclone lsf "SRC:$SRC_BUCKET/snapshots" --format t | sort | tail -1)
+  [ -n "$newest" ] || die "no snapshots in $SRC_BUCKET"
+  now=$(date -u +%s)
+  if [ $((now - $(date -u -d "$newest" +%s))) -gt "$MAX_AGE_S" ]; then
+    die "newest snapshot in $SRC_BUCKET is from $newest: that server's backup is not running"
+  fi
+  install -d -m 0755 "$(dirname "$OK_FILE")"
+  touch "$OK_FILE"; chmod 0644 "$OK_FILE"
+  echo "copied $SRC_BUCKET -> $DST_BUCKET; newest source snapshot $newest"
+}
+
+set_keys() {
+  local sb sk ss db dk ds
+  read -r -p "Source bucket (the other server's, e.g. 71e89eb48ab5-ruoc-backups): " sb
+  read -r -p "  its access key: " sk
+  read -r -s -p "  its secret key: " ss; echo
+  read -r -p "Copy bucket (this server's, e.g. 71e89eb48ab5-ruoc-copy): " db
+  read -r -p "  its access key: " dk
+  read -r -s -p "  its secret key: " ds; echo
+  for v in "$sb" "$sk" "$ss" "$db" "$dk" "$ds"; do [ -n "$v" ] || die "all six are needed"; done
+  umask 077
+  printf 'SRC_BUCKET=%q\nSRC_KEY=%q\nSRC_SECRET=%q\nDST_BUCKET=%q\nDST_KEY=%q\nDST_SECRET=%q\n' \
+    "$sb" "$sk" "$ss" "$db" "$dk" "$ds" > "$CONF"
+  chmod 0600 "$CONF"
+  load
+  rclone lsd "SRC:$SRC_BUCKET" >/dev/null && echo "source reachable"
+  rclone lsd "DST:$DST_BUCKET" >/dev/null && echo "copy bucket reachable"
+}
+
+case ${1:-} in
+  run) run ;;
+  set-keys) set_keys ;;
+  *) sed -n '2,19p' "$0"; exit 2 ;;
+esac

@@ -1,0 +1,85 @@
+#!/bin/bash
+# Off-site backups of the ruoc host (alpha-eridanus) with restic to Beget S3
+# (bucket 71e89eb48ab5-ruoc-backups). Installed as /usr/local/sbin/ruoc-backup.
+#
+#   ruoc-backup nightly        ruoc_live (pg_dump), /data/sites, /etc/ruoc, /etc/caddy
+#   ruoc-backup set-keys       asks for the S3 keys, creates the password and repo
+#   ruoc-backup forget         retention and prune (Sundays, from nightly)
+#   ruoc-backup restic <args>  restic with the repository set
+#
+# Restore the database: ruoc-backup restic restore latest --target /tmp/r
+#   --include /var/backups/ruoc-stage, then
+#   sudo -u postgres pg_restore -d <new db> /tmp/r/var/backups/ruoc-stage/ruoc_live.dump
+#
+# restic encrypts here; keep /etc/ruoc/backup-password somewhere off this
+# server. Replaces the old ruocbackup dump receiver (/data/ruoc-backups), whose
+# sender (the RU database host) is gone since 2026-11-02.
+set -euo pipefail
+
+KEYS=/etc/ruoc/backup-s3.env
+export RESTIC_REPOSITORY=s3:https://s3.ru1.storage.beget.cloud/71e89eb48ab5-ruoc-backups
+export RESTIC_PASSWORD_FILE=/etc/ruoc/backup-password
+export RESTIC_CACHE_DIR=/var/cache/restic
+STAGE=/var/backups/ruoc-stage
+STATE=/var/lib/ruoc-backup
+DB=ruoc_live
+
+die() { echo "ruoc-backup: $*" >&2; exit 1; }
+[ "$(id -u)" = 0 ] || die "run as root"
+exec 9>/run/ruoc-backup.lock
+flock 9
+
+load_keys() {
+  [ -r "$KEYS" ] || die "no $KEYS: run ruoc-backup set-keys"
+  set -a; . "$KEYS"; set +a
+  [ -r "$RESTIC_PASSWORD_FILE" ] || die "no $RESTIC_PASSWORD_FILE"
+}
+
+nightly() {
+  rm -rf "$STAGE"
+  install -d -m 0700 -o postgres -g postgres "$STAGE"
+  # A consistent snapshot of the live database, taken by postgres itself.
+  setpriv --reuid=postgres --regid=postgres --init-groups \
+    env -i PATH=/usr/bin:/bin pg_dump -Fc -Z 6 -d "$DB" -f "$STAGE/$DB.dump"
+  local size; size=$(stat -c %s "$STAGE/$DB.dump")
+  [ "$size" -gt 1000000 ] || die "$DB dump is only $size bytes"
+  chown -R root:root "$STAGE"
+  load_keys
+  restic backup --tag nightly --one-file-system \
+    --exclude "/etc/ruoc/backup-password" --exclude "$KEYS" \
+    "$STAGE" /data/sites /etc/ruoc /etc/caddy
+  rm -rf "$STAGE"
+  install -d -m 0755 "$STATE"
+  touch "$STATE/last-ok"
+  if [ "$(date -u +%u)" = 7 ]; then forget; fi
+}
+
+forget() {
+  load_keys
+  restic forget --tag nightly --keep-daily 7 --keep-weekly 4 --keep-monthly 3
+  restic prune
+}
+
+set_keys() {
+  local a s
+  read -r -p "S3 access key (ruoc-backups): " a
+  read -r -s -p "S3 secret key: " s; echo
+  [ -n "$a" ] && [ -n "$s" ] || die "both keys are needed"
+  umask 077
+  printf 'AWS_ACCESS_KEY_ID=%s\nAWS_SECRET_ACCESS_KEY=%s\n' "$a" "$s" > "$KEYS"
+  if [ ! -s "$RESTIC_PASSWORD_FILE" ]; then
+    head -c 32 /dev/urandom | base64 > "$RESTIC_PASSWORD_FILE"
+    echo "New encryption password in $RESTIC_PASSWORD_FILE: keep a copy off this server."
+  fi
+  chmod 0600 "$KEYS" "$RESTIC_PASSWORD_FILE"
+  load_keys
+  if restic cat config >/dev/null 2>&1; then echo "Repository reachable."; else restic init; fi
+}
+
+case ${1:-} in
+  nightly) nightly ;;
+  forget) forget ;;
+  set-keys) set_keys ;;
+  restic) shift; load_keys; restic "$@" ;;
+  *) sed -n '2,17p' "$0"; exit 2 ;;
+esac

@@ -1,0 +1,11 @@
+[Unit]
+Description=Nightly copy of the other server's backups
+
+[Timer]
+# After both servers' nightly backups (01:00 and 01:30 UTC).
+OnCalendar=*-*-* 03:00:00 UTC
+RandomizedDelaySec=20m
+Persistent=true
+
+[Install]
+WantedBy=timers.target

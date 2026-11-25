@@ -16,6 +16,10 @@ defmodule Druzhok.HostUpdates do
     * `:backup_stale` — the nightly off-site backup (`ops/druzhok-backup`)
       has not succeeded for 26 hours (`/var/lib/druzhok-backup/last-ok`).
       Only once that dir exists, i.e. backups were set up on this host.
+    * `:mirror_stale` — the nightly copy of ruoc's backup bucket
+      (`ops/backup-mirror`) has not succeeded for 26 hours
+      (`/var/lib/backup-mirror/last-ok`). It also fails when ruoc's own
+      backup is older than that, so this watches the ruoc host's backup too.
 
   Both are readable by the `druzhok` user. On a machine with no
   `/var/lib/apt/periodic` (dev, tests) it does nothing. Runs only where
@@ -36,7 +40,8 @@ defmodule Druzhok.HostUpdates do
   @defaults %{
     periodic_dir: "/var/lib/apt/periodic",
     reboot_required: "/var/run/reboot-required",
-    backup_dir: "/var/lib/druzhok-backup"
+    backup_dir: "/var/lib/druzhok-backup",
+    mirror_dir: "/var/lib/backup-mirror"
   }
 
   def start_link(opts \\ []), do: GenServer.start_link(__MODULE__, opts, name: __MODULE__)
@@ -100,37 +105,45 @@ defmodule Druzhok.HostUpdates do
         _ ->
           nil
       end,
-      case Map.get(facts, :backup_ok, :off) do
-        :off ->
-          nil
-
-        nil ->
-          {:backup_stale,
-           "Резервная копия ещё ни разу не прошла: journalctl -u druzhok-backup.service"}
-
-        t when now - t > @backup_max_age_s ->
-          {:backup_stale,
-           "Резервная копия не проходила #{div(now - t, 3600)} ч. " <>
-             "Проверь: journalctl -u druzhok-backup.service"}
-
-        _ ->
-          nil
-      end
+      stale(
+        Map.get(facts, :backup_ok, :off),
+        now,
+        :backup_stale,
+        "Резервная копия",
+        "druzhok-backup.service"
+      ),
+      stale(
+        Map.get(facts, :mirror_ok, :off),
+        now,
+        :mirror_stale,
+        "Копия резервных копий ruoc",
+        "backup-mirror.service"
+      )
     ]
     |> Enum.reject(&is_nil/1)
   end
+
+  defp stale(:off, _now, _kind, _what, _unit), do: nil
+
+  defp stale(nil, _now, kind, what, unit),
+    do: {kind, "#{what}: ещё ни разу не прошла. journalctl -u #{unit}"}
+
+  defp stale(t, now, kind, what, unit) when now - t > @backup_max_age_s,
+    do: {kind, "#{what}: не проходила #{div(now - t, 3600)} ч. journalctl -u #{unit}"}
+
+  defp stale(_t, _now, _kind, _what, _unit), do: nil
 
   defp facts(paths) do
     %{
       upgrade_stamp: mtime(Path.join(paths.periodic_dir, "upgrade-stamp")),
       reboot_required: mtime(paths.reboot_required),
-      backup_ok:
-        if(File.dir?(paths.backup_dir),
-          do: mtime(Path.join(paths.backup_dir, "last-ok")),
-          else: :off
-        )
+      backup_ok: last_ok(paths.backup_dir),
+      mirror_ok: last_ok(paths.mirror_dir)
     }
   end
+
+  defp last_ok(dir),
+    do: if(File.dir?(dir), do: mtime(Path.join(dir, "last-ok")), else: :off)
 
   defp mtime(path) do
     case File.stat(path, time: :posix) do

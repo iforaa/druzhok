@@ -32,6 +32,12 @@ defmodule Druzhok.HostUpdatesTest do
     assert kinds(Map.put(ok(), :backup_ok, nil)) == [:backup_stale]
   end
 
+  test "the copy of ruoc's backups, the same way" do
+    assert kinds(Map.put(ok(), :mirror_ok, @now - 3600)) == []
+    assert kinds(Map.put(ok(), :mirror_ok, @now - 30 * 3600)) == [:mirror_stale]
+    assert kinds(Map.put(ok(), :mirror_ok, nil)) == [:mirror_stale]
+  end
+
   test "run/2 does nothing on a host without apt's periodic dir" do
     state = %{paths: %{periodic_dir: "/nonexistent-#{System.unique_integer()}"}, reported: %{}}
     assert HostUpdates.run(state, @now) == state

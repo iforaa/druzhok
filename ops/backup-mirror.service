@@ -1,0 +1,10 @@
+[Unit]
+Description=Copy the other server's backup bucket (ops/backup-mirror)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/backup-mirror run
+Nice=10
+IOSchedulingClass=idle
