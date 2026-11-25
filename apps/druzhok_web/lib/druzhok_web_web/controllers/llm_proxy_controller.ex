@@ -26,19 +26,46 @@ defmodule DruzhokWebWeb.LlmProxyController do
 
   def audio_transcriptions(conn, _params), do: RuocProxy.transcribe(conn, conn.assigns.instance)
 
+  # TTS is paid from the operator's OpenAI key, so the bot's ruoc plan never
+  # sees it: Druzhok.TtsGate checks the plan and an hourly count, the model is
+  # always @tts_model and only these fields reach OpenAI.
+  @tts_model "gpt-4o-mini-tts"
+  @tts_fields ~w(voice input instructions response_format speed)
+  # OpenAI's own limit for one request.
+  @tts_max_chars 4096
+
   def audio_speech(conn, _params) do
     openai_key = Druzhok.Settings.get("openai_api_key")
+    instance = conn.assigns.instance
+    input = conn.body_params["input"]
 
-    if is_nil(openai_key) do
-      json_error(conn, 503, "Text-to-speech not configured", "server_error")
-    else
-      do_audio_speech(conn, openai_key, conn.assigns.instance)
+    cond do
+      is_nil(openai_key) ->
+        json_error(conn, 503, "Text-to-speech not configured", "server_error")
+
+      not is_binary(input) or input == "" ->
+        json_error(conn, 400, "input is required", "invalid_request_error")
+
+      String.length(input) > @tts_max_chars ->
+        json_error(conn, 400, "input is longer than #{@tts_max_chars} characters", "invalid_request_error")
+
+      tts_plan_check().(instance) != :ok ->
+        json_error(conn, 402, "Text-to-speech is not available on this bot's plan right now", "insufficient_quota")
+
+      Druzhok.TtsGate.take(instance.id) == :limit ->
+        json_error(conn, 429, "Text-to-speech limit: #{Druzhok.TtsGate.per_hour()} per hour", "rate_limit_error")
+
+      true ->
+        do_audio_speech(conn, openai_key, instance)
     end
   end
 
+  defp tts_plan_check,
+    do: Application.get_env(:druzhok_web, :tts_plan_check, &Druzhok.TtsGate.check_plan/1)
+
   defp do_audio_speech(conn, openai_key, instance) do
     started_at = System.monotonic_time(:millisecond)
-    body = conn.body_params
+    body = conn.body_params |> Map.take(@tts_fields) |> Map.put("model", @tts_model)
 
     url = openai_api_url() <> "/audio/speech"
 

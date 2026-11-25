@@ -4,6 +4,8 @@ defmodule DruzhokWebWeb.LlmProxy.InflightTest do
 
   setup do
     Druzhok.Settings.set("openai_api_key", "sk-test-openai")
+    Application.put_env(:druzhok_web, :tts_plan_check, fn _ -> :ok end)
+    on_exit(fn -> Application.delete_env(:druzhok_web, :tts_plan_check) end)
     :ok
   end
 

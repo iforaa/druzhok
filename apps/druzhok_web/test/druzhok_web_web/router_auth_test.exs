@@ -24,6 +24,16 @@ defmodule DruzhokWebWeb.RouterAuthTest do
     end
   end
 
+  test "a bot being deleted is refused with its own key", %{conn: conn} do
+    inst =
+      DruzhokWebWeb.ProxyCase.create_instance(%{})
+      |> Ecto.Changeset.change(delete_requested: true)
+      |> Druzhok.Repo.update!()
+
+    conn = conn |> DruzhokWebWeb.ProxyCase.authed(inst) |> post("/v1/chat/completions", %{})
+    assert conn.status == 401
+  end
+
   test "the site routes need a tenant key" do
     gzip = put_req_header(build_conn(), "content-type", "application/gzip")
 

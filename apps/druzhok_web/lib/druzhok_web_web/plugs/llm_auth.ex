@@ -7,7 +7,8 @@ defmodule DruzhokWebWeb.Plugs.LlmAuth do
     case get_req_header(conn, "authorization") do
       ["Bearer " <> tenant_key] ->
         case Druzhok.Repo.get_by(Druzhok.Instance, tenant_key: tenant_key) do
-          nil ->
+          # A bot being deleted is not served (as in Plugs.DocsAuth).
+          instance when is_nil(instance) or instance.delete_requested == true ->
             conn
             |> put_resp_content_type("application/json")
             |> send_resp(401, Jason.encode!(%{error: %{message: "Invalid API key", type: "authentication_error"}}))

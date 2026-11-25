@@ -26,6 +26,8 @@ defmodule Druzhok.Application do
           Druzhok.Status,
           # cleohub_set_avatar's 3 a day per bot.
           Druzhok.Cleohub.AvatarLimit,
+          # /v1/audio/speech's calls per bot per hour.
+          Druzhok.TtsGate,
           # Warm ruoc's model catalogue: a bot start reads it from the cache
           # without waiting (Runtime.Hermes sync_image_input_mode).
           {Task, &Druzhok.Ruoc.models/0}
