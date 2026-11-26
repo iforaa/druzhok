@@ -267,11 +267,31 @@ defmodule DruzhokWebWeb.CleohubMcpControllerTest do
       assert on =~ "Рисую картинки по описанию"
       refute on =~ "Картинки сейчас не рисую"
       refute on =~ "<!--"
+      assert on =~ "рисую картинки по описанию и вижу присланные фото"
+      refute on =~ "В группе только ищу в интернете"
+
+      # Group pictures off: pictures in private, the group line as before.
+      inst |> Ecto.Changeset.change(image_gen_enabled: true, group_images_enabled: false) |> Repo.update!()
+      private_only = text(call_tool(conn, "cleohub_help"))
+      assert private_only =~ "Рисую картинки по описанию"
+      assert private_only =~ "В группе только ищу в интернете"
+      refute private_only =~ "вижу присланные фото"
+      refute private_only =~ "<!--"
+
+      # Group pictures on, pictures off: nothing about pictures in a group.
+      inst |> Ecto.Changeset.change(image_gen_enabled: false, group_images_enabled: true) |> Repo.update!()
+      assert text(call_tool(conn, "cleohub_help")) =~ "В группе только ищу в интернете"
     end
 
     test "English for an English bot", %{conn: conn, instance: inst} do
       inst |> Ecto.Changeset.change(language: "en") |> Repo.update!()
       assert text(call_tool(conn, "cleohub_help")) =~ "# What I can do"
+      assert text(call_tool(conn, "cleohub_help")) =~ "In a group I only search the web"
+
+      inst |> Ecto.Changeset.change(image_gen_enabled: true) |> Repo.update!()
+      on = text(call_tool(conn, "cleohub_help"))
+      assert on =~ "see the photos people post"
+      refute on =~ "<!--"
     end
   end
 

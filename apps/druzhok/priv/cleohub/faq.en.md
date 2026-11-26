@@ -20,7 +20,12 @@
 
 - I don't log into your accounts, email or bank, and I don't pay or buy anything.
 - I don't call or message other people on my own.
+<!-- group-pictures -->
+- In a group I search the web, draw pictures from a description and see the photos people post. No files, reminders or memory there, and I can't rework a photo there.
+<!-- /group-pictures -->
+<!-- no-group-pictures -->
 - In a group I only search the web: no files, reminders or memory there.
+<!-- /no-group-pictures -->
 - I don't change the plan or take payments: that is in «Cabinet».
 
 # Common questions

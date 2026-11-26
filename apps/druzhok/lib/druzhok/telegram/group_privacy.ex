@@ -9,8 +9,8 @@ defmodule Druzhok.Telegram.GroupPrivacy do
 
   Telegram keeps the setting and druzhok keeps no copy. Bot API 10.5's
   `setMySettings` changes it with the bot's own token, and `getMe` reads it
-  back (the panel shows it through `Druzhok.Panel.profile/1`). Telegram applies it to a group when the
-  bot joins, so a group the bot is already in needs it removed and added again.
+  back (the panel shows it through `Druzhok.Panel.profile/1`). A change applies at once, in groups
+  the bot is already in too: no removing and adding it again (checked live).
 
   New managed bots start reading every message (`ManagerBot.Provisioner`); the owner switches it
   in the panel (`POST /app/api/group-privacy`).

@@ -100,6 +100,7 @@ defmodule Druzhok.Panel do
         sleep_idle_minutes: div(Lifecycle.Idle.window_s(), 60),
         image_gen_enabled: inst.image_gen_enabled,
         image_gen_model: inst.image_gen_model,
+        group_images_enabled: inst.group_images_enabled,
         website_hosting_enabled: inst.website_hosting_enabled,
         memory_provider: inst.memory_provider,
         # Telegram's, not a column (`Telegram.GroupPrivacy`); nil when getMe did not say.

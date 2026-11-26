@@ -363,11 +363,32 @@ defmodule Druzhok.Runtime.Hermes.VoiceTest do
     end
 
     test "the group rule: web only, no photos, no pictures, nothing private" do
-      rules = Voice.product_rules(%{name: "b", image_gen_enabled: true})
+      rules = Voice.product_rules(%{name: "b", image_gen_enabled: true, group_images_enabled: false})
       assert rules =~ "В группе:"
       assert rules =~ "только поиск в интернете"
       assert rules =~ "Фото в группе ты не разбираешь и картинки там не рисуешь"
       assert rules =~ "о владельце"
+    end
+
+    test "the group rule with group pictures: draws by description, sees photos, no redraw" do
+      rules = Voice.product_rules(%{name: "b", image_gen_enabled: true, group_images_enabled: true})
+      assert rules =~ "в группе есть только поиск в интернете и рисование картинок по описанию"
+      assert rules =~ "Фото, присланные в группу, ты видишь"
+      assert rules =~ "Переделать фото в группе нельзя"
+      refute rules =~ "не рисуешь"
+      refute rules =~ "не разбираешь"
+
+      # The switch alone, or pictures alone, keeps today's rule.
+      for inst <- [
+            %{name: "b", group_images_enabled: true},
+            %{name: "b", image_gen_enabled: true}
+          ] do
+        rules = Voice.product_rules(inst)
+        assert rules =~ "Фото в группе ты не разбираешь"
+        refute rules =~ "рисование картинок"
+      end
+
+      refute Voice.product_rules(%{name: "b", group_images_enabled: true}) =~ "картинки"
     end
 
     test "capability lines follow the settings" do

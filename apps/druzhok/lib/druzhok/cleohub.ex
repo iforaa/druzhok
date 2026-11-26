@@ -258,17 +258,25 @@ defmodule Druzhok.Cleohub do
   @doc """
   The help text for `inst`: `priv/cleohub/faq.<lang>.md` (Russian unless the bot
   speaks English), keeping the section between `<!-- pictures -->` markers when
-  pictures are on and the one between `<!-- no-pictures -->` markers otherwise.
+  pictures are on and the one between `<!-- no-pictures -->` markers otherwise;
+  `group-pictures` / `no-group-pictures` the same for «Картинки в группах»
+  (`Voice.group_images?/1`).
   """
   def help_text(inst) do
     lang = if inst.language == "en", do: "en", else: "ru"
     path = Path.join([:code.priv_dir(:druzhok), "cleohub", "faq.#{lang}.md"])
-    {keep, drop} = if inst.image_gen_enabled == true, do: {"pictures", "no-pictures"}, else: {"no-pictures", "pictures"}
 
-    path
-    |> File.read!()
-    |> String.replace(~r/<!-- #{drop} -->.*?<!-- \/#{drop} -->\n?/s, "")
-    |> String.replace(~r/<!-- \/?#{keep} -->\n?/, "")
+    [
+      {"pictures", inst.image_gen_enabled == true},
+      {"group-pictures", Druzhok.Runtime.Hermes.Voice.group_images?(inst)}
+    ]
+    |> Enum.reduce(File.read!(path), fn {name, on?}, text ->
+      {keep, drop} = if on?, do: {name, "no-" <> name}, else: {"no-" <> name, name}
+
+      text
+      |> String.replace(~r/<!-- #{drop} -->.*?<!-- \/#{drop} -->\n?/s, "")
+      |> String.replace(~r/<!-- \/?#{keep} -->\n?/, "")
+    end)
     |> String.trim()
   end
 
