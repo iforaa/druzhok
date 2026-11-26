@@ -6,11 +6,13 @@ import { ErrorNote, Figure, Icon, Meter, Row, Skeleton } from "./ui"
 
 // Счёт: ruoc-gateway's bot cabinet (ruoc internal/httpapi/miniapp.go), called
 // cross-origin: the plan and when its period ends, how much of it is left
-// (its limits, with the day each comes back), and the plans and payments.
-// There is no balance to show: a bot's plan is all it spends. A payment
-// takes two taps: one to open it at the bank, one to go there, because
-// Telegram opens an outside link only from a tap and the bank can take
-// seconds to answer.
+// (its limits, with the day each comes back), the bot's balance and its
+// top-ups, and the plans and payments. The balance is what the bot spends
+// once its plan is used up: after a window on a windowed plan whose
+// `overflow` is on, after the period's credit on a credit plan. A payment,
+// a plan's or a top-up's, takes two taps: one to open it at the bank, one to
+// go there, because Telegram opens an outside link only from a tap and the
+// bank can take seconds to answer. One payment is asked for at a time.
 //
 // A bot can spend from its owner's Cleo Code account instead of its own
 // (ruoc's funding link): the owner proves the account with its password here,
@@ -19,6 +21,36 @@ import { ErrorNote, Figure, Icon, Meter, Row, Skeleton } from "./ui"
 // account is offered, never unlinking.
 
 type Screen = "account" | "receipt" | "link"
+
+/** What sent the owner to confirm a receipt email first: a plan, or a top-up of this much. */
+type Held = { plan: Plan } | { topup: number }
+
+/** A credit plan's period credit still left: its `subscription` grants. */
+function planCredit(me: Me): number {
+  return me.grants.filter((g) => g.kind === "subscription").reduce((n, g) => n + g.remaining_nanorub, 0)
+}
+
+/**
+ * The bot's own money: the balance less what is left of a credit plan's
+ * period credit. The balance counts an overshoot (a negative grant) and the
+ * grant list does not, so a debt lowers this, never below nothing.
+ */
+export function ownMoney(me: Me): number {
+  return Math.max(0, me.balance_nanorub - planCredit(me))
+}
+
+/** What a credit plan has left this period: a debt larger than the bot's own money comes out of it. */
+function planLeft(me: Me): number {
+  return Math.min(planCredit(me), Math.max(0, me.balance_nanorub))
+}
+
+/** A window is used up and the bot goes on, paying from its own money. */
+function spendingBalance(me: Me): boolean {
+  const l = me.limits
+  if (!l?.overflow) return false
+  const spent = l.spent != null || l.session.used_percent >= 100 || l.weekly.used_percent >= 100
+  return spent && ownMoney(me) > 0
+}
 
 /**
  * What the period line says, as ruoc's own portal says it: a cancelled plan
@@ -39,12 +71,13 @@ export function periodNote(sub: NonNullable<Me["subscription"]>): string {
 /**
  * The plan in one line, for Бот's row into Счёт: what is left of the week, or
  * that the 5-hour limit has run out, since the bot stops answering then
- * whatever the week says.
+ * whatever the week says, unless it goes on from its balance.
  */
 export function planLine(me: Me): { title: string; sub: string } {
   const sub = me.subscription
   const line = sub ? `${sub.plan_name} · ${lowerFirst(periodNote(sub))}` : "Тариф не выбран"
   if (!me.limits) return sub ? { title: sub.plan_name, sub: lowerFirst(periodNote(sub)) } : { title: "Тариф не выбран", sub: "Посмотреть тарифы" }
+  if (spendingBalance(me)) return { title: "Лимит исчерпан, тратится баланс", sub: `Баланс ${rub(ownMoney(me))}` }
   const session = me.limits.session
   if (session.used_percent >= 100)
     return {
@@ -57,7 +90,8 @@ export function planLine(me: Me): { title: string; sub: string } {
 
 /**
  * The plan at a glance, Счёт's big figure: what is left of the week, the
- * plan's name and its period. A plan without limits shows its name.
+ * plan's name and its period, or the balance while it pays after a spent
+ * window. A plan without limits shows its name.
  */
 export function PlanHero({ me }: { me: Me }) {
   const sub = me.subscription
@@ -68,6 +102,14 @@ export function PlanHero({ me }: { me: Me }) {
         <p className="hero__label">Тариф</p>
         <Figure whole={sub ? sub.plan_name : "—"} small />
         {sub ? <p className="hero__sub">{lowerFirst(periodNote(sub))}</p> : null}
+      </>
+    )
+  if (spendingBalance(me))
+    return (
+      <>
+        <p className="hero__label">Лимит исчерпан, тратится баланс</p>
+        <Figure whole={rub(ownMoney(me))} small />
+        <p className="hero__sub">{line}</p>
       </>
     )
   const left = 100 - Math.max(0, Math.min(100, Math.round(me.limits.weekly.used_percent)))
@@ -87,11 +129,11 @@ export default function Billing({ start }: { start?: string }) {
   const [me, setMe] = useState<Me | null>(null)
   const [failure, setFailure] = useState<string | null>(null)
   const [screen, setScreen] = useState<Screen>(start === "receipt" || start === "link" ? start : "account")
-  const [watching, setWatching] = useState<string | null>(null)
-  // The plan whose «Оплатить» sent the owner to confirm an email first. Named
-  // on the email screen only; it never starts a payment, and any move off that
-  // screen drops it, so «Почта для чеков» and Главная open it with none.
-  const [held, setHeld] = useState<Plan | null>(null)
+  const [watching, setWatching] = useState<{ id: string; topup: boolean } | null>(null)
+  // The plan or top-up whose button sent the owner to confirm an email first.
+  // Named on the email screen only; it never starts a payment, and any move
+  // off that screen drops it, so «Почта для чеков» and Главная open it with none.
+  const [held, setHeld] = useState<Held | null>(null)
   const go = useCallback((s: Screen) => {
     setHeld(null)
     setScreen(s)
@@ -103,7 +145,8 @@ export default function Billing({ start }: { start?: string }) {
       const next = await cached("me", api.me)
       setFailure(null)
       setMe(next)
-      if (next.pending_payment?.state === "pending") setWatching(next.pending_payment.id)
+      const pending = next.pending_payment
+      if (pending?.state === "pending") setWatching({ id: pending.id, topup: pending.kind === "topup" })
     } catch (err) {
       setFailure(explain(err))
     }
@@ -138,8 +181,9 @@ export default function Billing({ start }: { start?: string }) {
     <>
       {watching ? (
         <PaymentWatch
-          key={watching}
-          id={watching}
+          key={watching.id}
+          id={watching.id}
+          topup={watching.topup}
           onDone={() => {
             setWatching(null)
             load(true)
@@ -150,19 +194,19 @@ export default function Billing({ start }: { start?: string }) {
         <Account
           me={me}
           go={go}
-          needReceipt={(plan) => {
+          needReceipt={(h) => {
             setScreen("receipt")
-            setHeld(plan)
+            setHeld(h)
           }}
-          onOpened={(id) => {
+          onOpened={(id, topup) => {
             invalidate("me")
-            setWatching(id)
+            setWatching({ id, topup })
           }}
           onLinkChanged={reloadAccount}
         />
       ) : null}
       {shown === "receipt" ? (
-        <Receipt me={me} plan={held} onChanged={() => load(true)} done={() => go("account")} />
+        <Receipt me={me} held={held} onChanged={() => load(true)} done={() => go("account")} />
       ) : null}
       {shown === "link" ? (
         <Link
@@ -177,6 +221,28 @@ export default function Billing({ start }: { start?: string }) {
   )
 }
 
+type Checkout = { payment_id: string; payment_url: string }
+
+/**
+ * The payment being asked for or opened, shared by the plans and the top-up
+ * buttons so that only one is ever in hand. `key` names the button: a plan's
+ * id, or "topup:<amount>".
+ */
+interface Pay {
+  busy: string | null
+  opened: { key: string; id: string; url: string; fallback: boolean } | null
+  /** First tap: ask the bank. Resolves to the refusal, or null. */
+  start: (key: string, held: Held, ask: () => Promise<Checkout>) => Promise<unknown>
+  /** Second tap: go to the bank. */
+  go: () => void
+}
+
+/** What a plan's lines move with: a change to any of them makes the plans and a payment already opened stale. */
+function accountKey(me: Me): string {
+  const sub = me.subscription
+  return [me.linked?.email_masked, sub?.plan_id, sub?.current_period_end, sub?.paid_through, sub?.next_plan_name].join("|")
+}
+
 function Account({
   me,
   go,
@@ -186,10 +252,53 @@ function Account({
 }: {
   me: Me
   go: (s: Screen) => void
-  needReceipt: (plan: Plan) => void
-  onOpened: (paymentID: string) => void
+  needReceipt: (held: Held) => void
+  onOpened: (paymentID: string, topup: boolean) => void
   onLinkChanged: () => void
 }) {
+  const [busy, setBusy] = useState<string | null>(null)
+  const [opened, setOpened] = useState<Pay["opened"]>(null)
+
+  // A payment link already opened is spent once the plan or the balance moves
+  // (a payment went through), and belongs to the old account after a link.
+  useEffect(() => {
+    setOpened(null)
+  }, [accountKey(me), me.balance_nanorub])
+
+  // Telegram would not open the link after the bank's wait, so the button
+  // turns into a second tap that does.
+  const pay: Pay = {
+    busy,
+    opened,
+    start: async (key, held, ask) => {
+      // A linked bot's receipts go to its account's email, which it cannot set
+      // here: ruoc's email_not_verified says so instead.
+      if (!me.receipt.verified && !me.linked) {
+        needReceipt(held)
+        return null
+      }
+      setBusy(key)
+      try {
+        const p = await ask()
+        setOpened({ key, id: p.payment_id, url: p.payment_url, fallback: false })
+        return null
+      } catch (err) {
+        // The bot was linked (or re-pointed) since this screen opened: ruoc
+        // refused the payment, and `me` and the plans are read again.
+        if (err instanceof APIError && err.kind === "link_changed") onLinkChanged()
+        return err
+      } finally {
+        setBusy(null)
+      }
+    },
+    go: () => {
+      if (!opened) return
+      const ok = openExternal(opened.url)
+      setOpened({ ...opened, fallback: !ok })
+      onOpened(opened.id, opened.key.startsWith("topup:"))
+    },
+  }
+
   return (
     <>
       <section className="hero hero--plain">
@@ -215,6 +324,8 @@ function Account({
           />
         </section>
       ) : null}
+
+      <Balance me={me} pay={pay} />
 
       <section className="card">
         <div className="card__head">
@@ -254,7 +365,7 @@ function Account({
         </section>
       )}
 
-      <Plans me={me} needReceipt={needReceipt} onOpened={onOpened} onLinkChanged={onLinkChanged} />
+      <Plans me={me} pay={pay} />
 
       {me.linked ? null : (
         <div className="group">
@@ -271,34 +382,144 @@ function Account({
   )
 }
 
-function Plans({
-  me,
-  needReceipt,
-  onOpened,
-  onLinkChanged,
-}: {
-  me: Me
-  needReceipt: (plan: Plan) => void
-  onOpened: (paymentID: string) => void
-  onLinkChanged: () => void
-}) {
+/**
+ * The bot's own money (`ownMoney`), what it is spent on, a credit plan's
+ * period credit beside it, and the top-up buttons: ruoc's presets and any
+ * whole-ruble sum within its bounds, which ruoc checks again.
+ */
+function Balance({ me, pay }: { me: Me; pay: Pay }) {
+  const [error, setError] = useState<string | null>(null)
+  // The typed sum while «Другая сумма» is open, else null.
+  const [custom, setCustom] = useState<string | null>(null)
+  const t = me.topup
+  const sub = me.subscription
+  // ruoc sends no limits for a credit plan, and also for a cancelled windowed
+  // plan whose period ended, until its renewal sweep lapses it.
+  const credit = !me.limits && sub !== null && sub.status !== "expired" && Date.parse(sub.current_period_end) > Date.now()
+  // A windowed plan with overflow off stops at its limit and never reaches the
+  // balance (only ruoc's operator turns it off): a top-up would sit unspent.
+  const unspent = me.limits !== null && !me.limits.overflow
+  const spends = unspent
+    ? "Этот тариф не тратит баланс"
+    : me.linked
+      ? "Баланс аккаунта Клео Код"
+      : me.limits
+        ? "Тратится, когда лимит тарифа исчерпан"
+        : "Тратится, когда закончится сумма тарифа"
+
+  const topup = async (amount: number) => {
+    setError(null)
+    const err = await pay.start(`topup:${amount}`, { topup: amount }, () => api.topup(amount))
+    if (err) setError(explain(err, me))
+  }
+
+  // Whole rubles only: the bank takes kopecks, the presets and bounds do not.
+  // What was typed is checked as typed: "100,50" is refused, never read as 10050.
+  const typed = custom !== null && /^\d{1,9}$/.test(custom.trim()) ? Number(custom.trim()) * 1e9 : null
+  const submitCustom = () => {
+    if (!t) return
+    if (typed === null || typed < t.min_nanorub || typed > t.max_nanorub) {
+      setError(`Введите сумму целым числом рублей, от ${rub(t.min_nanorub)} до ${rub(t.max_nanorub)}.`)
+      return
+    }
+    void topup(typed)
+  }
+
+  const openedHere = pay.opened?.key.startsWith("topup:") ? pay.opened : null
+
+  return (
+    <section className="card">
+      <div className="card__head">
+        <span className="label">Баланс</span>
+      </div>
+      <p className="price">{rub(ownMoney(me))}</p>
+      <p className="hint">{spends}</p>
+      {credit ? (
+        <dl className="pairs">
+          <div>
+            <dt>Осталось по тарифу</dt>
+            <dd>{rub(planLeft(me))}</dd>
+          </div>
+        </dl>
+      ) : null}
+      {t && !unspent ? (
+        <>
+          {error && <p className="error">{error}</p>}
+          <div className="buttons">
+            {t.presets_nanorub.map((a) => (
+              <button key={a} className="secondary" disabled={pay.busy !== null} onClick={() => topup(a)}>
+                {pay.busy === `topup:${a}` ? "Готовим…" : `+${rub(a)}`}
+              </button>
+            ))}
+            <button
+              className="secondary"
+              disabled={pay.busy !== null}
+              onClick={() => {
+                setError(null)
+                setCustom(custom === null ? "" : null)
+              }}
+            >
+              Другая сумма
+            </button>
+          </div>
+          {custom !== null && (
+            <>
+              <label className="field">
+                <span>
+                  Сумма, ₽ (от {rub(t.min_nanorub)} до {rub(t.max_nanorub)})
+                </span>
+                <input
+                  inputMode="numeric"
+                  value={custom}
+                  onChange={(e) => setCustom(e.target.value)}
+                />
+              </label>
+              <button className="secondary" disabled={pay.busy !== null || !custom.trim()} onClick={submitCustom}>
+                {typed !== null && pay.busy === `topup:${typed}` ? "Готовим оплату…" : "Пополнить"}
+              </button>
+            </>
+          )}
+          {openedHere && (
+            <>
+              <button className="primary" onClick={pay.go}>
+                Перейти к оплате · {rub(Number(openedHere.key.slice("topup:".length)))}
+              </button>
+              <GoFallback url={openedHere.url} shown={openedHere.fallback} />
+            </>
+          )}
+        </>
+      ) : null}
+    </section>
+  )
+}
+
+/** The bank's link as a plain link, for when Telegram did not open it. */
+function GoFallback({ url, shown }: { url: string; shown: boolean }) {
+  if (!shown) return null
+  return (
+    <p className="hint">
+      Если страница банка не открылась, нажмите:{" "}
+      <a href={url} target="_blank" rel="noreferrer">
+        оплатить на сайте банка
+      </a>
+    </p>
+  )
+}
+
+function Plans({ me, pay }: { me: Me; pay: Pay }) {
   const [plans, setPlans] = useState<Plan[] | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [loadError, setLoadError] = useState<string | null>(null)
   const [round, setRound] = useState(0)
-  const [busy, setBusy] = useState<string | null>(null)
-  const [opened, setOpened] = useState<{ plan: string; id: string; url: string; fallback: boolean } | null>(null)
 
   // The plans are Cleo's, linked or not; they start on the bot's own account,
   // or on the funder's once it is linked. Asked again when the link or the plan changes under this screen,
-  // as a finished payment does: which is current, and each one's price, move,
-  // and a payment link already opened is spent. The old list goes first, so a
+  // as a finished payment does: which is current, and each one's price, move
+  // (Account drops a payment link already opened). The old list goes first, so a
   // failed read can never leave old prices with live buttons.
-  const sub = me.subscription
-  const account = [me.linked?.email_masked, sub?.plan_id, sub?.current_period_end, sub?.paid_through, sub?.next_plan_name].join("|")
+  const account = accountKey(me)
   useEffect(() => {
     let live = true
-    setOpened(null)
     setPlans(null)
     setLoadError(null)
     api.plans().then(
@@ -310,33 +531,10 @@ function Plans({
     }
   }, [account, round])
 
-  // First tap: ask the bank for a payment. Telegram would not open the link
-  // after the bank's wait, so the button turns into a second tap that does.
   const buy = async (plan: Plan) => {
-    if (!me.receipt.verified) {
-      needReceipt(plan)
-      return
-    }
     setError(null)
-    setBusy(plan.id)
-    try {
-      const p = await api.checkout(plan.id, plan.amount_nanorub)
-      setOpened({ plan: plan.id, id: p.payment_id, url: p.payment_url, fallback: false })
-    } catch (err) {
-      setError(explain(err))
-      // The bot was linked (or re-pointed) since this screen opened: ruoc
-      // refused the payment, and `me` and the plans are read again.
-      if (err instanceof APIError && err.kind === "link_changed") onLinkChanged()
-    } finally {
-      setBusy(null)
-    }
-  }
-
-  const go = () => {
-    if (!opened) return
-    const ok = openExternal(opened.url)
-    setOpened({ ...opened, fallback: !ok })
-    onOpened(opened.id)
+    const err = await pay.start(plan.id, { plan }, () => api.checkout(plan.id, plan.amount_nanorub))
+    if (err) setError(explain(err, me))
   }
 
   if (!plans)
@@ -369,23 +567,16 @@ function Plans({
                 ? "Другой тариф уже куплен на следующий период."
                 : "Эту смену тарифа можно сделать через поддержку."}
             </p>
-          ) : plan.amount_nanorub === undefined ? null : opened?.plan === plan.id ? (
+          ) : plan.amount_nanorub === undefined ? null : pay.opened?.key === plan.id ? (
             <>
-              <button className="primary" onClick={go}>
+              <button className="primary" onClick={pay.go}>
                 Перейти к оплате
               </button>
-              {opened.fallback && (
-                <p className="hint">
-                  Если страница банка не открылась, нажмите:{" "}
-                  <a href={opened.url} target="_blank" rel="noreferrer">
-                    оплатить на сайте банка
-                  </a>
-                </p>
-              )}
+              <GoFallback url={pay.opened.url} shown={pay.opened.fallback} />
             </>
           ) : (
-            <button className="primary" disabled={busy !== null} onClick={() => buy(plan)}>
-              {busy === plan.id ? "Готовим оплату…" : plan.current ? "Продлить" : "Оплатить"}
+            <button className="primary" disabled={pay.busy !== null} onClick={() => buy(plan)}>
+              {pay.busy === plan.id ? "Готовим оплату…" : plan.current ? "Продлить" : "Оплатить"}
             </button>
           )}
         </section>
@@ -397,13 +588,16 @@ function Plans({
 // PaymentWatch asks about a payment while the owner is at the bank: every 3 s
 // for two minutes, and whenever the cabinet comes back into view.
 // If the window passes with no answer, or a refusal makes asking pointless,
-// the banner says so and offers to ask again or to hide it.
-function PaymentWatch({ id, onDone }: { id: string; onDone: () => void }) {
+// the banner says so and offers to ask again or to hide it. `topup` says
+// what the payment is until ruoc's answer names its kind.
+function PaymentWatch({ id, topup, onDone }: { id: string; topup: boolean; onDone: () => void }) {
   const [payment, setPayment] = useState<Payment | null>(null)
   const [gaveUp, setGaveUp] = useState<string | null>(null)
   const [round, setRound] = useState(0)
   const doneRef = useRef(onDone)
   doneRef.current = onDone
+  const topupRef = useRef(topup)
+  topupRef.current = payment?.kind ? payment.kind === "topup" : topup
 
   useEffect(() => {
     const started = Date.now()
@@ -432,7 +626,7 @@ function PaymentWatch({ id, onDone }: { id: string; onDone: () => void }) {
       if (Date.now() - started > 120_000) {
         window.clearInterval(timer)
         stopped = true
-        setGaveUp("Банк пока не ответил. Если вы оплатили, тариф обновится сам.")
+        setGaveUp(`Банк пока не ответил. Если вы оплатили, ${topupRef.current ? "баланс" : "тариф"} обновится сам.`)
         return
       }
       check()
@@ -467,7 +661,13 @@ function PaymentWatch({ id, onDone }: { id: string; onDone: () => void }) {
   const ok = payment.state === "paid"
   return (
     <div className={ok ? "banner banner--ok" : "banner banner--bad"}>
-      <p>{ok ? `Оплата прошла: ${payment.plan_name}.` : "Оплата не прошла, деньги не списаны."}</p>
+      <p>
+        {!ok
+          ? "Оплата не прошла, деньги не списаны."
+          : topupRef.current
+            ? `Баланс пополнен на ${rub(payment.amount_nanorub)}.`
+            : `Оплата прошла: ${payment.plan_name}.`}
+      </p>
       <button className="link" onClick={() => doneRef.current()}>
         Хорошо
       </button>
@@ -477,12 +677,12 @@ function PaymentWatch({ id, onDone }: { id: string; onDone: () => void }) {
 
 function Receipt({
   me,
-  plan,
+  held,
   onChanged,
   done,
 }: {
   me: Me
-  plan: Plan | null
+  held: Held | null
   onChanged: () => Promise<void> | void
   done: () => void
 }) {
@@ -538,13 +738,18 @@ function Receipt({
   return (
     <>
       <h1 className="screen-title">Почта для чеков</h1>
-      {plan ? (
+      {held && "plan" in held ? (
         <>
           <p className="price">
-            Тариф «{plan.name}» — {rub(plan.price_nanorub)}{" "}
-            <span className="hint">за {days(plan.period_days)}</span>
+            Тариф «{held.plan.name}» — {rub(held.plan.price_nanorub)}{" "}
+            <span className="hint">за {days(held.plan.period_days)}</span>
           </p>
-          <p className="hint">После подтверждения нажмите «{plan.current ? "Продлить" : "Оплатить"}» ещё раз.</p>
+          <p className="hint">После подтверждения нажмите «{held.plan.current ? "Продлить" : "Оплатить"}» ещё раз.</p>
+        </>
+      ) : held ? (
+        <>
+          <p className="price">Пополнение баланса — {rub(held.topup)}</p>
+          <p className="hint">После подтверждения выберите сумму ещё раз.</p>
         </>
       ) : null}
       <p className="hint">
@@ -627,6 +832,12 @@ export function linkError(err: unknown): string {
       return until && !Number.isNaN(Date.parse(until))
         ? `У бота оплачен свой тариф до ${date(until)}. Подключить аккаунт можно после этой даты.`
         : "У бота оплачен свой тариф. Подключить аккаунт можно, когда он закончится."
+    }
+    case "link_balance_held": {
+      const held = err.number("balance_nanorub")
+      return held !== null && held > 0
+        ? `У бота есть свой баланс ${rub(held)}. Подключить аккаунт можно, когда он будет потрачен.`
+        : "У бота есть свой баланс. Подключить аккаунт можно, когда он будет потрачен."
     }
     case "link_payment_pending":
       return "У бота есть незавершённая оплата. Дождитесь ответа банка и попробуйте снова."

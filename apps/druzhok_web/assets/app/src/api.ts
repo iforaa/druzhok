@@ -4,6 +4,7 @@
 // and payments; ruoc's internal/httpapi/miniapp.go), called cross-origin.
 
 import { botID, initData } from "./telegram"
+import { rub } from "./format"
 
 export interface Window {
   used_percent: number
@@ -12,8 +13,17 @@ export interface Window {
 
 export interface Me {
   account: { id: string; status: string }
-  // ruoc also sends balance_nanorub and grants; a bot's plan is all it
-  // spends, so the panel shows neither.
+  /**
+   * Everything the account can spend, the plan's period credit included and
+   * any overshoot (a negative grant) taken off. What of it is the bot's own
+   * money is `ownMoney` in billing.tsx.
+   */
+  balance_nanorub: number
+  /**
+   * Positive, unexpired grants only; `subscription` is a credit plan's period
+   * credit, `purchase` a top-up. Empty when there are none.
+   */
+  grants: { kind: string; remaining_nanorub: number }[]
   usage_30d: { requests: number }
   subscription: {
     plan_id: string
@@ -24,7 +34,13 @@ export interface Me {
     paid_through: string | null
     next_plan_name: string | null
   } | null
-  limits: { session: Window; weekly: Window; overflow: boolean } | null
+  /**
+   * A windowed plan's limits, null on a credit plan. `overflow`: once a window
+   * is spent the balance pays; `spent` names the window used up right now.
+   */
+  limits: { session: Window; weekly: Window; overflow: boolean; spent?: string | null } | null
+  /** What a top-up may be, and the buttons offered: a bot's own, or the linked account's. */
+  topup?: { min_nanorub: number; max_nanorub: number; presets_nanorub: number[] }
   bot_id: number
   product_name: string
   receipt: {
@@ -66,6 +82,8 @@ export interface Payment {
   plan_name: string
   amount_nanorub: number
   state: "pending" | "paid" | "failed" | "refunded"
+  /** A top-up's plan_name is «Пополнение баланса». */
+  kind?: "plan" | "week_reset" | "topup"
 }
 
 /**
@@ -87,6 +105,13 @@ export class APIError extends Error {
     const inner = this.body.error
     const v = this.body[name] ?? (inner && typeof inner === "object" ? (inner as Record<string, unknown>)[name] : undefined)
     return typeof v === "string" ? v : null
+  }
+
+  /** A numeric field of the refusal, beside the error or inside it. */
+  number(name: string): number | null {
+    const inner = this.body.error
+    const v = this.body[name] ?? (inner && typeof inner === "object" ? (inner as Record<string, unknown>)[name] : undefined)
+    return typeof v === "number" && Number.isFinite(v) ? v : null
   }
 }
 
@@ -342,6 +367,9 @@ export const api = {
       `plans/${encodeURIComponent(planID)}/checkout`,
       expected === undefined ? {} : { expected_nanorub: expected },
     ),
+  /** Tops up the bot's balance, or the linked account's; whole rubles, in nanorubles. */
+  topup: (amount: number) =>
+    call<{ payment_id: string; payment_url: string }>("POST", "topup/checkout", { amount_nanorub: amount }),
   payment: (id: string) => call<Payment>("GET", `payments/${encodeURIComponent(id)}`),
   receiptEmail: (email: string) => call<{ stage: "new" | "current"; sent_to: string }>("POST", "receipt-email", { email }),
   confirmReceipt: (code: string) => call<{ done: boolean; sent_to?: string }>("POST", "receipt-email/confirm", { code }),
@@ -430,8 +458,11 @@ export const support = {
   },
 }
 
-/** What to tell the owner about a refusal, in their words. */
-export function explain(err: unknown): string {
+/**
+ * What to tell the owner about a refusal, in their words. `me`, when given,
+ * names a top-up's bounds.
+ */
+export function explain(err: unknown, me?: Pick<Me, "topup"> | null): string {
   if (!(err instanceof APIError)) return "Что-то пошло не так. Попробуйте ещё раз."
   switch (err.kind) {
     case "network":
@@ -476,7 +507,13 @@ export function explain(err: unknown): string {
     case "price_changed":
       return "Цена изменилась. Посмотрите тарифы ещё раз."
     case "link_changed":
-      return "Счёт бота изменился. Посмотрите тарифы ещё раз."
+      return "Счёт бота изменился. Посмотрите его ещё раз и попробуйте снова."
+    case "balance_cap":
+      return "Баланс не может быть больше 100 000 ₽."
+    case "amount_out_of_range":
+      return me?.topup
+        ? `Пополнить можно на сумму от ${rub(me.topup.min_nanorub)} до ${rub(me.topup.max_nanorub)}.`
+        : "Такую сумму внести нельзя."
     case "linked":
       return "Чеки приходят на почту подключённого аккаунта Клео Код."
     case "plan_change_scheduled":

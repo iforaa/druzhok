@@ -56,10 +56,10 @@ defmodule Druzhok.Cabinet do
   @button %{"ru" => "Кабинет", "en" => "Cabinet"}
   @notice %{
     "ru" =>
-      {"Лимит тарифа на сейчас исчерпан. Когда он обновится и как сменить тариф — в кабинете.",
+      {"Лимит тарифа на сейчас исчерпан. Пополнить баланс или сменить тариф можно в кабинете.",
        "Открыть кабинет"},
     "en" =>
-      {"The plan's limit is used up for now. When it resets and how to change plans — in the cabinet.",
+      {"The plan's limit is used up for now. You can top up the balance or change plans in the cabinet.",
        "Open the cabinet"}
   }
 

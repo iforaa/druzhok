@@ -162,7 +162,7 @@ owner sees its account and pays for Cleo's plans.
 and sets the owner's «Кабинет» menu button on every start/wake when something changed
 (`instances.cabinet_binding/cabinet_url/cabinet_menu_set`); the button is retried on the owner's first private
 message, since Telegram refuses it before the owner opened the bot. A chat 402, or a 429 `usage_limit_reached` on chat, search, fetch, images or transcription, also sends the owner an
-«Открыть кабинет» button, at most every 6 h. `sudo ops/druzhok bind-cabinet [<bot>]` binds now; `--off`
+«Открыть кабинет» button, at most every 6 h, whose text offers a top-up or a plan change (`Cabinet @notice`; the chatters' `BalanceNotice` only points at the owner). `sudo ops/druzhok bind-cabinet [<bot>]` binds now; `--off`
 restores the default button and sets `cabinet_off`, which nothing undoes but a plain `bind-cabinet`. An owner
 or language change rebinds and resets the old owner's button. The model catalog is ruoc's
 `GET /v1/models` (`Druzhok.Ruoc.models/0`, default `ruoc-deepseek-flash` for new bots since 2026-11-08; `ruoc-flash` is GLM).
@@ -181,7 +181,7 @@ at a quiet moment (no update/proxy call for 60 s, no turn, no child process; nev
 start applies it (`settings_applied_seq`). «Удалить бота» (`POST /app/api/delete`) asks in a Telegram dialog and
 deletes (`BotManager.delete`); it needs init data under 10 min old, against a replay. The superbot's old
 `pdel:<token>` confirm handlers stay only for messages already sent. For a
-panel-ready bot (`Onboarding.panel_ready?`) the superbot drops 🎨/🗑 and answers old buttons with an alert. Счёт calls ruoc's `/tg/api/*` cross-origin at `RUOC_SITE_URL` (default
+panel-ready bot (`Onboarding.panel_ready?`) the superbot drops 🎨/🗑 and answers old buttons with an alert. Счёт shows the bot's own balance (what is left after a credit plan's period credit) and sells top-ups (`POST /tg/api/topup/checkout`, same bank flow and receipt email as a plan). Счёт calls ruoc's `/tg/api/*` cross-origin at `RUOC_SITE_URL` (default
 `https://oldey.dev`; ruoc must list druzhok in `TG_PANEL_ORIGINS`). `/app` answers only with Caddy's
 `X-Druzhok-Edge` header (`DRUZHOK_EDGE_SECRET`, env only; bots reach :4000 directly), and the API checks Telegram's
 Ed25519 signature plus the bot-token HMAC and the owner (`Plugs.PanelAuth`). Owners edit the text pages (spec `docs/superpowers/specs/2026-10-31-panel-editable-pages-design.md`): `POST /app/api/files/:kind`

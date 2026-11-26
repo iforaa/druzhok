@@ -60,7 +60,7 @@ defmodule DruzhokWebWeb.LlmProxy.Ruoc.SearchTest do
 
     conn = post(conn, "/v2/search", %{"query" => "q"})
     assert conn.status == 402
-    assert Jason.decode!(conn.resp_body) == %{"success" => false, "error" => "Лимит тарифа на сейчас исчерпан. Когда он обновится и как сменить тариф — в «Кабинете»."}
+    assert Jason.decode!(conn.resp_body) == %{"success" => false, "error" => "Лимит тарифа на сейчас исчерпан. Подробности — у владельца бота в «Кабинете»."}
   end
 
   test "a spent window is a 402 with the notice, and tells the owner", %{conn: conn, bypass: bypass, instance: instance} do

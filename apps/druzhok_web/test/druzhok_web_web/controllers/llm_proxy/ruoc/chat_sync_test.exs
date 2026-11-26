@@ -66,7 +66,7 @@ defmodule DruzhokWebWeb.LlmProxy.Ruoc.ChatSyncTest do
     conn = post(conn, "/v1/chat/completions", @turn)
 
     body = json_response(conn, 200)
-    assert get_in(body, ["choices", Access.at(0), "message", "content"]) == "Лимит тарифа на сейчас исчерпан. Когда он обновится и как сменить тариф — в «Кабинете»."
+    assert get_in(body, ["choices", Access.at(0), "message", "content"]) == "Лимит тарифа на сейчас исчерпан. Подробности — у владельца бота в «Кабинете»."
     assert get_in(body, ["choices", Access.at(0), "finish_reason"]) == "stop"
     assert body["model"] == "ruoc-flash"
     assert get_resp_header(conn, "x-ruoc-request-id") == ["req_abc"]
