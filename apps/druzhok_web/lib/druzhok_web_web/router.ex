@@ -14,6 +14,7 @@ defmodule DruzhokWebWeb.Router do
 
     post "/chat/completions", LlmProxyController, :chat_completions
     post "/embeddings", LlmProxyController, :embeddings
+    get "/images/models", LlmProxyController, :images_models
     post "/images/generations", LlmProxyController, :images_generations
     post "/images/edits", LlmProxyController, :images_edits
     post "/audio/transcriptions", LlmProxyController, :audio_transcriptions

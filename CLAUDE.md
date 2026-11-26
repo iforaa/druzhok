@@ -58,7 +58,8 @@ Always use `/my-commit` for committing changes.
   hermes, empty on a polling bot. Approving restarts an awake bot at once (the one panel save that does); a sleeping bot needs nothing; block or remove holds at once in the gate, drops what
   that chat had queued, and reaches the env through the `settings_seq` quiet restart. Tools in a group: `group_toolsets` = web, plus `image_gen` and `group_media: [image]` when «Картинки в группах»
   (`instances.group_images_enabled`, default on, panel Настройки) and `image_gen_enabled` are both on (`Voice.group_images?/1`, which also picks the group rule of the bot's prompt; else no `group_media` key):
-  the fork then sends that turn's own generated pictures (text-to-picture only, no reference images) and lets the bot see photos posted there; no `vision` tool, no other media. Limits, counted on what would be answered (`group_rate_events`, so they
+  the fork then sends that turn's own generated pictures and lets the bot see photos posted there; no `vision` tool, no other media.
+  Redraws use only current-run `ref:` values in «Фото N» labels, issued for attached or replied-to photos and usable for refinements while that run is working; without a current label, ask for a reply to the photo and a bot mention. Limits, counted on what would be answered (`group_rate_events`, so they
   survive a restart and a sleep): Settings `group_rate_user_per_min` (5) and `group_rate_chat_per_hour` (30); over them the update is acknowledged and not stored, with one notice an hour per chat.
   `group_shared_memory` is forced off whatever the column says. `poll` and chatless `poll_answer` updates name no chat and are dropped.
   **Privacy mode** (`Telegram.GroupPrivacy`): new managed bots get it off at provisioning (Bot API 10.5 `setMySettings`,
@@ -94,7 +95,7 @@ is 0 on those rows. A bot without a ruoc key gets 503 from `LlmAuth`. A 402 or a
 any other 429 is relayed) on chat is answered as a normal 200 completion carrying `LlmProxy.BalanceNotice` in the bot's
 language, because hermes's own 402 text tells tenants to add provider credits and switch `/model`, and it retries a 429;
 hermes's auxiliary calls (`LlmProxy.AuxShapes`: no tools, and no system message or a known aux
-prompt) keep the real error. Search, fetch, images and transcription answer that 429 as a 402 with the notice. What a bot is told about itself (SOUL.md, `agent.system_prompt`
+prompt) keep the real error. Search, fetch, image generation/edits and transcription answer that 429 as a 402 with the notice. What a bot is told about itself (SOUL.md, `agent.system_prompt`
 product rules, the Russian Telegram hint) is `Runtime.Hermes.Voice`, spec
 `docs/superpowers/specs/2026-10-25-bot-voice-design.md`. What hermes itself prints (menu `/new /stop`, `/start`
 greeting, failures; locale overlay + fork flag `display.end_user_mode`) is `Runtime.Hermes.Locale`, spec
@@ -107,6 +108,7 @@ Spec: `docs/superpowers/specs/2026-09-05-ruoc-gateway-migration-design.md`.
 | `POST /v1/audio/transcriptions` | ruoc-gateway `/v1/transcribe` (base64 wav/mp3/ogg) |
 | `POST /v2/search` | ruoc-gateway `/v1/search` (Tavily), Firecrawl-shaped reply |
 | `POST /v2/scrape` | ruoc-gateway `/v1/fetch`, which routes back to druzhok `POST /internal/fetch` (shared secret `fetch_secret` / `FETCH_SECRET`); `Druzhok.Fetch` reads the page (SSRF policy, 5 MiB, 30 s) and the Python worker at `FETCH_WORKER_BIN` (venv `/opt/druzhok-fetch`, `apps/druzhok/priv/fetch-worker`) turns it into markdown. Priced per page in ruoc (`ruocd fetch setup -rub 0`, free at launch) |
+| `GET /v1/images/models` | ruoc-gateway `/v1/images/models`, with the bot's own ruoc key; JSON passed through unchanged, including `edits` and any optional reference-limit metadata; no plan admission or error-status remapping |
 | `POST /v1/images/generations` | ruoc-gateway `/v1/images` (per-image price, model = `instances.image_gen_model`, nil = ruoc default, `size` passed on; catalogue from `GET /v1/images/models` via `Druzhok.Ruoc.image_models/0`) |
 | `POST /v1/images/edits` | ruoc-gateway `/v1/images` with the pictures as `images` data URIs (multipart `image`/`image[]`, order kept, `size` passed on, mask refused). Model = `instances.image_gen_model` if its catalogue entry (`GET /v1/images/models`, bot's key) has `edits`, else the first model that does, so an edit can be charged at a different model than the one picked in 🎨; catalogue unreadable = the bot's model as is, ruoc refuses a non-editing one. Hermes calls this when `image_generate` gets a reference picture |
 | `POST /v1/embeddings` | ruoc-gateway `/v1/embeddings` (kind `embedding`, per 1M input tokens, free at launch), computed upstream by ruoc. Bots send entry `ruoc-embed-gemini` (`Runtime.Hermes` `@embedding_model`/`@embedding_dim`, google/gemini-embedding-001 3072-d via OpenRouter, since 2026-10-22; `ruoc-embed-e5-large` before, whose one provider hung). ruoc hedges batches of ≤8 texts (`EMBED_HEDGE_AFTER` 2.5 s, `EMBED_ATTEMPT_TIMEOUT` 5 s). Changing the model = new ruoc entry + `@embedding_model`/`@embedding_dim` + `druzhok-ctl exec <bot> mnemosyne reindex --yes` per bot; a dimension mismatch makes Mnemosyne fall back to keyword recall, never corrupts. `MNEMOSYNE_DATA_DIR` must be `<tenant>/mnemosyne/data` (the plugin hardcodes that path, the CLI follows the variable). Used by the Mnemosyne memory provider (`instances.memory_provider`); spec `docs/superpowers/specs/2026-09-06-mnemosyne-memory-design.md`, eval `ops/embed-eval`. Mnemosyne 4 refuses a credentialed embedding call that is not https, so run `ops/patch-mnemosyne.py <install>` after every `uv sync` of a hermes install (`ops/smoke.sh` checks it). A `mnemosyne/data/config.yaml` now outranks these env vars: a bot must not have one. `MNEMOSYNE_LEXICAL_GATE_MIN=0` lets `mnemosyne_recall` find Russian paraphrases by meaning; automatic context still needs shared words, so `Voice.product_rules/1` tells a Mnemosyne bot to call the tool |
@@ -221,6 +223,10 @@ HERMES_BIN=$PWD/hermes-agent/.venv/bin/hermes DATABASE_PATH=data/druzhok.db mix 
 ```
 
 ## Server (KZ, PS Cloud Almaty)
+
+Group redraw rollout: install the Hermes release with current-run photo references first, then deploy Druzhok.
+After deploying, use managed restarts (`BotManager.restart`, through `sudo ops/druzhok restart <bot>`) for awake bots
+with group pictures enabled so their system prompt agrees with the newly served FAQ; sleeping bots pick it up on wake.
 
 ```bash
 # ~/druzhok on the box is an rsync target (symlink to /data/druzhok-app), not a git checkout.

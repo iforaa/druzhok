@@ -127,6 +127,95 @@ defmodule DruzhokWebWeb.LlmProxy.Ruoc.ImageTest do
     assert json_response(conn, 502)["error"]["message"] == "Image generation provider unavailable"
   end
 
+  describe "catalogue" do
+    test "passes the account's catalogue through verbatim with its own key", %{bypass: bypass} do
+      instance = create_instance(%{image_gen_enabled: true})
+      conn = authed(build_conn(), instance)
+      body = ~s({"models": [{"id":"draw","edits":false},{"id":"editor","edits":true,"max_reference_images":4,"extra":{"quality":"high"}}],"version":2})
+
+      Bypass.expect_once(bypass, "GET", "/v1/images/models", fn req ->
+        assert get_req_header(req, "authorization") == ["Bearer " <> instance.ruoc_api_key]
+        gateway_reply(req, 200, body, "req_catalogue")
+      end)
+
+      result = get(conn, "/v1/images/models")
+      assert response(result, 200) == body
+      assert json_response(result, 200)["models"] |> Enum.at(1) |> Map.get("edits")
+      assert get_resp_header(result, "x-ruoc-request-id") == ["req_catalogue"]
+      assert usage_logs(instance) == []
+    end
+
+    test "an empty catalogue stays empty", %{conn: conn, bypass: bypass} do
+      Bypass.expect_once(bypass, "GET", "/v1/images/models", fn req ->
+        gateway_reply(req, 200, %{"models" => []})
+      end)
+
+      assert json_response(get(conn, "/v1/images/models"), 200) == %{"models" => []}
+    end
+
+    test "retains a gateway error status and OpenAI error body without plan remapping",
+         %{conn: conn, bypass: bypass, instance: instance} do
+      body = %{"error" => %{"message" => "catalogue is rate limited", "type" => "usage_limit_reached", "retry_after" => 30}}
+      Bypass.expect_once(bypass, "GET", "/v1/images/models", fn req ->
+        gateway_reply(req, 429, body, "req_catalogue_error")
+      end)
+
+      result = get(conn, "/v1/images/models")
+      assert json_response(result, 429) == body
+      assert get_resp_header(result, "x-ruoc-request-id") == ["req_catalogue_error"]
+      assert usage_logs(instance) == []
+    end
+
+    test "wraps a non-JSON gateway error in the OpenAI envelope", %{conn: conn, bypass: bypass} do
+      Bypass.expect_once(bypass, "GET", "/v1/images/models", fn req ->
+        req |> put_resp_content_type("text/html") |> resp(503, "<html>unavailable</html>")
+      end)
+
+      assert json_response(get(conn, "/v1/images/models"), 503) ==
+               %{"error" => %{"message" => "Image catalogue unavailable", "type" => "api_error"}}
+    end
+
+    test "a transport failure is 502", %{conn: conn, bypass: bypass} do
+      Bypass.down(bypass)
+      assert json_response(get(conn, "/v1/images/models"), 502)["error"]["type"] == "api_error"
+    end
+
+    test "missing, invalid and deleted tenant credentials are refused", %{stub: stub} do
+      assert json_response(get(build_conn(), "/v1/images/models"), 401)["error"]["type"] == "authentication_error"
+      bogus = put_req_header(build_conn(), "authorization", "Bearer invalid")
+      assert get(bogus, "/v1/images/models").status == 401
+
+      deleted =
+        create_instance(%{})
+        |> Ecto.Changeset.change(delete_requested: true)
+        |> Druzhok.Repo.update!()
+      assert get(authed(build_conn(), deleted), "/v1/images/models").status == 401
+      assert Druzhok.RuocStub.calls(stub, "GET /v1/images/models") == []
+    end
+
+    test "a missing ruoc key has the same refusal as edits", %{stub: stub} do
+      instance = create_instance(%{ruoc_api_key: nil})
+      conn = authed(build_conn(), instance)
+      catalogue = json_response(get(conn, "/v1/images/models"), 503)
+      assert catalogue == json_response(post(conn, "/v1/images/edits", %{}), 503)
+      assert catalogue["error"]["type"] == "api_error"
+      assert Druzhok.RuocStub.calls(stub, "GET /v1/images/models") == []
+    end
+
+    test "pictures off follows edits' existing proxy access policy", %{bypass: bypass} do
+      instance = create_instance(%{image_gen_enabled: false, group_images_enabled: false})
+      conn = authed(build_conn(), instance)
+      Bypass.expect_once(bypass, "GET", "/v1/images/models", fn req ->
+        gateway_reply(req, 200, %{"models" => []})
+      end)
+
+      assert get(conn, "/v1/images/models").status == 200
+      # Edits passes auth too, then validates input; the proxy has no pictures switch gate.
+      assert json_response(post(conn, "/v1/images/edits", %{}), 400)["error"]["message"] ==
+               "an edit needs at least one image"
+    end
+  end
+
   describe "edits" do
     @jpeg <<0xFF, 0xD8, 0xFF, 0xE0, "fake-jpeg">>
 

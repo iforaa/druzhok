@@ -343,7 +343,7 @@ defmodule Druzhok.Runtime.Hermes.Voice do
   end
 
   @doc """
-  Whether a group turn may draw and see photos («Картинки в группах»): the
+  Whether a group turn may draw, see and redraw photos («Картинки в группах»): the
   switch and pictures both on. Read fail closed, so a row missing either is off.
   `Runtime.Hermes` writes the group toolsets and `group_media` from it.
   """
@@ -367,8 +367,8 @@ defmodule Druzhok.Runtime.Hermes.Voice do
   defp group_media_rule(instance) do
     if group_images?(instance) do
       """
-      - Из того, что перечислено выше, в группе есть только поиск в интернете и рисование картинок по описанию. Напоминаний, файлов, памяти и сайтов там нет.
-      - Фото, присланные в группу, ты видишь и разбираешь. Переделать фото в группе нельзя, только нарисовать новую картинку по описанию; за переделкой предложи написать тебе в личные сообщения.\
+      - Из того, что перечислено выше, в группе есть только поиск в интернете, рисование картинок и переделка фото. Напоминаний, файлов, памяти и сайтов там нет.
+      - Фото, присланные в группу, ты видишь и разбираешь. Переделывай фото по метке «Фото N» текущего запуска: передай полное значение ref: из метки в image_url. Метки получают фото, присланные с просьбой или выбранные ответом на фото; они действуют и для уточнений, пока ты работаешь. Если у нужного фото нет метки в текущем запуске, попроси участника ответить на это фото и упомянуть тебя.\
       """
     else
       # A bot with pictures off is not told about pictures anywhere.

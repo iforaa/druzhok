@@ -388,6 +388,43 @@ defmodule DruzhokWebWeb.LlmProxy.Ruoc do
   # --- Images -----------------------------------------------------------------
 
   @doc """
+  The bot's image catalogue, unchanged from ruoc, including `edits` and any
+  optional reference limits. Hermes reads it before issuing group photo labels. This is a lookup,
+  not a generation: no usage row or plan-refusal remapping.
+  """
+  def image_models(conn, instance) do
+    started_at = System.monotonic_time(:millisecond)
+
+    case Client.get("/v1/images/models", instance.ruoc_api_key) do
+      {:ok, status, headers, body} ->
+        request_id = request_id(headers)
+        log(instance, "image_models", request_id, started_at, "HTTP #{status}")
+
+        conn =
+          conn
+          |> relay_headers(headers, request_id)
+          |> put_resp_content_type("application/json")
+
+        if status == 200 do
+          send_resp(conn, 200, body)
+        else
+          case Jason.decode(body) do
+            {:ok, %{"error" => %{"message" => message, "type" => type}}}
+            when is_binary(message) and is_binary(type) ->
+              send_resp(conn, status, body)
+
+            _ ->
+              json_error(conn, status, "Image catalogue unavailable", "api_error")
+          end
+        end
+
+      {:error, reason} ->
+        Logger.error("[ruoc] #{instance.name} image catalogue unreachable: #{inspect(reason)}")
+        json_error(conn, 502, "Image catalogue unavailable", "api_error")
+    end
+  end
+
+  @doc """
   OpenAI `images/generations` in, `{data: [{b64_json}]}` out, over ruoc
   `POST /v1/images`. The client's `model` is ignored (hermes sends OpenAI
   ids); the bot's `image_gen_model` names a ruoc catalogue entry, nil meaning

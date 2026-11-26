@@ -370,11 +370,16 @@ defmodule Druzhok.Runtime.Hermes.VoiceTest do
       assert rules =~ "о владельце"
     end
 
-    test "the group rule with group pictures: draws by description, sees photos, no redraw" do
+    test "the group rule with group pictures: draws, sees photos and redraws only with current labels" do
       rules = Voice.product_rules(%{name: "b", image_gen_enabled: true, group_images_enabled: true})
-      assert rules =~ "в группе есть только поиск в интернете и рисование картинок по описанию"
+      assert rules =~ "в группе есть только поиск в интернете, рисование картинок и переделка фото"
       assert rules =~ "Фото, присланные в группу, ты видишь"
-      assert rules =~ "Переделать фото в группе нельзя"
+      assert rules =~ "Переделывай фото по метке «Фото N» текущего запуска"
+      assert rules =~ "Метки получают фото, присланные с просьбой или выбранные ответом на фото"
+      assert rules =~ "передай полное значение ref: из метки в image_url"
+      assert rules =~ "они действуют и для уточнений, пока ты работаешь"
+      assert rules =~ "Если у нужного фото нет метки в текущем запуске, попроси участника ответить на это фото и упомянуть тебя"
+      refute rules =~ "Переделать фото в группе нельзя"
       refute rules =~ "не рисуешь"
       refute rules =~ "не разбираешь"
 
@@ -386,6 +391,8 @@ defmodule Druzhok.Runtime.Hermes.VoiceTest do
         rules = Voice.product_rules(inst)
         assert rules =~ "Фото в группе ты не разбираешь"
         refute rules =~ "рисование картинок"
+        refute rules =~ "ref:"
+        refute rules =~ "Переделывай фото"
       end
 
       refute Voice.product_rules(%{name: "b", group_images_enabled: true}) =~ "картинки"
