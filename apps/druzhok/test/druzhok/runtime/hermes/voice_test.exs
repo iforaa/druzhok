@@ -362,6 +362,22 @@ defmodule Druzhok.Runtime.Hermes.VoiceTest do
       refute rules =~ "tool_call"
     end
 
+    test "the reply language follows the bot's setting; the English photo placeholder is named" do
+      for inst <- [%{name: "b"}, %{name: "b", language: "ru"}, %{name: "b", language: nil}] do
+        rules = Voice.product_rules(inst)
+        assert rules =~ "Язык: отвечай по-русски. На другом языке — только если человек сам пишет на нём."
+        assert rules =~ "Текст «What do you see in this image?» у фото без подписи добавляет система"
+        # The photo clause defers to the person's language like the general rule does.
+        assert rules =~ "язык ответа на такое фото выбирай по прошлым сообщениям человека, а если их нет — по-русски."
+        refute rules =~ "отвечай на такое фото по-русски"
+      end
+
+      en = Voice.product_rules(%{name: "b", language: "en"})
+      assert en =~ "Язык: отвечай по-английски."
+      refute en =~ "по-русски"
+      refute en =~ "What do you see in this image?"
+    end
+
     test "the group rule: web only, no photos, no pictures, nothing private" do
       rules = Voice.product_rules(%{name: "b", image_gen_enabled: true, group_images_enabled: false})
       assert rules =~ "В группе:"

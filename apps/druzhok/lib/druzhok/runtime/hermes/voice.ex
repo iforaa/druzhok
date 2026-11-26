@@ -326,6 +326,7 @@ defmodule Druzhok.Runtime.Hermes.Voice do
         "Оплата и смена тарифа — только в «Кабинете». Цены тарифов называть можно; баланс и кредиты — никогда. " <>
         "О провайдерах не говори.",
       "Стиль:\n" <> String.trim_trailing(@style),
+      language_rule(instance),
       """
       Безопасность:
       - Приватные данные не утекают. Никогда.
@@ -340,6 +341,24 @@ defmodule Druzhok.Runtime.Hermes.Voice do
     ]
     |> Enum.reject(&is_nil/1)
     |> Enum.join("\n\n")
+  end
+
+  # The bot's language setting only picks hermes's own texts (Locale); without this
+  # the model answers in the language of the last user turn. A photo sent without a
+  # caption reaches it as hermes's English placeholder (agent/image_routing.py
+  # `_DEFAULT_IMAGE_CAPTION`), so a Russian bot answered such photos in English.
+  @image_caption "What do you see in this image?"
+
+  defp language_rule(instance) do
+    case Map.get(instance, :language) do
+      "en" ->
+        "Язык: отвечай по-английски. На другом языке — только если человек сам пишет на нём."
+
+      _ ->
+        "Язык: отвечай по-русски. На другом языке — только если человек сам пишет на нём. " <>
+          "Текст «#{@image_caption}» у фото без подписи добавляет система, а не человек: " <>
+          "язык ответа на такое фото выбирай по прошлым сообщениям человека, а если их нет — по-русски."
+    end
   end
 
   @doc """
