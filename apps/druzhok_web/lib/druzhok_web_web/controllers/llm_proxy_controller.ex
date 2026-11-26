@@ -21,6 +21,7 @@ defmodule DruzhokWebWeb.LlmProxyController do
   # ruoc-gateway with the bot's own account (`LlmProxy.Ruoc`). LlmAuth
   # guarantees `ruoc_api_key` is set. TTS still goes to OpenAI directly.
   def chat_completions(conn, _params), do: RuocProxy.chat(conn, conn.assigns.instance)
+  def images_models(conn, _params), do: RuocProxy.image_models(conn, conn.assigns.instance)
   def images_generations(conn, _params), do: RuocProxy.generate_image(conn, conn.assigns.instance)
   def images_edits(conn, _params), do: RuocProxy.edit_image(conn, conn.assigns.instance)
 
