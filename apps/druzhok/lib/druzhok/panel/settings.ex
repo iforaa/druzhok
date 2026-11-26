@@ -128,8 +128,7 @@ defmodule Druzhok.Panel.Settings do
   # «Картинки в группах» reaches hermes only with pictures on, so a change of it
   # alone while they are off would restart the bot for an identical config.
   defp group_images(inst, %{group_images_enabled: _} = changed) do
-    if Map.get(changed, :image_gen_enabled, inst.image_gen_enabled) == true or
-         Map.has_key?(changed, :image_gen_enabled),
+    if inst.image_gen_enabled == true or Map.has_key?(changed, :image_gen_enabled),
        do: :ok,
        else: {:error, 400, "images_off", "turn pictures on before pictures in groups"}
   end
