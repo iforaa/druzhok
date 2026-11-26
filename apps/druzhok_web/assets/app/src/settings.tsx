@@ -325,8 +325,8 @@ function GroupReading({ bot, onBot }: { bot: Bot; onBot: (b: Bot) => void }) {
 }
 
 /**
- * «Картинки в группах»: in approved groups the bot draws by description and
- * sees the photos people post. Only with «Картинки» on; saved like any setting
+ * «Картинки в группах»: in approved groups the bot draws pictures, sees
+ * and redraws the photos people post. Only with «Картинки» on; saved like any setting
  * and applied at the bot's next quiet restart.
  */
 function GroupImages({ bot, settings }: { bot: Bot; settings: Settings }) {
@@ -345,7 +345,7 @@ function GroupImages({ bot, settings }: { bot: Bot; settings: Settings }) {
           onChange={(v) => settings.save({ group_images_enabled: v })}
         />
       </div>
-      {images ? <p className="hint">Бот рисует и смотрит фото в группах. Картинки оплачиваются с вашего баланса.</p> : null}
+      {images ? <p className="hint">Бот рисует, смотрит и переделывает фото в группах. Картинки оплачиваются с вашего баланса.</p> : null}
     </>
   )
 }

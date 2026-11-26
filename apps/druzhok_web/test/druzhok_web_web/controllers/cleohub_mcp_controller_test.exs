@@ -268,19 +268,26 @@ defmodule DruzhokWebWeb.CleohubMcpControllerTest do
       refute on =~ "Картинки сейчас не рисую"
       refute on =~ "<!--"
       assert on =~ "рисую картинки по описанию и вижу присланные фото"
+      assert on =~ "Могу переделать фото, присланное с просьбой или выбранное ответом на него с упоминанием меня"
+      assert on =~ "Уточнять переделку можно, пока я работаю"
+      assert on =~ "для более раннего фото — ответьте на фото и упомяните меня снова"
+      refute on =~ "переделать фото там нельзя"
       refute on =~ "В группе только ищу в интернете"
 
       # Group pictures off: pictures in private, the group line as before.
-      inst |> Ecto.Changeset.change(image_gen_enabled: true, group_images_enabled: false) |> Repo.update!()
+      inst = inst |> Ecto.Changeset.change(image_gen_enabled: true, group_images_enabled: false) |> Repo.update!()
       private_only = text(call_tool(conn, "cleohub_help"))
       assert private_only =~ "Рисую картинки по описанию"
       assert private_only =~ "В группе только ищу в интернете"
       refute private_only =~ "вижу присланные фото"
+      refute private_only =~ "Могу переделать фото"
       refute private_only =~ "<!--"
 
       # Group pictures on, pictures off: nothing about pictures in a group.
       inst |> Ecto.Changeset.change(image_gen_enabled: false, group_images_enabled: true) |> Repo.update!()
-      assert text(call_tool(conn, "cleohub_help")) =~ "В группе только ищу в интернете"
+      group_only = text(call_tool(conn, "cleohub_help"))
+      assert group_only =~ "В группе только ищу в интернете"
+      refute group_only =~ "Могу переделать фото"
     end
 
     test "English for an English bot", %{conn: conn, instance: inst} do
@@ -291,6 +298,16 @@ defmodule DruzhokWebWeb.CleohubMcpControllerTest do
       inst |> Ecto.Changeset.change(image_gen_enabled: true) |> Repo.update!()
       on = text(call_tool(conn, "cleohub_help"))
       assert on =~ "see the photos people post"
+      assert on =~ "I can redraw a photo sent with the request or selected by replying to it and @mentioning me"
+      assert on =~ "You can refine the edit while I am working"
+      assert on =~ "for an earlier photo, reply to the photo and @mention me again"
+      refute on =~ "can't rework a photo"
+
+      inst |> Ecto.Changeset.change(group_images_enabled: false) |> Repo.update!()
+      private_only = text(call_tool(conn, "cleohub_help"))
+      assert private_only =~ "Draw pictures from a description and edit a picture you send"
+      assert private_only =~ "In a group I only search the web"
+      refute private_only =~ "I can redraw a photo"
       refute on =~ "<!--"
     end
   end

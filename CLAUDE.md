@@ -58,7 +58,8 @@ Always use `/my-commit` for committing changes.
   hermes, empty on a polling bot. Approving restarts an awake bot at once (the one panel save that does); a sleeping bot needs nothing; block or remove holds at once in the gate, drops what
   that chat had queued, and reaches the env through the `settings_seq` quiet restart. Tools in a group: `group_toolsets` = web, plus `image_gen` and `group_media: [image]` when «Картинки в группах»
   (`instances.group_images_enabled`, default on, panel Настройки) and `image_gen_enabled` are both on (`Voice.group_images?/1`, which also picks the group rule of the bot's prompt; else no `group_media` key):
-  the fork then sends that turn's own generated pictures (text-to-picture only, no reference images) and lets the bot see photos posted there; no `vision` tool, no other media. Limits, counted on what would be answered (`group_rate_events`, so they
+  the fork then sends that turn's own generated pictures and lets the bot see photos posted there; no `vision` tool, no other media.
+  Redraws use only current-run `ref:` values in «Фото N» labels, issued for attached or replied-to photos and usable for refinements while that run is working; without a current label, ask for a reply to the photo and a bot mention. Limits, counted on what would be answered (`group_rate_events`, so they
   survive a restart and a sleep): Settings `group_rate_user_per_min` (5) and `group_rate_chat_per_hour` (30); over them the update is acknowledged and not stored, with one notice an hour per chat.
   `group_shared_memory` is forced off whatever the column says. `poll` and chatless `poll_answer` updates name no chat and are dropped.
   **Privacy mode** (`Telegram.GroupPrivacy`): new managed bots get it off at provisioning (Bot API 10.5 `setMySettings`,
@@ -221,6 +222,10 @@ HERMES_BIN=$PWD/hermes-agent/.venv/bin/hermes DATABASE_PATH=data/druzhok.db mix 
 ```
 
 ## Server (KZ, PS Cloud Almaty)
+
+Group redraw rollout: install the Hermes release with current-run photo references first, then deploy Druzhok.
+After deploying, use managed restarts (`BotManager.restart`, through `sudo ops/druzhok restart <bot>`) for awake bots
+with group pictures enabled so their system prompt agrees with the newly served FAQ; sleeping bots pick it up on wake.
 
 ```bash
 # ~/druzhok on the box is an rsync target (symlink to /data/druzhok-app), not a git checkout.

@@ -657,8 +657,8 @@ defmodule Druzhok.Runtime.Hermes do
       {"group_user_allowed_commands", @user_commands},
       # Anyone in an approved group can talk to the bot, so web only: no terminal,
       # files, cron, memory, sites or vision (it opens any path). «Картинки в группах»
-      # with pictures on adds image_gen, which the fork makes text-to-picture only in
-      # a group, and group_media lets this turn's own pictures out and photos in.
+      # with pictures on adds image_gen: new pictures or redraws from current-run
+      # photo labels; group_media lets this turn's own pictures out and photos in.
       {"group_toolsets", group_toolsets(group_images)},
       {"command_menu",
        [
