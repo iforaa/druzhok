@@ -471,13 +471,17 @@ defmodule Druzhok.ManagerBot.OnboardingTest do
       assert share == "https://t.me/druzhoksuperbot?start=ref_AAAA-BBBB"
       assert button.text == "Поделиться"
       assert button.url =~ "https://t.me/share/url?url=https%3A%2F%2Ft.me%2Fdruzhoksuperbot%3Fstart%3Dref_AAAA-BBBB&text="
+      # Spaces as %20: Telegram shows a "+" in the shared text literally.
+      [_, text] = String.split(button.url, "&text=")
+      refute text =~ "+"
+      assert URI.decode(text) == "Создай своего AI-бота по моей ссылке"
       assert used == "Использован 5 окт"
     end
 
     test "a bonus is mentioned in the share caption" do
       codes = [%{code: "AAAA-BBBB", status: "available", redeemed_at: nil, friend_rub: "0.00", you_rub: "20.00"}]
       [_, {_, [[button]]}] = Onboarding.referrals_messages(codes, "b")
-      assert URI.decode_www_form(button.url) =~ "20.00"
+      assert URI.decode(button.url) =~ "20.00 ₽"
     end
 
     test "no codes" do

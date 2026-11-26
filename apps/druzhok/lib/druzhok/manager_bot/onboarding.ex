@@ -333,10 +333,14 @@ defmodule Druzhok.ManagerBot.Onboarding do
           do: "Создай своего AI-бота по моей ссылке — мне за это начислят #{c.you_rub} ₽",
           else: "Создай своего AI-бота по моей ссылке"
 
-      share = "https://t.me/share/url?url=#{URI.encode_www_form(link)}&text=#{URI.encode_www_form(caption)}"
+      # Percent-encoding, not form encoding: Telegram shows a "+" in the
+      # shared text as is, so a space must travel as %20.
+      share = "https://t.me/share/url?url=#{share_param(link)}&text=#{share_param(caption)}"
       %{link: link, share_url: share, you_rub: c.you_rub, friend_rub: c.friend_rub}
     end
   end
+
+  defp share_param(text), do: URI.encode(text, &URI.char_unreserved?/1)
 
   @doc """
   What «🎁 Пригласить» sends, in order: an intro, one message per available
