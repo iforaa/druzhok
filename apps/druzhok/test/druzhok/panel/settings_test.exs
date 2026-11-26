@@ -37,6 +37,39 @@ defmodule Druzhok.Panel.SettingsTest do
              })
   end
 
+  test "group pictures: changed only while pictures are on or change in the same request" do
+    off = relay_instance(%{image_gen_enabled: false})
+    refused(off, %{"group_images_enabled" => false}, "images_off")
+    # Unchanged is dropped, not refused.
+    assert {:ok, %{}} = Settings.validate(reload(off), %{"group_images_enabled" => true})
+
+    assert {:ok, %{image_gen_enabled: true, group_images_enabled: false}} =
+             Settings.validate(reload(off), %{"image_gen_enabled" => true, "group_images_enabled" => false})
+
+    on = relay_instance(%{image_gen_enabled: true})
+
+    assert {:ok, %{image_gen_enabled: false, group_images_enabled: false}} =
+             Settings.validate(reload(on), %{"image_gen_enabled" => false, "group_images_enabled" => false})
+
+    assert {:error, 400, "images_off", _} = Settings.save(off, %{"group_images_enabled" => false})
+    assert {reload(off).group_images_enabled, reload(off).settings_seq} == {true, 0}
+  end
+
+  test "group pictures: a boolean, saved for a quiet restart, on by default" do
+    inst = relay_instance(%{active: true, image_gen_enabled: true})
+    assert reload(inst).group_images_enabled == true
+
+    refused(inst, %{"group_images_enabled" => "false"}, "invalid_setting")
+    refused(inst, %{"group_images_enabled" => nil}, "invalid_setting")
+    assert {:ok, %{}} = Settings.validate(reload(inst), %{"group_images_enabled" => true})
+
+    assert {:ok, row} = Settings.save(inst, %{"group_images_enabled" => false})
+    assert row.group_images_enabled == false
+    assert row.settings_seq == 1
+    assert row.start_seq == inst.start_seq
+    assert reload(inst).group_images_enabled == false
+  end
+
   test "group trigger is trimmed, bounded, clearable and saved for a quiet restart" do
     inst = relay_instance(%{active: true, trigger_name: "Вася"})
 

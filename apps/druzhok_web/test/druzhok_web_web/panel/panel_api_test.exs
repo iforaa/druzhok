@@ -188,6 +188,30 @@ defmodule DruzhokWebWeb.PanelApiTest do
       assert {row.settings_seq, row.start_seq} == {1, inst.start_seq}
     end
 
+    test "group pictures: read on by default, saved off for a quiet restart", %{
+      conn: conn,
+      inst: inst
+    } do
+      Repo.update!(Ecto.Changeset.change(inst, active: true, image_gen_enabled: true))
+
+      assert Jason.decode!(api(conn, "/app/api/bot").resp_body)["settings"][
+               "group_images_enabled"
+             ] == true
+
+      c = api(conn, "/app/api/settings", post: %{changes: %{"group_images_enabled" => false}})
+
+      assert c.status == 200
+      assert Jason.decode!(c.resp_body)["bot"]["settings"]["group_images_enabled"] == false
+      row = Repo.get!(Instance, inst.id)
+
+      assert {row.group_images_enabled, row.settings_seq, row.start_seq} ==
+               {false, 1, inst.start_seq}
+
+      c = api(conn, "/app/api/settings", post: %{changes: %{"group_images_enabled" => "no"}})
+      assert c.status == 400
+      assert Repo.get!(Instance, inst.id).group_images_enabled == false
+    end
+
     test "refusals in the envelope; nothing is written", %{conn: conn, inst: inst} do
       for {changes, type} <- [
             {%{"model" => "x"}, "unknown_setting"},

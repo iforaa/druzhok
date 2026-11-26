@@ -633,13 +633,22 @@ defmodule Druzhok.Runtime.Hermes do
   # hermes checks the typed name against the policy, so it must be listed.
   @user_commands ~w(start new stop voice)
   @menu_commands ~w(new stop)
-  @telegram_extra_keys ~w(allow_admin_from user_allowed_commands group_allow_admin_from group_user_allowed_commands group_toolsets command_menu drop_pending_on_cold_boot gateway_restart_notification)
+  @telegram_extra_keys ~w(allow_admin_from user_allowed_commands group_allow_admin_from group_user_allowed_commands group_toolsets group_media command_menu drop_pending_on_cold_boot gateway_restart_notification)
 
   def user_commands, do: @user_commands
   def menu_commands, do: @menu_commands
 
+  defp group_toolsets(true), do: ["web", "image_gen"]
+  defp group_toolsets(false), do: ["web"]
+
+  # No key at all when off: render_yaml would write `[]` as a bare (null) key, and
+  # `group_media` is in @telegram_extra_keys, so an old value is dropped.
+  defp group_media(true), do: [{"group_media", ["image"]}]
+  defp group_media(false), do: []
+
   defp sync_telegram_extra(content, instance) do
     admin = operator_telegram_id(instance)
+    group_images = Voice.group_images?(instance)
 
     owned = [
       {"allow_admin_from", [~s("#{admin}")]},
@@ -647,8 +656,10 @@ defmodule Druzhok.Runtime.Hermes do
       {"group_allow_admin_from", [~s("#{admin}")]},
       {"group_user_allowed_commands", @user_commands},
       # Anyone in an approved group can talk to the bot, so web only: no terminal,
-      # files, cron, memory, sites, or vision and image_generate (both accept a local path).
-      {"group_toolsets", ["web"]},
+      # files, cron, memory, sites or vision (it opens any path). «Картинки в группах»
+      # with pictures on adds image_gen, which the fork makes text-to-picture only in
+      # a group, and group_media lets this turn's own pictures out and photos in.
+      {"group_toolsets", group_toolsets(group_images)},
       {"command_menu",
        [
          {"priority_mode", "replace"},
@@ -661,7 +672,7 @@ defmodule Druzhok.Runtime.Hermes do
       # TELEGRAM_HOME_CHANNEL is the owner, so every stop (each sleep too)
       # sent «⚠️ Hermes завершает работу…» and the online ping to the owner.
       {"gateway_restart_notification", "false"}
-    ]
+    ] ++ group_media(group_images)
 
     lines = String.split(content, "\n")
 

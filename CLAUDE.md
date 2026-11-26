@@ -56,13 +56,15 @@ Always use `/my-commit` for committing changes.
   for every update that carries a chat: an unapproved or blocked group gets a 200 with nothing stored, no wake and no spend, the owner's own messages included. The first update makes a
   `pending` row and a plain note to the owner (`Druzhok.Cabinet`); only the panel decides (`POST /app/api/groups/:chat_id`, init data under 10 min). `DRUZHOK_GROUP_CHATS` carries the approved ids to
   hermes, empty on a polling bot. Approving restarts an awake bot at once (the one panel save that does); a sleeping bot needs nothing; block or remove holds at once in the gate, drops what
-  that chat had queued, and reaches the env through the `settings_seq` quiet restart. Tools in a group: `group_toolsets` = web only. Limits, counted on what would be answered (`group_rate_events`, so they
+  that chat had queued, and reaches the env through the `settings_seq` quiet restart. Tools in a group: `group_toolsets` = web, plus `image_gen` and `group_media: [image]` when «Картинки в группах»
+  (`instances.group_images_enabled`, default on, panel Настройки) and `image_gen_enabled` are both on (`Voice.group_images?/1`, which also picks the group rule of the bot's prompt; else no `group_media` key):
+  the fork then sends that turn's own generated pictures (text-to-picture only, no reference images) and lets the bot see photos posted there; no `vision` tool, no other media. Limits, counted on what would be answered (`group_rate_events`, so they
   survive a restart and a sleep): Settings `group_rate_user_per_min` (5) and `group_rate_chat_per_hour` (30); over them the update is acknowledged and not stored, with one notice an hour per chat.
   `group_shared_memory` is forced off whatever the column says. `poll` and chatless `poll_answer` updates name no chat and are dropped.
   **Privacy mode** (`Telegram.GroupPrivacy`): new managed bots get it off at provisioning (Bot API 10.5 `setMySettings`,
   `can_read_all_group_messages: true`), so the group name (`trigger_name`) works without an @mention and no admin is needed. Telegram
   holds the value, no column: `getMe` reads it, the panel switches it (`POST /app/api/group-privacy {"on": bool}`, init data under 10 min).
-  A change reaches a group only when the bot joins it again. With it off, an approved group's unaddressed chatter is stored with
+  A change applies at once, in groups the bot is already in too. With it off, an approved group's unaddressed chatter is stored with
   `wakes: false`: it never wakes the bot or puts it in the queue's line (`Inbox.next_waking`/`oldest_waking` read only `wakes` rows; it is
   delivered on the next real wake or expires at 24 h), and `Lifecycle.Idle` counts only `wakes` rows, so it never keeps a bot awake or puts off a quiet restart.
 - `hermes-agent/` is a separate, gitignored git repo (the hermes fork clone) — never `git add` it into druzhok.

@@ -167,6 +167,8 @@ export interface Bot {
     sleep_idle_minutes: number
     image_gen_enabled: boolean
     image_gen_model: string | null
+    /** «Картинки в группах»: draws and sees photos in approved groups, only while image_gen_enabled. */
+    group_images_enabled: boolean
     website_hosting_enabled: boolean
     memory_provider: string
     /** Whether the bot gets every group message (Telegram's privacy mode off); null when Telegram did not say. */
@@ -193,6 +195,7 @@ export interface SettingChanges {
   image_gen_enabled?: boolean
   image_gen_model?: string | null
   website_hosting_enabled?: boolean
+  group_images_enabled?: boolean
 }
 
 export interface ImageModel {

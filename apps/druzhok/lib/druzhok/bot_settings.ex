@@ -15,7 +15,7 @@ defmodule Druzhok.BotSettings do
   alias Druzhok.Runtime.Hermes
 
   @restart ~w(model image_model language telegram_token mention_only
-              website_hosting_enabled image_gen_enabled memory_provider trigger_name
+              website_hosting_enabled image_gen_enabled group_images_enabled memory_provider trigger_name
               allowed_telegram_chats owner_telegram_id timezone)a
 
   # Read per request (image_gen_model by the proxy), by the lifecycle

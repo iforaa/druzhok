@@ -45,9 +45,10 @@ passes nothing else to `BotSettings`.
 | `image_gen_enabled` | boolean | restart |
 | `image_gen_model` | an `id` from `Ruoc.image_models/0`, or `null` for ruoc's default | live |
 | `website_hosting_enabled` | boolean | restart |
+| `group_images_enabled` | boolean, «Картинки в группах» (added 2026-11-26) | restart |
 
 Not writable: `model`, `sleep_enabled`, `memory_provider`, `group_shared_memory`, and `image_model`, the operator's **vision** model (`instance.ex:21`, a different field
-from `image_gen_model`), which the panel does not show and does not start showing. The allowlist is the seven names above; a test sends every other
+from `image_gen_model`), which the panel does not show and does not start showing. The allowlist is the eight names above; a test sends every other
 `BotSettings.fields/0` name and expects `400 unknown_setting`.
 
 The UI for timezone is a short list (Asia/Almaty, Europe/Moscow, Asia/Tashkent, Europe/Istanbul, Asia/Tbilisi,
@@ -57,6 +58,9 @@ UTC) plus «Другой…», which accepts any IANA name, validated server-sid
 otherwise `400 images_off`. The catalogue comes from `Ruoc.image_models/0` (not cached); the panel gets it
 from a new `GET /app/api/image-models`, a thin pass-through that answers 502 `catalogue_unavailable` on error,
 like `invites`.
+
+`group_images_enabled` reaches hermes only with `image_gen_enabled` on, so a change of it is refused with
+`400 images_off` while pictures are off, unless the same request also changes `image_gen_enabled`.
 
 ### API
 

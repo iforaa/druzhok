@@ -551,6 +551,72 @@ defmodule Druzhok.Runtime.HermesTest do
       config = YamlElixir.read_from_file!(Path.join(tmp_dir, "config.yaml"))
       assert config["platforms"]["telegram"]["extra"]["group_toolsets"] == ["web"]
     end
+
+    for {switch, images, toolsets, media} <- [
+          {true, true, ["web", "image_gen"], ["image"]},
+          {true, false, ["web"], nil},
+          {false, true, ["web"], nil},
+          {false, false, ["web"], nil}
+        ] do
+      @tag :tmp_dir
+      test "group pictures #{switch}, pictures #{images}: toolsets #{inspect(toolsets)}", %{
+        tmp_dir: tmp_dir
+      } do
+        File.write!(Path.join(tmp_dir, "config.yaml"), "model:\n  default: \"x\"\n")
+
+        inst =
+          Map.merge(@instance, %{
+            group_images_enabled: unquote(switch),
+            image_gen_enabled: unquote(images)
+          })
+
+        assert :ok = Hermes.sync_config(inst, tmp_dir)
+        assert :ok = Hermes.sync_config(inst, tmp_dir)
+
+        yaml = File.read!(Path.join(tmp_dir, "config.yaml"))
+        extra = YamlElixir.read_from_string!(yaml)["platforms"]["telegram"]["extra"]
+        assert extra["group_toolsets"] == unquote(toolsets)
+
+        if unquote(media) do
+          assert extra["group_media"] == unquote(media)
+          assert length(Regex.scan(~r/^\s+group_media:/m, yaml)) == 1
+        else
+          refute Map.has_key?(extra, "group_media")
+          refute yaml =~ ~r/^\s+group_media:/m
+        end
+      end
+    end
+
+    @tag :tmp_dir
+    test "turning group pictures off drops the old group_media and image_gen", %{tmp_dir: tmp_dir} do
+      File.write!(Path.join(tmp_dir, "config.yaml"), "model:\n  default: \"x\"\n")
+      on = Map.merge(@instance, %{group_images_enabled: true, image_gen_enabled: true})
+
+      assert :ok = Hermes.sync_config(on, tmp_dir)
+      assert File.read!(Path.join(tmp_dir, "config.yaml")) =~ ~r/^\s+group_media:/m
+
+      assert :ok = Hermes.sync_config(%{on | group_images_enabled: false}, tmp_dir)
+
+      yaml = File.read!(Path.join(tmp_dir, "config.yaml"))
+      extra = YamlElixir.read_from_string!(yaml)["platforms"]["telegram"]["extra"]
+      assert extra["group_toolsets"] == ["web"]
+      refute yaml =~ ~r/^\s+group_media:/m
+      refute yaml =~ ~r/^\s+- image$/m
+    end
+
+    @tag :tmp_dir
+    test "a row without the switch draws nothing in a group", %{tmp_dir: tmp_dir} do
+      File.write!(Path.join(tmp_dir, "config.yaml"), "model:\n  default: \"x\"\n")
+      assert :ok = Hermes.sync_config(Map.put(@instance, :image_gen_enabled, true), tmp_dir)
+
+      extra =
+        YamlElixir.read_from_file!(Path.join(tmp_dir, "config.yaml"))["platforms"]["telegram"][
+          "extra"
+        ]
+
+      assert extra["group_toolsets"] == ["web"]
+      refute Map.has_key?(extra, "group_media")
+    end
   end
 
   describe "sync_config/2 — mcp_servers.cleohub" do

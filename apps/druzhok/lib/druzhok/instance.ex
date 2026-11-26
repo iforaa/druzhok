@@ -23,6 +23,8 @@ defmodule Druzhok.Instance do
     field(:website_hosting_enabled, :boolean, default: false)
     field(:image_gen_enabled, :boolean, default: false)
     field(:image_gen_model, :string)
+    # «Картинки в группах»: draw and see photos in approved groups, while image_gen_enabled.
+    field(:group_images_enabled, :boolean, default: true)
     field(:ruoc_account_id, :string)
     field(:ruoc_api_key, :string)
     field(:memory_provider, :string, default: "mnemosyne")
@@ -140,6 +142,7 @@ defmodule Druzhok.Instance do
       :website_hosting_enabled,
       :image_gen_enabled,
       :image_gen_model,
+      :group_images_enabled,
       :ruoc_account_id,
       :ruoc_api_key,
       :memory_provider,

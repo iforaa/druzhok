@@ -11,9 +11,9 @@ defmodule Druzhok.Panel.Settings do
 
   alias Druzhok.{BotSettings, Instance, Repo}
 
-  @fields ~w(language timezone mention_only trigger_name image_gen_enabled image_gen_model website_hosting_enabled)
+  @fields ~w(language timezone mention_only trigger_name image_gen_enabled image_gen_model website_hosting_enabled group_images_enabled)
   @languages ~w(ru en)
-  @booleans ~w(mention_only image_gen_enabled website_hosting_enabled)
+  @booleans ~w(mention_only image_gen_enabled website_hosting_enabled group_images_enabled)
 
   def fields, do: @fields
 
@@ -56,8 +56,10 @@ defmodule Druzhok.Panel.Settings do
     with :ok <- known(changes),
          {:ok, typed} <- typed(changes),
          :ok <- images_on(inst, typed),
-         :ok <- image_model(typed) do
-      {:ok, typed |> Enum.reject(fn {k, v} -> Map.get(inst, k) == v end) |> Map.new()}
+         :ok <- image_model(typed),
+         changed = typed |> Enum.reject(fn {k, v} -> Map.get(inst, k) == v end) |> Map.new(),
+         :ok <- group_images(inst, changed) do
+      {:ok, changed}
     end
   end
 
@@ -122,6 +124,16 @@ defmodule Druzhok.Panel.Settings do
   end
 
   defp images_on(_inst, _typed), do: :ok
+
+  # «Картинки в группах» reaches hermes only with pictures on, so a change of it
+  # alone while they are off would restart the bot for an identical config.
+  defp group_images(inst, %{group_images_enabled: _} = changed) do
+    if inst.image_gen_enabled == true or Map.has_key?(changed, :image_gen_enabled),
+       do: :ok,
+       else: {:error, 400, "images_off", "turn pictures on before pictures in groups"}
+  end
+
+  defp group_images(_inst, _changed), do: :ok
 
   defp image_model(%{image_gen_model: id}) when is_binary(id) do
     case Druzhok.Ruoc.image_models() do

@@ -210,7 +210,8 @@ export default function Settings({ bot, onBot, go }: { bot: Bot; onBot: (b: Bot)
       <ApplyNote bot={bot} settings={settings} go={go} />
 
       <GroupReading bot={bot} onBot={onBot} />
-      <Groups onBot={onBot} />
+      <GroupImages bot={bot} settings={settings} />
+      <Groups onBot={onBot} pictures={s.image_gen_enabled && s.group_images_enabled} />
 
       <section className="card">
         <dl className="pairs">
@@ -318,7 +319,33 @@ function GroupReading({ bot, onBot }: { bot: Bot; onBot: (b: Bot) => void }) {
         />
       </div>
       {failed ? <p className="note-error">{failed}</p> : null}
-      <p className="hint">Права администратора не нужны. В группах, где бот уже есть, изменение заработает, когда его удалят из группы и добавят снова.</p>
+      <p className="hint">Права администратора не нужны. Изменение действует сразу, и в группах, где бот уже есть.</p>
+    </>
+  )
+}
+
+/**
+ * «Картинки в группах»: in approved groups the bot draws by description and
+ * sees the photos people post. Only with «Картинки» on; saved like any setting
+ * and applied at the bot's next quiet restart.
+ */
+function GroupImages({ bot, settings }: { bot: Bot; settings: Settings }) {
+  const { image_gen_enabled: images, group_images_enabled: groupImages } = bot.settings
+  const on = images && groupImages
+  return (
+    <>
+      <div className="group">
+        <Toggle
+          icon="image"
+          tone="orange"
+          title="Картинки в группах"
+          sub={!images ? "Сначала включите Картинки" : on ? "рисует и смотрит фото" : "выключены"}
+          on={on}
+          busy={settings.busy || !images}
+          onChange={(v) => settings.save({ group_images_enabled: v })}
+        />
+      </div>
+      {images ? <p className="hint">Бот рисует и смотрит фото в группах. Картинки оплачиваются с вашего баланса.</p> : null}
     </>
   )
 }
@@ -330,7 +357,7 @@ const groupStatus: Record<GroupChat["status"], string> = {
 }
 
 /** The groups the bot was added to; it answers only in those the owner allowed. */
-function Groups({ onBot }: { onBot: (b: Bot) => void }) {
+function Groups({ onBot, pictures }: { onBot: (b: Bot) => void; pictures: boolean }) {
   const { data, error, reload } = useLoad(panelApi.groups)
   const [groups, setGroups] = useState<GroupChat[] | null>(null)
   const [busy, setBusy] = useState(false)
@@ -392,7 +419,12 @@ function Groups({ onBot }: { onBot: (b: Bot) => void }) {
         ))}
       </section>
       {failed ? <p className="note-error">{failed}</p> : null}
-      <p className="hint">В группе бот только ищет в интернете. Вашей памяти и файлов у него там нет, а его описание участники могут увидеть.</p>
+      <p className="hint">
+        {pictures
+          ? "В группе бот ищет в интернете, рисует картинки и смотрит фото."
+          : "В группе бот только ищет в интернете."}{" "}
+        Вашей памяти и файлов у него там нет, а его описание участники могут увидеть.
+      </p>
     </>
   )
 }
