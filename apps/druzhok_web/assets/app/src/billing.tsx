@@ -325,8 +325,6 @@ function Account({
         </section>
       ) : null}
 
-      <Balance me={me} pay={pay} />
-
       <section className="card">
         <div className="card__head">
           <span className="label">За 30 дней</span>
@@ -366,6 +364,8 @@ function Account({
       )}
 
       <Plans me={me} pay={pay} />
+
+      <Balance me={me} pay={pay} />
 
       {me.linked ? null : (
         <div className="group">
