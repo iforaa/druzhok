@@ -59,8 +59,19 @@ stage_db() {
   if env -i PATH=/usr/bin:/bin setpriv --reuid="$uid" --regid="$gid" --clear-groups \
       --no-new-privs sqlite3 -batch -bail "$src" ".timeout 15000" ".backup '$work/copy'"; then
     mkdir -p "$(dirname "$dest")"
+    rm -rf "$dest"
     mv -f "$work/copy" "$dest"
-    chown root:root "$dest"; chmod 0600 "$dest"
+    # $work is the owner's: while sqlite3 ran, the bot could reach it through
+    # /proc/<pid>/root and put a symlink or a hard link where the copy was.
+    # $dest's dir is root's, so what is there now cannot change: take only a
+    # plain file with one name, and never follow a link with chown or chmod.
+    if [ -L "$dest" ] || [ ! -f "$dest" ] || [ "$(stat -c %h "$dest")" != 1 ]; then
+      rm -rf "$dest"
+      echo "druzhok-backup: the copy of $src is not a plain file" >&2
+      FAILED=1
+      return 0
+    fi
+    chown -h root:root "$dest"; chmod 0600 "$dest"
   else
     echo "druzhok-backup: could not copy $src" >&2
     FAILED=1
