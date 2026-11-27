@@ -455,7 +455,8 @@ bar with icons, and placeholders while loading. Data added, all read only:
   opening a payment drops it.
 
 Главная: the bot and its state in words, what is left of the plan's week as the big figure (no balance: a
-bot's plan is all it spends, so balance, grants and «списано с баланса» are not shown anywhere), a setup checklist (receipt email, «о вас»,
+bot's plan is all it spends, so balance, grants and «списано с баланса» are not shown anywhere; superseded 2026-11-26:
+Счёт shows the bot's own balance and sells top-ups), a setup checklist (receipt email, «о вас»,
 a first scheduled job, a site when hosting is on; «Написать боту» closes the panel back to the chat), four
 shortcuts, dismissible tips (localStorage), the limits. Счёт's limits name the day each comes back («обновится
 завтра в 18:42 · через 21 ч»), the 5-hour window says it starts with the first message, the plan line and the

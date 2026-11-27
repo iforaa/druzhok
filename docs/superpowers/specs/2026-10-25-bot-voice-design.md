@@ -190,6 +190,10 @@ New texts:
 - ru: «Лимит тарифа на сейчас исчерпан. Когда он обновится и как сменить тариф — в «Кабинете».»
 - en: «The plan's limit is used up for now. When it resets and how to change plans — in «Кабинет».»
 
+Superseded 2026-11-26 by the bot top-up work: bots have a balance again, sold in Счёт. `BalanceNotice`, which
+any chatter reads, keeps the texts above and says nothing of a top-up; the owner's `Druzhok.Cabinet` note
+offers a top-up or a plan change.
+
 No prompt can change these, because they are deterministic completions.
 - `text/1` also feeds the 402 replies for fetch (`/v2/scrape`, llm_proxy/ruoc.ex:259) and image generation
   (ruoc.ex:388); those get the same texts.

@@ -599,10 +599,26 @@ defmodule Druzhok.CabinetTest do
 
     [{_, msg}] = telegram(seen, "sendMessage")
     assert msg["chat_id"] == 456
-    assert msg["text"] =~ "Лимит тарифа на сейчас исчерпан"
+    assert msg["text"] ==
+             "Лимит тарифа на сейчас исчерпан. Пополнить баланс или сменить тариф можно в кабинете."
 
     assert [[%{"text" => "Открыть кабинет", "web_app" => %{"url" => @url}}]] =
              msg["reply_markup"]["inline_keyboard"]
+  end
+
+  test "the out-of-money notice speaks the bot's language", %{seen: seen, inst: inst} do
+    start_supervised!(Cabinet)
+    {:ok, :bound} = Cabinet.bind_now(inst)
+    set_row(inst, language: "en")
+    Cabinet.out_of_money(inst.id)
+    :sys.get_state(Cabinet)
+
+    [{_, msg}] = telegram(seen, "sendMessage")
+
+    assert msg["text"] ==
+             "The plan's limit is used up for now. You can top up the balance or change plans in the cabinet."
+
+    assert [[%{"text" => "Open the cabinet"}]] = msg["reply_markup"]["inline_keyboard"]
   end
 
   test "a call that raises never takes the process down", %{inst: inst} do

@@ -12,7 +12,9 @@ defmodule DruzhokWebWeb.LlmProxy.BalanceNotice do
   refusal instead.
   """
 
-  # Plans have limits, not a balance (spec 2026-10-25-bot-voice-design.md).
+  # Anyone chatting with the bot reads this, group members included, and only
+  # the owner can open the cabinet and pay: so it names the plan and no top-up.
+  # The owner's own note, with the button and the top-up, is `Druzhok.Cabinet`'s.
   @notices %{
     "ru" => "Лимит тарифа на сейчас исчерпан. Когда он обновится и как сменить тариф — в «Кабинете».",
     "en" => "The plan's limit is used up for now. When it resets and how to change plans — in «Кабинет»."
