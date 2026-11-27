@@ -71,7 +71,7 @@ defmodule DruzhokWebWeb.LlmProxy.Ruoc.ChatStreamTest do
     events = conn.resp_body |> String.split("\n\n", trim: true) |> Enum.map(&String.trim_leading(&1, "data: "))
     assert [chunk, "[DONE]"] = events
     decoded = Jason.decode!(chunk)
-    assert get_in(decoded, ["choices", Access.at(0), "delta", "content"]) == "Лимит тарифа на сейчас исчерпан. Подробности — у владельца бота в «Кабинете»."
+    assert get_in(decoded, ["choices", Access.at(0), "delta", "content"]) == "Лимит тарифа на сейчас исчерпан. Когда он обновится и как сменить тариф — в «Кабинете»."
     assert get_in(decoded, ["choices", Access.at(0), "finish_reason"]) == "stop"
     assert decoded["object"] == "chat.completion.chunk"
     assert usage_logs(instance) == []

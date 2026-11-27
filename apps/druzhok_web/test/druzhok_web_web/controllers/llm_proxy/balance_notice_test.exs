@@ -3,14 +3,14 @@ defmodule DruzhokWebWeb.LlmProxy.BalanceNoticeTest do
 
   alias DruzhokWebWeb.LlmProxy.BalanceNotice
 
-  # Anyone in the chat reads this, and only the owner can pay: it sends them
-  # to the owner, and offers no top-up (that is Druzhok.Cabinet's note).
-  test "points chatters at the owner, in the bot's language, without a top-up" do
+  # Anyone in the chat reads this, and only the owner can pay: it names the
+  # plan and offers no top-up (that is Druzhok.Cabinet's note).
+  test "names the plan's limit in the bot's language, without a top-up" do
     assert BalanceNotice.text(%{language: "ru"}) ==
-             "Лимит тарифа на сейчас исчерпан. Подробности — у владельца бота в «Кабинете»."
+             "Лимит тарифа на сейчас исчерпан. Когда он обновится и как сменить тариф — в «Кабинете»."
 
     assert BalanceNotice.text(%{language: "en"}) ==
-             "The plan's limit is used up for now. The bot's owner has the details in «Кабинет»."
+             "The plan's limit is used up for now. When it resets and how to change plans — in «Кабинет»."
 
     assert BalanceNotice.text(%{language: "de"}) == BalanceNotice.text(%{language: "en"})
 
