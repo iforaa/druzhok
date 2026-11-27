@@ -31,7 +31,6 @@ PrivateTmp=yes
 PrivateDevices=yes
 ProtectKernelTunables=yes
 ProtectKernelModules=yes
-ProtectControlGroups=yes
 ProtectClock=yes
 ProtectHostname=yes
 RestrictSUIDSGID=yes
@@ -48,6 +47,30 @@ PrivateIPC=yes
 # Host services a bot never needs. D-Bus (polkit behind it) and snapd answer any
 # local user, and both have had privilege-escalation bugs. "-": absent is fine.
 InaccessiblePaths=-/run/dbus -/run/snapd.socket -/run/snapd-snap.socket
+
+# What a bot may look at (spec 2026-11-27-bot-sandbox-visibility-design.md):
+# under /data its own dir and the runtime only, not the other bots' names,
+# druzhok's source or ubuntu's home.
+TemporaryFileSystem=/data:ro
+BindReadOnlyPaths=/data/opt
+BindPaths=/data/tenants/%i
+# /run and /var hold other units' names, logs, host state. Kept: the socket
+# READY=1 and the watchdog go to, and the resolver file /etc/resolv.conf links
+# to. PrivateTmp still gives a private /var/tmp.
+TemporaryFileSystem=/run:ro /var:ro
+BindReadOnlyPaths=/run/systemd/notify /run/systemd/resolve/stub-resolv.conf
+# Only its own cgroup: hermes sizes its cache from memory.max. On systemd 255
+# ProtectControlGroups=yes would win over a tmpfs on the same path; the files
+# are root's either way.
+ProtectControlGroups=no
+TemporaryFileSystem=/sys/fs/cgroup:ro
+BindReadOnlyPaths=/sys/fs/cgroup/system.slice/system-hermes.slice/%n
+# Platform config, units, firewall rules and helpers, as whole dirs so the next
+# file put there is hidden too. EnvironmentFile= is read before these apply.
+InaccessiblePaths=/etc/druzhok /etc/caddy /etc/systemd -/etc/nftables.d -/etc/nftables.conf
+TemporaryFileSystem=/usr/local/sbin:ro
+InaccessiblePaths=-/usr/local/lib/druzhok -/opt/druzhok-fetch
+InaccessiblePaths=-/boot -/srv -/mnt -/media
 
 MemoryMax=1G
 MemoryHigh=800M

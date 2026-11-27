@@ -163,8 +163,25 @@ install -d -m 0771 -o root -g druzhok /var/lib/cleo-docs/jobs
 install -m 0755 -o root -g root "$OPS/docs-convert" /usr/local/lib/druzhok/docs-convert
 # Druzhok's file work in tenant dirs, done as the bot (Druzhok.TenantFiles).
 install -m 0755 -o root -g root "$OPS/../apps/druzhok/priv/tenant-fs/tenant_fs.py" /usr/local/lib/druzhok/tenant-fs
+# The backup's database copies, made as each file's owner (ops/druzhok-backup).
+install -m 0755 -o root -g root "$OPS/../apps/druzhok/priv/sqlite-copy/sqlite_copy.py" /usr/local/lib/druzhok/sqlite-copy
 install -m 0755 -o root -g root "$OPS/soffice-shim" /usr/local/bin/soffice
 ln -sfn soffice /usr/local/bin/libreoffice
+
+step "off-site backups (restic to Beget S3)"
+# Keys and the encryption password come from `druzhok-backup set-keys`, by hand;
+# the timers start once they exist.
+apt-get install -y -q --no-install-recommends restic sqlite3 >/dev/null
+install -m 0755 -o root -g root "$OPS/druzhok-backup" /usr/local/sbin/druzhok-backup
+for u in druzhok-backup.service druzhok-backup.timer druzhok-backup-db.service druzhok-backup-db.timer; do
+  install -m 0644 -o root -g root "$OPS/$u" "/etc/systemd/system/$u"
+done
+systemctl daemon-reload
+if [ -s /etc/druzhok/backup-s3.env ]; then
+  systemctl enable --now druzhok-backup.timer druzhok-backup-db.timer
+else
+  echo "!! run 'sudo druzhok-backup set-keys', then 'systemctl enable --now druzhok-backup.timer druzhok-backup-db.timer'"
+fi
 
 step "druzhok env"
 # Single source of prod env for druzhok.service, druzhok-run.sh and smoke.sh.

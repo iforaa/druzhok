@@ -17,7 +17,10 @@
 # into /data/backup-stage first, and the copy is what is uploaded. The copy runs
 # as the file's owner: root opening a bot's database could leave a root-owned
 # -wal/-shm the bot can then not write, and a bot's "*.db" could be a symlink
-# to a file only root may read.
+# to a file only root may read. It is made by /usr/local/lib/druzhok/sqlite-copy
+# (apps/druzhok/priv/sqlite-copy), which drops to the owner and stays
+# non-dumpable: a process running as a bot's uid that the bot could open
+# through /proc/<pid>/root would hand it the host's whole filesystem.
 #
 # A successful nightly run touches /var/lib/druzhok-backup/last-ok, which
 # Druzhok.HostUpdates watches (alert after 26 h).
@@ -32,6 +35,7 @@ STAGE=/data/backup-stage
 STATE=/var/lib/druzhok-backup
 TENANTS=/data/tenants
 DRUZHOK_DB=/data/druzhok/druzhok.db
+SQLITE_COPY=/usr/local/lib/druzhok/sqlite-copy
 
 die() { echo "druzhok-backup: $*" >&2; exit 1; }
 [ "$(id -u)" = 0 ] || die "run as root"
@@ -39,6 +43,13 @@ die() { echo "druzhok-backup: $*" >&2; exit 1; }
 # one run at a time, the next one waits.
 exec 9>/run/druzhok-backup.lock
 flock 9
+
+# Never fall back to running sqlite3 as the owner: that is what the helper replaces.
+check_helper() {
+  [ -f "$SQLITE_COPY" ] && [ ! -L "$SQLITE_COPY" ] && [ "$(stat -c %u "$SQLITE_COPY")" = 0 ] \
+    && [ $(( 0$(stat -c %a "$SQLITE_COPY") & 022 )) = 0 ] \
+    || die "$SQLITE_COPY is missing, not root's or writable by others: install it (CLAUDE.md, deploy recipe)"
+}
 
 load_keys() {
   [ -r "$KEYS" ] || die "no $KEYS: run druzhok-backup set-keys"
@@ -54,10 +65,9 @@ stage_db() {
   work=$STAGE/.w/$uid
   install -d -m 0700 -o "$uid" -g "$gid" "$work"
   rm -f "$work/copy"
-  # env -i: the S3 keys are in this shell's environment, and the owner (a
-  # bot) can read the environment of its own uid's processes.
-  if env -i PATH=/usr/bin:/bin setpriv --reuid="$uid" --regid="$gid" --clear-groups \
-      --no-new-privs sqlite3 -batch -bail "$src" ".timeout 15000" ".backup '$work/copy'"; then
+  # env -i: the S3 keys stay in this shell. timeout: a locked database must
+  # not hold the backup lock; the helper has its own, shorter alarm too.
+  if env -i PATH=/usr/bin:/bin timeout -k 5 60 "$SQLITE_COPY" "$uid" "$gid" "$src" "$work/copy"; then
     mkdir -p "$(dirname "$dest")"
     rm -rf "$dest"
     mv -f "$work/copy" "$dest"
@@ -94,6 +104,7 @@ stage_all_dbs() {
 }
 
 nightly() {
+  check_helper
   load_keys
   FAILED=0
   fresh_stage
@@ -117,6 +128,7 @@ nightly() {
 }
 
 db_only() {
+  check_helper
   load_keys
   FAILED=0
   fresh_stage

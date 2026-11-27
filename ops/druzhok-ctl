@@ -302,10 +302,15 @@ case "$cmd" in
     # Run as a transient unit so the env file is parsed by systemd exactly as
     # hermes@.service sees it (no second parser here), with the same HOME/PATH.
     # ExecSearchPath resolves the binary AND becomes $PATH (systemd ≥ 250).
-    # The same sandbox as hermes@.service (keep the two in step): what runs here
-    # reads files the bot wrote (hermes's home, the workspace), so it must not
-    # get what the bot's own unit refuses it — setuid binaries, other users'
-    # processes, the host's /tmp, D-Bus, namespaces, unlimited memory.
+    # The same sandbox as hermes@.service (keep the two in step;
+    # test/ops/sandbox_drift_test.exs checks it): what runs here reads files
+    # the bot wrote (hermes's home, the workspace), so it must not get what the
+    # bot's own unit refuses it — setuid binaries, other users' processes, the
+    # host's /tmp, D-Bus, namespaces, unlimited memory. It runs as the bot's
+    # uid, so the bot can read its filesystem through /proc/<pid>/root: it
+    # hides what the unit hides. Differences: no notify socket, an empty
+    # cgroup tree, and of /usr/local/lib/druzhok only panel-save.py, which
+    # panel saves run here (so the bot can read that one script).
     exec systemd-run --quiet --wait --pipe --collect \
       --uid="$user" --gid="$user" --slice=system-hermes.slice \
       -p EnvironmentFile="$envf" -p WorkingDirectory="$root/workspace" \
@@ -316,7 +321,20 @@ case "$cmd" in
       -p ProtectSystem=strict -p ProtectHome=yes -p ReadWritePaths="$root" \
       -p PrivateTmp=yes -p PrivateDevices=yes \
       -p ProtectKernelTunables=yes -p ProtectKernelModules=yes \
-      -p ProtectControlGroups=yes -p ProtectClock=yes -p ProtectHostname=yes \
+      -p ProtectControlGroups=no -p ProtectClock=yes -p ProtectHostname=yes \
+      -p TemporaryFileSystem=/data:ro -p BindReadOnlyPaths=/data/opt -p BindPaths="$root" \
+      -p TemporaryFileSystem=/run:ro -p TemporaryFileSystem=/var:ro \
+      -p BindReadOnlyPaths=/run/systemd/resolve/stub-resolv.conf \
+      -p TemporaryFileSystem=/sys/fs/cgroup:ro \
+      -p InaccessiblePaths=/etc/druzhok -p InaccessiblePaths=/etc/caddy \
+      -p InaccessiblePaths=/etc/systemd -p InaccessiblePaths=-/etc/nftables.d \
+      -p InaccessiblePaths=-/etc/nftables.conf \
+      -p TemporaryFileSystem=/usr/local/sbin:ro \
+      -p TemporaryFileSystem=/usr/local/lib/druzhok:ro \
+      -p BindReadOnlyPaths=/usr/local/lib/druzhok/panel-save.py \
+      -p InaccessiblePaths=-/opt/druzhok-fetch \
+      -p InaccessiblePaths=-/boot -p InaccessiblePaths=-/srv \
+      -p InaccessiblePaths=-/mnt -p InaccessiblePaths=-/media \
       -p RestrictSUIDSGID=yes -p RestrictRealtime=yes -p RestrictNamespaces=yes \
       -p LockPersonality=yes \
       -p SystemCallFilter=@system-service -p SystemCallErrorNumber=EPERM \

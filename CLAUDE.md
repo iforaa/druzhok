@@ -216,6 +216,7 @@ mix test --cover        # enforces per-app thresholds set in each mix.exs; raise
 HERMES_PYTHON=$PWD/hermes-agent/.venv/bin/python python3 -m unittest discover -s apps/druzhok/test/panel_save
 python3 -m unittest discover -s apps/druzhok/test/publish_existing_sites
 python3 -m unittest discover -s apps/druzhok/test/tenant_fs   # what the tenant-fs helper refuses as root
+python3 -m unittest discover -s apps/druzhok/test/sqlite_copy   # the backup's database copy helper (the privilege drop: smoke.sh)
 python3 -m unittest discover -s apps/druzhok/test/soffice_shim   # ops/soffice-shim; mix test runs one real conversion when soffice exists (:soffice)
 MIX_ENV=test mix ecto.migrate   # after pulling new migrations (test DB is data/druzhok_test.db)
 # run with a real local hermes venv for Host.Process:
@@ -242,6 +243,8 @@ sudo ops/druzhok-migrate               # as druzhok; DATABASE_PATH comes from dr
 sudo install -D -m 0644 -o root -g root apps/druzhok/priv/panel-save/save.py /usr/local/lib/druzhok/panel-save.py   # every deploy
 sudo install -m 0755 -o root -g root ops/docs-convert /usr/local/lib/druzhok/docs-convert                       # every deploy
 sudo install -m 0755 -o root -g root apps/druzhok/priv/tenant-fs/tenant_fs.py /usr/local/lib/druzhok/tenant-fs   # every deploy
+sudo install -m 0755 -o root -g root apps/druzhok/priv/sqlite-copy/sqlite_copy.py /usr/local/lib/druzhok/sqlite-copy   # every deploy, before druzhok-backup
+sudo install -m 0755 -o root -g root ops/druzhok-backup /usr/local/sbin/druzhok-backup                          # when it changed
 sudo install -m 0755 -o root -g root ops/druzhok-ctl /usr/local/sbin/druzhok-ctl                                # when it changed
 sudo install -m 0755 -o root -g root ops/soffice-shim /usr/local/bin/soffice && sudo ln -sfn soffice /usr/local/bin/libreoffice
 # once, before the first deploy with the document converter (bootstrap.sh does the same on a new box):

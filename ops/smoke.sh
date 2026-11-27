@@ -128,9 +128,9 @@ cmp -s "$ops/docs-convert" /usr/local/lib/druzhok/docs-convert || { echo "/usr/l
 [ "$(stat -c %U /usr/local/lib/druzhok/docs-convert)" = root ] || { echo "the docs-convert wrapper is not root's"; exit 1; }
 [ -x /usr/lib/libreoffice/program/soffice ] || { echo "LibreOffice missing: apt-get install libreoffice-core-nogui libreoffice-writer-nogui libreoffice-calc-nogui libreoffice-impress-nogui"; exit 1; }
 id -u cleo-docs >/dev/null 2>&1 || { echo "no cleo-docs user"; exit 1; }
-# In the bot's workspace, not /tmp: druzhok-ctl exec runs without the unit's
-# PrivateTmp, so the bot user cannot write the host's /tmp. Made by the bot,
-# removed by this script whatever happens.
+# In the bot's workspace, not /tmp: druzhok-ctl exec has its own private /tmp,
+# which this script (root, outside it) cannot see. Made by the bot, removed by
+# this script whatever happens.
 smoke_dir=/data/tenants/$name/workspace/.smoke-$(od -An -N8 -tx1 /dev/urandom | tr -d ' \n')
 trap 'rm -rf "$smoke_dir"' EXIT
 conv=$(druzhok-ctl exec "$name" "$venv_bin/python" -I -c '
@@ -149,6 +149,59 @@ finally:
 ' "$smoke_dir" || true)
 echo "$conv"
 echo "$conv" | grep -q "TEXT:Проверка конвертера Дружок" || { echo "document conversion failed"; exit 1; }
+
+# What the bot can look at (visibility spec, 2026-11-27): under /data only its
+# own dir; platform source, config, units, firewall rules, logs and helpers
+# hidden; DNS still works. Through exec (asleep or not), then inside the
+# running unit itself when its process already has the sandbox.
+probe='
+echo "tenants:$(ls -A /data/tenants 2>&1 | tr "\n" " ")"
+for p in /data/druzhok-app /data/home-ubuntu /etc/druzhok /etc/systemd/system /etc/nftables.d /var/log /run/systemd/units /usr/local/lib/druzhok/tenant-fs; do
+  ls "$p" >/dev/null 2>&1 && echo "visible:$p"
+done
+echo "sbin:$(ls -A /usr/local/sbin 2>/dev/null | wc -l)"
+getent hosts api.telegram.org >/dev/null && echo dns:ok
+true'
+check_view() { # where, output
+  [ "$(printf '%s\n' "$2" | sed -n 's/^tenants://p')" = "$name " ] || { echo "$1: /data/tenants shows: $(printf '%s\n' "$2" | sed -n 's/^tenants://p')"; exit 1; }
+  ! printf '%s\n' "$2" | grep '^visible:' || { echo "$1: the paths above are visible to the bot"; exit 1; }
+  printf '%s\n' "$2" | grep -qx 'sbin:0' || { echo "$1: /usr/local/sbin is not empty"; exit 1; }
+  printf '%s\n' "$2" | grep -qx 'dns:ok' || { echo "$1: DNS does not resolve"; exit 1; }
+  echo "$1: only its own dir, platform hidden, DNS ok"
+}
+echo "== what the bot can see"
+check_view "exec" "$(druzhok-ctl exec "$name" /bin/sh -c "$probe" || true)"
+if [ "$asleep" != 1 ]; then
+  pid=$(systemctl show -p MainPID --value "hermes@$name.service")
+  if [ "${pid:-0}" -gt 0 ] && awk '$5 == "/data" { for (i = 6; i <= NF; i++) if ($i == "-") { if ($(i+1) == "tmpfs") f = 1; break } } END { exit !f }' "/proc/$pid/mountinfo"; then
+    check_view "unit" "$(nsenter -t "$pid" -m -S "$uid" -G "$(id -g "bot-$name")" -- /bin/sh -c "$probe" || true)"
+  else
+    echo "unit: old unit (started before the sandbox), restart to apply"
+  fi
+fi
+
+# The backup copies a bot's databases with this helper, as the bot and
+# non-dumpable (ops/druzhok-backup). One real copy, shaped like stage_db: into
+# a dir the bot owns, then checked by root without trusting that dir.
+echo "== backup copy helper"
+helper=/usr/local/lib/druzhok/sqlite-copy
+cmp -s "$ops/../apps/druzhok/priv/sqlite-copy/sqlite_copy.py" "$helper" || { echo "$helper is missing or stale: install it (CLAUDE.md, deploy recipe)"; exit 1; }
+cmp -s "$ops/druzhok-backup" /usr/local/sbin/druzhok-backup || { echo "/usr/local/sbin/druzhok-backup is missing or stale: install it (CLAUDE.md, deploy recipe)"; exit 1; }
+[ "$(stat -c %U "$helper")" = root ] && [ "$(stat -c %U /usr/local/sbin/druzhok-backup)" = root ] || { echo "the backup helper or script is not root's"; exit 1; }
+src_db=$(find "/data/tenants/$name" -mindepth 1 -maxdepth 1 -type f -name '*.db' -user "bot-$name" | head -n 1)
+if [ -n "$src_db" ]; then
+  work=$(mktemp -d /data/.smoke-copy.XXXXXX)
+  chown "bot-$name:bot-$name" "$work"; chmod 0700 "$work"
+  if env -i PATH=/usr/bin:/bin timeout -k 5 60 "$helper" "$uid" "$(id -g "bot-$name")" "$src_db" "$work/copy" \
+      && [ -f "$work/copy" ] && [ ! -L "$work/copy" ] && [ "$(stat -c %h "$work/copy")" = 1 ] \
+      && [ "$(stat -c %u "$work/copy")" = "$uid" ] && [ "$(head -c 15 "$work/copy")" = "SQLite format 3" ]; then
+    rm -rf "$work"; echo "copied $(basename "$src_db") as uid $uid"
+  else
+    rm -rf "$work"; echo "the backup helper did not copy $src_db as the bot"; exit 1
+  fi
+else
+  echo "no database in the bot's dir; skipped"
+fi
 
 # Without ops/patch-mnemosyne.py recall silently drops to keyword-only.
 echo "== mnemosyne embeddings allowed on loopback"
